@@ -1,0 +1,44 @@
+[project]
+name = "python-template"
+version = "0.1.0"
+description = "Python 项目初始化模版"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "commitizen>=4.8.2",
+    "pre-commit>=4.2.0",
+    "pytest>=9.0.2",
+]
+
+[tool.ruff.lint]
+select = [
+    "E", # pycodestyle (error)
+    "F", # pyflakes
+    "B", # bugbear
+    "S", # flake8-bandit
+    "C4", # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "I", # isort
+    "UP", # pyupgrade
+    "PIE", # flake8-pie
+    "PGH", # pygrep-hooks
+    "PYI", # flake8-pyi
+]
+ignore = [
+    "E501" # line-too-long
+]
+[tool.ruff.lint.per-file-ignores]
+# 针对 tests 文件夹下的所有 Python 文件忽略 S101 (assert) 规则
+"tests/**/*.py" = ["S101"]
+
+[[tool.uv.index]]
+url = "https://mirrors.cernet.edu.cn/pypi/web/simple"
+default = true
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+allowed_prefixes = ["doc", "feat", "Merge", "dependency", "Revert"]
