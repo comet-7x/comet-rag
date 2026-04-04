@@ -43,6 +43,7 @@ lint: ## 执行静态检查 (ruff + mypy)
 
 format: ## 格式化代码 (ruff)
 	$(RUFF) format .
+	$(RUFF) check . --fix
 
 test: ## 运行所有测试并生成覆盖率报告
 	$(PYTEST) tests/
