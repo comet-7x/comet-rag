@@ -1,4 +1,5 @@
 import os
+
 import dotenv
 from fastapi import Depends, FastAPI
 
@@ -23,6 +24,7 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
+
     dotenv.load_dotenv()
     uvicorn.run(
         app, host=os.environ["COMET_RAG_HOST"], port=int(os.environ["COMET_RAG_PORT"])
