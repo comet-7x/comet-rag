@@ -165,6 +165,59 @@ class Qwen3VLReranker(BaseReranker):
                 ):
                     raise CometRAGException(invalid_image_url_msg)
 
+    def _validate_inputs(
+        self,
+        query: str | ScoreMultiModalParam,
+        documents: str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],
+    ):
+        if isinstance(query, ScoreMultiModalParam):
+            self._validate_multimodal_content(query)
+        if isinstance(documents, ScoreMultiModalParam):
+            self._validate_multimodal_content(documents)
+        elif isinstance(documents, list):
+            for doc in documents:
+                if isinstance(doc, ScoreMultiModalParam):
+                    self._validate_multimodal_content(doc)
+
+    def _build_rerank_request(
+        self,
+        query: str | ScoreMultiModalParam,
+        documents: str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],
+        **kwargs,
+    ):
+        return RerankRequest(
+            model=self._model_name,
+            query=query,
+            documents=documents,
+            **kwargs,
+        ).model_dump(exclude_none=True)
+
+    def _extract_scores(self, response_json: dict) -> list[float]:
+        results = response_json["results"]
+        return [i["relevance_score"] for i in sorted(results, key=lambda x: x["index"])]
+
+    def _post_sync(self, rerank_request: dict):
+        rerank_response = self._httpx_sync_client.post(
+            url=f"{self._base_url}/rerank",
+            json=rerank_request,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+            },
+        )
+        rerank_response.raise_for_status()
+        return rerank_response.json()
+
+    async def _post_async(self, rerank_request: dict):
+        rerank_response = await self._httpx_async_client.post(
+            url=f"{self._base_url}/rerank",
+            json=rerank_request,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+            },
+        )
+        rerank_response.raise_for_status()
+        return rerank_response.json()
+
     def score(
         self,
         query: str | ScoreMultiModalParam,
@@ -172,36 +225,12 @@ class Qwen3VLReranker(BaseReranker):
         **kwargs,
     ):
         try:
-            if isinstance(query, ScoreMultiModalParam):
-                self._validate_multimodal_content(query)
-            if isinstance(documents, ScoreMultiModalParam):
-                self._validate_multimodal_content(documents)
-            elif isinstance(documents, list):
-                for doc in documents:
-                    if isinstance(doc, ScoreMultiModalParam):
-                        self._validate_multimodal_content(doc)
-
-            rerank_request = RerankRequest(
-                model=self._model_name,
-                query=query,
-                documents=documents,
-                **kwargs,
-            ).model_dump(exclude_none=True)
-
-            rerank_response = self._httpx_sync_client.post(
-                url=f"{self._base_url}/rerank",
-                json=rerank_request,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                },
-            )
-            rerank_response.raise_for_status()
-            response_json = rerank_response.json()
-            results = response_json["results"]
-
-            return [
-                i["relevance_score"] for i in sorted(results, key=lambda x: x["index"])
-            ]
+            self._validate_inputs(query, documents)
+            rerank_request = self._build_rerank_request(query, documents, **kwargs)
+            response_json = self._post_sync(rerank_request)
+            return self._extract_scores(response_json)
+        except CometRAGException:
+            raise
         except Exception as e:
             error_msg = (
                 f"{self.__class__.__name__} | rerank 方法操作发生非预期错误：{str(e)}"
@@ -215,36 +244,12 @@ class Qwen3VLReranker(BaseReranker):
         **kwargs,
     ):
         try:
-            if isinstance(query, ScoreMultiModalParam):
-                self._validate_multimodal_content(query)
-            if isinstance(documents, ScoreMultiModalParam):
-                self._validate_multimodal_content(documents)
-            elif isinstance(documents, list):
-                for doc in documents:
-                    if isinstance(doc, ScoreMultiModalParam):
-                        self._validate_multimodal_content(doc)
-
-            rerank_request = RerankRequest(
-                model=self._model_name,
-                query=query,
-                documents=documents,
-                **kwargs,
-            ).model_dump(exclude_none=True)
-
-            rerank_response = await self._httpx_async_client.post(
-                url=f"{self._base_url}/rerank",
-                json=rerank_request,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                },
-            )
-            rerank_response.raise_for_status()
-            response_json = rerank_response.json()
-            results = response_json["results"]
-
-            return [
-                i["relevance_score"] for i in sorted(results, key=lambda x: x["index"])
-            ]
+            self._validate_inputs(query, documents)
+            rerank_request = self._build_rerank_request(query, documents, **kwargs)
+            response_json = await self._post_async(rerank_request)
+            return self._extract_scores(response_json)
+        except CometRAGException:
+            raise
         except Exception as e:
             error_msg = (
                 f"{self.__class__.__name__} | rerank 方法操作发生非预期错误：{str(e)}"
