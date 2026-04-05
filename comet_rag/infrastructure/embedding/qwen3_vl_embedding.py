@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from enum import StrEnum
 from typing import Literal
 
@@ -303,18 +304,22 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             list[list[float]]: 向量表示列表
         """
         try:
-            embed_list = [
-                self.embed(
-                    embedding_data,
-                    system_prompt,
-                    encoding_format,
-                    continue_final_message,
-                    add_special_tokens,
+            max_workers = min(16, len(embedding_data_list))
+
+            def _safe_embed(data):
+                return self.embed(
+                    embedding_data=data,
+                    system_prompt=system_prompt,
+                    encoding_format=encoding_format,
+                    continue_final_message=continue_final_message,
+                    add_special_tokens=add_special_tokens,
                     **kwargs,
                 )
-                for embedding_data in embedding_data_list
-            ]
-            return embed_list
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # executor.map 会保持输入顺序
+                return list(executor.map(_safe_embed, embedding_data_list))
+
         except Exception as e:
             error_msg = f"{self.__class__.__name__} | embed_list 方法操作发生非预期错误：{str(e)}"
             raise CometRAGException(error_msg) from e

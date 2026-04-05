@@ -233,7 +233,7 @@ class Qwen3VLReranker(BaseReranker):
             raise
         except Exception as e:
             error_msg = (
-                f"{self.__class__.__name__} | rerank 方法操作发生非预期错误：{str(e)}"
+                f"{self.__class__.__name__} | score | 方法操作发生非预期错误：{str(e)}"
             )
             raise CometRAGException(error_msg) from e
 
@@ -252,7 +252,7 @@ class Qwen3VLReranker(BaseReranker):
             raise
         except Exception as e:
             error_msg = (
-                f"{self.__class__.__name__} | rerank 方法操作发生非预期错误：{str(e)}"
+                f"{self.__class__.__name__} | ascore | 方法操作发生非预期错误：{str(e)}"
             )
             raise CometRAGException(error_msg) from e
 
