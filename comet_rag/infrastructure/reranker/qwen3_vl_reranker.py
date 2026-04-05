@@ -133,7 +133,7 @@ class Qwen3VLReranker(BaseReranker):
             api_key (str): 模型服务 api_key
             timeout (int | None): 请求超时时间，默认为 `None`
         """
-        self._base_url = base_url
+        self._base_url = base_url.rstrip("/")
         self._model_name = model_name
         self._api_key = api_key
 
