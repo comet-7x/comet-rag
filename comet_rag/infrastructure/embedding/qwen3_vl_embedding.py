@@ -513,3 +513,10 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             response = self.tokenize(EmbeddingData(text="hello"))
             self._max_model_len = response.max_model_len
         return self._max_model_len
+
+    async def close_client(self) -> None:
+        """
+        关闭客户端
+        """
+        await self._httpx_async_client.aclose()
+        self._httpx_sync_client.close()

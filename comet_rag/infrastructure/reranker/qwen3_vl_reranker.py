@@ -250,3 +250,10 @@ class Qwen3VLReranker(BaseReranker):
                 f"{self.__class__.__name__} | rerank 方法操作发生非预期错误：{str(e)}"
             )
             raise CometRAGException(error_msg) from e
+
+    async def close_client(self) -> None:
+        """
+        关闭客户端
+        """
+        await self._httpx_async_client.aclose()
+        self._httpx_sync_client.close()
