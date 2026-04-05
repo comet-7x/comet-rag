@@ -1,6 +1,3 @@
-"""自定义异常基类"""
-
-
 class CometRAGException(Exception):
     """Comet-RAG 基础异常"""
 
