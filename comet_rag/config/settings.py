@@ -1,44 +1,47 @@
-"""配置管理"""
-
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
-from pydantic_settings import BaseSettings
+import yaml
+
+from .schemas import APPConfig
 
 
-class Settings(BaseSettings):
-    """应用配置"""
+@dataclass
+class BaseConfigLoader(ABC):
+    """
+    抽象配置加载基类
+    """
 
-    app_name: str = "Comet-RAG"
-    debug: bool = False
+    @classmethod
+    @abstractmethod
+    def load(cls, path: str | None = None) -> dict:
+        pass
 
-    # 数据库配置
-    database_url: str = "sqlite:///./comet_rag.db"
 
-    # LLM 配置
-    llm_url: str = ""
-    llm_api_key: str = ""
-    llm_model: str = ""
+@dataclass
+class YamlConfigLoader(BaseConfigLoader):
+    yaml_path: str = "config.yaml"
 
-    # Embedding 配置
-    embedding_url: str = ""
-    embedding_api_key: str = ""
-    embedding_model: str = ""
+    @classmethod
+    def load(cls, path: str | None = None) -> dict:
+        yaml_path = path or cls.yaml_path
 
-    # Reranker 配置
-    reranker_url: str = ""
-    reranker_api_key: str = ""
-    reranker_model: str = ""
+        if not Path(yaml_path).exists():
+            return {}
 
-    # VectorStore 配置
-    vectorstore_uri: str = ""
-    vectorstore_db_name: str = ""
+        with open(yaml_path, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    @classmethod
+    def get_config(cls, path: str | None = None) -> APPConfig:
+        return APPConfig.model_validate(cls.load(path))
 
 
 @lru_cache
-def get_settings() -> Settings:
-    """获取配置（单例）"""
-    return Settings()
+def get_config(path: str | None = None, type: str = "yaml") -> APPConfig:
+    if type == "yaml":
+        return YamlConfigLoader.get_config(path)
+
+    raise ValueError("get_config | 暂不支持该类型配置加载")

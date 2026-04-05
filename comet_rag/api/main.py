@@ -1,14 +1,17 @@
-import os
-
-import dotenv
+import uvicorn
 from fastapi import Depends, FastAPI
 
 from comet_rag.api.lifespan import lifespan
 from comet_rag.api.middleware import TraceMiddleware, get_trace_id
 from comet_rag.api.routes import admin, search
+from comet_rag.config.settings import get_config
+
+config = get_config()
 
 app = FastAPI(
-    title="Comet-RAG", lifespan=lifespan, dependencies=[Depends(get_trace_id)]
+    title=config.server_config.app_name,
+    lifespan=lifespan,
+    dependencies=[Depends(get_trace_id)],
 )
 
 
@@ -23,9 +26,4 @@ async def root():
 
 
 if __name__ == "__main__":
-    import uvicorn
-
-    dotenv.load_dotenv()
-    uvicorn.run(
-        app, host=os.environ["COMET_RAG_HOST"], port=int(os.environ["COMET_RAG_PORT"])
-    )
+    uvicorn.run(app, host=config.server_config.host, port=config.server_config.port)
