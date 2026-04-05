@@ -145,14 +145,14 @@ class Qwen3VLReranker(BaseReranker):
         """检查图片URL是否为base64编码"""
         return image_url.startswith("data:image/")
 
-    def _normalize_request(self, documents: ScoreMultiModalParam):
+    def _validate_multimodal_content(self, documents: ScoreMultiModalParam):
         allowed_content_types = (
             ChatCompletionContentPartTextParam,
             ChatCompletionContentPartImageParam,
         )
         url_prefixes = ("https://", "http://")
-        unsupported_type_msg = f"{self.__class__.__name__} | _normalize_request：暂不支持 ChatCompletionContentPartImageEmbedsParam / ChatCompletionContentPartVideoParam 类型"
-        invalid_image_url_msg = f"{self.__class__.__name__} | _normalize_request：仅支持以 {url_prefixes} 开头的在线图片URL或 base64 编码图片，不支持本地图片"
+        unsupported_type_msg = f"{self.__class__.__name__} | _validate_multimodal_content：暂不支持 ChatCompletionContentPartImageEmbedsParam / ChatCompletionContentPartVideoParam 类型"
+        invalid_image_url_msg = f"{self.__class__.__name__} | _validate_multimodal_content：仅支持以 {url_prefixes} 开头的在线图片URL或 base64 编码图片，不支持本地图片"
 
         for content in documents.content:
             if not isinstance(content, allowed_content_types):
@@ -173,13 +173,13 @@ class Qwen3VLReranker(BaseReranker):
     ):
         try:
             if isinstance(query, ScoreMultiModalParam):
-                self._normalize_request(query)
+                self._validate_multimodal_content(query)
             if isinstance(documents, ScoreMultiModalParam):
-                self._normalize_request(documents)
+                self._validate_multimodal_content(documents)
             elif isinstance(documents, list):
                 for doc in documents:
                     if isinstance(doc, ScoreMultiModalParam):
-                        self._normalize_request(doc)
+                        self._validate_multimodal_content(doc)
 
             rerank_request = RerankRequest(
                 model=self._model_name,
@@ -216,13 +216,13 @@ class Qwen3VLReranker(BaseReranker):
     ):
         try:
             if isinstance(query, ScoreMultiModalParam):
-                self._normalize_request(query)
+                self._validate_multimodal_content(query)
             if isinstance(documents, ScoreMultiModalParam):
-                self._normalize_request(documents)
+                self._validate_multimodal_content(documents)
             elif isinstance(documents, list):
                 for doc in documents:
                     if isinstance(doc, ScoreMultiModalParam):
-                        self._normalize_request(doc)
+                        self._validate_multimodal_content(doc)
 
             rerank_request = RerankRequest(
                 model=self._model_name,
