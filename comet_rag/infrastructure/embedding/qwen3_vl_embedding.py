@@ -85,6 +85,8 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         model_name: str,
         api_key: str,
         timeout: int | None = None,
+        output_dim: int | None = None,
+        max_model_len: int | None = None,
     ) -> None:
         """
         Qwen3VL 嵌入模型
@@ -98,8 +100,8 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         self._base_url = base_url
         self._model_name = model_name
         self._api_key = api_key
-        self._output_dim = None
-        self._max_model_len = None
+        self._output_dim = output_dim
+        self._max_model_len = max_model_len
 
         self._httpx_async_client = AsyncClient(timeout=timeout)
         self._httpx_sync_client = Client(timeout=timeout)
@@ -500,18 +502,32 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             raise CometRAGException(error_msg) from e
 
     def get_output_dim(self) -> int:
-        if self._output_dim is None:
-            self._output_dim = len(
-                self.embed(
-                    EmbeddingData(text="hello"), encoding_format=EncodingFormat.FLOAT
-                )
+        """获取并校验输出维度"""
+        actual_dim = len(
+            self.embed(
+                EmbeddingData(text="hello"), encoding_format=EncodingFormat.FLOAT
             )
+        )
+
+        if self._output_dim is None:
+            self._output_dim = actual_dim
+        elif self._output_dim != actual_dim:
+            raise ValueError(
+                f"{self.__class__.__name__} | get_output_dim | 模型输出维度冲突: 配置为 {self._output_dim}, 但模型实际输出为 {actual_dim}"
+            )
+
         return self._output_dim
 
     def get_max_model_len(self) -> int:
+        response = self.tokenize(EmbeddingData(text="hello"))
+        actual_len = response.max_model_len
+
         if self._max_model_len is None:
-            response = self.tokenize(EmbeddingData(text="hello"))
-            self._max_model_len = response.max_model_len
+            self._max_model_len = actual_len
+        elif self._max_model_len != actual_len:
+            raise ValueError(
+                f"{self.__class__.__name__} | get_max_model_len | 模型最大输出长度冲突: 配置为 {self._max_model_len}, 但模型实际输出为 {actual_len}"
+            )
         return self._max_model_len
 
     async def close_client(self) -> None:
