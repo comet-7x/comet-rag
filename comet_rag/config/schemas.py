@@ -64,5 +64,19 @@ class S3Config(BaseModel):
     region: str | None = Field(None, description="地域，如 cn-north-1")
 
 
+class ModelConfig(BaseModel):
+    """模型配置 (如 OpenAI, Cohere)"""
+
+    base_url: str = Field(..., description="服务地址")
+    model_name: str = Field(..., description="模型名称")
+    api_key: str | None = Field(None, description="API 访问密钥")
+
+
+class InfrastructureConfig(BaseModel):
+    embedding_model: ModelConfig = Field(..., description="嵌入模型配置")
+    reranker: ModelConfig = Field(..., description="重排序模型配置")
+
+
 class APPConfig(BaseModel):
     server_config: ServerConfig = Field(..., description="服务配置")
+    infrastructure_config: InfrastructureConfig = Field(..., description="基础设施配置")

@@ -1,18 +1,21 @@
-"""Embedding 模型封装"""
+from .base import BaseEmbeddingModel
+from .qwen3_vl_embedding import (
+    DetokenizeResponse,
+    EmbeddingData,
+    EmbeddingResponse,
+    EncodingFormat,
+    Qwen3VLEmbeddingModel,
+    Qwen3VLEmbeddingModelSystemPrompt,
+    TokenizeResponse,
+)
 
-from abc import ABC, abstractmethod
-from collections.abc import Sequence
-
-
-class BaseEmbeddingModel(ABC):
-    """Embedding 模型基类"""
-
-    @abstractmethod
-    async def aembed_text(self, text: str) -> Sequence[float]:
-        """异步获取单条文本的向量"""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def aembed_texts(self, texts: list[str]) -> list[Sequence[float]]:
-        """异步获取多条文本的向量"""
-        raise NotImplementedError
+__all__ = [
+    "BaseEmbeddingModel",
+    "DetokenizeResponse",
+    "EmbeddingData",
+    "EmbeddingResponse",
+    "EncodingFormat",
+    "Qwen3VLEmbeddingModel",
+    "Qwen3VLEmbeddingModelSystemPrompt",
+    "TokenizeResponse",
+]
