@@ -13,6 +13,7 @@ dependencies = [
     "alembic>=1.13.0",
     "loguru>=0.7.3",
     "snowflake>=1.12.0",
+    "openai>=2.30.0",
 ]
 
 [dependency-groups]

@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -16,7 +17,7 @@ class BaseConfigLoader(ABC):
 
     @classmethod
     @abstractmethod
-    def load(cls, path: str | None = None) -> dict:
+    def load(cls, *args, **kwargs) -> Any:
         pass
 
 
