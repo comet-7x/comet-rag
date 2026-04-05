@@ -386,7 +386,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 system_prompt=Qwen3VLEmbeddingModelSystemPrompt.COMMON,
             )
             response = self._httpx_sync_client.post(
-                f"{self._base_url.replace('/v1', '')}/tokenize",
+                f"{self._base_url.removesuffix('/v1')}/tokenize",
                 headers=self._get_headers(),
                 json={
                     "model": self._model_name,
@@ -432,7 +432,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 system_prompt=Qwen3VLEmbeddingModelSystemPrompt.COMMON,
             )
             response = await self._httpx_async_client.post(
-                f"{self._base_url.replace('/v1', '')}/tokenize",
+                f"{self._base_url.removesuffix('/v1')}/tokenize",
                 headers=self._get_headers(),
                 json={
                     "model": self._model_name,
@@ -458,7 +458,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
     ) -> DetokenizeResponse:
         try:
             response = self._httpx_sync_client.post(
-                f"{self._base_url.replace('/v1', '')}/detokenize",
+                f"{self._base_url.removesuffix('/v1')}/detokenize",
                 headers=self._get_headers(),
                 json={
                     "model": self._model_name,
@@ -482,7 +482,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
     ) -> DetokenizeResponse:
         try:
             response = await self._httpx_async_client.post(
-                f"{self._base_url.replace('/v1', '')}/detokenize",
+                f"{self._base_url.removesuffix('/v1')}/detokenize",
                 headers=self._get_headers(),
                 json={
                     "model": self._model_name,
