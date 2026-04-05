@@ -145,7 +145,7 @@ class Qwen3VLReranker(BaseReranker):
         """检查图片URL是否为base64编码"""
         return image_url.startswith("data:image/")
 
-    def _validate_multimodal_content(self, documents: ScoreMultiModalParam):
+    def _validate_multimodal_content(self, data: ScoreMultiModalParam):
         allowed_content_types = (
             ChatCompletionContentPartTextParam,
             ChatCompletionContentPartImageParam,
@@ -154,7 +154,7 @@ class Qwen3VLReranker(BaseReranker):
         unsupported_type_msg = f"{self.__class__.__name__} | _validate_multimodal_content：暂不支持 ChatCompletionContentPartImageEmbedsParam / ChatCompletionContentPartVideoParam 类型"
         invalid_image_url_msg = f"{self.__class__.__name__} | _validate_multimodal_content：仅支持以 {url_prefixes} 开头的在线图片URL或 base64 编码图片，不支持本地图片"
 
-        for content in documents.content:
+        for content in data.content:
             if not isinstance(content, allowed_content_types):
                 raise CometRAGException(unsupported_type_msg)
 
