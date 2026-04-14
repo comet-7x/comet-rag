@@ -286,6 +286,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         encoding_format: EncodingFormat = EncodingFormat.FLOAT,
         continue_final_message: bool = True,
         add_special_tokens: bool = True,
+        max_concurrency: int = 16,
         **kwargs,
     ) -> list[list[float] | str]:
         """
@@ -304,7 +305,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             list[list[float]]: 向量表示列表
         """
         try:
-            max_workers = max(1, min(16, len(embedding_data_list)))
+            max_workers = max(1, min(max_concurrency, len(embedding_data_list)))
 
             def _safe_embed(data):
                 return self.embed(
@@ -333,6 +334,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         encoding_format: EncodingFormat = EncodingFormat.FLOAT,
         continue_final_message: bool = True,
         add_special_tokens: bool = True,
+        max_concurrency: int = 16,
         **kwargs,
     ) -> list[list[float] | str]:
         """
@@ -351,19 +353,24 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             list[list[float]]: 向量表示列表
         """
         try:
-            tasks = [
-                self.aembed(
-                    embedding_data,
-                    system_prompt,
-                    encoding_format,
-                    continue_final_message,
-                    add_special_tokens,
-                    **kwargs,
-                )
-                for embedding_data in embedding_data_list
-            ]
-            batch_embed = await asyncio.gather(*tasks)
-            return batch_embed
+            max_workers = max(1, min(max_concurrency, len(embedding_data_list)))
+
+            semaphore = asyncio.Semaphore(max_workers)
+
+            async def _safe_aembed(data):
+                async with semaphore:
+                    return await self.aembed(
+                        embedding_data=data,
+                        system_prompt=system_prompt,
+                        encoding_format=encoding_format,
+                        continue_final_message=continue_final_message,
+                        add_special_tokens=add_special_tokens,
+                        **kwargs,
+                    )
+
+            return await asyncio.gather(
+                *[_safe_aembed(data) for data in embedding_data_list]
+            )
         except Exception as e:
             error_msg = f"{self.__class__.__name__} | batch_aembed 方法操作发生非预期错误：{str(e)}"
             raise CometRAGException(error_msg) from e
