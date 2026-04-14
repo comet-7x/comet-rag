@@ -102,12 +102,16 @@ class RecursiveCharacterTextSplitter:
         self._keep_separator = keep_separator
 
         # 默认分隔符按优先级排序：双换行 -> 单换行 -> 空格 -> 逐字符
-        self._separators = separators or [
-            "\n\n",
-            "\n",
-            " ",
-            "",
-        ]
+        self._separators = (
+            separators
+            if separators is not None
+            else [
+                "\n\n",
+                "\n",
+                " ",
+                "",
+            ]
+        )
 
     def split_text(self, text: str) -> list[str]:
         """将输入文本拆分为 chunks
@@ -183,12 +187,12 @@ class RecursiveCharacterTextSplitter:
             splits = []
 
             for i, part in enumerate(parts):
-                if i < len(parts) - 1:        # 非末尾片段：追加分隔符
+                if i < len(parts) - 1:  # 非末尾片段：追加分隔符
                     if part:
                         splits.append(part + separator)
                     elif splits:
                         splits[-1] += separator  # 连续分隔符：并入上一段
-                else:                          # 末尾片段：无后续分隔符
+                else:  # 末尾片段：无后续分隔符
                     if part:
                         splits.append(part)
 
