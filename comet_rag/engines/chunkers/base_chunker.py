@@ -193,11 +193,11 @@ class RecursiveCharacterTextSplitter:
                         splits.append(part + separator)
                     elif splits:
                         splits[-1] += separator  # 连续分隔符：并入上一段
-                else:  # 末尾片段：无后续分隔符
-                    if part:
-                        splits.append(part)
-
-            return [s for s in splits if s]
+                    else:  # 开头空片段：添加分隔符
+                        splits.append(separator)
+                elif part:  # 末尾片段：无后续分隔符
+                    splits.append(part)
+            return splits
         return text.split(separator)
 
     def _split_by_characters(self, text: str) -> list[str]:
