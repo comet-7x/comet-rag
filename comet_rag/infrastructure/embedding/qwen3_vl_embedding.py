@@ -300,6 +300,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 - `"float"`：返回浮点数表示的向量
             continue_final_message (bool): 是否继续最后一条消息，默认为 `True`
             add_special_tokens (bool): 是否添加特殊分隔标记，默认为 `True`
+            max_concurrency (int): 最大并发数，默认为 `16`
 
         Returns:
             list[list[float]]: 向量表示列表
@@ -348,6 +349,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 - `"float"`：返回浮点数表示的向量
             continue_final_message (bool): 是否继续最后一条消息，默认为 `True`
             add_special_tokens (bool): 是否添加特殊分隔标记，默认为 `True`
+            max_concurrency (int): 最大并发数，默认为 `16`
 
         Returns:
             list[list[float]]: 向量表示列表
