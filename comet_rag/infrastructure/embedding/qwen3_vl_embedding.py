@@ -277,7 +277,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             )
             raise CometRAGException(error_msg) from e
 
-    def embed_list(
+    def batch_embed(
         self,
         embedding_data_list: list[EmbeddingData],
         system_prompt: (
@@ -321,10 +321,10 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 return list(executor.map(_safe_embed, embedding_data_list))
 
         except Exception as e:
-            error_msg = f"{self.__class__.__name__} | embed_list 方法操作发生非预期错误：{str(e)}"
+            error_msg = f"{self.__class__.__name__} | batch_embed 方法操作发生非预期错误：{str(e)}"
             raise CometRAGException(error_msg) from e
 
-    async def aembed_list(
+    async def batch_aembed(
         self,
         embedding_data_list: list[EmbeddingData],
         system_prompt: (
@@ -362,10 +362,10 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 )
                 for embedding_data in embedding_data_list
             ]
-            embed_list = await asyncio.gather(*tasks)
-            return embed_list
+            batch_embed = await asyncio.gather(*tasks)
+            return batch_embed
         except Exception as e:
-            error_msg = f"{self.__class__.__name__} | aembed_list 方法操作发生非预期错误：{str(e)}"
+            error_msg = f"{self.__class__.__name__} | batch_aembed 方法操作发生非预期错误：{str(e)}"
             raise CometRAGException(error_msg) from e
 
     def tokenize(
