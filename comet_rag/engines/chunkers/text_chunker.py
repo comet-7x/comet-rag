@@ -39,9 +39,10 @@ class MdxChunker(BaseChunker):
     ):
         if separators is None:
             separators = [
-                "\n#### ",  # H4 headers (sub-subsections)
-                "\n### ",  # H3 headers (subsections)
+                "\n# ",  # H1 headers (top-level sections)
                 "\n## ",  # H2 headers (major sections)
+                "\n### ",  # H3 headers (subsections)
+                "\n#### ",  # H4 headers (sub-subsections)
                 "\n\n",  # Paragraph breaks
                 "\n```",  # Code block boundaries
                 "\n",  # Line breaks
@@ -54,3 +55,9 @@ class MdxChunker(BaseChunker):
                 "",  # Character level
             ]
         super().__init__(chunk_size, chunk_overlap, separators, keep_separator)
+
+    def chunk(self, text: str) -> list[str]:
+        # \n 前缀的分隔符无法匹配文档首行标题，预置 \n 使其可被正常识别
+        if text and text[0] == "#":
+            text = "\n" + text
+        return super().chunk(text)
