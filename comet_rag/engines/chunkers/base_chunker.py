@@ -281,16 +281,13 @@ class BaseChunker:
             keep_separator: 是否保留分隔符
         """
         if separators is None and language:
-            if language == Language.ENGLISH:
-                separators = SEPARATORS_EN
-            elif language == Language.CHINESE:
-                separators = SEPARATORS_ZH
-            elif language == Language.JAPANESE:
-                separators = SEPARATORS_JA
-            elif language == Language.KOREAN:
-                separators = SEPARATORS_KO
-            else:
-                separators = None
+            mapping = {
+                Language.ENGLISH: SEPARATORS_EN,
+                Language.CHINESE: SEPARATORS_ZH,
+                Language.JAPANESE: SEPARATORS_JA,
+                Language.KOREAN: SEPARATORS_KO,
+            }
+            separators = mapping.get(language)
 
         self._splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
