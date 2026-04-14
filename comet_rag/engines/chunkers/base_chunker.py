@@ -231,7 +231,7 @@ class RecursiveCharacterTextSplitter:
 
             # 累积内容已满，输出当前 chunk
             if total + len_to_add > self._chunk_size and current_doc:
-                doc = ("" if self._keep_separator else separator).join(current_doc)
+                doc = separator.join(current_doc)
                 if doc:
                     docs.append(doc)
 
