@@ -177,18 +177,20 @@ class RecursiveCharacterTextSplitter:
             return list(text)
 
         if self._keep_separator and separator in text:
-            # 保留分隔符：在每个片段前加上分隔符（首尾除外）
+            # 保留分隔符：将分隔符追加到其所属片段的末尾（而非前置到下一片段），
+            # 保证每个内容单元的完整性（如句子以标点结尾，JSON 对象含闭合符号）
             parts = text.split(separator)
             splits = []
 
             for i, part in enumerate(parts):
-                if i == 0:
-                    splits.append(part)
-                else:
+                if i < len(parts) - 1:        # 非末尾片段：追加分隔符
                     if part:
-                        splits.append(separator + part)
+                        splits.append(part + separator)
                     elif splits:
-                        splits[-1] += separator
+                        splits[-1] += separator  # 连续分隔符：并入上一段
+                else:                          # 末尾片段：无后续分隔符
+                    if part:
+                        splits.append(part)
 
             return [s for s in splits if s]
         return text.split(separator)
