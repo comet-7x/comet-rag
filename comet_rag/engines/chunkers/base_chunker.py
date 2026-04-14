@@ -1,4 +1,5 @@
 # 引用自 https://github.com/crewAIInc/crewAI/blob/main/lib/crewai-tools/src/crewai_tools/rag/chunkers/
+from collections import deque
 from enum import StrEnum
 
 
@@ -216,41 +217,44 @@ class RecursiveCharacterTextSplitter:
         将当前文档作为一个 chunk，并保留部分重叠内容到下一个 chunk
         """
         docs: list[str] = []
-        current_doc: list[str] = []
+        current_doc: deque[str] = deque()
         total = 0
 
         for split in splits:
             split_len = len(split)
+            # keep_separator=False 时新 split 加入后还需插入一个分隔符，需计入长度
+            len_to_add = (
+                split_len + len(separator)
+                if not self._keep_separator and separator != "" and current_doc
+                else split_len
+            )
 
             # 累积内容已满，输出当前 chunk
-            if total + split_len > self._chunk_size and current_doc:
-                if separator == "" or self._keep_separator:
-                    doc = "".join(current_doc)
-                else:
-                    doc = separator.join(current_doc)
-
+            if total + len_to_add > self._chunk_size and current_doc:
+                doc = ("" if self._keep_separator else separator).join(current_doc)
                 if doc:
                     docs.append(doc)
 
-                # 实现 overlap：移除前面的片段，直到内容减少到 overlap 以下
-                while total > self._chunk_overlap and len(current_doc) > 0:
-                    removed = current_doc.pop(0)
+                # 缩小窗口：满足 overlap 约束，同时确保新 split 能放入
+                while current_doc and (
+                    total > self._chunk_overlap or total + len_to_add > self._chunk_size
+                ):
+                    removed = current_doc.popleft()
                     total -= len(removed)
-                    if separator != "" and not self._keep_separator:
+                    if not self._keep_separator and separator != "" and current_doc:
                         total -= len(separator)
+
+                if not current_doc:
+                    total = 0
 
             current_doc.append(split)
             total += split_len
-            if separator != "" and not self._keep_separator and len(current_doc) > 1:
+            if not self._keep_separator and separator != "" and len(current_doc) > 1:
                 total += len(separator)
 
         # 处理最后一个文档
         if current_doc:
-            if separator == "" or self._keep_separator:
-                doc = "".join(current_doc)
-            else:
-                doc = separator.join(current_doc)
-
+            doc = ("" if self._keep_separator else separator).join(current_doc)
             if doc:
                 docs.append(doc)
 
