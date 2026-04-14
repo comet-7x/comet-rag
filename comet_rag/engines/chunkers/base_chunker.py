@@ -124,10 +124,15 @@ class RecursiveCharacterTextSplitter:
         """递归拆分文本的核心逻辑
 
         策略：优先用高优先级分隔符（如\\n\\n）拆分，如果结果仍超过 chunk_size，
-        则用次优先级分隔符继续拆分，直到可以放入 chunk_size 或无法再分时按字符数强制拆分
+        则用次优先级分隔符继续拆分，直到可以放入 chunk_size 或无法再分时按字符数强制拆分。
+
+        每层只负责合并本层收集到的小片段；过大的片段递归处理后直接追加到输出，
+        不再经过本层的 _merge_splits，避免双重合并。
         """
+        final_chunks: list[str] = []
+
         separator = separators[-1]
-        new_separators = []
+        new_separators: list[str] = []
 
         # 从高优先级分隔符开始，找到第一个在文本中存在的分隔符
         for i, sep in enumerate(separators):
@@ -141,22 +146,29 @@ class RecursiveCharacterTextSplitter:
 
         splits = self._split_text_with_separator(text, separator)
 
-        good_splits = []
+        # keep_separator=True 时分隔符已内嵌于片段，合并时直接拼接；
+        # keep_separator=False 时需用原分隔符重新插入
+        merge_sep = "" if self._keep_separator else separator
 
+        good_splits: list[str] = []
         for split in splits:
-            # 如果当前片段不超过 chunk_size，直接保留
             if len(split) <= self._chunk_size:
                 good_splits.append(split)
             else:
-                # 否则用更低优先级的分隔符继续拆分
+                # 先将已积累的小片段合并输出，再处理当前过大的片段
+                if good_splits:
+                    final_chunks.extend(self._merge_splits(good_splits, merge_sep))
+                    good_splits = []
                 if new_separators:
-                    other_info = self._split_text(split, new_separators)
-                    good_splits.extend(other_info)
+                    # 递归结果直接追加，不再经过本层合并
+                    final_chunks.extend(self._split_text(split, new_separators))
                 else:
-                    # 没有更多分隔符时，按固定长度强制拆分
-                    good_splits.extend(self._split_by_characters(split))
+                    final_chunks.extend(self._split_by_characters(split))
 
-        return self._merge_splits(good_splits, separator)
+        if good_splits:
+            final_chunks.extend(self._merge_splits(good_splits, merge_sep))
+
+        return final_chunks
 
     def _split_text_with_separator(self, text: str, separator: str) -> list[str]:
         """使用指定分隔符拆分文本，并可选保留分隔符"""
@@ -182,10 +194,12 @@ class RecursiveCharacterTextSplitter:
         return text.split(separator)
 
     def _split_by_characters(self, text: str) -> list[str]:
-        """按固定字符数强制拆分（用于无法再分割时的兜底）"""
-        step = self._chunk_size - self._chunk_overlap
+        """按固定字符数强制拆分（用于无法再分割时的兜底）
+
+        结果直接追加到输出，不经过 _merge_splits，因此不加 overlap。
+        """
         chunks = []
-        for i in range(0, len(text), step):
+        for i in range(0, len(text), self._chunk_size):
             chunks.append(text[i : i + self._chunk_size])
         return chunks
 
@@ -213,7 +227,7 @@ class RecursiveCharacterTextSplitter:
                     docs.append(doc)
 
                 # 实现 overlap：移除前面的片段，直到内容减少到 overlap 以下
-                while total > self._chunk_overlap and len(current_doc) > 1:
+                while total > self._chunk_overlap and len(current_doc) > 0:
                     removed = current_doc.pop(0)
                     total -= len(removed)
                     if separator != "" and not self._keep_separator:

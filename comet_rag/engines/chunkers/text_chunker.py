@@ -39,9 +39,9 @@ class MdxChunker(BaseChunker):
     ):
         if separators is None:
             separators = [
-                "\n## ",  # H2 headers (major sections)
-                "\n### ",  # H3 headers (subsections)
                 "\n#### ",  # H4 headers (sub-subsections)
+                "\n### ",  # H3 headers (subsections)
+                "\n## ",  # H2 headers (major sections)
                 "\n\n",  # Paragraph breaks
                 "\n```",  # Code block boundaries
                 "\n",  # Line breaks
