@@ -1,5 +1,67 @@
 # 引用自 https://github.com/crewAIInc/crewAI/blob/main/lib/crewai-tools/src/crewai_tools/rag/chunkers/
-import re
+from enum import StrEnum
+
+
+class Language(StrEnum):
+    ENGLISH = "en"
+    CHINESE = "zh"
+    JAPANESE = "ja"
+    KOREAN = "ko"
+
+
+SEPARATORS_EN = [
+    "\n\n\n",  # Multiple line breaks (sections)
+    "\n\n",  # Paragraph breaks
+    "\n",  # Line breaks
+    ". ",  # Sentence endings
+    "! ",  # Exclamation endings
+    "? ",  # Question endings
+    "; ",  # Semicolon breaks
+    ", ",  # Comma breaks
+    " ",  # Word breaks
+    "",  # Character level
+]
+
+SEPARATORS_ZH = [
+    "\n\n\n",  # 多个换行（章节）
+    "\n\n",  # 段落分隔
+    "\n",  # 换行
+    "。",  # 句号
+    "！",  # 感叹号
+    "？",  # 问号
+    "；",  # 分号
+    "，",  # 逗号
+    "、",  # 顿号
+    "",  # 字符级（中文无词间空格）
+]
+
+SEPARATORS_JA = [
+    "\n\n\n",  # 複数改行（章・節）
+    "\n\n",  # 段落区切り
+    "\n",  # 改行
+    "。",  # 句点
+    "！",  # 感嘆符
+    "？",  # 疑問符
+    "；",  # セミコロン
+    "、",  # 読点
+    "",  # 文字レベル（日本語は単語間スペースなし）
+]
+
+SEPARATORS_KO = [
+    "\n\n",  # 段落
+    "\n",  # 换行
+    ". ",
+    "! ",
+    "? ",  # 句末（通常带空格）
+    "。",
+    "！",
+    "？",  # 全角句末
+    "; ",
+    ": ",  # 句中
+    ", ",  # 逗号
+    " ",  # 单词间距（韩语书写有空格隔开词组）
+    "",  # 字符
+]
 
 
 class RecursiveCharacterTextSplitter:
@@ -72,7 +134,7 @@ class RecursiveCharacterTextSplitter:
             if sep == "":
                 separator = sep
                 break
-            if re.search(re.escape(sep), text):
+            if sep in text:
                 separator = sep
                 new_separators = separators[i + 1 :]
                 break
@@ -82,8 +144,8 @@ class RecursiveCharacterTextSplitter:
         good_splits = []
 
         for split in splits:
-            # 如果当前片段小于 chunk_size，直接保留
-            if len(split) < self._chunk_size:
+            # 如果当前片段不超过 chunk_size，直接保留
+            if len(split) <= self._chunk_size:
                 good_splits.append(split)
             else:
                 # 否则用更低优先级的分隔符继续拆分
@@ -110,23 +172,20 @@ class RecursiveCharacterTextSplitter:
             for i, part in enumerate(parts):
                 if i == 0:
                     splits.append(part)
-                elif i == len(parts) - 1:
-                    if part:
-                        splits.append(separator + part)
                 else:
                     if part:
                         splits.append(separator + part)
-                    else:
-                        if splits:
-                            splits[-1] += separator
+                    elif splits:
+                        splits[-1] += separator
 
             return [s for s in splits if s]
         return text.split(separator)
 
     def _split_by_characters(self, text: str) -> list[str]:
         """按固定字符数强制拆分（用于无法再分割时的兜底）"""
+        step = self._chunk_size - self._chunk_overlap
         chunks = []
-        for i in range(0, len(text), self._chunk_size):
+        for i in range(0, len(text), step):
             chunks.append(text[i : i + self._chunk_size])
         return chunks
 
@@ -145,13 +204,10 @@ class RecursiveCharacterTextSplitter:
 
             # 累积内容已满，输出当前 chunk
             if total + split_len > self._chunk_size and current_doc:
-                if separator == "":
+                if separator == "" or self._keep_separator:
                     doc = "".join(current_doc)
                 else:
-                    if self._keep_separator and separator == " ":
-                        doc = "".join(current_doc)
-                    else:
-                        doc = separator.join(current_doc)
+                    doc = separator.join(current_doc)
 
                 if doc:
                     docs.append(doc)
@@ -160,23 +216,20 @@ class RecursiveCharacterTextSplitter:
                 while total > self._chunk_overlap and len(current_doc) > 1:
                     removed = current_doc.pop(0)
                     total -= len(removed)
-                    if separator != "":
+                    if separator != "" and not self._keep_separator:
                         total -= len(separator)
 
             current_doc.append(split)
             total += split_len
-            if separator != "" and len(current_doc) > 1:
+            if separator != "" and not self._keep_separator and len(current_doc) > 1:
                 total += len(separator)
 
         # 处理最后一个文档
         if current_doc:
-            if separator == "":
+            if separator == "" or self._keep_separator:
                 doc = "".join(current_doc)
             else:
-                if self._keep_separator and separator == " ":
-                    doc = "".join(current_doc)
-                else:
-                    doc = separator.join(current_doc)
+                doc = separator.join(current_doc)
 
             if doc:
                 docs.append(doc)
@@ -193,6 +246,7 @@ class BaseChunker:
         chunk_overlap: int = 200,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        language: Language | None = Language.ENGLISH,
     ) -> None:
         """初始化 Chunker
 
@@ -202,6 +256,18 @@ class BaseChunker:
             separators: 分割符列表，按优先级排序
             keep_separator: 是否保留分隔符
         """
+        if separators is None and language:
+            if language == Language.ENGLISH:
+                separators = SEPARATORS_EN
+            elif language == Language.CHINESE:
+                separators = SEPARATORS_ZH
+            elif language == Language.JAPANESE:
+                separators = SEPARATORS_JA
+            elif language == Language.KOREAN:
+                separators = SEPARATORS_KO
+            else:
+                separators = None
+
         self._splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,

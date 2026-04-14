@@ -1,4 +1,4 @@
-from comet_rag.engines.chunkers.base_chunker import BaseChunker
+from comet_rag.engines.chunkers.base_chunker import BaseChunker, Language
 
 
 class TextChunker(BaseChunker):
@@ -8,21 +8,11 @@ class TextChunker(BaseChunker):
         chunk_overlap: int = 150,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        language: Language = Language.ENGLISH,
     ):
-        if separators is None:
-            separators = [
-                "\n\n\n",  # Multiple line breaks (sections)
-                "\n\n",  # Paragraph breaks
-                "\n",  # Line breaks
-                ". ",  # Sentence endings
-                "! ",  # Exclamation endings
-                "? ",  # Question endings
-                "; ",  # Semicolon breaks
-                ", ",  # Comma breaks
-                " ",  # Word breaks
-                "",  # Character level
-            ]
-        super().__init__(chunk_size, chunk_overlap, separators, keep_separator)
+        super().__init__(
+            chunk_size, chunk_overlap, separators, keep_separator, language
+        )
 
 
 class DocxChunker(BaseChunker):
@@ -32,21 +22,11 @@ class DocxChunker(BaseChunker):
         chunk_overlap: int = 250,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        language: Language = Language.ENGLISH,
     ):
-        if separators is None:
-            separators = [
-                "\n\n\n",  # Multiple line breaks (major sections)
-                "\n\n",  # Paragraph breaks
-                "\n",  # Line breaks
-                ". ",  # Sentence endings
-                "! ",  # Exclamation endings
-                "? ",  # Question endings
-                "; ",  # Semicolon breaks
-                ", ",  # Comma breaks
-                " ",  # Word breaks
-                "",  # Character level
-            ]
-        super().__init__(chunk_size, chunk_overlap, separators, keep_separator)
+        super().__init__(
+            chunk_size, chunk_overlap, separators, keep_separator, language
+        )
 
 
 class MdxChunker(BaseChunker):
