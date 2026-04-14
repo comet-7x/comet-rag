@@ -277,7 +277,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             )
             raise CometRAGException(error_msg) from e
 
-    def embed_list(
+    def batch_embed(
         self,
         embedding_data_list: list[EmbeddingData],
         system_prompt: (
@@ -286,6 +286,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         encoding_format: EncodingFormat = EncodingFormat.FLOAT,
         continue_final_message: bool = True,
         add_special_tokens: bool = True,
+        max_concurrency: int = 16,
         **kwargs,
     ) -> list[list[float] | str]:
         """
@@ -299,12 +300,13 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 - `"float"`：返回浮点数表示的向量
             continue_final_message (bool): 是否继续最后一条消息，默认为 `True`
             add_special_tokens (bool): 是否添加特殊分隔标记，默认为 `True`
+            max_concurrency (int): 最大并发数，默认为 `16`
 
         Returns:
             list[list[float]]: 向量表示列表
         """
         try:
-            max_workers = max(1, min(16, len(embedding_data_list)))
+            max_workers = max(1, min(max_concurrency, len(embedding_data_list)))
 
             def _safe_embed(data):
                 return self.embed(
@@ -321,10 +323,10 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 return list(executor.map(_safe_embed, embedding_data_list))
 
         except Exception as e:
-            error_msg = f"{self.__class__.__name__} | embed_list 方法操作发生非预期错误：{str(e)}"
+            error_msg = f"{self.__class__.__name__} | batch_embed 方法操作发生非预期错误：{str(e)}"
             raise CometRAGException(error_msg) from e
 
-    async def aembed_list(
+    async def batch_aembed(
         self,
         embedding_data_list: list[EmbeddingData],
         system_prompt: (
@@ -333,6 +335,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         encoding_format: EncodingFormat = EncodingFormat.FLOAT,
         continue_final_message: bool = True,
         add_special_tokens: bool = True,
+        max_concurrency: int = 16,
         **kwargs,
     ) -> list[list[float] | str]:
         """
@@ -346,26 +349,32 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 - `"float"`：返回浮点数表示的向量
             continue_final_message (bool): 是否继续最后一条消息，默认为 `True`
             add_special_tokens (bool): 是否添加特殊分隔标记，默认为 `True`
+            max_concurrency (int): 最大并发数，默认为 `16`
 
         Returns:
             list[list[float]]: 向量表示列表
         """
         try:
-            tasks = [
-                self.aembed(
-                    embedding_data,
-                    system_prompt,
-                    encoding_format,
-                    continue_final_message,
-                    add_special_tokens,
-                    **kwargs,
-                )
-                for embedding_data in embedding_data_list
-            ]
-            embed_list = await asyncio.gather(*tasks)
-            return embed_list
+            max_workers = max(1, min(max_concurrency, len(embedding_data_list)))
+
+            semaphore = asyncio.Semaphore(max_workers)
+
+            async def _safe_aembed(data):
+                async with semaphore:
+                    return await self.aembed(
+                        embedding_data=data,
+                        system_prompt=system_prompt,
+                        encoding_format=encoding_format,
+                        continue_final_message=continue_final_message,
+                        add_special_tokens=add_special_tokens,
+                        **kwargs,
+                    )
+
+            return await asyncio.gather(
+                *[_safe_aembed(data) for data in embedding_data_list]
+            )
         except Exception as e:
-            error_msg = f"{self.__class__.__name__} | aembed_list 方法操作发生非预期错误：{str(e)}"
+            error_msg = f"{self.__class__.__name__} | batch_aembed 方法操作发生非预期错误：{str(e)}"
             raise CometRAGException(error_msg) from e
 
     def tokenize(
