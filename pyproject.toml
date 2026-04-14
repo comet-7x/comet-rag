@@ -43,7 +43,9 @@ select = [
 
 ignore = [
 "E501",    # line-too-long
-"E261",    # multiple-spaces-before-operator
+"W291",    # Trailing whitespace
+"E241",    # Multiple spaces after comma
+"E221",    # Multiple spaces before operator
 ]
 
 [tool.ruff.lint.per-file-ignores]
