@@ -122,7 +122,6 @@ class Qwen3VLReranker(BaseReranker):
         base_url: str,
         model_name: str,
         api_key: str,
-        timeout: int | None = None,
         async_client_kwargs: dict | None = None,
         sync_client_kwargs: dict | None = None,
     ) -> None:
@@ -133,18 +132,15 @@ class Qwen3VLReranker(BaseReranker):
             base_url (str): 模型服务地址
             model_name (str): 模型名称
             api_key (str): 模型服务 api_key
-            timeout (int | None): 请求超时时间，默认为 `None`
-            async_client_kwargs (dict | None): 异步请求参数
-            sync_client_kwargs (dict | None): 同步请求参数
+            async_client_kwargs (dict | None): 异步请求参数，默认为 None
+            sync_client_kwargs (dict | None): 同步请求参数，默认为 None
         """
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
         self._api_key = api_key
 
-        self._httpx_async_client = AsyncClient(
-            timeout=timeout, **(async_client_kwargs or {})
-        )
-        self._httpx_sync_client = Client(timeout=timeout, **(sync_client_kwargs or {}))
+        self._httpx_async_client = AsyncClient(**(async_client_kwargs or {}))
+        self._httpx_sync_client = Client(**(sync_client_kwargs or {}))
 
     @staticmethod
     def _is_base64_image(image_url: str) -> bool:
