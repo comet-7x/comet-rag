@@ -45,7 +45,8 @@ class SourceContent:
 
     @cached_property
     def extension(self) -> str:
-        return Path(self.source).suffix.lstrip(".").lower()
+        parsed_path = urlparse(self.source).path
+        return Path(parsed_path).suffix.lstrip(".").lower()
 
     @cached_property
     def parse_config(self) -> ParseConfig:
