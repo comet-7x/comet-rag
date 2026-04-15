@@ -104,11 +104,11 @@ class BaseLoader(ABC):
     async def aload(self, source: SourceContent, **kwargs: Any) -> LoaderResult: ...
 
     def batch_load(
-        self, sources: list[SourceContent], *, max_workers: int = 4, **kwargs: Any
+        self, sources: list[SourceContent], *, max_concurrency: int = 10, **kwargs: Any
     ) -> list[LoaderResult]:
         from concurrent.futures import ThreadPoolExecutor
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
             futures = [executor.submit(self.load, s, **kwargs) for s in sources]
             return [future.result() for future in futures]
 
