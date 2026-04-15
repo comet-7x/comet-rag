@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
-from comet_rag.engines.loaders import ParseConfig
+from comet_rag.engines.loaders.data_type import ParseConfig
 from comet_rag.engines.utils import compute_sha256
 
 
