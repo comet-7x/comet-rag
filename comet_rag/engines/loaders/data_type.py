@@ -101,8 +101,8 @@ class BaseFileFormat(ABC):
                 result.append(fmt)
         return result
 
-    def __repr__(cls) -> str:
-        return f"<FileFormat {cls.extensions}>"
+    def __repr__(self) -> str:
+        return f"<FileFormat {self.extensions}>"
 
 
 _G = GranularityStrategy
