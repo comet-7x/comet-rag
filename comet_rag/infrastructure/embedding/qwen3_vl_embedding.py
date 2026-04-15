@@ -85,7 +85,6 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         base_url: str,
         model_name: str,
         api_key: str,
-        timeout: int | None = None,
         output_dim: int | None = None,
         max_model_len: int | None = None,
         async_client_kwargs: dict | None = None,
@@ -98,7 +97,6 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             base_url (str): 模型服务地址
             model_name (str): 模型名称
             api_key (str): 模型服务 api_key
-            timeout (int | None): 请求超时时间，默认为 `None`
             output_dim (int | None): 嵌入向量的维度，默认为 `None`
             max_model_len (int | None): 模型允许的最大输入序列长度，默认为 `None`
             async_client_kwargs (dict | None): 异步请求参数，默认为 `None`
@@ -110,10 +108,8 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         self._output_dim = output_dim
         self._max_model_len = max_model_len
 
-        self._httpx_async_client = AsyncClient(
-            timeout=timeout, **(async_client_kwargs or {})
-        )
-        self._httpx_sync_client = Client(timeout=timeout, **(sync_client_kwargs or {}))
+        self._httpx_async_client = AsyncClient(**(async_client_kwargs or {}))
+        self._httpx_sync_client = Client(**(sync_client_kwargs or {}))
 
     def _get_headers(self, **kwargs) -> dict:
         """
