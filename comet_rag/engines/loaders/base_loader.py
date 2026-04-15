@@ -48,7 +48,7 @@ class SourceContent:
         return Path(self.source).suffix.lstrip(".").lower()
 
     @cached_property
-    def parse_config(self):
+    def parse_config(self) -> ParseConfig:
         return ParseConfig.from_path(self.source)
 
     @cached_property
