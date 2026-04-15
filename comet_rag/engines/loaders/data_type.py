@@ -156,7 +156,7 @@ class StructuredFormat(BaseFileFormat):
 
 
 class CodeFormat(BaseFileFormat):
-    extensions = ("py",)
+    extensions = ("py", "js", "ts", "java", "c", "cpp", "go", "rs", "php", "rb")
     meta = FormatMeta(
         FormatCategory.CODE, ContentStructure.CODE, _G.WHOLE, _CODE_GRANULARITIES
     )

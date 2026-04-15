@@ -128,6 +128,7 @@ class BaseLoader(ABC):
         return await asyncio.gather(*tasks)
 
 
+# TODO 后续添加自动选择加载器
 # def auto_loader(source: str):
 #     for loader in ALL_LOADERS:
 #         if loader.supports(source):
