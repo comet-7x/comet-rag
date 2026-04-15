@@ -45,17 +45,27 @@ class SourceContent:
 
     @cached_property
     def extension(self) -> str:
-        return Path(self.source).suffix.lstrip(".").lower()
+        parsed_path = (
+            urlparse(self.source).path
+            if (self.is_url or self.is_cloud)
+            else self.source
+        )
+        return Path(parsed_path).suffix.lstrip(".").lower()
 
     @cached_property
-    def parse_config(self):
+    def parse_config(self) -> ParseConfig:
         return ParseConfig.from_path(self.source)
 
     @cached_property
     def source_id(self) -> str:
-        if self.is_url or self.is_cloud or self.is_local:
-            return compute_sha256(self.source)
-        raise ValueError(f"Invalid source: {self.source}")
+        if self.is_cloud or self.is_local:
+            source_to_hash = os.path.normpath(self.source)
+            return compute_sha256(source_to_hash)
+        elif self.is_url:
+            source_to_hash = self.source
+            return compute_sha256(source_to_hash)
+        else:
+            raise ValueError(f"Invalid source: {self.source}")
 
     @cached_property
     def source_type(self) -> str:
@@ -91,12 +101,34 @@ class BaseLoader(ABC):
     @abstractmethod
     def load(self, source: SourceContent, **kwargs: Any) -> LoaderResult: ...
 
-    def batch_load(
-        self, sources: list[SourceContent], **kwargs: Any
+    @abstractmethod
+    async def aload(self, source: SourceContent, **kwargs: Any) -> LoaderResult: ...
+
+    def batch(
+        self, sources: list[SourceContent], *, max_workers: int = 4, **kwargs: Any
     ) -> list[LoaderResult]:
-        return [self.load(src, **kwargs) for src in sources]
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(self.load, s, **kwargs) for s in sources]
+            return [future.result() for future in futures]
+
+    async def abatch(
+        self, sources: list[SourceContent], *, max_concurrency: int = 10, **kwargs: Any
+    ) -> list[LoaderResult]:
+        import asyncio
+
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def _load_with_limit(source: SourceContent) -> LoaderResult:
+            async with semaphore:
+                return await self.aload(source, **kwargs)
+
+        tasks = [_load_with_limit(s) for s in sources]
+        return await asyncio.gather(*tasks)
 
 
+# TODO 后续添加自动选择加载器
 # def auto_loader(source: str):
 #     for loader in ALL_LOADERS:
 #         if loader.supports(source):

@@ -73,7 +73,12 @@ class BaseFileFormat(ABC):
 
     @classmethod
     def from_path(cls, path: str | Path) -> type[BaseFileFormat]:
-        return cls.from_extension(Path(path).suffix)
+        path_str = str(path)
+        if "://" in path_str:
+            from urllib.parse import urlparse
+
+            path_str = urlparse(path_str).path
+        return cls.from_extension(Path(path_str).suffix)
 
     @classmethod
     def structure(cls) -> ContentStructure:
@@ -101,8 +106,8 @@ class BaseFileFormat(ABC):
                 result.append(fmt)
         return result
 
-    def __repr__(cls) -> str:
-        return f"<FileFormat {cls.extensions}>"
+    def __repr__(self) -> str:
+        return f"<FileFormat {self.extensions}>"
 
 
 _G = GranularityStrategy
@@ -151,7 +156,7 @@ class StructuredFormat(BaseFileFormat):
 
 
 class CodeFormat(BaseFileFormat):
-    extensions = ("py",)
+    extensions = ("py", "js", "ts", "java", "c", "cpp", "go", "rs", "php", "rb")
     meta = FormatMeta(
         FormatCategory.CODE, ContentStructure.CODE, _G.WHOLE, _CODE_GRANULARITIES
     )
