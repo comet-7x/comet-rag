@@ -76,6 +76,7 @@ class BaseFileFormat(ABC):
         path_str = str(path)
         if "://" in path_str:
             from urllib.parse import urlparse
+
             path_str = urlparse(path_str).path
         return cls.from_extension(Path(path_str).suffix)
 

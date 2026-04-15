@@ -10,7 +10,7 @@ def to_base64_url(binary_data: bytes, mime_type: str = "image/png") -> str:
 
 def from_base64_url(base64_url: str) -> bytes:
     """将 Base64 Data URL 转换为二进制流"""
-    _, base64_str = base64_url.split(",", 1)
+    base64_str = base64_url.split(",", 1)[-1]
     return base64.b64decode(base64_str)
 
 

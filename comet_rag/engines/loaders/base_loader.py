@@ -45,7 +45,11 @@ class SourceContent:
 
     @cached_property
     def extension(self) -> str:
-        parsed_path = urlparse(self.source).path if (self.is_url or self.is_cloud) else self.source
+        parsed_path = (
+            urlparse(self.source).path
+            if (self.is_url or self.is_cloud)
+            else self.source
+        )
         return Path(parsed_path).suffix.lstrip(".").lower()
 
     @cached_property
