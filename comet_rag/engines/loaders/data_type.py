@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar
-from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -74,9 +73,11 @@ class BaseFileFormat(ABC):
 
     @classmethod
     def from_path(cls, path: str | Path) -> type[BaseFileFormat]:
-        if isinstance(path, str):
-            path = urlparse(str(path)).path
-        return cls.from_extension(Path(path).suffix)
+        path_str = str(path)
+        if "://" in path_str:
+            from urllib.parse import urlparse
+            path_str = urlparse(path_str).path
+        return cls.from_extension(Path(path_str).suffix)
 
     @classmethod
     def structure(cls) -> ContentStructure:
