@@ -58,14 +58,13 @@ class SourceContent:
 
     @cached_property
     def source_id(self) -> str:
-        if self.is_cloud or self.is_local:
-            source_to_hash = os.path.normpath(self.source)
-            return compute_sha256(source_to_hash)
-        elif self.is_url:
+        if self.is_url or self.is_cloud:
             source_to_hash = self.source
-            return compute_sha256(source_to_hash)
+        elif self.is_local:
+            source_to_hash = os.path.normpath(self.source)
         else:
             raise ValueError(f"Invalid source: {self.source}")
+        return compute_sha256(source_to_hash)
 
     @cached_property
     def source_type(self) -> str:
