@@ -3,7 +3,7 @@ from .data_type import (
     BaseFileFormat,
     CodeFormat,
     ContentStructure,
-    FormatCategory,
+    FileFormat,
     FormatMeta,
     GranularityStrategy,
     MixedFormat,
@@ -15,11 +15,11 @@ from .data_type import (
 )
 
 __all__ = [
-    "FormatCategory",
     "ContentStructure",
     "GranularityStrategy",
     "FormatMeta",
     "BaseFileFormat",
+    "FileFormat",
     "ProseFormat",
     "MixedFormat",
     "SlideFormat",

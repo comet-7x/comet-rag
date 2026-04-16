@@ -9,12 +9,6 @@ from typing import ClassVar
 from pydantic import BaseModel, ConfigDict, model_validator
 
 
-class FormatCategory(StrEnum):
-    DOC = "doc"
-    SHEET = "sheet"
-    CODE = "code"
-
-
 class ContentStructure(StrEnum):
     PROSE = "prose"
     TABULAR = "tabular"
@@ -34,7 +28,6 @@ class GranularityStrategy(StrEnum):
 
 @dataclass(frozen=True)
 class FormatMeta:
-    category: FormatCategory
     structure: ContentStructure
     default_granularity: GranularityStrategy
     supported_granularities: tuple[GranularityStrategy, ...]
@@ -56,7 +49,7 @@ class BaseFileFormat(ABC):
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
-        if ABC in cls.__bases__:  # 跳过抽象中间层
+        if ABC in cls.__bases__:
             return
         for ext in cls.extensions:
             BaseFileFormat._registry[ext] = cls
@@ -85,10 +78,6 @@ class BaseFileFormat(ABC):
         return cls.meta.structure
 
     @classmethod
-    def category(cls) -> FormatCategory:
-        return cls.meta.category
-
-    @classmethod
     def default_granularity(cls) -> GranularityStrategy:
         return cls.meta.default_granularity
 
@@ -97,11 +86,13 @@ class BaseFileFormat(ABC):
         return cls.meta.supports(granularity)
 
     @classmethod
-    def all_by_category(cls, category: FormatCategory) -> list[type[BaseFileFormat]]:
+    def all_by_structure(
+        cls, *structures: ContentStructure
+    ) -> list[type[BaseFileFormat]]:
         seen: set[type[BaseFileFormat]] = set()
         result = []
         for fmt in cls._registry.values():
-            if fmt not in seen and fmt.meta.category == category:
+            if fmt not in seen and fmt.meta.structure in structures:
                 seen.add(fmt)
                 result.append(fmt)
         return result
@@ -111,55 +102,66 @@ class BaseFileFormat(ABC):
 
 
 _G = GranularityStrategy
-_DOC_GRANULARITIES = (_G.WHOLE, _G.BY_PAGE, _G.BY_CHUNK)
-_SLIDE_GRANULARITIES = (_G.WHOLE, _G.BY_PAGE, _G.BY_CHUNK)
-_CODE_GRANULARITIES = (_G.WHOLE, _G.BY_CHUNK)
-_NODE_GRANULARITIES = (_G.WHOLE, _G.BY_NODE)
+
+_G_MAPS = {
+    ContentStructure.PROSE: (_G.WHOLE, _G.BY_PAGE, _G.BY_CHUNK),
+    ContentStructure.MIXED: (_G.WHOLE, _G.BY_PAGE, _G.BY_CHUNK),
+    ContentStructure.SLIDE: (_G.WHOLE, _G.BY_PAGE, _G.BY_CHUNK),
+    ContentStructure.TABULAR: (_G.BY_ROW,),
+    ContentStructure.STRUCTURED: (_G.WHOLE, _G.BY_NODE),
+    ContentStructure.CODE: (_G.WHOLE, _G.BY_CHUNK),
+}
+
+
+_FILE_EXTENSIONS = {
+    ContentStructure.PROSE: ("txt",),
+    ContentStructure.MIXED: ("doc", "docx", "pdf", "md"),
+    ContentStructure.SLIDE: ("ppt", "pptx"),
+    ContentStructure.TABULAR: ("csv", "xlsx", "xls"),
+    ContentStructure.STRUCTURED: ("json", "yaml", "xml"),
+    ContentStructure.CODE: ("py", "js", "ts", "java", "c", "cpp", "go"),
+}
 
 
 class ProseFormat(BaseFileFormat):
-    extensions = ("txt",)
-    meta = FormatMeta(
-        FormatCategory.DOC, ContentStructure.PROSE, _G.WHOLE, _DOC_GRANULARITIES
-    )
+    extensions = _FILE_EXTENSIONS[ContentStructure.PROSE]
+    meta = FormatMeta(ContentStructure.PROSE, _G.WHOLE, _G_MAPS[ContentStructure.PROSE])
 
 
 class MixedFormat(BaseFileFormat):
-    extensions = ("doc", "docx", "pdf", "md")
+    extensions = _FILE_EXTENSIONS[ContentStructure.MIXED]
     meta = FormatMeta(
-        FormatCategory.DOC, ContentStructure.MIXED, _G.BY_CHUNK, _DOC_GRANULARITIES
+        ContentStructure.MIXED, _G.BY_CHUNK, _G_MAPS[ContentStructure.MIXED]
     )
 
 
 class SlideFormat(BaseFileFormat):
-    extensions = ("ppt", "pptx")
+    extensions = _FILE_EXTENSIONS[ContentStructure.SLIDE]
     meta = FormatMeta(
-        FormatCategory.DOC, ContentStructure.SLIDE, _G.BY_PAGE, _SLIDE_GRANULARITIES
+        ContentStructure.SLIDE, _G.BY_PAGE, _G_MAPS[ContentStructure.SLIDE]
     )
 
 
 class TabularFormat(BaseFileFormat):
-    extensions = ("csv", "xlsx", "xls")
+    extensions = _FILE_EXTENSIONS[ContentStructure.TABULAR]
     meta = FormatMeta(
-        FormatCategory.SHEET, ContentStructure.TABULAR, _G.BY_ROW, (_G.BY_ROW,)
+        ContentStructure.TABULAR, _G.BY_ROW, _G_MAPS[ContentStructure.TABULAR]
     )
 
 
 class StructuredFormat(BaseFileFormat):
-    extensions = ("json", "yaml", "xml")
+    extensions = _FILE_EXTENSIONS[ContentStructure.STRUCTURED]
     meta = FormatMeta(
-        FormatCategory.CODE,
-        ContentStructure.STRUCTURED,
-        _G.BY_NODE,
-        _NODE_GRANULARITIES,
+        ContentStructure.STRUCTURED, _G.BY_NODE, _G_MAPS[ContentStructure.STRUCTURED]
     )
 
 
 class CodeFormat(BaseFileFormat):
-    extensions = ("py", "js", "ts", "java", "c", "cpp", "go", "rs", "php", "rb")
-    meta = FormatMeta(
-        FormatCategory.CODE, ContentStructure.CODE, _G.WHOLE, _CODE_GRANULARITIES
-    )
+    extensions = _FILE_EXTENSIONS[ContentStructure.CODE]
+    meta = FormatMeta(ContentStructure.CODE, _G.WHOLE, _G_MAPS[ContentStructure.CODE])
+
+
+FileFormat = BaseFileFormat
 
 
 class ParseConfig(BaseModel):
