@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from httpx import AsyncClient, Client
 from openai.types.chat import ChatCompletionMessageParam
@@ -106,8 +106,10 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         self._output_dim = output_dim
         self._max_model_len = max_model_len
 
-        self._httpx_async_client = AsyncClient(**(async_client_kwargs or {}))
-        self._httpx_sync_client = Client(**(sync_client_kwargs or {}))
+        async_kwargs: dict[str, Any] = {"timeout": None} | (async_client_kwargs or {})
+        sync_kwargs: dict[str, Any] = {"timeout": None} | (sync_client_kwargs or {})
+        self._httpx_async_client = AsyncClient(**async_kwargs)
+        self._httpx_sync_client = Client(**sync_kwargs)
 
     def _get_headers(self, **kwargs) -> dict:
         """

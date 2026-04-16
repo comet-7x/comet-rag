@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from httpx import AsyncClient, Client
 from pydantic import BaseModel, Field
@@ -139,8 +139,10 @@ class Qwen3VLReranker(BaseReranker):
         self._model_name = model_name
         self._api_key = api_key
 
-        self._httpx_async_client = AsyncClient(**(async_client_kwargs or {}))
-        self._httpx_sync_client = Client(**(sync_client_kwargs or {}))
+        async_kwargs: dict[str, Any] = {"timeout": None} | (async_client_kwargs or {})
+        sync_kwargs: dict[str, Any] = {"timeout": None} | (sync_client_kwargs or {})
+        self._httpx_async_client = AsyncClient(**async_kwargs)
+        self._httpx_sync_client = Client(**sync_kwargs)
 
     @staticmethod
     def _is_base64_image(image_url: str) -> bool:
