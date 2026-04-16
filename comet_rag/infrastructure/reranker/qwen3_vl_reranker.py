@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Literal
 
 from httpx import AsyncClient, Client
 from pydantic import BaseModel, Field
@@ -122,8 +122,8 @@ class Qwen3VLReranker(BaseReranker):
         base_url: str,
         model_name: str,
         api_key: str,
-        async_client_kwargs: dict | None = None,
-        sync_client_kwargs: dict | None = None,
+        async_client: AsyncClient | None = None,
+        sync_client: Client | None = None,
     ) -> None:
         """
         Qwen3VL 重排序模型
@@ -132,17 +132,15 @@ class Qwen3VLReranker(BaseReranker):
             base_url (str): 模型服务地址
             model_name (str): 模型名称
             api_key (str): 模型服务 api_key
-            async_client_kwargs (dict | None): 异步请求参数，默认为 None
-            sync_client_kwargs (dict | None): 同步请求参数，默认为 None
+            async_client (AsyncClient | None): 异步请求连接，默认为 None
+            sync_client (Client | None): 同步请求连接，默认为 None
         """
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
         self._api_key = api_key
 
-        async_kwargs: dict[str, Any] = {"timeout": None} | (async_client_kwargs or {})
-        sync_kwargs: dict[str, Any] = {"timeout": None} | (sync_client_kwargs or {})
-        self._httpx_async_client = AsyncClient(**async_kwargs)
-        self._httpx_sync_client = Client(**sync_kwargs)
+        self.async_client = async_client if async_client else AsyncClient()
+        self.sync_client = sync_client if sync_client else Client()
 
     @staticmethod
     def _is_base64_image(image_url: str) -> bool:
@@ -201,7 +199,7 @@ class Qwen3VLReranker(BaseReranker):
         return [i["relevance_score"] for i in sorted(results, key=lambda x: x["index"])]
 
     def _post_sync(self, rerank_request: dict) -> dict:
-        rerank_response = self._httpx_sync_client.post(
+        rerank_response = self.sync_client.post(
             url=f"{self._base_url}/rerank",
             json=rerank_request,
             headers={
@@ -212,7 +210,7 @@ class Qwen3VLReranker(BaseReranker):
         return rerank_response.json()
 
     async def _post_async(self, rerank_request: dict) -> dict:
-        rerank_response = await self._httpx_async_client.post(
+        rerank_response = await self.async_client.post(
             url=f"{self._base_url}/rerank",
             json=rerank_request,
             headers={
@@ -264,5 +262,5 @@ class Qwen3VLReranker(BaseReranker):
         """
         关闭客户端
         """
-        await self._httpx_async_client.aclose()
-        self._httpx_sync_client.close()
+        await self.async_client.aclose()
+        self.sync_client.close()

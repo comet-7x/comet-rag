@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Literal
 
 from httpx import AsyncClient, Client
 from openai.types.chat import ChatCompletionMessageParam
@@ -85,8 +85,8 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         api_key: str,
         output_dim: int | None = None,
         max_model_len: int | None = None,
-        async_client_kwargs: dict | None = None,
-        sync_client_kwargs: dict | None = None,
+        async_client: AsyncClient | None = None,
+        sync_client: Client | None = None,
     ) -> None:
         """
         Qwen3VL 嵌入模型
@@ -97,8 +97,8 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             api_key (str): 模型服务 api_key
             output_dim (int | None): 嵌入向量的维度，默认为 `None`
             max_model_len (int | None): 模型允许的最大输入序列长度，默认为 `None`
-            async_client_kwargs (dict | None): 异步请求参数，默认为 `None`
-            sync_client_kwargs (dict | None): 同步请求参数，默认为 `None`
+            async_client (AsyncClient | None): 异步请求连接，默认为 `None`
+            sync_client (Client | None): 同步请求连接，默认为 `None`
         """
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
@@ -106,10 +106,8 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         self._output_dim = output_dim
         self._max_model_len = max_model_len
 
-        async_kwargs: dict[str, Any] = {"timeout": None} | (async_client_kwargs or {})
-        sync_kwargs: dict[str, Any] = {"timeout": None} | (sync_client_kwargs or {})
-        self._httpx_async_client = AsyncClient(**async_kwargs)
-        self._httpx_sync_client = Client(**sync_kwargs)
+        self.async_client = async_client if async_client else AsyncClient()
+        self.sync_client = sync_client if sync_client else Client()
 
     def _get_headers(self, **kwargs) -> dict:
         """
@@ -205,7 +203,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 image_url=embedding_data.image_url,
                 system_prompt=system_prompt,
             )
-            response = self._httpx_sync_client.post(
+            response = self.sync_client.post(
                 url=f"{self._base_url}/embeddings",
                 headers=self._get_headers(),
                 json={
@@ -259,7 +257,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 image_url=embedding_data.image_url,
                 system_prompt=system_prompt,
             )
-            response = await self._httpx_async_client.post(
+            response = await self.async_client.post(
                 url=f"{self._base_url}/embeddings",
                 headers=self._get_headers(),
                 json={
@@ -305,7 +303,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 image_url=embedding_data.image_url,
                 system_prompt=Qwen3VLEmbeddingModelSystemPrompt.COMMON,
             )
-            response = self._httpx_sync_client.post(
+            response = self.sync_client.post(
                 f"{self._base_url.removesuffix('/v1')}/tokenize",
                 headers=self._get_headers(),
                 json={
@@ -351,7 +349,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 image_url=embedding_data.image_url,
                 system_prompt=Qwen3VLEmbeddingModelSystemPrompt.COMMON,
             )
-            response = await self._httpx_async_client.post(
+            response = await self.async_client.post(
                 f"{self._base_url.removesuffix('/v1')}/tokenize",
                 headers=self._get_headers(),
                 json={
@@ -377,7 +375,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         **kwargs,
     ) -> DetokenizeResponse:
         try:
-            response = self._httpx_sync_client.post(
+            response = self.sync_client.post(
                 f"{self._base_url.removesuffix('/v1')}/detokenize",
                 headers=self._get_headers(),
                 json={
@@ -401,7 +399,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         **kwargs,
     ) -> DetokenizeResponse:
         try:
-            response = await self._httpx_async_client.post(
+            response = await self.async_client.post(
                 f"{self._base_url.removesuffix('/v1')}/detokenize",
                 headers=self._get_headers(),
                 json={
@@ -452,5 +450,5 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         """
         关闭客户端
         """
-        await self._httpx_async_client.aclose()
-        self._httpx_sync_client.close()
+        await self.async_client.aclose()
+        self.sync_client.close()
