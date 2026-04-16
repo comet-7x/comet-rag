@@ -58,14 +58,13 @@ class SourceContent:
 
     @cached_property
     def source_id(self) -> str:
-        if self.is_cloud or self.is_local:
-            source_to_hash = os.path.normpath(self.source)
-            return compute_sha256(source_to_hash)
-        elif self.is_url:
+        if self.is_url or self.is_cloud:
             source_to_hash = self.source
-            return compute_sha256(source_to_hash)
+        elif self.is_local:
+            source_to_hash = os.path.normpath(self.source)
         else:
             raise ValueError(f"Invalid source: {self.source}")
+        return compute_sha256(source_to_hash)
 
     @cached_property
     def source_type(self) -> str:
@@ -104,16 +103,16 @@ class BaseLoader(ABC):
     @abstractmethod
     async def aload(self, source: SourceContent, **kwargs: Any) -> LoaderResult: ...
 
-    def batch(
-        self, sources: list[SourceContent], *, max_workers: int = 4, **kwargs: Any
+    def batch_load(
+        self, sources: list[SourceContent], *, max_concurrency: int = 10, **kwargs: Any
     ) -> list[LoaderResult]:
         from concurrent.futures import ThreadPoolExecutor
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
             futures = [executor.submit(self.load, s, **kwargs) for s in sources]
             return [future.result() for future in futures]
 
-    async def abatch(
+    async def abatch_load(
         self, sources: list[SourceContent], *, max_concurrency: int = 10, **kwargs: Any
     ) -> list[LoaderResult]:
         import asyncio

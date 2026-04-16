@@ -1,5 +1,3 @@
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from enum import StrEnum
 from typing import Literal
 
@@ -85,9 +83,10 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         base_url: str,
         model_name: str,
         api_key: str,
-        timeout: int | None = None,
         output_dim: int | None = None,
         max_model_len: int | None = None,
+        async_client: AsyncClient | None = None,
+        sync_client: Client | None = None,
     ) -> None:
         """
         Qwen3VL 嵌入模型
@@ -96,7 +95,10 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             base_url (str): 模型服务地址
             model_name (str): 模型名称
             api_key (str): 模型服务 api_key
-            timeout (int | None): 请求超时时间，默认为 `None`
+            output_dim (int | None): 嵌入向量的维度，默认为 `None`
+            max_model_len (int | None): 模型允许的最大输入序列长度，默认为 `None`
+            async_client (AsyncClient | None): 异步请求连接，默认为 `None`
+            sync_client (Client | None): 同步请求连接，默认为 `None`
         """
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
@@ -104,8 +106,14 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         self._output_dim = output_dim
         self._max_model_len = max_model_len
 
-        self._httpx_async_client = AsyncClient(timeout=timeout)
-        self._httpx_sync_client = Client(timeout=timeout)
+        self._owns_async_client = async_client is None
+        self._owns_sync_client = sync_client is None
+        self.async_client = (
+            async_client if async_client is not None else AsyncClient(timeout=60.0)
+        )
+        self.sync_client = (
+            sync_client if sync_client is not None else Client(timeout=60.0)
+        )
 
     def _get_headers(self, **kwargs) -> dict:
         """
@@ -201,7 +209,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 image_url=embedding_data.image_url,
                 system_prompt=system_prompt,
             )
-            response = self._httpx_sync_client.post(
+            response = self.sync_client.post(
                 url=f"{self._base_url}/embeddings",
                 headers=self._get_headers(),
                 json={
@@ -255,7 +263,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 image_url=embedding_data.image_url,
                 system_prompt=system_prompt,
             )
-            response = await self._httpx_async_client.post(
+            response = await self.async_client.post(
                 url=f"{self._base_url}/embeddings",
                 headers=self._get_headers(),
                 json={
@@ -275,106 +283,6 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             error_msg = (
                 f"{self.__class__.__name__} | aembed 方法操作发生非预期错误：{str(e)}"
             )
-            raise CometRAGException(error_msg) from e
-
-    def batch_embed(
-        self,
-        embedding_data_list: list[EmbeddingData],
-        system_prompt: (
-            Qwen3VLEmbeddingModelSystemPrompt | str
-        ) = Qwen3VLEmbeddingModelSystemPrompt.COMMON,
-        encoding_format: EncodingFormat = EncodingFormat.FLOAT,
-        continue_final_message: bool = True,
-        add_special_tokens: bool = True,
-        max_concurrency: int = 16,
-        **kwargs,
-    ) -> list[list[float] | str]:
-        """
-        编码文本、图片（图片的 base64 编码或者图片 URL） 对应的向量列表
-
-        Args:
-            embedding_data_list (list[EmbeddingData]): 嵌入数据列表
-            system_prompt (Qwen3VLEmbeddingModelSystemPrompt): 系统提示，默认为 `Qwen3VLEmbeddingModelSystemPrompt.COMMON`
-            encoding_format (EncodingFormat): 编码格式，默认为 `EncodingFormat.FLOAT`：
-                - `"base64"`：返回 base64 编码的向量表示
-                - `"float"`：返回浮点数表示的向量
-            continue_final_message (bool): 是否继续最后一条消息，默认为 `True`
-            add_special_tokens (bool): 是否添加特殊分隔标记，默认为 `True`
-            max_concurrency (int): 最大并发数，默认为 `16`
-
-        Returns:
-            list[list[float]]: 向量表示列表
-        """
-        try:
-            max_workers = max(1, min(max_concurrency, len(embedding_data_list)))
-
-            def _safe_embed(data):
-                return self.embed(
-                    embedding_data=data,
-                    system_prompt=system_prompt,
-                    encoding_format=encoding_format,
-                    continue_final_message=continue_final_message,
-                    add_special_tokens=add_special_tokens,
-                    **kwargs,
-                )
-
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # executor.map 会保持输入顺序
-                return list(executor.map(_safe_embed, embedding_data_list))
-
-        except Exception as e:
-            error_msg = f"{self.__class__.__name__} | batch_embed 方法操作发生非预期错误：{str(e)}"
-            raise CometRAGException(error_msg) from e
-
-    async def batch_aembed(
-        self,
-        embedding_data_list: list[EmbeddingData],
-        system_prompt: (
-            Qwen3VLEmbeddingModelSystemPrompt | str
-        ) = Qwen3VLEmbeddingModelSystemPrompt.COMMON,
-        encoding_format: EncodingFormat = EncodingFormat.FLOAT,
-        continue_final_message: bool = True,
-        add_special_tokens: bool = True,
-        max_concurrency: int = 16,
-        **kwargs,
-    ) -> list[list[float] | str]:
-        """
-        异步编码文本、图片（图片的 base64 编码或者图片 URL） 对应的向量列表
-
-        Args:
-            embedding_data_list (list[EmbeddingData]): 嵌入数据列表
-            system_prompt (Qwen3VLEmbeddingModelSystemPrompt): 系统提示，默认为 `Qwen3VLEmbeddingModelSystemPrompt.COMMON`
-            encoding_format (EncodingFormat): 编码格式，默认为 `EncodingFormat.FLOAT`：
-                - `"base64"`：返回 base64 编码的向量表示
-                - `"float"`：返回浮点数表示的向量
-            continue_final_message (bool): 是否继续最后一条消息，默认为 `True`
-            add_special_tokens (bool): 是否添加特殊分隔标记，默认为 `True`
-            max_concurrency (int): 最大并发数，默认为 `16`
-
-        Returns:
-            list[list[float]]: 向量表示列表
-        """
-        try:
-            max_workers = max(1, min(max_concurrency, len(embedding_data_list)))
-
-            semaphore = asyncio.Semaphore(max_workers)
-
-            async def _safe_aembed(data):
-                async with semaphore:
-                    return await self.aembed(
-                        embedding_data=data,
-                        system_prompt=system_prompt,
-                        encoding_format=encoding_format,
-                        continue_final_message=continue_final_message,
-                        add_special_tokens=add_special_tokens,
-                        **kwargs,
-                    )
-
-            return await asyncio.gather(
-                *[_safe_aembed(data) for data in embedding_data_list]
-            )
-        except Exception as e:
-            error_msg = f"{self.__class__.__name__} | batch_aembed 方法操作发生非预期错误：{str(e)}"
             raise CometRAGException(error_msg) from e
 
     def tokenize(
@@ -401,7 +309,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 image_url=embedding_data.image_url,
                 system_prompt=Qwen3VLEmbeddingModelSystemPrompt.COMMON,
             )
-            response = self._httpx_sync_client.post(
+            response = self.sync_client.post(
                 f"{self._base_url.removesuffix('/v1')}/tokenize",
                 headers=self._get_headers(),
                 json={
@@ -447,7 +355,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
                 image_url=embedding_data.image_url,
                 system_prompt=Qwen3VLEmbeddingModelSystemPrompt.COMMON,
             )
-            response = await self._httpx_async_client.post(
+            response = await self.async_client.post(
                 f"{self._base_url.removesuffix('/v1')}/tokenize",
                 headers=self._get_headers(),
                 json={
@@ -473,7 +381,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         **kwargs,
     ) -> DetokenizeResponse:
         try:
-            response = self._httpx_sync_client.post(
+            response = self.sync_client.post(
                 f"{self._base_url.removesuffix('/v1')}/detokenize",
                 headers=self._get_headers(),
                 json={
@@ -497,7 +405,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         **kwargs,
     ) -> DetokenizeResponse:
         try:
-            response = await self._httpx_async_client.post(
+            response = await self.async_client.post(
                 f"{self._base_url.removesuffix('/v1')}/detokenize",
                 headers=self._get_headers(),
                 json={
@@ -548,5 +456,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         """
         关闭客户端
         """
-        await self._httpx_async_client.aclose()
-        self._httpx_sync_client.close()
+        if self._owns_async_client:
+            await self.async_client.aclose()
+        if self._owns_sync_client:
+            self.sync_client.close()

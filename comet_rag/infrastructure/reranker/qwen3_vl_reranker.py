@@ -122,7 +122,8 @@ class Qwen3VLReranker(BaseReranker):
         base_url: str,
         model_name: str,
         api_key: str,
-        timeout: int | None = None,
+        async_client: AsyncClient | None = None,
+        sync_client: Client | None = None,
     ) -> None:
         """
         Qwen3VL 重排序模型
@@ -131,21 +132,28 @@ class Qwen3VLReranker(BaseReranker):
             base_url (str): 模型服务地址
             model_name (str): 模型名称
             api_key (str): 模型服务 api_key
-            timeout (int | None): 请求超时时间，默认为 `None`
+            async_client (AsyncClient | None): 异步请求连接，默认为 None
+            sync_client (Client | None): 同步请求连接，默认为 None
         """
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
         self._api_key = api_key
 
-        self._httpx_async_client = AsyncClient(timeout=timeout)
-        self._httpx_sync_client = Client(timeout=timeout)
+        self._owns_async_client = async_client is None
+        self._owns_sync_client = sync_client is None
+        self.async_client = (
+            async_client if async_client is not None else AsyncClient(timeout=60.0)
+        )
+        self.sync_client = (
+            sync_client if sync_client is not None else Client(timeout=60.0)
+        )
 
     @staticmethod
     def _is_base64_image(image_url: str) -> bool:
         """检查图片URL是否为base64编码"""
         return image_url.startswith("data:image/")
 
-    def _validate_multimodal_content(self, data: ScoreMultiModalParam):
+    def _validate_multimodal_content(self, data: ScoreMultiModalParam) -> None:
         allowed_content_types = (
             ChatCompletionContentPartTextParam,
             ChatCompletionContentPartImageParam,
@@ -169,7 +177,7 @@ class Qwen3VLReranker(BaseReranker):
         self,
         query: str | ScoreMultiModalParam,
         documents: str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],
-    ):
+    ) -> None:
         if isinstance(query, ScoreMultiModalParam):
             self._validate_multimodal_content(query)
         if isinstance(documents, ScoreMultiModalParam):
@@ -184,7 +192,7 @@ class Qwen3VLReranker(BaseReranker):
         query: str | ScoreMultiModalParam,
         documents: str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],
         **kwargs,
-    ):
+    ) -> dict:
         return RerankRequest(
             model=self._model_name,
             query=query,
@@ -196,8 +204,8 @@ class Qwen3VLReranker(BaseReranker):
         results = response_json["results"]
         return [i["relevance_score"] for i in sorted(results, key=lambda x: x["index"])]
 
-    def _post_sync(self, rerank_request: dict):
-        rerank_response = self._httpx_sync_client.post(
+    def _post_sync(self, rerank_request: dict) -> dict:
+        rerank_response = self.sync_client.post(
             url=f"{self._base_url}/rerank",
             json=rerank_request,
             headers={
@@ -207,8 +215,8 @@ class Qwen3VLReranker(BaseReranker):
         rerank_response.raise_for_status()
         return rerank_response.json()
 
-    async def _post_async(self, rerank_request: dict):
-        rerank_response = await self._httpx_async_client.post(
+    async def _post_async(self, rerank_request: dict) -> dict:
+        rerank_response = await self.async_client.post(
             url=f"{self._base_url}/rerank",
             json=rerank_request,
             headers={
@@ -223,7 +231,7 @@ class Qwen3VLReranker(BaseReranker):
         query: str | ScoreMultiModalParam,
         documents: str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],
         **kwargs,
-    ):
+    ) -> list[float]:
         try:
             self._validate_inputs(query, documents)
             rerank_request = self._build_rerank_request(query, documents, **kwargs)
@@ -242,7 +250,7 @@ class Qwen3VLReranker(BaseReranker):
         query: str | ScoreMultiModalParam,
         documents: str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],
         **kwargs,
-    ):
+    ) -> list[float]:
         try:
             self._validate_inputs(query, documents)
             rerank_request = self._build_rerank_request(query, documents, **kwargs)
@@ -260,5 +268,7 @@ class Qwen3VLReranker(BaseReranker):
         """
         关闭客户端
         """
-        await self._httpx_async_client.aclose()
-        self._httpx_sync_client.close()
+        if self._owns_async_client:
+            await self.async_client.aclose()
+        if self._owns_sync_client:
+            self.sync_client.close()
