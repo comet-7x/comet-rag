@@ -106,8 +106,14 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         self._output_dim = output_dim
         self._max_model_len = max_model_len
 
-        self.async_client = async_client if async_client else AsyncClient()
-        self.sync_client = sync_client if sync_client else Client()
+        self._owns_async_client = async_client is None
+        self._owns_sync_client = sync_client is None
+        self.async_client = (
+            async_client if async_client is not None else AsyncClient(timeout=None)
+        )
+        self.sync_client = (
+            sync_client if sync_client is not None else Client(timeout=None)
+        )
 
     def _get_headers(self, **kwargs) -> dict:
         """
@@ -450,5 +456,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         """
         关闭客户端
         """
-        await self.async_client.aclose()
-        self.sync_client.close()
+        if self._owns_async_client:
+            await self.async_client.aclose()
+        if self._owns_sync_client:
+            self.sync_client.close()
