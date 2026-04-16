@@ -78,10 +78,10 @@ class RecursiveCharacterTextSplitter:
         """初始化 RecursiveCharacterTextSplitter
 
         Args:
-            chunk_size: 每个 chunk 的最大字符数
-            chunk_overlap: chunk 之间的重叠字符数
-            separators: 分割符列表，按优先级排序
-            keep_separator: 是否在分割后的文本中保留分隔符
+            chunk_size (int): 每个 chunk 的最大字符数， 默认为 4000
+            chunk_overlap (200): chunk 之间的重叠字符数， 默认为 200
+            separators (list[str]): 分割符列表，按优先级排序
+            keep_separator (bool): 是否在分割后的文本中保留分隔符, 默认为 `True`
         """
         if chunk_size <= 0:
             raise ValueError(
@@ -275,10 +275,11 @@ class BaseChunker:
         """初始化 Chunker
 
         Args:
-            chunk_size: 每个 chunk 的最大字符数
-            chunk_overlap: 相邻 chunk 之间的重叠字符数
-            separators: 分割符列表，按优先级排序
-            keep_separator: 是否保留分隔符
+            chunk_size (int): 每个 chunk 的最大字符数， 默认 1000
+            chunk_overlap (int): 相邻 chunk 之间的重叠字符数， 默认 200
+            separators (list[str]): 分割符列表，按优先级排序
+            keep_separator (bool): 是否保留分隔符， 默认 `True`
+            language (Language): 语言，默认 `Language.ENGLISH`
         """
         if separators is None and language:
             mapping = {
