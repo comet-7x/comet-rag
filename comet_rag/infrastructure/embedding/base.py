@@ -19,11 +19,11 @@ class BaseEmbeddingModel(ABC):
 
     def batch_embed(
         self,
-        embedding_data_list: list,
+        embedding_data_list: list[Any],
         *,
         max_concurrency: int = 16,
         **kwargs,
-    ) -> list:
+    ) -> list[Any]:
         from concurrent.futures import ThreadPoolExecutor
 
         max_workers = max(1, min(max_concurrency, len(embedding_data_list)))
@@ -36,11 +36,11 @@ class BaseEmbeddingModel(ABC):
 
     async def abatch_embed(
         self,
-        embedding_data_list: list,
+        embedding_data_list: list[Any],
         *,
         max_concurrency: int = 16,
         **kwargs,
-    ) -> list:
+    ) -> list[Any]:
         import asyncio
 
         semaphore = asyncio.Semaphore(
