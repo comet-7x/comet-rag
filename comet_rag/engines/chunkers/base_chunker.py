@@ -79,7 +79,7 @@ class RecursiveCharacterTextSplitter:
 
         Args:
             chunk_size (int): 每个 chunk 的最大字符数， 默认为 4000
-            chunk_overlap (200): chunk 之间的重叠字符数， 默认为 200
+            chunk_overlap (int): chunk 之间的重叠字符数， 默认为 200
             separators (list[str]): 分割符列表，按优先级排序
             keep_separator (bool): 是否在分割后的文本中保留分隔符, 默认为 `True`
         """
