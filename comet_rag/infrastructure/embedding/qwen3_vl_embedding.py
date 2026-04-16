@@ -109,10 +109,10 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         self._owns_async_client = async_client is None
         self._owns_sync_client = sync_client is None
         self.async_client = (
-            async_client if async_client is not None else AsyncClient(timeout=None)
+            async_client if async_client is not None else AsyncClient(timeout=60.0)
         )
         self.sync_client = (
-            sync_client if sync_client is not None else Client(timeout=None)
+            sync_client if sync_client is not None else Client(timeout=60.0)
         )
 
     def _get_headers(self, **kwargs) -> dict:
