@@ -40,7 +40,7 @@ class JavaScriptChunker(BaseChunker):
         )
 
 
-class JavaCodeChunker(BaseChunker):
+class JavaChunker(BaseChunker):
     def __init__(
         self,
         chunk_size: int = 2000,
