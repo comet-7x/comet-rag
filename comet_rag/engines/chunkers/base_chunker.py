@@ -2,6 +2,24 @@
 from collections import deque
 from enum import StrEnum
 
+from comet_rag.engines.chunkers.separators import (
+    SEPARATORS_CODE_C,
+    SEPARATORS_CODE_CPP,
+    SEPARATORS_CODE_GO,
+    SEPARATORS_CODE_HTML,
+    SEPARATORS_CODE_JAVA,
+    SEPARATORS_CODE_JS,
+    SEPARATORS_CODE_PHP,
+    SEPARATORS_CODE_PY,
+    SEPARATORS_CODE_R,
+    SEPARATORS_CODE_RUST,
+    SEPARATORS_CODE_TS,
+    SEPARATORS_EN,
+    SEPARATORS_JA,
+    SEPARATORS_KO,
+    SEPARATORS_ZH,
+)
+
 
 class Language(StrEnum):
     ENGLISH = "en"
@@ -10,59 +28,18 @@ class Language(StrEnum):
     KOREAN = "ko"
 
 
-SEPARATORS_EN = [
-    "\n\n\n",  # Multiple line breaks (sections)
-    "\n\n",  # Paragraph breaks
-    "\n",  # Line breaks
-    ". ",  # Sentence endings
-    "! ",  # Exclamation endings
-    "? ",  # Question endings
-    "; ",  # Semicolon breaks
-    ", ",  # Comma breaks
-    " ",  # Word breaks
-    "",  # Character level
-]
-
-SEPARATORS_ZH = [
-    "\n\n\n",  # 多个换行（章节）
-    "\n\n",  # 段落分隔
-    "\n",  # 换行
-    "。",  # 句号
-    "！",  # 感叹号
-    "？",  # 问号
-    "；",  # 分号
-    "，",  # 逗号
-    "、",  # 顿号
-    "",  # 字符级（中文无词间空格）
-]
-
-SEPARATORS_JA = [
-    "\n\n\n",  # 複数改行（章・節）
-    "\n\n",  # 段落区切り
-    "\n",  # 改行
-    "。",  # 句点
-    "！",  # 感嘆符
-    "？",  # 疑問符
-    "；",  # セミコロン
-    "、",  # 読点
-    "",  # 文字レベル（日本語は単語間スペースなし）
-]
-
-SEPARATORS_KO = [
-    "\n\n",  # 段落
-    "\n",  # 换行
-    ". ",
-    "! ",
-    "? ",  # 句末（通常带空格）
-    "。",
-    "！",
-    "？",  # 全角句末
-    "; ",
-    ": ",  # 句中
-    ", ",  # 逗号
-    " ",  # 单词间距（韩语书写有空格隔开词组）
-    "",  # 字符
-]
+class CodeLanguage(StrEnum):
+    PY = "py"
+    TS = "ts"
+    JS = "js"
+    JAVA = "java"
+    C = "c"
+    CPP = "cpp"
+    GO = "go"
+    PHP = "php"
+    R = "r"
+    RUST = "rust"
+    HTML = "html"
 
 
 class RecursiveCharacterTextSplitter:
@@ -270,7 +247,7 @@ class BaseChunker:
         chunk_overlap: int = 200,
         separators: list[str] | None = None,
         keep_separator: bool = True,
-        language: Language | None = Language.ENGLISH,
+        language: Language | CodeLanguage | None = Language.ENGLISH,
     ) -> None:
         """初始化 Chunker
 
@@ -279,7 +256,7 @@ class BaseChunker:
             chunk_overlap (int): 相邻 chunk 之间的重叠字符数， 默认 200
             separators (list[str]): 分割符列表，按优先级排序
             keep_separator (bool): 是否保留分隔符， 默认 `True`
-            language (Language): 语言，默认 `Language.ENGLISH`
+            language (Language | CodeLanguage): 语言，可以是国家语言或者代码语言，默认为国家语言 `Language.ENGLISH`
         """
         if separators is None and language:
             mapping = {
@@ -287,6 +264,17 @@ class BaseChunker:
                 Language.CHINESE: SEPARATORS_ZH,
                 Language.JAPANESE: SEPARATORS_JA,
                 Language.KOREAN: SEPARATORS_KO,
+                CodeLanguage.PY: SEPARATORS_CODE_PY,
+                CodeLanguage.TS: SEPARATORS_CODE_TS,
+                CodeLanguage.JS: SEPARATORS_CODE_JS,
+                CodeLanguage.JAVA: SEPARATORS_CODE_JAVA,
+                CodeLanguage.C: SEPARATORS_CODE_C,
+                CodeLanguage.CPP: SEPARATORS_CODE_CPP,
+                CodeLanguage.GO: SEPARATORS_CODE_GO,
+                CodeLanguage.PHP: SEPARATORS_CODE_PHP,
+                CodeLanguage.R: SEPARATORS_CODE_R,
+                CodeLanguage.RUST: SEPARATORS_CODE_RUST,
+                CodeLanguage.HTML: SEPARATORS_CODE_HTML,
             }
             separators = mapping.get(language)
 
