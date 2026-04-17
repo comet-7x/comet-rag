@@ -21,32 +21,32 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-"commitizen>=4.8.2",
-"pre-commit>=4.2.0",
-"pytest>=9.0.2",
-"ruff>=0.6.0",
+    "commitizen>=4.8.2",
+    "pre-commit>=4.2.0",
+    "pytest>=9.0.2",
+    "ruff>=0.6.0",
 ]
 
 [tool.ruff.lint]
 select = [
-"E",             # pycodestyle (error)
-"F",             # pyflakes
-"B",             # bugbear
-"S",             # flake8-bandit
-"C4",            # flake8-comprehensions
-"SIM",           # flake8-simplify
-"I",             # isort
-"UP",            # pyupgrade
-"PIE",           # flake8-pie
-"PGH",           # pygrep-hooks
-"PYI",           # flake8-pyi
+    "E",             # pycodestyle (error)
+    "F",             # pyflakes
+    "B",             # bugbear
+    "S",             # flake8-bandit
+    "C4",            # flake8-comprehensions
+    "SIM",           # flake8-simplify
+    "I",             # isort
+    "UP",            # pyupgrade
+    "PIE",           # flake8-pie
+    "PGH",           # pygrep-hooks
+    "PYI",           # flake8-pyi
 ]
 
 ignore = [
-"E501",    # line-too-long
-"W291",    # Trailing whitespace
-"E241",    # Multiple spaces after comma
-"E221",    # Multiple spaces before operator
+    "E501",    # line-too-long
+    "W291",    # Trailing whitespace
+    "E241",    # Multiple spaces after comma
+    "E221",    # Multiple spaces before operator
 ]
 
 [tool.ruff.lint.per-file-ignores]
