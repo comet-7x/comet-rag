@@ -1,4 +1,9 @@
 from comet_rag.engines.chunkers.base_chunker import BaseChunker
+from comet_rag.engines.chunkers.separators import (
+    SEPARATORS_CSV,
+    SEPARATORS_JSON,
+    SEPARATORS_XML,
+)
 
 
 class CsvChunker(BaseChunker):
@@ -8,17 +13,15 @@ class CsvChunker(BaseChunker):
         chunk_overlap: int = 100,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
-        if separators is None:
-            separators = [
-                "\nRow ",  # Row boundaries (from CSVLoader format)
-                "\n",  # Line breaks
-                " | ",  # Column separators
-                ", ",  # Comma separators
-                " ",  # Word breaks
-                "",  # Character level
-            ]
-        super().__init__(chunk_size, chunk_overlap, separators, keep_separator)
+        super().__init__(
+            chunk_size,
+            chunk_overlap,
+            separators if separators is not None else SEPARATORS_CSV,
+            keep_separator,
+            keep_separator_at_start=keep_separator_at_start,
+        )
 
 
 class JsonChunker(BaseChunker):
@@ -29,18 +32,12 @@ class JsonChunker(BaseChunker):
         separators: list[str] | None = None,
         keep_separator: bool = True,
     ):
-        if separators is None:
-            separators = [
-                "\n\n",  # Object/array boundaries
-                "\n",  # Line breaks
-                "},",  # Object endings
-                "],",  # Array endings
-                ", ",  # Property separators
-                ": ",  # Key-value separators
-                " ",  # Word breaks
-                "",  # Character level
-            ]
-        super().__init__(chunk_size, chunk_overlap, separators, keep_separator)
+        super().__init__(
+            chunk_size,
+            chunk_overlap,
+            separators if separators is not None else SEPARATORS_JSON,
+            keep_separator,
+        )
 
 
 class XmlChunker(BaseChunker):
@@ -51,16 +48,9 @@ class XmlChunker(BaseChunker):
         separators: list[str] | None = None,
         keep_separator: bool = True,
     ):
-        if separators is None:
-            separators = [
-                "\n\n",  # Element boundaries
-                "\n",  # Line breaks
-                ">",  # Tag endings
-                ". ",  # Sentence endings (for text content)
-                "! ",  # Exclamation endings
-                "? ",  # Question endings
-                ", ",  # Comma separators
-                " ",  # Word breaks
-                "",  # Character level
-            ]
-        super().__init__(chunk_size, chunk_overlap, separators, keep_separator)
+        super().__init__(
+            chunk_size,
+            chunk_overlap,
+            separators if separators is not None else SEPARATORS_XML,
+            keep_separator,
+        )
