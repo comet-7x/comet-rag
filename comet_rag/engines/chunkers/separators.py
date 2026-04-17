@@ -350,6 +350,9 @@ SEPARATORS_CODE_HTML = [
     "<script",  # Embedded JS block
     "<meta",    # Metadata element
     "<title",   # Document title element
+    "\n\n",     # Blank line between logical blocks
+    "\n",       # Line break
+    " ",        # Token boundary
     "",         # Character level (last resort)
 ]
 # fmt: on
