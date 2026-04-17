@@ -47,12 +47,14 @@ ignore = [
     "W291",    # Trailing whitespace
     "E241",    # Multiple spaces after comma
     "E221",    # Multiple spaces before operator
-    "E261",    # At least two spaces before inline comment
-    "E262",    # Inline comment should start with '# '
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101"]
+"comet_rag/engines/chunkers/separators.py" = [
+    "E261",  # Inline comment spacing — intentional alignment for readability
+    "E262",  # Inline comment format — intentional alignment for readability
+]
 
 [[tool.uv.index]]
 url = "https://mirrors.cernet.edu.cn/pypi/web/simple"
