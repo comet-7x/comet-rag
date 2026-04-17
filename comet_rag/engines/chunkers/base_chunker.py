@@ -42,6 +42,27 @@ class CodeLanguage(StrEnum):
     HTML = "html"
 
 
+# fmt: off
+_LANGUAGE_TO_SEPARATORS: dict[Language | CodeLanguage, list[str]] = {
+    Language.ENGLISH:    SEPARATORS_EN,
+    Language.CHINESE:    SEPARATORS_ZH,
+    Language.JAPANESE:   SEPARATORS_JA,
+    Language.KOREAN:     SEPARATORS_KO,
+    CodeLanguage.PY:     SEPARATORS_CODE_PY,
+    CodeLanguage.TS:     SEPARATORS_CODE_TS,
+    CodeLanguage.JS:     SEPARATORS_CODE_JS,
+    CodeLanguage.JAVA:   SEPARATORS_CODE_JAVA,
+    CodeLanguage.C:      SEPARATORS_CODE_C,
+    CodeLanguage.CPP:    SEPARATORS_CODE_CPP,
+    CodeLanguage.GO:     SEPARATORS_CODE_GO,
+    CodeLanguage.PHP:    SEPARATORS_CODE_PHP,
+    CodeLanguage.R:      SEPARATORS_CODE_R,
+    CodeLanguage.RUST:   SEPARATORS_CODE_RUST,
+    CodeLanguage.HTML:   SEPARATORS_CODE_HTML,
+}
+# fmt: on
+
+
 class RecursiveCharacterTextSplitter:
     """基于分隔符层次结构递归拆分文本的文本分割器"""
 
@@ -259,24 +280,7 @@ class BaseChunker:
             language (Language | CodeLanguage): 语言，可以是国家语言或者代码语言，默认为国家语言 `Language.ENGLISH`
         """
         if separators is None and language:
-            mapping = {
-                Language.ENGLISH: SEPARATORS_EN,
-                Language.CHINESE: SEPARATORS_ZH,
-                Language.JAPANESE: SEPARATORS_JA,
-                Language.KOREAN: SEPARATORS_KO,
-                CodeLanguage.PY: SEPARATORS_CODE_PY,
-                CodeLanguage.TS: SEPARATORS_CODE_TS,
-                CodeLanguage.JS: SEPARATORS_CODE_JS,
-                CodeLanguage.JAVA: SEPARATORS_CODE_JAVA,
-                CodeLanguage.C: SEPARATORS_CODE_C,
-                CodeLanguage.CPP: SEPARATORS_CODE_CPP,
-                CodeLanguage.GO: SEPARATORS_CODE_GO,
-                CodeLanguage.PHP: SEPARATORS_CODE_PHP,
-                CodeLanguage.R: SEPARATORS_CODE_R,
-                CodeLanguage.RUST: SEPARATORS_CODE_RUST,
-                CodeLanguage.HTML: SEPARATORS_CODE_HTML,
-            }
-            separators = mapping.get(language)
+            separators = _LANGUAGE_TO_SEPARATORS.get(language)
 
         self._splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
