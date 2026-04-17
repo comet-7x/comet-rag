@@ -1,4 +1,4 @@
-# 引用自 https://github.com/crewAIInc/crewAI/blob/main/lib/crewai-tools/src/crewai_tools/rag/chunkers/
+# 修改自 https://github.com/crewAIInc/crewAI/blob/main/lib/crewai-tools/src/crewai_tools/rag/chunkers/
 from collections import deque
 from enum import StrEnum
 
@@ -72,6 +72,7 @@ class RecursiveCharacterTextSplitter:
         chunk_overlap: int = 200,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = False,
     ) -> None:
         """初始化 RecursiveCharacterTextSplitter
 
@@ -80,6 +81,9 @@ class RecursiveCharacterTextSplitter:
             chunk_overlap (int): chunk 之间的重叠字符数， 默认为 200
             separators (list[str]): 分割符列表，按优先级排序
             keep_separator (bool): 是否在分割后的文本中保留分隔符, 默认为 `True`
+            keep_separator_at_start (bool): 保留分隔符时，将其前置到下一片段开头而非追加到上一片段末尾。
+                适用于以关键字为前缀的分隔符（如 `\\nclass `、`\\ndef `、`\\n# `），
+                确保每个 chunk 以完整的语义单元开头。默认为 `False`（追加到末尾，适合自然语言标点）
         """
         if chunk_size <= 0:
             raise ValueError(
@@ -99,6 +103,7 @@ class RecursiveCharacterTextSplitter:
         self._chunk_size = chunk_size
         self._chunk_overlap = chunk_overlap
         self._keep_separator = keep_separator
+        self._keep_separator_at_start = keep_separator_at_start
 
         # 默认分隔符按优先级排序：双换行 -> 单换行 -> 空格 -> 逐字符
         self._separators = (
@@ -180,21 +185,38 @@ class RecursiveCharacterTextSplitter:
             return list(text)
 
         if self._keep_separator and separator in text:
-            # 保留分隔符：将分隔符追加到其所属片段的末尾（而非前置到下一片段），
-            # 保证每个内容单元的完整性（如句子以标点结尾，JSON 对象含闭合符号）
             parts = text.split(separator)
-            splits = []
+            splits: list[str] = []
 
-            for i, part in enumerate(parts):
-                if i < len(parts) - 1:  # 非末尾片段：追加分隔符
-                    if part:
-                        splits.append(part + separator)
-                    elif splits:
-                        splits[-1] += separator  # 连续分隔符：并入上一段
-                    else:  # 开头空片段：添加分隔符
-                        splits.append(separator)
-                elif part:  # 末尾片段：无后续分隔符
-                    splits.append(part)
+            if self._keep_separator_at_start:
+                # 前置模式：将分隔符拼到下一片段的开头
+                # 适用于关键字前缀分隔符（\nclass、\ndef、\n# 等），
+                # 确保每个 chunk 以完整的语义声明开头
+                for i, part in enumerate(parts):
+                    if i == 0:
+                        if part:
+                            splits.append(part)
+                    else:
+                        if part:
+                            splits.append(separator + part)
+                        elif splits:
+                            splits[-1] += separator  # 连续分隔符：并入上一段
+                        else:
+                            splits.append(separator)
+            else:
+                # 追加模式：将分隔符拼到当前片段的末尾（默认）
+                # 适用于自然语言标点（句号、逗号）和结构后缀（}、>），
+                # 保证内容单元以其归属标点结尾
+                for i, part in enumerate(parts):
+                    if i < len(parts) - 1:
+                        if part:
+                            splits.append(part + separator)
+                        elif splits:
+                            splits[-1] += separator  # 连续分隔符：并入上一段
+                        else:
+                            splits.append(separator)
+                    elif part:
+                        splits.append(part)
             return splits
         return text.split(separator)
 
@@ -269,6 +291,7 @@ class BaseChunker:
         separators: list[str] | None = None,
         keep_separator: bool = True,
         language: Language | CodeLanguage | None = Language.ENGLISH,
+        keep_separator_at_start: bool = False,
     ) -> None:
         """初始化 Chunker
 
@@ -278,6 +301,8 @@ class BaseChunker:
             separators (list[str]): 分割符列表，按优先级排序
             keep_separator (bool): 是否保留分隔符， 默认 `True`
             language (Language | CodeLanguage): 语言，可以是国家语言或者代码语言，默认为国家语言 `Language.ENGLISH`
+            keep_separator_at_start (bool): 将保留的分隔符前置到下一片段开头而非追加到上一片段末尾，
+                代码和 Markdown 分隔符应设为 `True`，自然语言标点应设为 `False`（默认）
         """
         if separators is None and language:
             separators = _LANGUAGE_TO_SEPARATORS.get(language)
@@ -287,6 +312,7 @@ class BaseChunker:
             chunk_overlap=chunk_overlap,
             separators=separators,
             keep_separator=keep_separator,
+            keep_separator_at_start=keep_separator_at_start,
         )
 
     def chunk(self, text: str) -> list[str]:
