@@ -1,393 +1,355 @@
+# fmt: off
+
 SEPARATORS_EN = [
-    "\n\n\n",  # Multiple line breaks (sections)
-    "\n\n",  # Paragraph breaks
-    "\n",  # Line breaks
-    ". ",  # Sentence endings
-    "! ",  # Exclamation endings
-    "? ",  # Question endings
-    "; ",  # Semicolon breaks
-    ", ",  # Comma breaks
-    " ",  # Word breaks
-    "",  # Character level
+    "\n\n\n",  # Triple blank line — chapter / major section boundary
+    "\n\n",    # Double blank line — paragraph boundary
+    "\n",      # Single line break — line boundary
+    ". ",      # Period + space — sentence ending (space avoids splitting decimals)
+    "! ",      # Exclamation + space — exclamatory sentence ending
+    "? ",      # Question mark + space — interrogative sentence ending
+    "; ",      # Semicolon + space — clause boundary
+    ", ",      # Comma + space — phrase boundary
+    " ",       # Space — word boundary
+    "",        # Empty string — character level (last resort)
 ]
 
 SEPARATORS_ZH = [
-    "\n\n\n",  # 多个换行（章节）
-    "\n\n",  # 段落分隔
-    "\n",  # 换行
-    "。",  # 句号
-    "！",  # 感叹号
-    "？",  # 问号
-    "；",  # 分号
-    "，",  # 逗号
-    "、",  # 顿号
-    "",  # 字符级（中文无词间空格）
+    "\n\n\n",  # 三个换行 — 章节边界
+    "\n\n",    # 双换行 — 段落边界
+    "\n",      # 单换行 — 行边界
+    "。",      # 句号 — 陈述句句末
+    "！",      # 全角感叹号 — 感叹句句末
+    "？",      # 全角问号 — 疑问句句末
+    "；",      # 全角分号 — 分句边界
+    "，",      # 全角逗号 — 短语边界
+    "、",      # 顿号 — 并列词语边界
+    "",        # 字符级 — 兜底（中文无词间空格）
 ]
 
 SEPARATORS_JA = [
-    "\n\n\n",  # 複数改行（章・節）
-    "\n\n",  # 段落区切り
-    "\n",  # 改行
-    "。",  # 句点
-    "！",  # 感嘆符
-    "？",  # 疑問符
-    "；",  # セミコロン
-    "、",  # 読点
-    "",  # 文字レベル（日本語は単語間スペースなし）
+    "\n\n\n",  # 三重改行 — 章・節の境界
+    "\n\n",    # 二重改行 — 段落境界
+    "\n",      # 単一改行 — 行境界
+    "。",      # 句点 — 文末
+    "！",      # 全角感嘆符 — 感嘆文末
+    "？",      # 全角疑問符 — 疑問文末
+    "；",      # 全角セミコロン — 節境界
+    "、",      # 読点 — 句内区切り
+    "",        # 文字レベル — 最終手段（日本語は単語間スペースなし）
 ]
 
 SEPARATORS_KO = [
-    "\n\n",  # 段落
-    "\n",  # 换行
-    ". ",
-    "! ",
-    "? ",  # 句末（通常带空格）
-    "。",
-    "！",
-    "？",  # 全角句末
-    "; ",
-    ": ",  # 句中
-    ", ",  # 逗号
-    " ",  # 单词间距（韩语书写有空格隔开词组）
-    "",  # 字符
+    "\n\n",    # 두 줄 바꿈 — 단락 경계
+    "\n",      # 줄 바꿈 — 행 경계
+    ". ",      # 반각 마침표 + 공백 — 문장 끝
+    "! ",      # 반각 느낌표 + 공백 — 감탄문 끝
+    "? ",      # 반각 물음표 + 공백 — 의문문 끝
+    "。",      # 전각 마침표 — 문장 끝 (한자 혼용 문서)
+    "！",      # 전각 느낌표 — 감탄문 끝
+    "？",      # 전각 물음표 — 의문문 끝
+    "; ",      # 반각 세미콜론 — 절 경계
+    ": ",      # 반각 콜론 — 설명 도입
+    ", ",      # 반각 쉼표 — 구 경계
+    " ",       # 공백 — 어절 경계 (한국어는 띄어쓰기로 어절 구분)
+    "",        # 문자 단위 — 최후 수단
 ]
 
 
 SEPARATORS_CODE_PY = [
-    # First, try to split along class definitions
-    "\nclass ",
-    "\nasync def ",
-    "\ndef ",
-    "\n    def ",  # 4-space indent (PEP8 standard)
-    "\n\tdef ",    # tab indent (compatibility)
-    # Now split by the normal type of lines
-    "\n\n",
-    "\n",
-    " ",
-    "",
+    "\nclass ",      # Class definition
+    "\nasync def ",  # Async function / coroutine definition
+    "\ndef ",        # Module-level function definition
+    "\n    def ",    # Method definition — 4-space indent (PEP8 standard)
+    "\n\tdef ",      # Method definition — tab indent (compatibility)
+    "\n\n",          # Blank line between logical blocks
+    "\n",            # Line break
+    " ",             # Token boundary
+    "",              # Character level (last resort)
 ]
 
 SEPARATORS_CODE_TS = [
-    "\nenum ",
-    "\ninterface ",
-    "\nnamespace ",
-    "\ntype ",
-    # Split along class definitions
-    "\nexport default class ",
-    "\nexport abstract class ",
-    "\nexport class ",
-    "\nclass ",
-    # Split along function definitions
-    "\nexport async function ",
-    "\nexport function ",
-    "\nasync function ",
-    "\nfunction ",
-    "\nexport const ",
-    "\nexport let ",
-    "\nconst ",
-    "\nlet ",
-    "\nvar ",
-    # Split along control flow statements
-    "\nif ",
-    "\nfor ",
-    "\nwhile ",
-    "\nswitch ",
-    "\ncase ",
-    "\ndefault ",
-    # Split by the normal type of lines
-    "\n\n",
-    "\n",
-    " ",
-    "",
+    "\nenum ",                  # Enum declaration
+    "\ninterface ",             # Interface declaration
+    "\nnamespace ",             # Namespace / module declaration
+    "\ntype ",                  # Type alias declaration
+    "\nexport default class ",  # Default-exported class
+    "\nexport abstract class ", # Exported abstract class
+    "\nexport class ",          # Named exported class
+    "\nclass ",                 # Non-exported class
+    "\nexport async function ",  # Exported async function
+    "\nexport function ",       # Exported named function
+    "\nasync function ",        # Non-exported async function
+    "\nfunction ",              # Non-exported named function
+    "\nexport const ",          # Exported constant / arrow function binding
+    "\nexport let ",            # Exported mutable binding
+    "\nconst ",                 # Constant declaration / arrow function
+    "\nlet ",                   # Mutable variable declaration
+    "\nvar ",                   # Legacy variable declaration
+    "\nif ",                    # If statement
+    "\nfor ",                   # For loop
+    "\nwhile ",                 # While loop
+    "\nswitch ",                # Switch statement
+    "\ncase ",                  # Switch case branch
+    "\ndefault ",               # Default case branch
+    "\n\n",                     # Blank line between logical blocks
+    "\n",                       # Line break
+    " ",                        # Token boundary
+    "",                         # Character level (last resort)
 ]
 
 SEPARATORS_CODE_JS = [
-    # Split along class definitions
-    "\nexport default class ",
-    "\nexport class ",
-    "\nclass ",
-    # Split along function definitions
-    "\nexport async function ",
-    "\nexport function ",
-    "\nasync function ",
-    "\nfunction ",
-    "\nexport const ",
-    "\nexport let ",
-    "\nconst ",
-    "\nlet ",
-    "\nvar ",
-    # Split along control flow statements
-    "\nif ",
-    "\nfor ",
-    "\nwhile ",
-    "\nswitch ",
-    "\ncase ",
-    "\ndefault ",
-    # Split by the normal type of lines
-    "\n\n",
-    "\n",
-    " ",
-    "",
+    "\nexport default class ",  # Default-exported class
+    "\nexport class ",          # Named exported class
+    "\nclass ",                 # Non-exported class
+    "\nexport async function ",  # Exported async function
+    "\nexport function ",       # Exported named function
+    "\nasync function ",        # Non-exported async function
+    "\nfunction ",              # Non-exported named function
+    "\nexport const ",          # Exported constant / arrow function binding
+    "\nexport let ",            # Exported mutable binding
+    "\nconst ",                 # Constant declaration / arrow function
+    "\nlet ",                   # Mutable variable declaration
+    "\nvar ",                   # Legacy variable declaration
+    "\nif ",                    # If statement
+    "\nfor ",                   # For loop
+    "\nwhile ",                 # While loop
+    "\nswitch ",                # Switch statement
+    "\ncase ",                  # Switch case branch
+    "\ndefault ",               # Default case branch
+    "\n\n",                     # Blank line between logical blocks
+    "\n",                       # Line break
+    " ",                        # Token boundary
+    "",                         # Character level (last resort)
 ]
 
 SEPARATORS_CODE_JAVA = [
-    # Split along class/type definitions
-    "\nclass ",
-    "\ninterface ",
-    "\nenum ",
-    "\nrecord ",
-    "\n@interface ",
-    # Split along method definitions
-    "\npublic ",
-    "\nprotected ",
-    "\nprivate ",
-    "\nstatic ",
-    "\nabstract ",
-    # Split along control flow statements
-    "\nif ",
-    "\nfor ",
-    "\nwhile ",
-    "\nswitch ",
-    "\ncase ",
-    # Split by the normal type of lines
-    "\n\n",
-    "\n",
-    " ",
-    "",
+    "\nclass ",       # Class declaration
+    "\ninterface ",   # Interface declaration
+    "\nenum ",        # Enum declaration
+    "\nrecord ",      # Record class declaration (Java 16+)
+    "\n@interface ",  # Annotation type declaration
+    "\npublic ",      # Public method / field / nested class
+    "\nprotected ",   # Protected method / field
+    "\nprivate ",     # Private method / field
+    "\nstatic ",      # Static method / initializer / field
+    "\nabstract ",    # Abstract method / class
+    "\nif ",          # If statement
+    "\nfor ",         # For loop
+    "\nwhile ",       # While loop
+    "\nswitch ",      # Switch statement
+    "\ncase ",        # Switch case branch
+    "\n\n",           # Blank line between logical blocks
+    "\n",             # Line break
+    " ",              # Token boundary
+    "",               # Character level (last resort)
 ]
 
 SEPARATORS_CODE_C = [
-    # Split along struct/type definitions
-    "\nstruct ",
-    "\ntypedef ",
-    "\nunion ",
-    "\nenum ",
-    # Split along function definitions
-    "\nvoid ",
-    "\nint ",
-    "\nfloat ",
-    "\ndouble ",
-    "\nchar ",
-    "\nunsigned ",
-    "\nlong ",
-    "\nstatic ",
-    "\nextern ",
-    # Split along control flow statements
-    "\nif ",
-    "\nfor ",
-    "\nwhile ",
-    "\nswitch ",
-    "\ncase ",
-    # Split by the normal type of lines
-    "\n\n",
-    "\n",
-    " ",
-    "",
+    "\nstruct ",    # Struct definition
+    "\ntypedef ",   # Type alias definition
+    "\nunion ",     # Union definition
+    "\nenum ",      # Enum definition
+    "\nvoid ",      # Void-returning function definition
+    "\nint ",       # int-typed function or global variable
+    "\nfloat ",     # float-typed function or global variable
+    "\ndouble ",    # double-typed function or global variable
+    "\nchar ",      # char-typed function or global variable
+    "\nunsigned ",  # unsigned-typed function or global variable
+    "\nlong ",      # long-typed function or global variable
+    "\nstatic ",    # Static function or file-scoped variable
+    "\nextern ",    # External symbol declaration
+    "\nif ",        # If statement
+    "\nfor ",       # For loop
+    "\nwhile ",     # While loop
+    "\nswitch ",    # Switch statement
+    "\ncase ",      # Switch case branch
+    "\n\n",         # Blank line between logical blocks
+    "\n",           # Line break
+    " ",            # Token boundary
+    "",             # Character level (last resort)
 ]
 
 SEPARATORS_CODE_CPP = [
-    # Split along class/type definitions
-    "\ntemplate ",
-    "\nnamespace ",
-    "\nclass ",
-    "\nstruct ",
-    "\nunion ",
-    "\nenum ",
-    "\ntypedef ",
-    # Split along access specifiers
-    "\npublic:",
-    "\nprotected:",
-    "\nprivate:",
-    # Split along function definitions
-    "\nvoid ",
-    "\nint ",
-    "\nfloat ",
-    "\ndouble ",
-    "\nchar ",
-    "\nunsigned ",
-    "\nlong ",
-    "\nauto ",
-    "\nstatic ",
-    "\nextern ",
-    # Split along control flow statements
-    "\nif ",
-    "\nfor ",
-    "\nwhile ",
-    "\nswitch ",
-    "\ncase ",
-    # Split by the normal type of lines
-    "\n\n",
-    "\n",
-    " ",
-    "",
+    "\ntemplate ",   # Template declaration (class / function template)
+    "\nnamespace ",  # Namespace block
+    "\nclass ",      # Class definition
+    "\nstruct ",     # Struct definition (value-type idiom in C++)
+    "\nunion ",      # Union definition
+    "\nenum ",       # Enum definition (includes scoped enum class)
+    "\ntypedef ",    # Legacy type alias
+    "\npublic:",     # Public access specifier section
+    "\nprotected:",  # Protected access specifier section
+    "\nprivate:",    # Private access specifier section
+    "\nvoid ",       # Void-returning function definition
+    "\nint ",        # int-typed function or variable
+    "\nfloat ",      # float-typed function or variable
+    "\ndouble ",     # double-typed function or variable
+    "\nchar ",       # char-typed function or variable
+    "\nunsigned ",   # unsigned-typed function or variable
+    "\nlong ",       # long-typed function or variable
+    "\nauto ",       # auto-deduced type (C++11+)
+    "\nstatic ",     # Static member / file-scoped function
+    "\nextern ",     # External symbol declaration
+    "\nif ",         # If statement
+    "\nfor ",        # For loop
+    "\nwhile ",      # While loop
+    "\nswitch ",     # Switch statement
+    "\ncase ",       # Switch case branch
+    "\n\n",          # Blank line between logical blocks
+    "\n",            # Line break
+    " ",             # Token boundary
+    "",              # Character level (last resort)
 ]
 
 SEPARATORS_CODE_GO = [
-    # Split along function definitions
-    "\nfunc ",
-    "\nvar ",
-    "\nconst ",
-    "\ntype ",
-    # Split along control flow statements
-    "\nif ",
-    "\nfor ",
-    "\nswitch ",
-    "\ncase ",
-    # Split by the normal type of lines
-    "\n\n",
-    "\n",
-    " ",
-    "",
+    "\nfunc ",   # Function or method definition
+    "\nvar ",    # Variable declaration block
+    "\nconst ",  # Constant declaration block
+    "\ntype ",   # Type definition (struct, interface, alias)
+    "\nif ",     # If statement
+    "\nfor ",    # For loop (Go's only loop construct)
+    "\nswitch ", # Switch statement
+    "\ncase ",   # Switch / type-switch case branch
+    "\n\n",      # Blank line between logical blocks
+    "\n",        # Line break
+    " ",         # Token boundary
+    "",          # Character level (last resort)
 ]
 
 SEPARATORS_CODE_PHP = [
-    # Split along function definitions
-    "\nfunction ",
-    # Split along class definitions
-    "\nclass ",
-    # Split along control flow statements
-    "\nif ",
-    "\nforeach ",
-    "\nwhile ",
-    "\ndo ",
-    "\nswitch ",
-    "\ncase ",
-    # Split by the normal type of lines
-    "\n\n",
-    "\n",
-    " ",
-    "",
+    "\nfunction ", # Function definition
+    "\nclass ",    # Class definition
+    "\nif ",       # If statement
+    "\nforeach ",  # Foreach loop
+    "\nwhile ",    # While loop
+    "\ndo ",       # Do-while loop
+    "\nswitch ",   # Switch statement
+    "\ncase ",     # Switch case branch
+    "\n\n",        # Blank line between logical blocks
+    "\n",          # Line break
+    " ",           # Token boundary
+    "",            # Character level (last resort)
 ]
 
 SEPARATORS_CODE_R = [
-    # Split along function definitions
-    "\nfunction ",
-    # Split along S4 class and method definitions
-    "\nsetClass(",
-    "\nsetMethod(",
-    "\nsetGeneric(",
-    # Split along control flow statements
-    "\nif ",
-    "\nelse ",
-    "\nfor ",
-    "\nwhile ",
-    "\nrepeat ",
-    # Split along package loading
-    "\nlibrary(",
-    "\nrequire(",
-    # Split by the normal type of lines
-    "\n\n",
-    "\n",
-    " ",
-    "",
+    "\nfunction ",   # Function definition (assigned via <- or =)
+    "\nsetClass(",   # S4 class definition
+    "\nsetMethod(",  # S4 method definition for a generic
+    "\nsetGeneric(", # S4 generic function declaration
+    "\nif ",         # If statement
+    "\nelse ",       # Else branch
+    "\nfor ",        # For loop
+    "\nwhile ",      # While loop
+    "\nrepeat ",     # Repeat loop (infinite loop with explicit break)
+    "\nlibrary(",    # Package loading — attaches namespace to search path
+    "\nrequire(",    # Package loading — conditional, returns FALSE on failure
+    "\n\n",          # Blank line between logical blocks
+    "\n",            # Line break
+    " ",             # Token boundary
+    "",              # Character level (last resort)
 ]
 
 SEPARATORS_CODE_RUST = [
-    # Split along type/trait definitions
-    "\nstruct ",
-    "\nenum ",
-    "\ntrait ",
-    "\nimpl ",
-    "\nmod ",
-    # Split along function definitions
-    "\npub async fn ",
-    "\npub fn ",
-    "\nasync fn ",
-    "\nfn ",
-    "\npub const ",
-    "\nconst ",
-    "\nlet ",
-    "\nuse ",
-    # Split along control flow statements
-    "\nif ",
-    "\nwhile ",
-    "\nfor ",
-    "\nloop ",
-    "\nmatch ",
-    # Split by the normal type of lines
-    "\n\n",
-    "\n",
-    " ",
-    "",
+    "\nstruct ",       # Struct definition
+    "\nenum ",         # Enum definition
+    "\ntrait ",        # Trait definition
+    "\nimpl ",         # Implementation block (inherent or trait impl)
+    "\nmod ",          # Module declaration
+    "\npub async fn ", # Public async function
+    "\npub fn ",       # Public function
+    "\nasync fn ",     # Non-public async function
+    "\nfn ",           # Non-public function definition
+    "\npub const ",    # Public constant
+    "\nconst ",        # Module-level constant
+    "\nlet ",          # Variable binding (immutable by default)
+    "\nuse ",          # Import / re-export declaration
+    "\nif ",           # If expression
+    "\nwhile ",        # While loop
+    "\nfor ",          # For-in loop (iterator-based)
+    "\nloop ",         # Infinite loop
+    "\nmatch ",        # Pattern match expression
+    "\n\n",            # Blank line between logical blocks
+    "\n",              # Line break
+    " ",               # Token boundary
+    "",                # Character level (last resort)
 ]
 
 SEPARATORS_MDX = [
-    "\n# ",    # H1 headers (top-level sections)
-    "\n## ",   # H2 headers (major sections)
-    "\n### ",  # H3 headers (subsections)
-    "\n#### ", # H4 headers (sub-subsections)
-    "\n\n",    # Paragraph breaks
-    "\n```",   # Code block boundaries
-    "\n",      # Line breaks
-    ". ",      # Sentence endings
-    "! ",      # Exclamation endings
-    "? ",      # Question endings
-    "; ",      # Semicolon breaks
-    ", ",      # Comma breaks
-    " ",       # Word breaks
-    "",        # Character level
+    "\n# ",     # H1 heading — document title / top-level section
+    "\n## ",    # H2 heading — major section
+    "\n### ",   # H3 heading — subsection
+    "\n#### ",  # H4 heading — sub-subsection
+    "\n\n",     # Blank line — paragraph boundary
+    "\n```",    # Fenced code block boundary
+    "\n",       # Line break
+    ". ",       # Sentence ending
+    "! ",       # Exclamatory sentence ending
+    "? ",       # Interrogative sentence ending
+    "; ",       # Clause boundary
+    ", ",       # Phrase boundary
+    " ",        # Word boundary
+    "",         # Character level (last resort)
 ]
 
 SEPARATORS_CSV = [
-    "\nRow ",  # Row boundaries (from CSVLoader format)
-    "\n",      # Line breaks
-    " | ",     # Column separators
-    ", ",      # Comma separators
-    " ",       # Word breaks
-    "",        # Character level
+    "\nRow ",  # Row boundary — matches CSVLoader's "Row N:" header format
+    "\n",      # Raw line break — fallback row boundary
+    " | ",     # Pipe separator — column boundary in display format
+    ", ",      # Comma separator — value boundary
+    " ",       # Token boundary
+    "",        # Character level (last resort)
 ]
 
 SEPARATORS_JSON = [
-    "\n\n",    # Object/array boundaries
-    "\n",      # Line breaks
-    "},",      # Object endings
-    "],",      # Array endings
-    ", ",      # Property separators
-    ": ",      # Key-value separators
-    " ",       # Word breaks
-    "",        # Character level
+    "\n\n",  # Major structural gap — boundary between top-level objects
+    "\n",    # Line break — boundary between properties
+    "},",    # End of nested object within an array
+    "],",    # End of nested array within an array or object
+    ", ",    # Property / element separator
+    ": ",    # Key-value pair separator
+    " ",     # Token boundary
+    "",      # Character level (last resort)
 ]
 
 SEPARATORS_XML = [
-    "\n\n",    # Element boundaries
-    "\n",      # Line breaks
-    ">",       # Tag endings
-    ". ",      # Sentence endings (for text content)
-    "! ",      # Exclamation endings
-    "? ",      # Question endings
-    ", ",      # Comma separators
-    " ",       # Word breaks
-    "",        # Character level
+    "\n\n",  # Major element gap — boundary between sibling elements
+    "\n",    # Line break — boundary between tags or text lines
+    ">",     # Tag-closing boundary — splits after end of opening/closing tag
+    ". ",    # Sentence ending in element text content
+    "! ",    # Exclamatory sentence in element text content
+    "? ",    # Interrogative sentence in element text content
+    ", ",    # List item boundary in element text content
+    " ",     # Word boundary
+    "",      # Character level (last resort)
 ]
 
 SEPARATORS_CODE_HTML = [
-    # First, try to split along HTML tags
-    "<body",
-    "<div",
-    "<p",
-    "<br",
-    "<li",
-    "<h1",
-    "<h2",
-    "<h3",
-    "<h4",
-    "<h5",
-    "<h6",
-    "<span",
-    "<table",
-    "<tr",
-    "<td",
-    "<th",
-    "<ul",
-    "<ol",
-    "<header",
-    "<footer",
-    "<nav",
-    # Head
-    "<head",
-    "<style",
-    "<script",
-    "<meta",
-    "<title",
-    "",
+    "<body",    # Document body root
+    "<div",     # Generic block container
+    "<p",       # Paragraph
+    "<br",      # Line break element
+    "<li",      # List item
+    "<h1",      # Level-1 heading
+    "<h2",      # Level-2 heading
+    "<h3",      # Level-3 heading
+    "<h4",      # Level-4 heading
+    "<h5",      # Level-5 heading
+    "<h6",      # Level-6 heading
+    "<span",    # Inline container
+    "<table",   # Table root
+    "<tr",      # Table row
+    "<td",      # Table data cell
+    "<th",      # Table header cell
+    "<ul",      # Unordered list
+    "<ol",      # Ordered list
+    "<header",  # Page / section header landmark
+    "<footer",  # Page / section footer landmark
+    "<nav",     # Navigation landmark
+    "<head",    # Document metadata section
+    "<style",   # Embedded CSS block
+    "<script",  # Embedded JS block
+    "<meta",    # Metadata element
+    "<title",   # Document title element
+    "",         # Character level (last resort)
 ]
+# fmt: on
