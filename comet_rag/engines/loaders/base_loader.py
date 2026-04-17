@@ -14,7 +14,6 @@ from comet_rag.engines.utils import compute_sha256
 
 class SourceType(StrEnum):
     URL = "url"
-    CLOUD = "cloud"
     LOCAL = "local"
     UNKNOWN = "unknown"
 
@@ -24,27 +23,24 @@ class SourceContent:
         self.source = str(source).strip()
 
     @cached_property
-    def scheme(self) -> str:
-        return urlparse(self.source).scheme.lower()
+    def parsed_url(self):
+        return urlparse(self.source)
 
     @cached_property
     def is_url(self) -> bool:
-        return self.scheme in ("http", "https")
+        if self.parsed_url.scheme.lower() not in ("http", "https"):
+            return False
+        return bool(self.parsed_url.netloc)
 
     @cached_property
     def is_local(self) -> bool:
         if self.is_url:
             return False
-        return os.path.exists(self.source)
-
-    @cached_property
-    def extension(self) -> str:
-        parsed_path = urlparse(self.source).path if self.is_url else self.source
-        return Path(parsed_path).suffix.lstrip(".").lower()
-
-    @cached_property
-    def parse_config(self) -> ParseConfig:
-        return ParseConfig.from_path(self.source)
+        try:
+            p = Path(self.source)
+            return p.exists()
+        except (PermissionError, OSError):
+            return False
 
     @cached_property
     def source_id(self) -> str:
@@ -52,9 +48,10 @@ class SourceContent:
         if source_type == SourceType.URL:
             source_to_hash = self.source
         elif source_type == SourceType.LOCAL:
-            source_to_hash = os.path.normpath(self.source)
+            abs_path = os.path.abspath(self.source)
+            source_to_hash = Path(abs_path).as_posix()
         else:
-            source_to_hash = compute_sha256(self.source)
+            source_to_hash = self.source
         return compute_sha256(source_to_hash)
 
     @cached_property
