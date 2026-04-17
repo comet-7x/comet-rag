@@ -8,9 +8,15 @@ class PythonChunker(BaseChunker):
         chunk_overlap: int = 150,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
-            chunk_size, chunk_overlap, separators, keep_separator, CodeLanguage.PY
+            chunk_size,
+            chunk_overlap,
+            separators,
+            keep_separator,
+            CodeLanguage.PY,
+            keep_separator_at_start,
         )
 
 
@@ -21,9 +27,15 @@ class TypeScriptChunker(BaseChunker):
         chunk_overlap: int = 150,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
-            chunk_size, chunk_overlap, separators, keep_separator, CodeLanguage.TS
+            chunk_size,
+            chunk_overlap,
+            separators,
+            keep_separator,
+            CodeLanguage.TS,
+            keep_separator_at_start,
         )
 
 
@@ -34,9 +46,15 @@ class JavaScriptChunker(BaseChunker):
         chunk_overlap: int = 100,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
-            chunk_size, chunk_overlap, separators, keep_separator, CodeLanguage.JS
+            chunk_size,
+            chunk_overlap,
+            separators,
+            keep_separator,
+            CodeLanguage.JS,
+            keep_separator_at_start,
         )
 
 
@@ -47,9 +65,15 @@ class JavaChunker(BaseChunker):
         chunk_overlap: int = 200,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
-            chunk_size, chunk_overlap, separators, keep_separator, CodeLanguage.JAVA
+            chunk_size,
+            chunk_overlap,
+            separators,
+            keep_separator,
+            CodeLanguage.JAVA,
+            keep_separator_at_start,
         )
 
 
@@ -60,9 +84,15 @@ class CChunker(BaseChunker):
         chunk_overlap: int = 100,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
-            chunk_size, chunk_overlap, separators, keep_separator, CodeLanguage.C
+            chunk_size,
+            chunk_overlap,
+            separators,
+            keep_separator,
+            CodeLanguage.C,
+            keep_separator_at_start,
         )
 
 
@@ -73,9 +103,15 @@ class CppChunker(BaseChunker):
         chunk_overlap: int = 150,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
-            chunk_size, chunk_overlap, separators, keep_separator, CodeLanguage.CPP
+            chunk_size,
+            chunk_overlap,
+            separators,
+            keep_separator,
+            CodeLanguage.CPP,
+            keep_separator_at_start,
         )
 
 
@@ -86,9 +122,15 @@ class GoChunker(BaseChunker):
         chunk_overlap: int = 100,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
-            chunk_size, chunk_overlap, separators, keep_separator, CodeLanguage.GO
+            chunk_size,
+            chunk_overlap,
+            separators,
+            keep_separator,
+            CodeLanguage.GO,
+            keep_separator_at_start,
         )
 
 
@@ -99,9 +141,15 @@ class PhpChunker(BaseChunker):
         chunk_overlap: int = 100,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
-            chunk_size, chunk_overlap, separators, keep_separator, CodeLanguage.PHP
+            chunk_size,
+            chunk_overlap,
+            separators,
+            keep_separator,
+            CodeLanguage.PHP,
+            keep_separator_at_start,
         )
 
 
@@ -112,9 +160,15 @@ class RChunker(BaseChunker):
         chunk_overlap: int = 100,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
-            chunk_size, chunk_overlap, separators, keep_separator, CodeLanguage.R
+            chunk_size,
+            chunk_overlap,
+            separators,
+            keep_separator,
+            CodeLanguage.R,
+            keep_separator_at_start,
         )
 
 
@@ -125,9 +179,15 @@ class RustChunker(BaseChunker):
         chunk_overlap: int = 150,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
-            chunk_size, chunk_overlap, separators, keep_separator, CodeLanguage.RUST
+            chunk_size,
+            chunk_overlap,
+            separators,
+            keep_separator,
+            CodeLanguage.RUST,
+            keep_separator_at_start,
         )
 
 
@@ -138,7 +198,13 @@ class HtmlChunker(BaseChunker):
         chunk_overlap: int = 200,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
-            chunk_size, chunk_overlap, separators, keep_separator, CodeLanguage.HTML
+            chunk_size,
+            chunk_overlap,
+            separators,
+            keep_separator,
+            CodeLanguage.HTML,
+            keep_separator_at_start,
         )

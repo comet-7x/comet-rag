@@ -37,12 +37,14 @@ class MdxChunker(BaseChunker):
         chunk_overlap: int = 300,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
             chunk_size,
             chunk_overlap,
             separators if separators is not None else SEPARATORS_MDX,
             keep_separator,
+            keep_separator_at_start=keep_separator_at_start,
         )
 
     def chunk(self, text: str) -> list[str]:

@@ -13,12 +13,14 @@ class CsvChunker(BaseChunker):
         chunk_overlap: int = 100,
         separators: list[str] | None = None,
         keep_separator: bool = True,
+        keep_separator_at_start: bool = True,
     ):
         super().__init__(
             chunk_size,
             chunk_overlap,
             separators if separators is not None else SEPARATORS_CSV,
             keep_separator,
+            keep_separator_at_start=keep_separator_at_start,
         )
 
 
