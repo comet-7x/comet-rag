@@ -1,9 +1,10 @@
-from .base_loader import BaseLoader, LoaderResult, SourceContent
+from .base_loader import BaseLoader, LoaderResult
 from .data_type import (
+    AllowExt,
     BaseFileFormat,
     CodeFormat,
     ContentStructure,
-    FormatCategory,
+    FileFormat,
     FormatMeta,
     GranularityStrategy,
     MixedFormat,
@@ -13,13 +14,15 @@ from .data_type import (
     StructuredFormat,
     TabularFormat,
 )
+from .source_content import SourceContent, SourceType
 
 __all__ = [
-    "FormatCategory",
+    "AllowExt",
     "ContentStructure",
     "GranularityStrategy",
     "FormatMeta",
     "BaseFileFormat",
+    "FileFormat",
     "ProseFormat",
     "MixedFormat",
     "SlideFormat",
@@ -28,6 +31,7 @@ __all__ = [
     "CodeFormat",
     "ParseConfig",
     "SourceContent",
+    "SourceType",
     "LoaderResult",
     "BaseLoader",
 ]
