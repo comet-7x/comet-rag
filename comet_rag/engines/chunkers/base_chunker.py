@@ -192,6 +192,10 @@ class RecursiveCharacterTextSplitter:
                 # 前置模式：将分隔符拼到下一片段的开头
                 # 适用于关键字前缀分隔符（\nclass、\ndef、\n# 等），
                 # 确保每个 chunk 以完整的语义声明开头
+                #
+                # 连续分隔符（空 part）始终作为独立项保留，而非并入上一段。
+                # _merge_splits 以 merge_sep="" 拼接，顺序不变，同时保证
+                # 每个非空片段都以完整的分隔符前缀开头。
                 for i, part in enumerate(parts):
                     if i == 0:
                         if part:
@@ -199,10 +203,8 @@ class RecursiveCharacterTextSplitter:
                     else:
                         if part:
                             splits.append(separator + part)
-                        elif splits:
-                            splits[-1] += separator  # 连续分隔符：并入上一段
                         else:
-                            splits.append(separator)
+                            splits.append(separator)  # 连续分隔符：保持为独立项
             else:
                 # 追加模式：将分隔符拼到当前片段的末尾（默认）
                 # 适用于自然语言标点（句号、逗号）和结构后缀（}、>），
