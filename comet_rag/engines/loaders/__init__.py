@@ -1,5 +1,6 @@
 from .base_loader import BaseLoader, LoaderResult, SourceContent
 from .data_type import (
+    AllowExt,
     BaseFileFormat,
     CodeFormat,
     ContentStructure,
@@ -15,6 +16,7 @@ from .data_type import (
 )
 
 __all__ = [
+    "AllowExt",
     "ContentStructure",
     "GranularityStrategy",
     "FormatMeta",
