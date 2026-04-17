@@ -1,4 +1,5 @@
 from comet_rag.engines.chunkers.base_chunker import BaseChunker, Language
+from comet_rag.engines.chunkers.separators import SEPARATORS_MDX
 
 
 class TextChunker(BaseChunker):
@@ -37,24 +38,12 @@ class MdxChunker(BaseChunker):
         separators: list[str] | None = None,
         keep_separator: bool = True,
     ):
-        if separators is None:
-            separators = [
-                "\n# ",  # H1 headers (top-level sections)
-                "\n## ",  # H2 headers (major sections)
-                "\n### ",  # H3 headers (subsections)
-                "\n#### ",  # H4 headers (sub-subsections)
-                "\n\n",  # Paragraph breaks
-                "\n```",  # Code block boundaries
-                "\n",  # Line breaks
-                ". ",  # Sentence endings
-                "! ",  # Exclamation endings
-                "? ",  # Question endings
-                "; ",  # Semicolon breaks
-                ", ",  # Comma breaks
-                " ",  # Word breaks
-                "",  # Character level
-            ]
-        super().__init__(chunk_size, chunk_overlap, separators, keep_separator)
+        super().__init__(
+            chunk_size,
+            chunk_overlap,
+            separators if separators is not None else SEPARATORS_MDX,
+            keep_separator,
+        )
 
     def chunk(self, text: str) -> list[str]:
         # \n 前缀的分隔符无法匹配文档首行标题，预置 \n 使其可被正常识别
