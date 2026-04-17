@@ -5,7 +5,7 @@ from magika import Magika
 _magika_instance = None
 
 
-def get_magika():
+def get_magika() -> Magika:
     global _magika_instance
     if _magika_instance is None:
         _magika_instance = Magika()
