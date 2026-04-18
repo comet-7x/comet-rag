@@ -34,7 +34,7 @@ class SourceContent:
         try:
             p = Path(self.source)
             return p.exists()
-        except (PermissionError, OSError, FileNotFoundError):
+        except OSError:
             return False
 
     @cached_property
