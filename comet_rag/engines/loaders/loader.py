@@ -66,6 +66,8 @@ class Loader:
                 content=config.content,
                 data=config.data,
                 params=config.params,
+                timeout=config.timeout,
+                follow_redirects=config.follow_redirects,
             )
             response.raise_for_status()
             return response.content
@@ -112,6 +114,8 @@ class Loader:
                 content=config.content,
                 data=config.data,
                 params=config.params,
+                timeout=config.timeout,
+                follow_redirects=config.follow_redirects,
             )
             response.raise_for_status()
             return response.content
