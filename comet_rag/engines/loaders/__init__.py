@@ -1,4 +1,3 @@
-from .base_loader import BaseLoader, LoaderResult
 from .data_type import (
     AllowExt,
     BaseFileFormat,
@@ -14,6 +13,7 @@ from .data_type import (
     StructuredFormat,
     TabularFormat,
 )
+from .loader import Loader, LoaderResult
 from .source_content import SourceContent, SourceType
 
 __all__ = [
@@ -33,5 +33,5 @@ __all__ = [
     "SourceContent",
     "SourceType",
     "LoaderResult",
-    "BaseLoader",
+    "Loader",
 ]
