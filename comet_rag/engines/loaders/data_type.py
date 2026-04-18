@@ -157,6 +157,10 @@ _EXTENSIONS_BY_STRUCTURE = {
         AllowExt.C,
         AllowExt.CPP,
         AllowExt.GO,
+        AllowExt.PHP,
+        AllowExt.R,
+        AllowExt.RUST,
+        AllowExt.HTML,
     ),
 }
 
