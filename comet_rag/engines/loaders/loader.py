@@ -32,10 +32,19 @@ class LoaderResult(BaseModel):
     source_id: str = Field(..., description="Unique identifier")
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    def cleanup(self) -> None:
+        if self.metadata.get("is_temp") and self.content:
+            Path(self.content).unlink(missing_ok=True)
+
 
 class Loader:
     def __init__(self, download_dir: str | Path | None = None) -> None:
         self.download_dir = Path(download_dir) if download_dir else None
+        self._temp_files: list[str] = []
+
+    @property
+    def temp_files(self) -> list[str]:
+        return self._temp_files.copy()
 
     def _download_from_url(self, url: str, config: DownloadRequestConfig) -> str:
         headers = config.headers or {
@@ -59,6 +68,7 @@ class Loader:
                 suffix=f".{label}", delete=False, dir=self.download_dir
             ) as tmp:
                 tmp.write(response.content)
+                self._temp_files.append(tmp.name)
                 return tmp.name
         except Exception as e:
             raise ValueError(f"Download failed from {url}: {e!s}") from e
@@ -91,6 +101,7 @@ class Loader:
                 suffix=f".{label}", delete=False, dir=self.download_dir
             ) as tmp:
                 tmp.write(content)
+                self._temp_files.append(tmp.name)
                 return tmp.name
         except Exception as e:
             raise ValueError(f"Async download failed from {url}: {e!s}") from e
@@ -242,3 +253,20 @@ class Loader:
                 )
 
         return await asyncio.gather(*[_load_with_limit(s) for s in sources])
+
+    def cleanup(self) -> None:
+        for path in self._temp_files:
+            Path(path).unlink(missing_ok=True)
+        self._temp_files.clear()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.cleanup()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        self.cleanup()
