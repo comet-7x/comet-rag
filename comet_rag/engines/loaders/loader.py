@@ -199,11 +199,15 @@ class Loader:
             )
             file_path = None
 
+        loop = asyncio.get_running_loop()
+        metadata = await loop.run_in_executor(
+            None, self._build_metadata, file_path, source_type
+        )
         return LoaderResult(
             content=file_path,
             source=source.source,
             source_id=source.source_id,
-            metadata=self._build_metadata(file_path, source_type),
+            metadata=metadata,
         )
 
     def batch_load(
