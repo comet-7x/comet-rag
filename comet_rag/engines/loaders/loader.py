@@ -164,7 +164,11 @@ class Loader:
             metadata["file_name"] = p.name
             metadata["file_type"] = p.suffix.lstrip(".")
             metadata["file_size"] = p.stat().st_size
-            metadata["parse_config"] = ParseConfig.from_extension(metadata["file_type"])
+            try:
+                metadata["parse_config"] = ParseConfig.from_extension(metadata["file_type"])
+            except ValueError:
+                logger.warning(f"No parse config found for {metadata['file_type']}")
+                metadata["parse_config"] = None
         return metadata
 
     def load(
