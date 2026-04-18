@@ -4,11 +4,12 @@ import logging
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from comet_rag.engines.loaders.data_type import ParseConfig
+from comet_rag.engines.loaders.data_type import AllowExt, ParseConfig
 from comet_rag.engines.loaders.source_content import SourceContent, SourceType
 from comet_rag.engines.utils.file_detector import detect_content_type_from_stream
 
@@ -63,7 +64,12 @@ class Loader:
                 follow_redirects=config.follow_redirects,
             )
             response.raise_for_status()
-            label = detect_content_type_from_stream(io.BytesIO(response.content))
+            url_ext = Path(urlparse(url).path).suffix.lstrip(".")
+            label = (
+                url_ext
+                if url_ext in AllowExt._value2member_map_
+                else detect_content_type_from_stream(io.BytesIO(response.content))
+            )
             with tempfile.NamedTemporaryFile(
                 suffix=f".{label}", delete=False, dir=self.download_dir
             ) as tmp:
@@ -93,10 +99,14 @@ class Loader:
                 response.raise_for_status()
 
             content = response.content
-            loop = asyncio.get_running_loop()
-            label = await loop.run_in_executor(
-                None, lambda: detect_content_type_from_stream(io.BytesIO(content))
-            )
+            url_ext = Path(urlparse(url).path).suffix.lstrip(".")
+            if url_ext in AllowExt._value2member_map_:
+                label = url_ext
+            else:
+                loop = asyncio.get_running_loop()
+                label = await loop.run_in_executor(
+                    None, lambda: detect_content_type_from_stream(io.BytesIO(content))
+                )
             with tempfile.NamedTemporaryFile(
                 suffix=f".{label}", delete=False, dir=self.download_dir
             ) as tmp:
