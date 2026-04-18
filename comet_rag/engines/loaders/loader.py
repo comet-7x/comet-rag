@@ -28,14 +28,14 @@ class DownloadRequestConfig(BaseModel):
 
 
 class LoaderResult(BaseModel):
-    content: str | None = Field(..., description="Local file path")
+    local_path: str | None = Field(..., description="Local file path")
     source: str = Field(..., description="Original source (URL or local path)")
     source_id: str = Field(..., description="Unique identifier")
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def cleanup(self) -> None:
-        if self.metadata.get("is_temp") and self.content:
-            Path(self.content).unlink(missing_ok=True)
+        if self.metadata.get("is_temp") and self.local_path:
+            Path(self.local_path).unlink(missing_ok=True)
 
 
 class Loader:
@@ -199,7 +199,7 @@ class Loader:
             file_path = None
 
         return LoaderResult(
-            content=file_path,
+            local_path=file_path,
             source=source.source,
             source_id=source.source_id,
             metadata=self._build_metadata(file_path, source_type),
@@ -241,7 +241,7 @@ class Loader:
             None, self._build_metadata, file_path, source_type
         )
         return LoaderResult(
-            content=file_path,
+            local_path=file_path,
             source=source.source,
             source_id=source.source_id,
             metadata=metadata,
