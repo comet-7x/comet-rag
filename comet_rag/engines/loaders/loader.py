@@ -6,13 +6,24 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from comet_rag.engines.loaders.data_type import ParseConfig
 from comet_rag.engines.loaders.source_content import SourceContent, SourceType
 from comet_rag.engines.utils.file_detector import detect_content_type_from_stream
 
 logger = logging.getLogger(__name__)
+
+
+class DownloadRequestConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    headers: dict[str, str] | None = None
+    content: bytes | None = None
+    data: dict[str, Any] | None = None
+    params: dict[str, str] | None = None
+    timeout: int = 30
+    follow_redirects: bool = True
 
 
 class LoaderResult(BaseModel):
@@ -26,23 +37,21 @@ class Loader:
     def __init__(self, download_dir: str | Path | None = None) -> None:
         self.download_dir = Path(download_dir) if download_dir else None
 
-    def _download_from_url(self, url: str, kwargs: dict[str, Any]) -> str:
-        headers = kwargs.get(
-            "headers",
-            {"User-Agent": f"Mozilla/5.0 (compatible; comet-rag {__class__.__name__})"},
-        )
-        data = kwargs.get("data")
-        params = kwargs.get("params")
+    def _download_from_url(self, url: str, config: DownloadRequestConfig) -> str:
+        headers = config.headers or {
+            "User-Agent": f"Mozilla/5.0 (compatible; comet-rag {type(self).__name__})"
+        }
         try:
-            method = "POST" if data else "GET"
+            method = "POST" if (config.content or config.data) else "GET"
             response = httpx.request(
                 method,
                 url,
                 headers=headers,
-                data=data,
-                params=params,
-                timeout=30,
-                follow_redirects=True,
+                content=config.content,
+                data=config.data,
+                params=config.params,
+                timeout=config.timeout,
+                follow_redirects=config.follow_redirects,
             )
             response.raise_for_status()
             label = detect_content_type_from_stream(io.BytesIO(response.content))
@@ -54,16 +63,23 @@ class Loader:
         except Exception as e:
             raise ValueError(f"Download failed from {url}: {e!s}") from e
 
-    async def _adownload_from_url(self, url: str, kwargs: dict[str, Any]) -> str:
-        headers = kwargs.get(
-            "headers",
-            {"User-Agent": f"Mozilla/5.0 (compatible; comet-rag {__class__.__name__})"},
-        )
-        data = kwargs.get("data")
+    async def _adownload_from_url(self, url: str, config: DownloadRequestConfig) -> str:
+        headers = config.headers or {
+            "User-Agent": f"Mozilla/5.0 (compatible; comet-rag {type(self).__name__})"
+        }
         try:
-            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-                method = "POST" if data else "GET"
-                response = await client.request(method, url, headers=headers, data=data)
+            async with httpx.AsyncClient(
+                timeout=config.timeout, follow_redirects=config.follow_redirects
+            ) as client:
+                method = "POST" if (config.content or config.data) else "GET"
+                response = await client.request(
+                    method,
+                    url,
+                    headers=headers,
+                    content=config.content,
+                    data=config.data,
+                    params=config.params,
+                )
                 response.raise_for_status()
 
             content = response.content
@@ -83,9 +99,10 @@ class Loader:
     def _build_metadata(
         file_path: str | None, source_type: SourceType
     ) -> dict[str, Any]:
-        metadata = {}
-        metadata["source_type"] = source_type
-        metadata["is_temp"] = source_type != SourceType.LOCAL
+        metadata: dict[str, Any] = {
+            "source_type": source_type,
+            "is_temp": source_type != SourceType.LOCAL,
+        }
         if file_path:
             p = Path(file_path)
             metadata["file_name"] = p.name
@@ -94,15 +111,33 @@ class Loader:
             metadata["parse_config"] = ParseConfig.from_extension(metadata["file_type"])
         return metadata
 
-    def load(self, source: SourceContent, **kwargs) -> LoaderResult:
+    def load(
+        self,
+        source: SourceContent,
+        *,
+        headers: dict[str, str] | None = None,
+        content: bytes | None = None,
+        data: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
+        timeout: int = 30,
+        follow_redirects: bool = True,
+    ) -> LoaderResult:
         source_type = source.pre_source_type
         if source_type == SourceType.URL:
-            file_path = self._download_from_url(source.source, kwargs)
+            config = DownloadRequestConfig(
+                headers=headers,
+                content=content,
+                data=data,
+                params=params,
+                timeout=timeout,
+                follow_redirects=follow_redirects,
+            )
+            file_path = self._download_from_url(source.source, config)
         elif source_type == SourceType.LOCAL:
             file_path = source.source
         else:
-            logging.warning(
-                f"The source is unsupported or cannot be accessed: {source.source!r}"
+            logger.warning(
+                "The source is unsupported or cannot be accessed: %r", source.source
             )
             file_path = None
 
@@ -113,15 +148,33 @@ class Loader:
             metadata=self._build_metadata(file_path, source_type),
         )
 
-    async def aload(self, source: SourceContent, **kwargs) -> LoaderResult:
+    async def aload(
+        self,
+        source: SourceContent,
+        *,
+        headers: dict[str, str] | None = None,
+        content: bytes | None = None,
+        data: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
+        timeout: int = 30,
+        follow_redirects: bool = True,
+    ) -> LoaderResult:
         source_type = source.pre_source_type
         if source_type == SourceType.URL:
-            file_path = await self._adownload_from_url(source.source, kwargs)
+            config = DownloadRequestConfig(
+                headers=headers,
+                content=content,
+                data=data,
+                params=params,
+                timeout=timeout,
+                follow_redirects=follow_redirects,
+            )
+            file_path = await self._adownload_from_url(source.source, config)
         elif source_type == SourceType.LOCAL:
             file_path = source.source
         else:
-            logging.warning(
-                f"The source is unsupported or cannot be accessed: {source.source!r}"
+            logger.warning(
+                "The source is unsupported or cannot be accessed: %r", source.source
             )
             file_path = None
 
@@ -133,21 +186,59 @@ class Loader:
         )
 
     def batch_load(
-        self, sources: list[SourceContent], *, max_concurrency: int = 10, **kwargs: Any
+        self,
+        sources: list[SourceContent],
+        *,
+        max_concurrency: int = 10,
+        headers: dict[str, str] | None = None,
+        content: bytes | None = None,
+        data: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
+        timeout: int = 30,
+        follow_redirects: bool = True,
     ) -> list[LoaderResult]:
         from concurrent.futures import ThreadPoolExecutor
 
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-            futures = [executor.submit(self.load, s, **kwargs) for s in sources]
+            futures = [
+                executor.submit(
+                    self.load,
+                    s,
+                    headers=headers,
+                    content=content,
+                    data=data,
+                    params=params,
+                    timeout=timeout,
+                    follow_redirects=follow_redirects,
+                )
+                for s in sources
+            ]
             return [future.result() for future in futures]
 
     async def abatch_load(
-        self, sources: list[SourceContent], *, max_concurrency: int = 10, **kwargs: Any
+        self,
+        sources: list[SourceContent],
+        *,
+        max_concurrency: int = 10,
+        headers: dict[str, str] | None = None,
+        content: bytes | None = None,
+        data: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
+        timeout: int = 30,
+        follow_redirects: bool = True,
     ) -> list[LoaderResult]:
         semaphore = asyncio.Semaphore(max_concurrency)
 
         async def _load_with_limit(source: SourceContent) -> LoaderResult:
             async with semaphore:
-                return await self.aload(source, **kwargs)
+                return await self.aload(
+                    source,
+                    headers=headers,
+                    content=content,
+                    data=data,
+                    params=params,
+                    timeout=timeout,
+                    follow_redirects=follow_redirects,
+                )
 
         return await asyncio.gather(*[_load_with_limit(s) for s in sources])
