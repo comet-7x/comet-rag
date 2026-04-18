@@ -17,12 +17,15 @@ class AllowExt(StrEnum):
     MD = "md"
     PPT = "ppt"
     PPTX = "pptx"
+
     CSV = "csv"
     XLSX = "xlsx"
     XLS = "xls"
+
     JSON = "json"
     YAML = "yaml"
     XML = "xml"
+
     PY = "py"
     TS = "ts"
     JS = "js"
@@ -30,6 +33,10 @@ class AllowExt(StrEnum):
     C = "c"
     CPP = "cpp"
     GO = "go"
+    PHP = "php"
+    R = "r"
+    RUST = "rust"
+    HTML = "html"
 
 
 class ContentStructure(StrEnum):
@@ -223,3 +230,7 @@ class ParseConfig(BaseModel):
     @classmethod
     def from_path(cls, path: str | Path) -> ParseConfig:
         return cls.from_format(BaseFileFormat.from_path(path))
+
+    @classmethod
+    def from_extension(cls, ext: str) -> ParseConfig:
+        return cls.from_format(BaseFileFormat.from_extension(ext))
