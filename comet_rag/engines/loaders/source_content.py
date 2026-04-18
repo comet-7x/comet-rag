@@ -34,15 +34,15 @@ class SourceContent:
         try:
             p = Path(self.source)
             return p.exists()
-        except (PermissionError, OSError):
+        except (PermissionError, OSError, FileNotFoundError):
             return False
 
     @cached_property
     def source_id(self) -> str:
-        source_type = self.source_type
-        if source_type == SourceType.URL:
+        pre_source_type = self.pre_source_type
+        if pre_source_type == SourceType.URL:
             source_to_hash = self.source
-        elif source_type == SourceType.LOCAL:
+        elif pre_source_type == SourceType.LOCAL:
             abs_path = os.path.abspath(self.source)
             source_to_hash = Path(abs_path).as_posix()
         else:
@@ -50,7 +50,7 @@ class SourceContent:
         return compute_sha256(source_to_hash)
 
     @cached_property
-    def source_type(self) -> SourceType:
+    def pre_source_type(self) -> SourceType:
         if self.is_url:
             return SourceType.URL
         if self.is_local:
