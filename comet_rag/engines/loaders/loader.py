@@ -100,19 +100,24 @@ class Loader:
 
             content = response.content
             url_ext = Path(urlparse(url).path).suffix.lstrip(".")
+            loop = asyncio.get_running_loop()
             if url_ext in AllowExt._value2member_map_:
                 label = url_ext
             else:
-                loop = asyncio.get_running_loop()
                 label = await loop.run_in_executor(
                     None, lambda: detect_content_type_from_stream(io.BytesIO(content))
                 )
-            with tempfile.NamedTemporaryFile(
-                suffix=f".{label}", delete=False, dir=self.download_dir
-            ) as tmp:
-                tmp.write(content)
-                self._temp_files.append(tmp.name)
-                return tmp.name
+
+            def _save_temp():
+                with tempfile.NamedTemporaryFile(
+                    suffix=f".{label}", delete=False, dir=self.download_dir
+                ) as tmp:
+                    tmp.write(content)
+                    return tmp.name
+
+            file_path = await loop.run_in_executor(None, _save_temp)
+            self._temp_files.append(file_path)
+            return file_path
         except Exception as e:
             raise ValueError(f"Async download failed from {url}: {e!s}") from e
 
