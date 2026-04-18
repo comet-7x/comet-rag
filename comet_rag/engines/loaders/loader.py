@@ -47,58 +47,84 @@ class Loader:
     def temp_files(self) -> list[str]:
         return self._temp_files.copy()
 
-    def _download_from_url(self, url: str, config: DownloadRequestConfig) -> str:
+    def _download_from_url(
+        self,
+        url: str,
+        config: DownloadRequestConfig,
+        client: httpx.Client | None = None,
+    ) -> str:
         headers = config.headers or {
             "User-Agent": f"Mozilla/5.0 (compatible; comet-rag {type(self).__name__})"
         }
-        try:
+
+        def _do_request(c: httpx.Client) -> bytes:
             method = "POST" if (config.content or config.data) else "GET"
-            response = httpx.request(
+            response = c.request(
                 method,
                 url,
                 headers=headers,
                 content=config.content,
                 data=config.data,
                 params=config.params,
-                timeout=config.timeout,
-                follow_redirects=config.follow_redirects,
             )
             response.raise_for_status()
+            return response.content
+
+        try:
+            if client is not None:
+                content = _do_request(client)
+            else:
+                with httpx.Client(
+                    timeout=config.timeout, follow_redirects=config.follow_redirects
+                ) as c:
+                    content = _do_request(c)
             url_ext = Path(urlparse(url).path).suffix.lstrip(".")
             label = (
                 url_ext
                 if url_ext in AllowExt._value2member_map_
-                else detect_content_type_from_stream(io.BytesIO(response.content))
+                else detect_content_type_from_stream(io.BytesIO(content))
             )
             with tempfile.NamedTemporaryFile(
                 suffix=f".{label}", delete=False, dir=self.download_dir
             ) as tmp:
-                tmp.write(response.content)
+                tmp.write(content)
                 self._temp_files.append(tmp.name)
                 return tmp.name
         except Exception as e:
             raise ValueError(f"Download failed from {url}: {e!s}") from e
 
-    async def _adownload_from_url(self, url: str, config: DownloadRequestConfig) -> str:
+    async def _adownload_from_url(
+        self,
+        url: str,
+        config: DownloadRequestConfig,
+        client: httpx.AsyncClient | None = None,
+    ) -> str:
         headers = config.headers or {
             "User-Agent": f"Mozilla/5.0 (compatible; comet-rag {type(self).__name__})"
         }
-        try:
-            async with httpx.AsyncClient(
-                timeout=config.timeout, follow_redirects=config.follow_redirects
-            ) as client:
-                method = "POST" if (config.content or config.data) else "GET"
-                response = await client.request(
-                    method,
-                    url,
-                    headers=headers,
-                    content=config.content,
-                    data=config.data,
-                    params=config.params,
-                )
-                response.raise_for_status()
 
-            content = response.content
+        async def _do_request(c: httpx.AsyncClient) -> bytes:
+            method = "POST" if (config.content or config.data) else "GET"
+            response = await c.request(
+                method,
+                url,
+                headers=headers,
+                content=config.content,
+                data=config.data,
+                params=config.params,
+            )
+            response.raise_for_status()
+            return response.content
+
+        try:
+            if client is not None:
+                content = await _do_request(client)
+            else:
+                async with httpx.AsyncClient(
+                    timeout=config.timeout, follow_redirects=config.follow_redirects
+                ) as c:
+                    content = await _do_request(c)
+
             url_ext = Path(urlparse(url).path).suffix.lstrip(".")
             loop = asyncio.get_running_loop()
             if url_ext in AllowExt._value2member_map_:
@@ -147,6 +173,7 @@ class Loader:
         params: dict[str, str] | None = None,
         timeout: int = 30,
         follow_redirects: bool = True,
+        client: httpx.Client | None = None,
     ) -> LoaderResult:
         source_type = source.pre_source_type
         if source_type == SourceType.URL:
@@ -158,7 +185,7 @@ class Loader:
                 timeout=timeout,
                 follow_redirects=follow_redirects,
             )
-            file_path = self._download_from_url(source.source, config)
+            file_path = self._download_from_url(source.source, config, client)
         elif source_type == SourceType.LOCAL:
             file_path = source.source
         else:
@@ -184,6 +211,7 @@ class Loader:
         params: dict[str, str] | None = None,
         timeout: int = 30,
         follow_redirects: bool = True,
+        client: httpx.AsyncClient | None = None,
     ) -> LoaderResult:
         source_type = source.pre_source_type
         if source_type == SourceType.URL:
@@ -195,7 +223,7 @@ class Loader:
                 timeout=timeout,
                 follow_redirects=follow_redirects,
             )
-            file_path = await self._adownload_from_url(source.source, config)
+            file_path = await self._adownload_from_url(source.source, config, client)
         elif source_type == SourceType.LOCAL:
             file_path = source.source
         else:
@@ -229,7 +257,10 @@ class Loader:
     ) -> list[LoaderResult]:
         from concurrent.futures import ThreadPoolExecutor
 
-        with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+        with (
+            httpx.Client(timeout=timeout, follow_redirects=follow_redirects) as client,
+            ThreadPoolExecutor(max_workers=max_concurrency) as executor,
+        ):
             futures = [
                 executor.submit(
                     self.load,
@@ -240,6 +271,7 @@ class Loader:
                     params=params,
                     timeout=timeout,
                     follow_redirects=follow_redirects,
+                    client=client,
                 )
                 for s in sources
             ]
@@ -259,19 +291,24 @@ class Loader:
     ) -> list[LoaderResult]:
         semaphore = asyncio.Semaphore(max_concurrency)
 
-        async def _load_with_limit(source: SourceContent) -> LoaderResult:
-            async with semaphore:
-                return await self.aload(
-                    source,
-                    headers=headers,
-                    content=content,
-                    data=data,
-                    params=params,
-                    timeout=timeout,
-                    follow_redirects=follow_redirects,
-                )
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=follow_redirects
+        ) as client:
 
-        return await asyncio.gather(*[_load_with_limit(s) for s in sources])
+            async def _load_with_limit(source: SourceContent) -> LoaderResult:
+                async with semaphore:
+                    return await self.aload(
+                        source,
+                        headers=headers,
+                        content=content,
+                        data=data,
+                        params=params,
+                        timeout=timeout,
+                        follow_redirects=follow_redirects,
+                        client=client,
+                    )
+
+            return await asyncio.gather(*[_load_with_limit(s) for s in sources])
 
     def cleanup(self) -> None:
         for path in self._temp_files:
