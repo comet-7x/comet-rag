@@ -80,7 +80,7 @@ class Loader:
                     timeout=config.timeout, follow_redirects=config.follow_redirects
                 ) as c:
                     content = _do_request(c)
-            url_ext = Path(urlparse(url).path).suffix.lstrip(".")
+            url_ext = Path(urlparse(url).path).suffix.lstrip(".").lower()
             label = (
                 url_ext
                 if url_ext in AllowExt._value2member_map_
@@ -129,7 +129,7 @@ class Loader:
                 ) as c:
                     content = await _do_request(c)
 
-            url_ext = Path(urlparse(url).path).suffix.lstrip(".")
+            url_ext = Path(urlparse(url).path).suffix.lstrip(".").lower()
             loop = asyncio.get_running_loop()
             if url_ext in AllowExt._value2member_map_:
                 label = url_ext
