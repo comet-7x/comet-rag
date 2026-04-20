@@ -44,11 +44,12 @@ class AutoLoader(BaseLoader):
         *,
         download_config: DownloadRequestConfig | None = None,
         client: httpx.Client | None = None,
+        **kwargs,
     ) -> LoaderResult:
         if isinstance(source, str):
             source = SourceContent(source)
         return self._resolve(source).load(
-            source, download_config=download_config, client=client
+            source, download_config=download_config, client=client, **kwargs
         )
 
     async def aload(
@@ -57,11 +58,12 @@ class AutoLoader(BaseLoader):
         *,
         download_config: DownloadRequestConfig | None = None,
         client: httpx.AsyncClient | None = None,
+        **kwargs,
     ) -> LoaderResult:
         if isinstance(source, str):
             source = SourceContent(source)
         return await self._resolve(source).aload(
-            source, download_config=download_config, client=client
+            source, download_config=download_config, client=client, **kwargs
         )
 
     def cleanup(self) -> None:
