@@ -1,3 +1,5 @@
+from .auto_loader import AutoLoader
+from .base_loader import BaseLoader, LoaderResult
 from .data_type import (
     AllowExt,
     BaseFileFormat,
@@ -13,8 +15,11 @@ from .data_type import (
     StructuredFormat,
     TabularFormat,
 )
-from .loader import Loader, LoaderResult
+from .local_loader import LocalLoader
 from .source_content import SourceContent, SourceType
+from .url_loader import DownloadRequestConfig, URLLoader
+
+Loader = AutoLoader
 
 __all__ = [
     "AllowExt",
@@ -32,6 +37,11 @@ __all__ = [
     "ParseConfig",
     "SourceContent",
     "SourceType",
+    "DownloadRequestConfig",
     "LoaderResult",
+    "BaseLoader",
+    "LocalLoader",
+    "URLLoader",
+    "AutoLoader",
     "Loader",
 ]
