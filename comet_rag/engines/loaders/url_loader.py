@@ -172,9 +172,9 @@ class URLLoader(BaseLoader):
     def batch_load(
         self,
         sources: list[SourceContent] | list[str],
-        *,
         download_config: DownloadRequestConfig | None = None,
         max_concurrency: int = 10,
+        **kwargs,
     ) -> list[LoaderResult]:
         from concurrent.futures import ThreadPoolExecutor
 
@@ -186,7 +186,9 @@ class URLLoader(BaseLoader):
             ThreadPoolExecutor(max_workers=max_concurrency) as executor,
         ):
             futures = [
-                executor.submit(self.load, s, download_config=config, client=client)
+                executor.submit(
+                    self.load, s, download_config=config, client=client, **kwargs
+                )
                 for s in sources
             ]
             return [f.result() for f in futures]
@@ -194,9 +196,9 @@ class URLLoader(BaseLoader):
     async def abatch_load(
         self,
         sources: list[SourceContent] | list[str],
-        *,
         download_config: DownloadRequestConfig | None = None,
         max_concurrency: int = 10,
+        **kwargs,
     ) -> list[LoaderResult]:
         config = download_config or DownloadRequestConfig()
         semaphore = asyncio.Semaphore(max_concurrency)
@@ -207,7 +209,7 @@ class URLLoader(BaseLoader):
             async def _load(source: SourceContent | str) -> LoaderResult:
                 async with semaphore:
                     return await self.aload(
-                        source, download_config=config, client=client
+                        source, download_config=config, client=client, **kwargs
                     )
 
             return list(await asyncio.gather(*[_load(s) for s in sources]))

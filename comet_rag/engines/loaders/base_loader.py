@@ -39,24 +39,24 @@ class BaseLoader(ABC):
     def batch_load(
         self,
         sources: list[SourceContent] | list[str],
-        *,
-        max_concurrency: int = 10,
+        **kwargs,
     ) -> list[LoaderResult]:
+        max_concurrency = kwargs.pop("max_concurrency", 10)
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-            futures = [executor.submit(self.load, s) for s in sources]
+            futures = [executor.submit(self.load, s, **kwargs) for s in sources]
             return [f.result() for f in futures]
 
     async def abatch_load(
         self,
         sources: list[SourceContent] | list[str],
-        *,
-        max_concurrency: int = 10,
+        **kwargs,
     ) -> list[LoaderResult]:
+        max_concurrency = kwargs.pop("max_concurrency", 10)
         semaphore = asyncio.Semaphore(max_concurrency)
 
         async def _load(source: SourceContent | str) -> LoaderResult:
             async with semaphore:
-                return await self.aload(source)
+                return await self.aload(source, **kwargs)
 
         return list(await asyncio.gather(*[_load(s) for s in sources]))
 
