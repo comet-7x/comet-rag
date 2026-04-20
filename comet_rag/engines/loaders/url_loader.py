@@ -212,7 +212,7 @@ class URLLoader(BaseLoader):
                         source, download_config=config, client=client, **kwargs
                     )
 
-            return list(await asyncio.gather(*[_load(s) for s in sources]))
+            return await asyncio.gather(*[_load(s) for s in sources])
 
     def cleanup(self) -> None:
         for path in self._temp_files:
