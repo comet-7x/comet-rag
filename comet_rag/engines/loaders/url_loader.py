@@ -98,8 +98,8 @@ class URLLoader(BaseLoader):
         with tempfile.NamedTemporaryFile(
             suffix=f".{label}", delete=False, dir=self.download_dir
         ) as tmp:
-            tmp.write(raw)
             self._temp_files.append(tmp.name)
+            tmp.write(raw)
             return tmp.name
 
     async def _adownload(
