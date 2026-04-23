@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,7 @@ class LocalLoader(BaseLoader):
         )
 
     async def aload(self, source: SourceContent | str, **_) -> LoaderResult:
-        return self.load(source)
+        return await asyncio.to_thread(self.load, source)
 
     def cleanup(self) -> None:
         pass

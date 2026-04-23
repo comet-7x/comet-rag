@@ -198,7 +198,9 @@ class URLLoader(BaseLoader):
         metadata = await loop.run_in_executor(
             None, self._build_metadata, file_path, source
         )
-        return LoaderResult(path=Path(file_path), source=source, is_temp=True, metadata=metadata)
+        return LoaderResult(
+            path=Path(file_path), source=source, is_temp=True, metadata=metadata
+        )
 
     def batch_load(
         self,
