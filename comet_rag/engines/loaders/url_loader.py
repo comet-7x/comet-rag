@@ -9,7 +9,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from comet_rag.engines.loaders.base_loader import BaseLoader, LoaderResult
-from comet_rag.engines.loaders.data_type import AllowExt
+from comet_rag.engines.loaders.data_type import AllowExt, ParseConfig
 from comet_rag.engines.loaders.source_content import SourceContent, SourceType
 from comet_rag.engines.utils.file_detector import detect_content_type_from_stream
 
@@ -33,6 +33,22 @@ class URLLoader(BaseLoader):
     @property
     def temp_files(self) -> list[str]:
         return self._temp_files.copy()
+
+    def _build_metadata(self, file_path: str, source: SourceContent) -> dict[str, Any]:
+        path = Path(file_path)
+        file_type = path.suffix.lstrip(".").lower()
+        metadata = {
+            "source_type": source.pre_source_type,
+            "file_name": path.name,
+            "file_type": file_type,
+            "file_size": path.stat().st_size,
+        }
+        try:
+            metadata["parse_config"] = ParseConfig.from_extension(file_type)
+        except ValueError:
+            metadata["parse_config"] = None
+
+        return metadata
 
     def _download(
         self,
@@ -67,21 +83,24 @@ class URLLoader(BaseLoader):
                     timeout=config.timeout, follow_redirects=config.follow_redirects
                 ) as c:
                     raw = _do_request(c)
-
-            url_ext = Path(urlparse(url).path).suffix.lstrip(".").lower()
-            label = (
-                url_ext
-                if url_ext in AllowExt._value2member_map_
-                else detect_content_type_from_stream(io.BytesIO(raw))
-            )
-            with tempfile.NamedTemporaryFile(
-                suffix=f".{label}", delete=False, dir=self.download_dir
-            ) as tmp:
-                tmp.write(raw)
-                self._temp_files.append(tmp.name)
-                return tmp.name
         except Exception as e:
             raise ValueError(f"Download failed from {url}: {e!s}") from e
+
+        if not raw:
+            raise ValueError(f"Downloaded empty content from {url}")
+
+        url_ext = Path(urlparse(url).path).suffix.lstrip(".").lower()
+        label = (
+            url_ext
+            if url_ext in AllowExt._value2member_map_
+            else detect_content_type_from_stream(io.BytesIO(raw))
+        )
+        with tempfile.NamedTemporaryFile(
+            suffix=f".{label}", delete=False, dir=self.download_dir
+        ) as tmp:
+            tmp.write(raw)
+            self._temp_files.append(tmp.name)
+            return tmp.name
 
     async def _adownload(
         self,
@@ -116,28 +135,31 @@ class URLLoader(BaseLoader):
                     timeout=config.timeout, follow_redirects=config.follow_redirects
                 ) as c:
                     raw = await _do_request(c)
-
-            url_ext = Path(urlparse(url).path).suffix.lstrip(".").lower()
-            loop = asyncio.get_running_loop()
-            if url_ext in AllowExt._value2member_map_:
-                label = url_ext
-            else:
-                label = await loop.run_in_executor(
-                    None, lambda: detect_content_type_from_stream(io.BytesIO(raw))
-                )
-
-            def _save() -> str:
-                with tempfile.NamedTemporaryFile(
-                    suffix=f".{label}", delete=False, dir=self.download_dir
-                ) as tmp:
-                    tmp.write(raw)
-                    return tmp.name
-
-            file_path = await loop.run_in_executor(None, _save)
-            self._temp_files.append(file_path)
-            return file_path
         except Exception as e:
             raise ValueError(f"Async download failed from {url}: {e!s}") from e
+
+        if not raw:
+            raise ValueError(f"Downloaded empty content from {url}")
+
+        url_ext = Path(urlparse(url).path).suffix.lstrip(".").lower()
+        loop = asyncio.get_running_loop()
+        if url_ext in AllowExt._value2member_map_:
+            label = url_ext
+        else:
+            label = await loop.run_in_executor(
+                None, lambda: detect_content_type_from_stream(io.BytesIO(raw))
+            )
+
+        def _save() -> str:
+            with tempfile.NamedTemporaryFile(
+                suffix=f".{label}", delete=False, dir=self.download_dir
+            ) as tmp:
+                tmp.write(raw)
+                return tmp.name
+
+        file_path = await loop.run_in_executor(None, _save)
+        self._temp_files.append(file_path)
+        return file_path
 
     def load(
         self,
@@ -152,7 +174,12 @@ class URLLoader(BaseLoader):
             raise ValueError(f"URLLoader only handles URLs, got: {source.source!r}")
         config = download_config or DownloadRequestConfig()
         file_path = self._download(source.source, config, client)
-        return LoaderResult(path=Path(file_path), source=source, is_temp=True)
+        return LoaderResult(
+            path=Path(file_path),
+            source=source,
+            is_temp=True,
+            metadata=self._build_metadata(file_path, source),
+        )
 
     async def aload(
         self,
