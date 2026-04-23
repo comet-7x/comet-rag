@@ -194,7 +194,11 @@ class URLLoader(BaseLoader):
             raise ValueError(f"URLLoader only handles URLs, got: {source.source!r}")
         config = download_config or DownloadRequestConfig()
         file_path = await self._adownload(source.source, config, client)
-        return LoaderResult(path=Path(file_path), source=source, is_temp=True)
+        loop = asyncio.get_running_loop()
+        metadata = await loop.run_in_executor(
+            None, self._build_metadata, file_path, source
+        )
+        return LoaderResult(path=Path(file_path), source=source, is_temp=True, metadata=metadata)
 
     def batch_load(
         self,
