@@ -58,7 +58,7 @@ class BaseLoader(ABC):
             async with semaphore:
                 return await self.aload(source, **kwargs)
 
-        return list(await asyncio.gather(*[_load(s) for s in sources]))
+        return await asyncio.gather(*[_load(s) for s in sources])
 
     def __enter__(self):
         return self
