@@ -154,12 +154,11 @@ class URLLoader(BaseLoader):
             with tempfile.NamedTemporaryFile(
                 suffix=f".{label}", delete=False, dir=self.download_dir
             ) as tmp:
+                self._temp_files.append(tmp.name)
                 tmp.write(raw)
                 return tmp.name
 
-        file_path = await loop.run_in_executor(None, _save)
-        self._temp_files.append(file_path)
-        return file_path
+        return await loop.run_in_executor(None, _save)
 
     def load(
         self,
