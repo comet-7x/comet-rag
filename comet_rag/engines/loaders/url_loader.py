@@ -166,6 +166,7 @@ class URLLoader(BaseLoader):
         *,
         download_config: DownloadRequestConfig | None = None,
         client: httpx.Client | None = None,
+        **kwargs,
     ) -> LoaderResult:
         if isinstance(source, str):
             source = SourceContent(source)
@@ -186,6 +187,7 @@ class URLLoader(BaseLoader):
         *,
         download_config: DownloadRequestConfig | None = None,
         client: httpx.AsyncClient | None = None,
+        **kwargs,
     ) -> LoaderResult:
         if isinstance(source, str):
             source = SourceContent(source)
