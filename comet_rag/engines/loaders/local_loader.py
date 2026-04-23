@@ -43,8 +43,8 @@ class LocalLoader(BaseLoader):
             metadata=self._build_metadata(source),
         )
 
-    async def aload(self, source: SourceContent | str, **_) -> LoaderResult:
-        return await asyncio.to_thread(self.load, source)
+    async def aload(self, source: SourceContent | str, **kwargs) -> LoaderResult:
+        return await asyncio.to_thread(self.load, source, **kwargs)
 
     def cleanup(self) -> None:
         pass
