@@ -13,13 +13,11 @@ class BaseConverter:
         return ByteDocument(elements=data, metadata=self.result.metadata)
 
     async def ato_bytes(self) -> ByteDocument:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self.to_bytes)
+        return await asyncio.to_thread(self.to_bytes)
 
     def to_text(self) -> BaseDocument[str]:
         text = self.result.path.read_text()
         return BaseDocument[str](elements=text, metadata=self.result.metadata)
 
     async def ato_text(self) -> BaseDocument[str]:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self.to_text)
+        return await asyncio.to_thread(self.to_text)

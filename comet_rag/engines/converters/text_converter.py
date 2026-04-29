@@ -16,5 +16,4 @@ class DocxConverter(BaseConverter):
         return DocxDocument(elements=docx, metadata=self.result.metadata)
 
     async def ato_docx(self) -> DocxDocument:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self.to_docx)
+        return await asyncio.to_thread(self.to_docx)
