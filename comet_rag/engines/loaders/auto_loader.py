@@ -2,8 +2,8 @@ from pathlib import Path
 
 import httpx
 
-from comet_rag.engines.loaders.base_loader import BaseLoader, LoaderResult
-from comet_rag.engines.loaders.source_content import SourceContent, SourceType
+from comet_rag.engines.loaders.base_loader import BaseLoader, LoaderContent
+from comet_rag.engines.loaders.types import SourceContent, SourceType
 from comet_rag.engines.loaders.url_loader import DownloadRequestConfig
 
 
@@ -45,7 +45,7 @@ class AutoLoader(BaseLoader):
         download_config: DownloadRequestConfig | None = None,
         client: httpx.Client | None = None,
         **kwargs,
-    ) -> LoaderResult:
+    ) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
         return self._resolve(source).load(
@@ -59,7 +59,7 @@ class AutoLoader(BaseLoader):
         download_config: DownloadRequestConfig | None = None,
         client: httpx.AsyncClient | None = None,
         **kwargs,
-    ) -> LoaderResult:
+    ) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
         return await self._resolve(source).aload(

@@ -1,5 +1,5 @@
 from .auto_loader import AutoLoader
-from .base_loader import BaseLoader, LoaderResult
+from .base_loader import BaseLoader
 from .data_type import (
     AllowExt,
     BaseFileFormat,
@@ -16,7 +16,7 @@ from .data_type import (
     TabularFormat,
 )
 from .local_loader import LocalLoader
-from .source_content import SourceContent, SourceType
+from .types import LoaderContent, SourceContent, SourceType
 from .url_loader import DownloadRequestConfig, URLLoader
 
 Loader = AutoLoader
@@ -38,7 +38,7 @@ __all__ = [
     "SourceContent",
     "SourceType",
     "DownloadRequestConfig",
-    "LoaderResult",
+    "LoaderContent",
     "BaseLoader",
     "LocalLoader",
     "URLLoader",
