@@ -1,12 +1,10 @@
-from typing import Any, TypeVar, Generic
+from typing import Any
 
-from pydantic import BaseModel
 from docx.document import Document as DocumentObject
+from pydantic import BaseModel
 
-T = TypeVar("T")
 
-
-class BaseDocument(BaseModel, Generic[T]):
+class BaseDocument[T](BaseModel):
     model_config = {"arbitrary_types_allowed": True}
     elements: T
     metadata: dict[str, Any]
