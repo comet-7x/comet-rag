@@ -18,7 +18,7 @@ class BaseConverter:
 
     def to_text(self) -> BaseDocument[str]:
         text = self.result.path.read_text()
-        return BaseDocument(elements=text, metadata=self.result.metadata)
+        return BaseDocument[str](elements=text, metadata=self.result.metadata)
 
     async def ato_text(self) -> BaseDocument[str]:
         loop = asyncio.get_running_loop()
