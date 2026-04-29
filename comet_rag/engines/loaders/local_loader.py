@@ -2,9 +2,9 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from comet_rag.engines.loaders.base_loader import BaseLoader, LoaderResult
+from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.data_type import ParseConfig
-from comet_rag.engines.loaders.source_content import SourceContent, SourceType
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent, SourceType
 
 
 class LocalLoader(BaseLoader):
@@ -29,21 +29,21 @@ class LocalLoader(BaseLoader):
 
         return metadata
 
-    def load(self, source: SourceContent | str, **_) -> LoaderResult:
+    def load(self, source: SourceContent | str, **_) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
         if source.pre_source_type != SourceType.LOCAL:
             raise ValueError(
                 f"LocalLoader only handles local paths, got: {source.source!r}"
             )
-        return LoaderResult(
+        return LoaderContent(
             path=Path(source.source),
             source=source,
             is_temp=False,
             metadata=self._build_metadata(source),
         )
 
-    async def aload(self, source: SourceContent | str, **kwargs) -> LoaderResult:
+    async def aload(self, source: SourceContent | str, **kwargs) -> LoaderContent:
         return await asyncio.to_thread(self.load, source, **kwargs)
 
     def cleanup(self) -> None:

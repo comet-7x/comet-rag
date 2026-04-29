@@ -1,7 +1,9 @@
 import os
+from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cached_property
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from comet_rag.engines.utils import compute_sha256
@@ -56,3 +58,15 @@ class SourceContent:
         if self.is_local:
             return SourceType.LOCAL
         return SourceType.UNKNOWN
+
+
+@dataclass
+class LoaderContent:
+    path: Path
+    source: SourceContent
+    is_temp: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def cleanup(self) -> None:
+        if self.is_temp:
+            self.path.unlink(missing_ok=True)

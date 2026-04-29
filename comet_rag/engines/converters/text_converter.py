@@ -12,8 +12,8 @@ class TextConverter(BaseConverter):
 
 class DocxConverter(BaseConverter):
     def to_docx(self) -> DocxDocument:
-        docx = Document(str(self.result.path))
-        return DocxDocument(elements=docx, metadata=self.result.metadata)
+        docx = Document(str(self.loader_content.path))
+        return DocxDocument(elements=docx, metadata=self.loader_content.metadata)
 
     async def ato_docx(self) -> DocxDocument:
         return await asyncio.to_thread(self.to_docx)

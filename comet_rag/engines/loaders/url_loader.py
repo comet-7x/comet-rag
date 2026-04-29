@@ -8,9 +8,9 @@ from urllib.parse import urlparse
 import httpx
 from pydantic import BaseModel, ConfigDict
 
-from comet_rag.engines.loaders.base_loader import BaseLoader, LoaderResult
+from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.data_type import AllowExt, ParseConfig
-from comet_rag.engines.loaders.source_content import SourceContent, SourceType
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent, SourceType
 from comet_rag.engines.utils.file_detector import detect_content_type_from_stream
 
 
@@ -167,14 +167,14 @@ class URLLoader(BaseLoader):
         download_config: DownloadRequestConfig | None = None,
         client: httpx.Client | None = None,
         **kwargs,
-    ) -> LoaderResult:
+    ) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
         if source.pre_source_type != SourceType.URL:
             raise ValueError(f"URLLoader only handles URLs, got: {source.source!r}")
         config = download_config or DownloadRequestConfig()
         file_path = self._download(source.source, config, client)
-        return LoaderResult(
+        return LoaderContent(
             path=Path(file_path),
             source=source,
             is_temp=True,
@@ -188,7 +188,7 @@ class URLLoader(BaseLoader):
         download_config: DownloadRequestConfig | None = None,
         client: httpx.AsyncClient | None = None,
         **kwargs,
-    ) -> LoaderResult:
+    ) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
         if source.pre_source_type != SourceType.URL:
@@ -199,7 +199,7 @@ class URLLoader(BaseLoader):
         metadata = await loop.run_in_executor(
             None, self._build_metadata, file_path, source
         )
-        return LoaderResult(
+        return LoaderContent(
             path=Path(file_path), source=source, is_temp=True, metadata=metadata
         )
 
@@ -209,7 +209,7 @@ class URLLoader(BaseLoader):
         download_config: DownloadRequestConfig | None = None,
         max_concurrency: int = 10,
         **kwargs,
-    ) -> list[LoaderResult]:
+    ) -> list[LoaderContent]:
         from concurrent.futures import ThreadPoolExecutor
 
         config = download_config or DownloadRequestConfig()
@@ -233,14 +233,14 @@ class URLLoader(BaseLoader):
         download_config: DownloadRequestConfig | None = None,
         max_concurrency: int = 10,
         **kwargs,
-    ) -> list[LoaderResult]:
+    ) -> list[LoaderContent]:
         config = download_config or DownloadRequestConfig()
         semaphore = asyncio.Semaphore(max_concurrency)
         async with httpx.AsyncClient(
             timeout=config.timeout, follow_redirects=config.follow_redirects
         ) as client:
 
-            async def _load(source: SourceContent | str) -> LoaderResult:
+            async def _load(source: SourceContent | str) -> LoaderContent:
                 async with semaphore:
                     return await self.aload(
                         source, download_config=config, client=client, **kwargs
