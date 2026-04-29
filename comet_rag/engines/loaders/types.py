@@ -2,7 +2,10 @@ import os
 from enum import StrEnum
 from functools import cached_property
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from comet_rag.engines.utils import compute_sha256
 
@@ -56,3 +59,18 @@ class SourceContent:
         if self.is_local:
             return SourceType.LOCAL
         return SourceType.UNKNOWN
+
+
+class LoaderContent(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    path: Path = Field(..., description="Local file path (temp copy or original)")
+    source: SourceContent = Field(
+        ..., description="Original source — for traceability only"
+    )
+    is_temp: bool = Field(default=False, description="Whether path is a temp file")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def cleanup(self) -> None:
+        if self.is_temp:
+            self.path.unlink(missing_ok=True)
