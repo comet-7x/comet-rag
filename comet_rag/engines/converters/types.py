@@ -1,11 +1,11 @@
 from typing import Any
 
 from docx.document import Document as DocumentObject
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class BaseDocument[T](BaseModel):
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     elements: T
     metadata: dict[str, Any]
 
