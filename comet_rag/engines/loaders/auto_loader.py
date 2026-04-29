@@ -2,8 +2,8 @@ from pathlib import Path
 
 import httpx
 
-from comet_rag.engines.loaders.base_loader import BaseLoader, LoaderContent
-from comet_rag.engines.loaders.types import SourceContent, SourceType
+from comet_rag.engines.loaders.base_loader import BaseLoader
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent, SourceType
 from comet_rag.engines.loaders.url_loader import DownloadRequestConfig
 
 

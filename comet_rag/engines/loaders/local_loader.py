@@ -2,9 +2,9 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from comet_rag.engines.loaders.base_loader import BaseLoader, LoaderContent
+from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.data_type import ParseConfig
-from comet_rag.engines.loaders.types import SourceContent, SourceType
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent, SourceType
 
 
 class LocalLoader(BaseLoader):

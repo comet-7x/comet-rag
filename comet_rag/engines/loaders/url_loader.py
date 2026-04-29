@@ -8,9 +8,9 @@ from urllib.parse import urlparse
 import httpx
 from pydantic import BaseModel, ConfigDict
 
-from comet_rag.engines.loaders.base_loader import BaseLoader, LoaderContent
+from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.data_type import AllowExt, ParseConfig
-from comet_rag.engines.loaders.types import SourceContent, SourceType
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent, SourceType
 from comet_rag.engines.utils.file_detector import detect_content_type_from_stream
 
 
