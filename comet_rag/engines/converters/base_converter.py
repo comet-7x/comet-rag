@@ -1,12 +1,11 @@
 import asyncio
-from abc import ABC
 
 from comet_rag.engines.converters.types import BaseDocument, ByteDocument
-from comet_rag.engines.loaders.base_loader import LoaderResult
+from comet_rag.engines.loaders.base_loader import LoaderContent
 
 
-class BaseConverter(ABC):
-    def __init__(self, result: LoaderResult) -> None:
+class BaseConverter:
+    def __init__(self, result: LoaderContent) -> None:
         self.result = result
 
     def to_bytes(self) -> ByteDocument:
