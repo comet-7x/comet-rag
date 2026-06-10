@@ -116,7 +116,8 @@ def _replace_outside_eq(text: str, old: str, new: str) -> str:
 def _table_to_markdown(rows: list[list[str]]) -> str:
     if not rows:
         return ""
-    header, *body = rows
+    escaped_rows = [[cell.replace("|", "\\|") for cell in row] for row in rows]
+    header, *body = escaped_rows
     sep = ["---"] * len(header)
     lines = [
         "| " + " | ".join(header) + " |",
