@@ -6,6 +6,10 @@ from typing import Any
 class BaseParsedContent:
     metadata: dict[str, Any]
 
+    @property
+    def text(self) -> Any:
+        return ""
+
 
 Block = dict[str, Any]
 
