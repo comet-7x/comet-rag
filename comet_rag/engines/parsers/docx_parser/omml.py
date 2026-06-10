@@ -235,7 +235,9 @@ class Pr(Tag2Method):
 
     def __getattr__(self, name: str) -> str | None:
         if name.startswith("__") and name.endswith("__"):
-            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+            raise AttributeError(
+                f"'{self.__class__.__name__}' object has no attribute '{name}'"
+            )
         # Accessing self.__innerdict here resolves to self._Pr__innerdict via
         # Python name-mangling, which was set unconditionally in __init__.
         return self.__innerdict.get(name, None)
