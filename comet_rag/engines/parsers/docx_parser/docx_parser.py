@@ -40,9 +40,7 @@ from comet_rag.engines.converters.types import DocxDocument
 from comet_rag.engines.parsers.docx_parser.omml import oMath2Latex as _oMath2Latex
 from comet_rag.engines.parsers.types import Block, DocxParsedContent
 
-# ---------------------------------------------------------------------------
-# XML namespace constants
-# ---------------------------------------------------------------------------
+
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _A = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -98,7 +96,7 @@ def _apply_fmt_and_url(text: str, fmt: _Fmt, url: str | None) -> str:
 
     if url and url.strip() not in ("", "."):
         url_esc = url.replace("(", "%28").replace(")", "%29")
-        return f"[{inner}]({url_esc})"
+        return f"{prefix}[{inner}]({url_esc}){suffix}"
 
     return f"{prefix}{inner}{suffix}"
 
@@ -215,10 +213,6 @@ class DocxParser:
         self._pre_ilevel: int = -1
         self._list_stack: list[Block] = []
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def parse(self, document: DocxDocument) -> DocxParsedContent:
         self._doc = document.elements
         self._doc_part = self._doc.part
@@ -231,10 +225,6 @@ class DocxParser:
         self._add_headers_footers()
 
         return DocxParsedContent(blocks=self._blocks, metadata=document.metadata)
-
-    # ------------------------------------------------------------------
-    # Document walk
-    # ------------------------------------------------------------------
 
     def _walk(self, container: Any) -> None:
         for _, child in enumerate(container):
@@ -251,9 +241,6 @@ class DocxParser:
             elif tag in _TRANSPARENT_INLINE:
                 self._walk(child)
 
-    # ------------------------------------------------------------------
-    # Paragraph dispatch
-    # ------------------------------------------------------------------
 
     def _handle_paragraph(self, element: Any) -> None:  # noqa: C901 (complexity ok here)
         paragraph = Paragraph(element, self._doc)  # pyright: ignore[reportArgumentType]
@@ -271,7 +258,7 @@ class DocxParser:
         # Extract images that live inside this paragraph element
         image_blocks = self._extract_images(element)
 
-        # --- List item (non-heading) ---
+        # List item (non-heading)
         if numid is not None and ilevel is not None and h_level is None:
             if rich_text:
                 self._add_list_item(
@@ -283,7 +270,7 @@ class DocxParser:
         # All non-list branches close any active list first
         self._close_list()
 
-        # --- Heading ---
+        # Heading
         if h_level is not None:
             if rich_text:
                 self._blocks.append(
@@ -295,7 +282,7 @@ class DocxParser:
                     }
                 )
 
-        # --- Standalone equation ---
+        # Standalone equation
         elif equations and not plain_text.strip():
             eq_content = re.sub(
                 r"<eq>(.*?)</eq>", r"\1", text_with_eq or "", flags=re.DOTALL
@@ -305,12 +292,12 @@ class DocxParser:
                     {"type": "equation", "content": f"$${eq_content}$$"}
                 )
 
-        # --- Caption (SEQ-field based detection) ---
+        # Caption (SEQ-field based detection)
         elif self._is_caption(element):
             if rich_text:
                 self._blocks.append({"type": "caption", "content": rich_text})
 
-        # --- Body text ---
+        # Body text
         elif rich_text:
             self._blocks.append(
                 {"type": "text", "content": rich_text, "style": style_name}
