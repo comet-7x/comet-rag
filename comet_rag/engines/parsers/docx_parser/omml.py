@@ -61,10 +61,6 @@ from comet_rag.engines.parsers.docx_parser.latex_dict import (
     T,
 )
 
-# ---------------------------------------------------------------------------
-# Module-level constants
-# ---------------------------------------------------------------------------
-
 SCR_TO_LATEX: dict[str, str] = {
     "script": "\\mathscr{{{0}}}",
     "fraktur": "\\mathfrak{{{0}}}",
@@ -76,10 +72,6 @@ SCR_TO_LATEX: dict[str, str] = {
 
 OMML_NS: str = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 """Expanded namespace prefix prepended to all ``m:*`` OMML element tags."""
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _process_unicode(s: str) -> str:
@@ -122,11 +114,6 @@ def get_val(
     if key is not None:
         return key if not store else store.get(key, key)
     return default
-
-
-# ---------------------------------------------------------------------------
-# Tag-dispatch base class
-# ---------------------------------------------------------------------------
 
 
 class Tag2Method:
@@ -221,11 +208,6 @@ class Tag2Method:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Property element
-# ---------------------------------------------------------------------------
-
-
 class Pr(Tag2Method):
     """
     Generic OMML property element (``<m:*Pr>``).
@@ -286,11 +268,6 @@ class Pr(Tag2Method):
     }
 
 
-# ---------------------------------------------------------------------------
-# Main converter
-# ---------------------------------------------------------------------------
-
-
 class oMath2Latex(Tag2Method):
     """
     Convert an OMML ``<m:oMath>`` element to a LaTeX math-mode string.
@@ -344,10 +321,6 @@ class oMath2Latex(Tag2Method):
     def latex(self) -> str:
         """Raw LaTeX string before double-space normalisation."""
         return self._latex
-
-    # ------------------------------------------------------------------
-    # Tag handlers — each handles one OMML math construct
-    # ------------------------------------------------------------------
 
     def do_acc(self, elm: Any) -> str:
         """``<m:acc>`` — accented character: ``\\hat{x}``, ``\\tilde{x}``, …"""
@@ -450,13 +423,14 @@ class oMath2Latex(Tag2Method):
     def do_limlow(self, elm: Any) -> str:
         """
         ``<m:limLow>`` — expression with a subscript limit (e.g. ``\\lim_{n→∞}``).
-
-        Raises ``RuntimeError`` for function names not in ``LIM_FUNC``.
         """
         t = self.process_children_dict(elm, include=("e", "lim"))
         latex_s = LIM_FUNC.get(t["e"])  # type: ignore[arg-type]
         if not latex_s:
-            raise RuntimeError(f"Unsupported lim function: {t['e']!r}")
+            logger.warning(
+                f"Unsupported lim function: {t['e']!r}, falling back to subscript"
+            )
+            return f"{{{t.get('e')}}}_{{{t.get('lim')}}}"
         return latex_s.format(lim=t.get("lim"))
 
     def do_limupp(self, elm: Any) -> str:
