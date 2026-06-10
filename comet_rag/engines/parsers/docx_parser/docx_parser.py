@@ -40,7 +40,6 @@ from comet_rag.engines.converters.types import DocxDocument
 from comet_rag.engines.parsers.docx_parser.omml import oMath2Latex as _oMath2Latex
 from comet_rag.engines.parsers.types import Block, DocxParsedContent
 
-
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _A = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -241,7 +240,6 @@ class DocxParser:
                     self._walk(sdt_content)
             elif tag in _TRANSPARENT_INLINE:
                 self._walk(child)
-
 
     def _handle_paragraph(self, element: Any) -> None:  # noqa: C901 (complexity ok here)
         paragraph = Paragraph(element, self._doc)  # pyright: ignore[reportArgumentType]
