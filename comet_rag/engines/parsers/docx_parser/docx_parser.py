@@ -561,12 +561,14 @@ class DocxParser:
             alt_text = docPr.get("descr", "") if docPr is not None else ""
 
             extent = drawing.find(f".//{qn('wp:extent')}")
-            width_px = (
-                int(extent.get("cx", 0)) // _EMU_PER_PX if extent is not None else 0
-            )
-            height_px = (
-                int(extent.get("cy", 0)) // _EMU_PER_PX if extent is not None else 0
-            )
+            width_px = 0
+            height_px = 0
+            if extent is not None:
+                try:
+                    width_px = int(extent.get("cx", 0)) // _EMU_PER_PX
+                    height_px = int(extent.get("cy", 0)) // _EMU_PER_PX
+                except (ValueError, TypeError):
+                    pass
 
             blip = drawing.find(f".//{qn('a:blip')}")
             if blip is None:
