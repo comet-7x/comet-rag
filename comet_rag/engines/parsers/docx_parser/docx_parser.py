@@ -237,7 +237,7 @@ class DocxParser:
     # ------------------------------------------------------------------
 
     def _walk(self, container: Any) -> None:
-        for i, child in enumerate(container):
+        for _, child in enumerate(container):
             tag = _qname(child)
             if tag == "p":
                 self._handle_paragraph(child)
@@ -256,7 +256,7 @@ class DocxParser:
     # ------------------------------------------------------------------
 
     def _handle_paragraph(self, element: Any) -> None:  # noqa: C901 (complexity ok here)
-        paragraph = Paragraph(element, self._doc) # pyright: ignore[reportArgumentType]
+        paragraph = Paragraph(element, self._doc)  # pyright: ignore[reportArgumentType]
         plain_text = self._get_paragraph_text(paragraph)
         text_with_eq, equations = self._handle_equations(element, plain_text)
         p_elems = self._get_paragraph_elements(paragraph)
