@@ -330,26 +330,40 @@ class oMath2Latex(Tag2Method):
     def do_acc(self, elm: Any) -> str:
         """``<m:acc>`` — accented character: ``\\hat{x}``, ``\\tilde{x}``, …"""
         c = self.process_children_dict(elm)
-        latex_s = get_val(c["accPr"].chr, default=CHR_DEFAULT.get("ACC_VAL"), store=CHR)
-        return latex_s.format(c["e"])  # type: ignore[union-attr]
+        acc_pr = c.get("accPr")
+        e_val = c.get("e", "")
+        if acc_pr is None:
+            return str(e_val)
+        latex_s = get_val(acc_pr.chr, default=CHR_DEFAULT.get("ACC_VAL"), store=CHR)
+        if latex_s is None:
+            return str(e_val)
+        return latex_s.format(e_val)
 
     def do_bar(self, elm: Any) -> str:
         """``<m:bar>`` — overline or underline decoration."""
         c = self.process_children_dict(elm)
-        pr = c["barPr"]
+        pr = c.get("barPr")
+        e_val = c.get("e", "")
+        if pr is None:
+            return str(e_val)
         latex_s = get_val(pr.pos, default=POS_DEFAULT.get("BAR_VAL"), store=POS)
-        return pr.text + latex_s.format(c["e"])  # type: ignore[union-attr]
+        if latex_s is None:
+            return str(e_val)
+        return pr.text + latex_s.format(e_val)
 
     def do_d(self, elm: Any) -> str:
         """``<m:d>`` — delimiter pair (parentheses, brackets, braces, …)."""
         c = self.process_children_dict(elm)
-        pr = c["dPr"]
+        pr = c.get("dPr")
+        content = c.get("e", "")
+        if pr is None:
+            return str(content)
         null = D_DEFAULT.get("null")
         s_val = get_val(pr.begChr, default=D_DEFAULT.get("left"), store=T)
         e_val = get_val(pr.endChr, default=D_DEFAULT.get("right"), store=T)
-        return pr.text + D.format(  # type: ignore[union-attr]
+        return pr.text + D.format(
             left=null if not s_val else escape_latex(s_val),
-            text=c["e"],
+            text=content,
             right=null if not e_val else escape_latex(e_val),
         )
 
@@ -396,8 +410,10 @@ class oMath2Latex(Tag2Method):
     def do_groupchr(self, elm: Any) -> str:
         """``<m:groupChr>`` — group character overlay (e.g. overbrace, underbrace)."""
         c = self.process_children_dict(elm)
-        pr = c["groupChrPr"]
+        pr = c.get("groupChrPr")
         content = c.get("e", "")
+        if pr is None:
+            return f"{{{content}}}"
 
         # Extensible arrows with label: → \xrightarrow{label}, ← \xleftarrow{label}, …
         # Only applies when the label is above (pos != "bot").
@@ -463,12 +479,12 @@ class oMath2Latex(Tag2Method):
         ``<m:limLow>`` — expression with a subscript limit (e.g. ``\\lim_{n→∞}``).
         """
         t = self.process_children_dict(elm, include=("e", "lim"))
-        latex_s = LIM_FUNC.get(t["e"])  # type: ignore[arg-type]
+        base = t.get("e", "")
+        latex_s = LIM_FUNC.get(base)
         if not latex_s:
             logger.warning(
-                f"Unsupported lim function: {t['e']!r}, falling back to subscript"
+                f"Unsupported lim function: {base!r}, falling back to subscript"
             )
-            base = t.get("e", "")
             lim = t.get("lim", "")
             # No outer braces when base is already a closed group (ends with })
             return f"{base}_{{{lim}}}" if base.endswith("}") else f"{{{base}}}_{{{lim}}}"
