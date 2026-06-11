@@ -57,6 +57,7 @@ from comet_rag.engines.parsers.docx_parser.latex_dict import (
     SUP,
     D,
     F,
+    GROUPCHR_ARROW,
     M,
     T,
 )
@@ -396,7 +397,40 @@ class oMath2Latex(Tag2Method):
         """``<m:groupChr>`` — group character overlay (e.g. overbrace, underbrace)."""
         c = self.process_children_dict(elm)
         pr = c["groupChrPr"]
-        return pr.text + get_val(pr.chr).format(c["e"])  # type: ignore[union-attr]
+        content = c.get("e", "")
+
+        # Extensible arrows with label: → \xrightarrow{label}, ← \xleftarrow{label}, …
+        # Only applies when the label is above (pos != "bot").
+        if pr.chr and pr.pos != "bot":
+            arrow_fmt = GROUPCHR_ARROW.get(pr.chr)
+            if arrow_fmt:
+                return pr.text + arrow_fmt.format(content)
+
+        # OOXML default chr when <m:chr> is absent depends on pos:
+        # pos="bot" → bottom curly bracket (⏟ → \underbrace)
+        # otherwise  → top curly bracket   (⏞ → \overbrace)
+        if pr.chr is None:
+            # pos="top" → overbrace; pos="bot" or absent → underbrace
+            # (absent pos inside <m:limLow> encodes \underbrace by convention)
+            default_key = "⏞" if pr.pos == "top" else "⏟"
+            latex_s = CHR.get(default_key)
+        else:
+            latex_s = get_val(pr.chr, store=CHR)
+            # ⏞ + pos="bot" renders as underbrace in Word
+            if pr.pos == "bot" and latex_s == CHR.get("⏞"):
+                latex_s = CHR.get("⏟")
+
+        if not latex_s:
+            logger.warning(f"Unsupported groupChr: {pr.chr!r}, falling back to braces")
+            return f"{{{content}}}"
+        # Format templates (⏞ → \overbrace{}, ⏟ → \underbrace{}) contain {0}
+        if "{0}" in latex_s:
+            return pr.text + latex_s.format(content)
+        # Raw characters — pos="bot" → \underset; otherwise → \overset
+        char_latex = _process_unicode(latex_s).strip() or latex_s
+        if pr.pos == "bot":
+            return pr.text + f"\\underset{{{content}}}{{{char_latex}}}"
+        return pr.text + f"\\overset{{{content}}}{{{char_latex}}}"
 
     def do_rad(self, elm: Any) -> str:
         """``<m:rad>`` — radical: square root (no degree) or nth root (with degree)."""
@@ -434,13 +468,30 @@ class oMath2Latex(Tag2Method):
             logger.warning(
                 f"Unsupported lim function: {t['e']!r}, falling back to subscript"
             )
-            return f"{{{t.get('e')}}}_{{{t.get('lim')}}}"
+            base = t.get("e", "")
+            lim = t.get("lim", "")
+            # No outer braces when base is already a closed group (ends with })
+            return f"{base}_{{{lim}}}" if base.endswith("}") else f"{{{base}}}_{{{lim}}}"
         return latex_s.format(lim=t.get("lim"))
 
     def do_limupp(self, elm: Any) -> str:
         """``<m:limUpp>`` — expression with a superscript overlay (``\\overset``)."""
         t = self.process_children_dict(elm, include=("e", "lim"))
         return LIM_UPP.format(lim=t.get("lim"), text=t.get("e"))
+
+    def do_borderbox(self, elm: Any) -> str:
+        """``<m:borderBox>`` — bordered box around expression (LaTeX: ``\\boxed``)."""
+        c = self.process_children_dict(elm, include=("e",))
+        return f"\\boxed{{{c.get('e', '')}}}"
+
+    def do_spre(self, elm: Any) -> str:
+        """``<m:sPre>`` — pre-script (LaTeX: ``{}^{sup}_{sub}base``)."""
+        c = self.process_children_dict(elm, include=("sub", "sup", "e"))
+        sub = c.get("sub") or ""
+        sup = c.get("sup") or ""
+        base = c.get("e") or ""
+        pre = (sup if sup != "^{}" else "") + (sub if sub != "_{}" else "")
+        return f"{{}}{pre}{base}"
 
     def do_lim(self, elm: Any) -> str:
         """``<m:lim>`` — limit expression; normalises ``\\rightarrow`` → ``\\to``."""
@@ -538,4 +589,6 @@ class oMath2Latex(Tag2Method):
         "m": do_m,
         "mr": do_mr,
         "nary": do_nary,
+        "borderBox": do_borderbox,
+        "sPre": do_spre,
     }

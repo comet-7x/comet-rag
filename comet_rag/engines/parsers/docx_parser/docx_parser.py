@@ -4,7 +4,7 @@ Production-grade DOCX parser for Comet-RAG.
 Block types emitted
 -------------------
 text      — body paragraph            {type, content, style}
-heading   — heading paragraph         {type, content, level, is_numbered}
+heading   — heading paragraph         {type, content, level, is_numbered[, number]}
 list      — ordered / unordered list  {type, attribute, ilevel, content: [Block, …]}
 table     — table block               {type, content, rows, row_count, col_count}
 image     — embedded image            {type, content, format, name, alt_text, width_px, height_px}
@@ -70,6 +70,32 @@ _PLAIN = _Fmt()
 _PElem = tuple[str, _Fmt, str | None]
 
 
+@dataclass(frozen=True)
+class _EqSeg:
+    latex: str
+
+
+_Seg = _PElem | _EqSeg
+
+
+def _merge_segs(elems: list[_Seg]) -> list[_Seg]:
+    """Merge adjacent text segments that share identical format and URL."""
+    merged: list[_Seg] = []
+    for seg in elems:
+        if (
+            merged
+            and not isinstance(seg, _EqSeg)
+            and not isinstance(merged[-1], _EqSeg)
+            and seg[1] == merged[-1][1]
+            and seg[2] == merged[-1][2]
+        ):
+            prev = merged[-1]
+            merged[-1] = (prev[0] + seg[0], prev[1], prev[2])
+        else:
+            merged.append(seg)
+    return merged
+
+
 def _qname(element: Any) -> str:
     return etree.QName(element).localname
 
@@ -99,17 +125,6 @@ def _apply_fmt_and_url(text: str, fmt: _Fmt, url: str | None) -> str:
 
     return f"{prefix}{inner}{suffix}"
 
-
-def _replace_outside_eq(text: str, old: str, new: str) -> str:
-    """Replace *old* → *new* only in non-equation segments of *text*."""
-    parts = re.split(r"(<eq>.*?</eq>)", text, flags=re.DOTALL)
-    result = []
-    for part in parts:
-        if part.startswith("<eq>") and part.endswith("</eq>"):
-            result.append(part)
-        else:
-            result.append(part.replace(old, new, 1))
-    return "".join(result)
 
 
 def _table_to_markdown(rows: list[list[str]]) -> str:
@@ -204,7 +219,7 @@ def _get_run_fmt(run: Run) -> _Fmt:
 class DocxParser:
     """Parse a DocxDocument into a list of semantically typed blocks."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, heading_numbers: bool = False) -> None:
         self._doc: DocumentObject | None = None
         self._doc_part: Any = None
         self._blocks: list[Block] = []
@@ -212,6 +227,14 @@ class DocxParser:
         self._pre_num_id: int = -1
         self._pre_ilevel: int = -1
         self._list_stack: list[Block] = []
+        # Heading auto-number extraction
+        self._heading_numbers = heading_numbers
+        self._h_counters: list[int] = [0] * 9
+        self._h_numId: int | None = None
+        self._h_fmts: list[str] = []
+        self._h_starts: list[int] = []
+        self._styles_root: Any = None
+        self._footnotes: dict[int, str] | None = None
 
     def parse(self, document: DocxDocument) -> DocxParsedContent:
         self._doc = document.elements
@@ -220,6 +243,12 @@ class DocxParser:
         self._pre_num_id = -1
         self._pre_ilevel = -1
         self._list_stack = []
+        self._h_counters = [0] * 9
+        self._h_numId = None
+        self._h_fmts = []
+        self._h_starts = []
+        self._styles_root = None
+        self._footnotes = None
 
         self._walk(self._doc.element.body)
         self._add_headers_footers()
@@ -243,10 +272,10 @@ class DocxParser:
 
     def _handle_paragraph(self, element: Any) -> None:  # noqa: C901 (complexity ok here)
         paragraph = Paragraph(element, self._doc)  # pyright: ignore[reportArgumentType]
-        plain_text = self._get_paragraph_text(paragraph)
-        text_with_eq, equations = self._handle_equations(element, plain_text)
         p_elems = self._get_paragraph_elements(paragraph)
-        rich_text = self._build_rich_text(p_elems, text_with_eq, equations)
+        eq_segs = [s for s in p_elems if isinstance(s, _EqSeg)]
+        has_plain_text = any(s[0].strip() for s in p_elems if not isinstance(s, _EqSeg))
+        rich_text = self._build_rich_text(p_elems)
 
         style_name = (paragraph.style.name if paragraph.style else None) or "Normal"
         h_level = self._get_heading_level(paragraph)
@@ -272,20 +301,22 @@ class DocxParser:
         # Heading
         if h_level is not None:
             if rich_text:
-                self._blocks.append(
-                    {
-                        "type": "heading",
-                        "level": h_level,
-                        "content": rich_text,
-                        "is_numbered": "<w:numPr>" in element.xml,
-                    }
-                )
+                h_numid = self._resolve_heading_numid(element)
+                block: Block = {
+                    "type": "heading",
+                    "level": h_level,
+                    "content": rich_text,
+                    "is_numbered": h_numid is not None,
+                }
+                if self._heading_numbers and h_numid is not None:
+                    num_str = self._compute_heading_number(h_numid, h_level)
+                    if num_str:
+                        block["number"] = num_str
+                self._blocks.append(block)
 
         # Standalone equation
-        elif equations and not plain_text.strip():
-            eq_content = re.sub(
-                r"<eq>(.*?)</eq>", r"\1", text_with_eq or "", flags=re.DOTALL
-            ).strip()
+        elif eq_segs and not has_plain_text:
+            eq_content = " ".join(s.latex for s in eq_segs).strip()
             if eq_content:
                 self._blocks.append(
                     {"type": "equation", "content": f"$${eq_content}$$"}
@@ -304,17 +335,14 @@ class DocxParser:
 
         self._blocks.extend(image_blocks)
 
-    # ------------------------------------------------------------------
     # Inner-content iterator
     # Handles inline w:sdt content controls and transparent wrappers that
     # python-docx's iter_inner_content() does not traverse.
-    # ------------------------------------------------------------------
-
     def _iter_inner_content(
         self,
         paragraph: Paragraph,
         container: Any | None = None,
-    ) -> Iterator[Run | Hyperlink]:
+    ) -> Iterator[Run | Hyperlink | Any]:
         if container is None:
             container = paragraph._element
         for child in container:
@@ -323,6 +351,10 @@ class DocxParser:
                 yield Run(child, paragraph)
             elif tag == "hyperlink":
                 yield Hyperlink(child, paragraph)
+            elif tag == "oMath":
+                yield child
+            elif tag == "oMathPara":
+                yield from self._iter_inner_content(paragraph, child)
             elif tag == "sdt":
                 sdt_content = child.find(f"{{{_W}}}sdtContent")
                 if sdt_content is not None:
@@ -330,24 +362,18 @@ class DocxParser:
             elif tag in _TRANSPARENT_INLINE:
                 yield from self._iter_inner_content(paragraph, child)
 
-    def _get_paragraph_text(self, paragraph: Paragraph) -> str:
-        return "".join(c.text or "" for c in self._iter_inner_content(paragraph))
-
-    # ------------------------------------------------------------------
-    # Rich paragraph elements
-    # ------------------------------------------------------------------
-
-    def _get_paragraph_elements(self, paragraph: Paragraph) -> list[_PElem]:  # noqa: C901
+    def _get_paragraph_elements(self, paragraph: Paragraph) -> list[_Seg]:  # noqa: C901
         """
-        Return (text, format, url) tuples for every visible run in the paragraph.
+        Return an ordered list of text and equation segments for the paragraph.
 
         Handles:
         - w:hyperlink wrappers (external URLs)
         - w:fldChar / w:instrText field-code hyperlinks
         - Hidden runs (w:vanish, w:webHidden)
+        - m:oMath / m:oMathPara inline and block equations
         - Consecutive same-format runs are merged for compactness
         """
-        elems: list[_PElem] = []
+        elems: list[_Seg] = []
 
         # Field-code hyperlink tracking state
         _field_in = False
@@ -368,6 +394,14 @@ class DocxParser:
             _grp_fmt = None
 
         for c in self._iter_inner_content(paragraph):
+            # ---- Equation element ----
+            if not isinstance(c, (Run, Hyperlink)):
+                _flush()
+                latex = self._convert_omath(c)
+                if latex:
+                    elems.append(_EqSeg(latex=latex))
+                continue
+
             # ---- Hyperlink element ----
             if isinstance(c, Hyperlink):
                 address = c.address
@@ -433,6 +467,16 @@ class DocxParser:
             if _is_hidden_run(c):
                 continue
 
+            # ---- Footnote reference ----
+            fn_ref = c._element.find(f"{{{_W}}}footnoteReference")
+            if fn_ref is not None:
+                fn_id = int(fn_ref.get(f"{{{_W}}}id", -1))
+                fn_text = self._load_footnotes().get(fn_id, "")
+                if fn_text:
+                    _flush()
+                    elems.append((f"（{fn_text}）", _PLAIN, None))
+                continue
+
             # ---- Normal run ----
             text = c.text or ""
             if not text:
@@ -448,110 +492,26 @@ class DocxParser:
                 _grp_text = text
 
         _flush()
-        return elems
+        return _merge_segs(elems)
 
-    def _build_rich_text(
-        self,
-        elems: list[_PElem],
-        text_with_eq: str,
-        equations: list[str],
-    ) -> str:
-        """
-        Combine paragraph elements (with formatting / hyperlinks) into a final
-        rich-text string. When equations are present they are spliced in from
-        *text_with_eq* and converted to $…$ notation.
-        """
-        if not elems and not equations:
-            return ""
-
-        if not equations:
-            return "".join(_apply_fmt_and_url(t, f, u) for t, f, u in elems)
-
-        # Inject Markdown formatting into the equation-annotated text, then
-        # convert <eq>…</eq> markers to $…$ inline notation.
-        result = text_with_eq
-        for text, fmt, url in elems:
-            if not text:
-                continue
-            formatted = _apply_fmt_and_url(text, fmt, url)
-            if formatted != text:
-                result = _replace_outside_eq(result, text, formatted)
-
-        result = re.sub(r"<eq>(.*?)</eq>", r"$\1$", result, flags=re.DOTALL)
-        return result
-
-    # ------------------------------------------------------------------
-    # Equation handling
-    # ------------------------------------------------------------------
-
-    def _handle_equations(
-        self, element: Any, paragraph_text: str
-    ) -> tuple[str, list[str]]:
-        """
-        Scan *element* for OMML math nodes.
-
-        Returns (text_with_eq_markers, [equation_markers]).
-        When no equations are found, returns (paragraph_text, []).
-        """
-        only_texts: list[str] = []
-        only_eqs: list[str] = []
-        combined: list[str] = []
-
-        for subt in element.iter():
-            tag = _qname(subt)
-            # Plain text node — exclude math namespace <m:t>
-            if tag == "t" and f"{{{_M}}}" not in subt.tag:
-                if isinstance(subt.text, str):
-                    only_texts.append(subt.text)
-                    combined.append(subt.text)
-            # OMML equation (skip oMathPara container to avoid double-processing)
-            elif "oMath" in subt.tag and "oMathPara" not in subt.tag:
-                latex = self._convert_omath(subt)
-                if latex:
-                    marker = f"<eq>{latex}</eq>"
-                    only_eqs.append(marker)
-                    combined.append(marker)
-
-        if not only_eqs:
-            return paragraph_text, []
-
-        # Sanity check: can we reconstruct the paragraph text from w:t nodes?
-        concat_plain = re.sub(r"\s+", "", "".join(only_texts)).strip()
-        concat_para = re.sub(r"\s+", "", paragraph_text).strip()
-        if concat_plain != concat_para:
-            return paragraph_text, []
-
-        # Splice equation markers into the paragraph text, preserving whitespace
-        output = paragraph_text
-        pos = 0
-        for fragment in combined:
-            if not fragment:
-                continue
-            if fragment.startswith("<eq>"):
-                output = output[:pos] + fragment + output[pos:]
-                pos += len(fragment)
-            else:
-                idx = output[pos:].find(fragment)
-                if idx >= 0:
-                    pos += idx + len(fragment)
-
-        return output, only_eqs
+    def _build_rich_text(self, elems: list[_Seg]) -> str:
+        return "".join(
+            f"${seg.latex}$" if isinstance(seg, _EqSeg)
+            else _apply_fmt_and_url(seg[0], seg[1], seg[2])
+            for seg in elems
+        )
 
     def _convert_omath(self, element: Any) -> str:
-        """Convert an oMath element to LaTeX, falling back to raw text on error."""
-        try:
-            return str(_oMath2Latex(element)).strip()
-        except Exception as exc:
-            logger.debug(f"oMath2Latex failed: {exc}")
-            return "".join(
-                node.text
-                for node in element.iter()
-                if _qname(node) == "t" and node.text
-            )
-
-    # ------------------------------------------------------------------
-    # Images
-    # ------------------------------------------------------------------
+            """Convert an oMath element to LaTeX, falling back to raw text on error."""
+            try:
+                return str(_oMath2Latex(element)).strip()
+            except Exception as exc:
+                logger.debug(f"oMath2Latex failed: {exc}")
+                return "".join(
+                    node.text
+                    for node in element.iter()
+                    if _qname(node) == "t" and node.text
+                )
 
     def _extract_images(self, para_element: Any) -> list[Block]:
         blocks: list[Block] = []
@@ -591,15 +551,21 @@ class DocxParser:
             )
         return blocks
 
-    # ------------------------------------------------------------------
-    # Tables
-    # ------------------------------------------------------------------
+    def _cell_to_text(self, cell: Any) -> str:
+        """Extract rich text from a table cell, including inline equations."""
+        parts: list[str] = []
+        for para in cell.paragraphs:
+            elems = self._get_paragraph_elements(para)
+            text = self._build_rich_text(elems).strip()
+            if text:
+                parts.append(text)
+        return "\n".join(parts)
 
     def _handle_table(self, element: Any) -> None:
         from docx.table import Table
 
         table = Table(element, self._doc)  # pyright: ignore[reportArgumentType]
-        raw_rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+        raw_rows = [[self._cell_to_text(cell) for cell in row.cells] for row in table.rows]
 
         # python-docx repeats merged-cell text; deduplicate adjacent duplicates
         cleaned: list[list[str]] = []
@@ -627,10 +593,6 @@ class DocxParser:
                 "col_count": max_cols,
             }
         )
-
-    # ------------------------------------------------------------------
-    # List helpers
-    # ------------------------------------------------------------------
 
     def _get_numId_ilvl(self, paragraph: Paragraph) -> tuple[int | None, int | None]:
         numPr = paragraph._element.find(
@@ -750,9 +712,159 @@ class DocxParser:
         self._pre_ilevel = -1
         self._list_stack = []
 
-    # ------------------------------------------------------------------
-    # Heading detection
-    # ------------------------------------------------------------------
+    def _get_styles_root(self) -> Any | None:
+        if self._styles_root is not None:
+            return self._styles_root
+        try:
+            part = next(
+                (p for p in self._doc.part.package.parts if p.partname.endswith("styles.xml")),  # pyright: ignore[reportOptionalMemberAccess]
+                None,
+            )
+            if part is not None:
+                self._styles_root = part.element  # pyright: ignore[reportAttributeAccessIssue]
+        except Exception as exc:
+            logger.debug(f"_get_styles_root: {exc}")
+        return self._styles_root
+
+    def _load_footnotes(self) -> dict[int, str]:
+        """Lazily parse word/footnotes.xml → {footnote_id: plain_text}."""
+        if self._footnotes is not None:
+            return self._footnotes
+        self._footnotes = {}
+        try:
+            part = next(
+                (p for p in self._doc.part.package.parts if p.partname.endswith("footnotes.xml")),  # pyright: ignore[reportOptionalMemberAccess]
+                None,
+            )
+            if part is None:
+                return self._footnotes
+            # FootnotesPart is a generic Part (no .element); parse blob directly.
+            root = etree.fromstring(part.blob)  # pyright: ignore[reportAttributeAccessIssue]
+            ns = {"w": _W}
+            for fn_el in root.findall("w:footnote", ns):
+                fn_id_str = fn_el.get(f"{{{_W}}}id")
+                if fn_id_str is None:
+                    continue
+                fn_id = int(fn_id_str)
+                if fn_id <= 0:  # skip separator (-1) and continuation (0) markers
+                    continue
+                text = "".join(
+                    t.text for t in fn_el.iter(f"{{{_W}}}t") if t.text
+                ).strip()
+                if text:
+                    self._footnotes[fn_id] = text
+        except Exception as exc:
+            logger.debug(f"_load_footnotes: {exc}")
+        return self._footnotes
+
+    def _resolve_heading_numid(self, element: Any) -> int | None:
+        """
+        Return the numId for a heading paragraph, or None if not auto-numbered.
+
+        Checks the paragraph's own <w:pPr>/<w:numPr> first, then walks the
+        style inheritance chain (needed when numPr lives in styles.xml rather
+        than in the paragraph itself, which is the common case in Word).
+        """
+        ns = {"w": _W}
+
+        # 1. Paragraph-level override
+        numpr = element.find(f"{{{_W}}}pPr/{{{_W}}}numPr")
+        if numpr is not None:
+            numid_el = numpr.find(f"{{{_W}}}numId")
+            if numid_el is not None:
+                val = int(numid_el.get(_XML_VAL, 0))
+                return None if val == 0 else val  # val=0 means "suppress"
+
+        # 2. Style inheritance chain
+        pstyle = element.find(f"{{{_W}}}pPr/{{{_W}}}pStyle")
+        if pstyle is None:
+            return None
+        style_id = pstyle.get(_XML_VAL)
+        if not style_id:
+            return None
+
+        root = self._get_styles_root()
+        if root is None:
+            return None
+
+        visited: set[str] = set()
+        current = style_id
+        while current and current not in visited:
+            visited.add(current)
+            style_el = root.find(f".//w:style[@w:styleId='{current}']", ns)
+            if style_el is None:
+                break
+            numpr = style_el.find(".//w:numPr", ns)
+            if numpr is not None:
+                numid_el = numpr.find("w:numId", ns)
+                if numid_el is not None:
+                    val = int(numid_el.get(_XML_VAL, 0))
+                    return None if val == 0 else val
+            based_on = style_el.find("w:basedOn", ns)
+            current = based_on.get(_XML_VAL) if based_on is not None else None
+
+        return None
+
+    def _load_heading_formats(self, num_id: int) -> tuple[list[str], list[int]]:
+        """Load (format_strings, start_values) for each level of numId from numbering.xml."""
+        try:
+            numbering_part = next(
+                (p for p in self._doc.part.package.parts if "numbering" in p.partname),  # pyright: ignore[reportOptionalMemberAccess]
+                None,
+            )
+            if numbering_part is None:
+                return [], []
+            ns = {"w": _W}
+            root = numbering_part.element  # pyright: ignore[reportAttributeAccessIssue]
+
+            num_el = root.find(f".//w:num[@w:numId='{num_id}']", ns)
+            if num_el is None:
+                return [], []
+            abs_id_el = num_el.find(".//w:abstractNumId", ns)
+            if abs_id_el is None:
+                return [], []
+            abs_id = abs_id_el.get(_XML_VAL)
+
+            abs_num = root.find(f".//w:abstractNum[@w:abstractNumId='{abs_id}']", ns)
+            if abs_num is None:
+                return [], []
+
+            fmts: list[str] = []
+            starts: list[int] = []
+            for lvl_el in sorted(
+                abs_num.findall("w:lvl", ns),
+                key=lambda e: int(e.get(f"{{{_W}}}ilvl", 0)),
+            ):
+                lvl_text = lvl_el.find("w:lvlText", ns)
+                fmts.append(lvl_text.get(_XML_VAL, "") if lvl_text is not None else "")
+                start_el = lvl_el.find("w:start", ns)
+                starts.append(int(start_el.get(_XML_VAL, 1)) if start_el is not None else 1)
+            return fmts, starts
+        except Exception as exc:
+            logger.debug(f"_load_heading_formats: {exc}")
+            return [], []
+
+    def _compute_heading_number(self, num_id: int, h_level: int) -> str:
+        """Return the auto-number string (e.g. '1.2.3') for a numbered heading."""
+        if self._h_numId is None:
+            self._h_fmts, self._h_starts = self._load_heading_formats(num_id)
+            self._h_numId = num_id
+            for i, s in enumerate(self._h_starts[:9]):
+                self._h_counters[i] = s - 1
+
+        idx = h_level - 1
+        self._h_counters[idx] += 1
+        for i in range(idx + 1, 9):
+            reset_to = self._h_starts[i] - 1 if i < len(self._h_starts) else 0
+            self._h_counters[i] = reset_to
+
+        if idx < len(self._h_fmts):
+            fmt = self._h_fmts[idx]
+            for i in range(9, 0, -1):
+                fmt = fmt.replace(f"%{i}", str(self._h_counters[i - 1]))
+            return fmt
+
+        return ".".join(str(self._h_counters[i]) for i in range(h_level))
 
     def _get_heading_level(self, paragraph: Paragraph) -> int | None:
         """
@@ -779,10 +891,6 @@ class DocxParser:
                     return level
             style = getattr(style, "base_style", None)
         return None
-
-    # ------------------------------------------------------------------
-    # Caption detection
-    # ------------------------------------------------------------------
 
     def _is_caption(self, element: Any) -> bool:
         """Detect Word captions: they contain a SEQ field instruction."""
