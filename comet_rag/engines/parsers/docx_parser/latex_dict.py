@@ -286,45 +286,45 @@ T: dict[str, str] = {
     "\U0001d466": "y",  # 𝑦
     "\U0001d467": "z",  # 𝑧
     # Plain (non-italic) Greek lowercase — Word equation editor sometimes inserts these
-    "α": "\\alpha ",    # α GREEK SMALL LETTER ALPHA
-    "β": "\\beta ",     # β GREEK SMALL LETTER BETA
-    "γ": "\\gamma ",    # γ GREEK SMALL LETTER GAMMA
-    "δ": "\\delta ",    # δ GREEK SMALL LETTER DELTA
+    "α": "\\alpha ",  # α GREEK SMALL LETTER ALPHA
+    "β": "\\beta ",  # β GREEK SMALL LETTER BETA
+    "γ": "\\gamma ",  # γ GREEK SMALL LETTER GAMMA
+    "δ": "\\delta ",  # δ GREEK SMALL LETTER DELTA
     "ε": "\\varepsilon ",  # ε GREEK SMALL LETTER EPSILON
-    "ζ": "\\zeta ",     # ζ GREEK SMALL LETTER ZETA
-    "η": "\\eta ",      # η GREEK SMALL LETTER ETA
-    "θ": "\\theta ",    # θ GREEK SMALL LETTER THETA
-    "ι": "\\iota ",     # ι GREEK SMALL LETTER IOTA
-    "κ": "\\kappa ",    # κ GREEK SMALL LETTER KAPPA
-    "λ": "\\lambda ",   # λ GREEK SMALL LETTER LAMBDA
-    "μ": "\\mu ",       # μ GREEK SMALL LETTER MU
-    "ν": "\\nu ",       # ν GREEK SMALL LETTER NU
-    "ξ": "\\xi ",       # ξ GREEK SMALL LETTER XI
-    "π": "\\pi ",       # π GREEK SMALL LETTER PI
-    "ρ": "\\rho ",      # ρ GREEK SMALL LETTER RHO
-    "σ": "\\sigma ",    # σ GREEK SMALL LETTER SIGMA
-    "τ": "\\tau ",      # τ GREEK SMALL LETTER TAU
+    "ζ": "\\zeta ",  # ζ GREEK SMALL LETTER ZETA
+    "η": "\\eta ",  # η GREEK SMALL LETTER ETA
+    "θ": "\\theta ",  # θ GREEK SMALL LETTER THETA
+    "ι": "\\iota ",  # ι GREEK SMALL LETTER IOTA
+    "κ": "\\kappa ",  # κ GREEK SMALL LETTER KAPPA
+    "λ": "\\lambda ",  # λ GREEK SMALL LETTER LAMBDA
+    "μ": "\\mu ",  # μ GREEK SMALL LETTER MU
+    "ν": "\\nu ",  # ν GREEK SMALL LETTER NU
+    "ξ": "\\xi ",  # ξ GREEK SMALL LETTER XI
+    "π": "\\pi ",  # π GREEK SMALL LETTER PI
+    "ρ": "\\rho ",  # ρ GREEK SMALL LETTER RHO
+    "σ": "\\sigma ",  # σ GREEK SMALL LETTER SIGMA
+    "τ": "\\tau ",  # τ GREEK SMALL LETTER TAU
     "υ": "\\upsilon ",  # υ GREEK SMALL LETTER UPSILON
-    "φ": "\\varphi ",   # φ GREEK SMALL LETTER PHI
-    "χ": "\\chi ",      # χ GREEK SMALL LETTER CHI
-    "ψ": "\\psi ",      # ψ GREEK SMALL LETTER PSI
-    "ω": "\\omega ",    # ω GREEK SMALL LETTER OMEGA
+    "φ": "\\varphi ",  # φ GREEK SMALL LETTER PHI
+    "χ": "\\chi ",  # χ GREEK SMALL LETTER CHI
+    "ψ": "\\psi ",  # ψ GREEK SMALL LETTER PSI
+    "ω": "\\omega ",  # ω GREEK SMALL LETTER OMEGA
     # Plain Greek uppercase
-    "Γ": "\\Gamma ",    # Γ
-    "Δ": "\\Delta ",    # Δ
-    "Θ": "\\Theta ",    # Θ
-    "Λ": "\\Lambda ",   # Λ
-    "Ξ": "\\Xi ",       # Ξ
-    "Π": "\\Pi ",       # Π
-    "Σ": "\\Sigma ",    # Σ
+    "Γ": "\\Gamma ",  # Γ
+    "Δ": "\\Delta ",  # Δ
+    "Θ": "\\Theta ",  # Θ
+    "Λ": "\\Lambda ",  # Λ
+    "Ξ": "\\Xi ",  # Ξ
+    "Π": "\\Pi ",  # Π
+    "Σ": "\\Sigma ",  # Σ
     "Υ": "\\Upsilon ",  # Υ
-    "Φ": "\\Phi ",      # Φ
-    "Ψ": "\\Psi ",      # Ψ
-    "Ω": "\\Omega ",    # Ω
+    "Φ": "\\Phi ",  # Φ
+    "Ψ": "\\Psi ",  # Ψ
+    "Ω": "\\Omega ",  # Ω
     # Special mathematical constants
-    "ℏ": "\\hbar ",     # ℏ PLANCK CONSTANT OVER TWO PI
+    "ℏ": "\\hbar ",  # ℏ PLANCK CONSTANT OVER TWO PI
     # OMML equation-array alignment point (&) — visually rendered as | in Word
-    "&": "\\vert ",          # & → \vert
+    "&": "\\vert ",  # & → \vert
 }
 
 # ---------------------------------------------------------------------------
@@ -456,13 +456,13 @@ LIM_UPP: str = "\\overset{{{lim}}}{{{text}}}"
 # ---------------------------------------------------------------------------
 
 GROUPCHR_ARROW: dict[str, str] = {
-    "←": "\\xleftarrow{{{0}}}",       # ←
-    "→": "\\xrightarrow{{{0}}}",      # →
+    "←": "\\xleftarrow{{{0}}}",  # ←
+    "→": "\\xrightarrow{{{0}}}",  # →
     "↔": "\\xleftrightarrow{{{0}}}",  # ↔
-    "⇐": "\\xLeftarrow{{{0}}}",       # ⇐
-    "⇒": "\\xRightarrow{{{0}}}",      # ⇒
+    "⇐": "\\xLeftarrow{{{0}}}",  # ⇐
+    "⇒": "\\xRightarrow{{{0}}}",  # ⇒
     "⇔": "\\xLeftrightarrow{{{0}}}",  # ⇔
-    "↦": "\\xmapsto{{{0}}}",          # ↦
+    "↦": "\\xmapsto{{{0}}}",  # ↦
 }
 
 # ---------------------------------------------------------------------------

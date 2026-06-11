@@ -46,6 +46,7 @@ from comet_rag.engines.parsers.docx_parser.latex_dict import (
     F_DEFAULT,
     FUNC,
     FUNC_PLACE,
+    GROUPCHR_ARROW,
     LIM_FUNC,
     LIM_TO,
     LIM_UPP,
@@ -57,7 +58,6 @@ from comet_rag.engines.parsers.docx_parser.latex_dict import (
     SUP,
     D,
     F,
-    GROUPCHR_ARROW,
     M,
     T,
 )
@@ -487,7 +487,9 @@ class oMath2Latex(Tag2Method):
             )
             lim = t.get("lim", "")
             # No outer braces when base is already a closed group (ends with })
-            return f"{base}_{{{lim}}}" if base.endswith("}") else f"{{{base}}}_{{{lim}}}"
+            return (
+                f"{base}_{{{lim}}}" if base.endswith("}") else f"{{{base}}}_{{{lim}}}"
+            )
         return latex_s.format(lim=t.get("lim"))
 
     def do_limupp(self, elm: Any) -> str:

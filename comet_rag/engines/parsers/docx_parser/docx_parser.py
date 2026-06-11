@@ -126,11 +126,12 @@ def _apply_fmt_and_url(text: str, fmt: _Fmt, url: str | None) -> str:
     return f"{prefix}{inner}{suffix}"
 
 
-
 def _table_to_markdown(rows: list[list[str]]) -> str:
     if not rows:
         return ""
-    escaped_rows = [[cell.replace("|", "\\|").replace("\n", "<br>") for cell in row] for row in rows]
+    escaped_rows = [
+        [cell.replace("|", "\\|").replace("\n", "<br>") for cell in row] for row in rows
+    ]
     header, *body = escaped_rows
     sep = ["---"] * len(header)
     lines = [
@@ -496,22 +497,23 @@ class DocxParser:
 
     def _build_rich_text(self, elems: list[_Seg]) -> str:
         return "".join(
-            f"${seg.latex}$" if isinstance(seg, _EqSeg)
+            f"${seg.latex}$"
+            if isinstance(seg, _EqSeg)
             else _apply_fmt_and_url(seg[0], seg[1], seg[2])
             for seg in elems
         )
 
     def _convert_omath(self, element: Any) -> str:
-            """Convert an oMath element to LaTeX, falling back to raw text on error."""
-            try:
-                return str(_oMath2Latex(element)).strip()
-            except Exception as exc:
-                logger.debug(f"oMath2Latex failed: {exc}")
-                return "".join(
-                    node.text
-                    for node in element.iter()
-                    if _qname(node) == "t" and node.text
-                )
+        """Convert an oMath element to LaTeX, falling back to raw text on error."""
+        try:
+            return str(_oMath2Latex(element)).strip()
+        except Exception as exc:
+            logger.debug(f"oMath2Latex failed: {exc}")
+            return "".join(
+                node.text
+                for node in element.iter()
+                if _qname(node) == "t" and node.text
+            )
 
     def _extract_images(self, para_element: Any) -> list[Block]:
         blocks: list[Block] = []
@@ -567,7 +569,9 @@ class DocxParser:
         from docx.table import Table
 
         table = Table(element, self._doc)  # pyright: ignore[reportArgumentType]
-        raw_rows = [[self._cell_to_text(cell) for cell in row.cells] for row in table.rows]
+        raw_rows = [
+            [self._cell_to_text(cell) for cell in row.cells] for row in table.rows
+        ]
 
         # python-docx repeats merged-cell text; deduplicate adjacent duplicates
         cleaned: list[list[str]] = []
@@ -719,7 +723,11 @@ class DocxParser:
             return self._styles_root
         try:
             part = next(
-                (p for p in self._doc.part.package.parts if p.partname.endswith("styles.xml")),  # pyright: ignore[reportOptionalMemberAccess]
+                (
+                    p
+                    for p in self._doc.part.package.parts
+                    if p.partname.endswith("styles.xml")
+                ),  # pyright: ignore[reportOptionalMemberAccess]
                 None,
             )
             if part is not None:
@@ -735,7 +743,11 @@ class DocxParser:
         self._footnotes = {}
         try:
             part = next(
-                (p for p in self._doc.part.package.parts if p.partname.endswith("footnotes.xml")),  # pyright: ignore[reportOptionalMemberAccess]
+                (
+                    p
+                    for p in self._doc.part.package.parts
+                    if p.partname.endswith("footnotes.xml")
+                ),  # pyright: ignore[reportOptionalMemberAccess]
                 None,
             )
             if part is None:
@@ -840,7 +852,9 @@ class DocxParser:
                 lvl_text = lvl_el.find("w:lvlText", ns)
                 fmts.append(lvl_text.get(_XML_VAL, "") if lvl_text is not None else "")
                 start_el = lvl_el.find("w:start", ns)
-                starts.append(int(start_el.get(_XML_VAL, 1)) if start_el is not None else 1)
+                starts.append(
+                    int(start_el.get(_XML_VAL, 1)) if start_el is not None else 1
+                )
             return fmts, starts
         except Exception as exc:
             logger.debug(f"_load_heading_formats: {exc}")
