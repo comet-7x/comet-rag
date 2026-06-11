@@ -725,7 +725,7 @@ class DocxParser:
             part = next(
                 (
                     p
-                    for p in self._doc.part.package.parts # pyright: ignore[reportOptionalMemberAccess]
+                    for p in self._doc.part.package.parts  # pyright: ignore[reportOptionalMemberAccess]
                     if p.partname.endswith("styles.xml")
                 ),  # pyright: ignore[reportOptionalMemberAccess]
                 None,
@@ -745,7 +745,7 @@ class DocxParser:
             part = next(
                 (
                     p
-                    for p in self._doc.part.package.parts
+                    for p in self._doc.part.package.parts  # pyright: ignore[reportOptionalMemberAccess]
                     if p.partname.endswith("footnotes.xml")
                 ),  # pyright: ignore[reportOptionalMemberAccess]
                 None,
