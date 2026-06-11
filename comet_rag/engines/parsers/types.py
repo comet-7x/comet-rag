@@ -32,6 +32,9 @@ class DocxParsedContent(BaseParsedContent):
                 "footer",
             ):
                 return b.get("content", "")
+            if t == "image":
+                alt = b.get("alt_text") or b.get("name") or b.get("id") or ""
+                return f"![{alt}]" if alt else ""
             if t == "list":
                 parts = [_extract(item) for item in b.get("content", [])]
                 return "\n".join(p for p in parts if p)

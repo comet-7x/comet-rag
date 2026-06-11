@@ -7,7 +7,7 @@ text      — body paragraph            {type, content, style}
 heading   — heading paragraph         {type, content, level, is_numbered[, number]}
 list      — ordered / unordered list  {type, attribute, ilevel, content: [Block, …]}
 table     — table block               {type, content, rows, row_count, col_count}
-image     — embedded image            {type, content, format, name, alt_text, width_px, height_px}
+image     — embedded image            {type, content, format, name, alt_text, id, width_px, height_px}
 equation  — standalone equation       {type, content}   (LaTeX or raw text)
 caption   — figure / table caption    {type, content}
 header    — page header               {type, content}
@@ -519,6 +519,7 @@ class DocxParser:
             docPr = drawing.find(f".//{qn('wp:docPr')}")
             name = docPr.get("name", "") if docPr is not None else ""
             alt_text = docPr.get("descr", "") if docPr is not None else ""
+            docPr_id = docPr.get("id", "") if docPr is not None else ""
 
             extent = drawing.find(f".//{qn('wp:extent')}")
             width_px = 0
@@ -545,6 +546,7 @@ class DocxParser:
                     "format": image_part.content_type.split("/")[-1],
                     "name": name,
                     "alt_text": alt_text,
+                    "id": docPr_id,
                     "width_px": width_px,
                     "height_px": height_px,
                 }
