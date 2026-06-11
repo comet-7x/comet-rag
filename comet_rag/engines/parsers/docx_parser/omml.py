@@ -239,9 +239,10 @@ class Pr(Tag2Method):
             raise AttributeError(
                 f"'{self.__class__.__name__}' object has no attribute '{name}'"
             )
-        # Accessing self.__innerdict here resolves to self._Pr__innerdict via
-        # Python name-mangling, which was set unconditionally in __init__.
-        return self.__innerdict.get(name, None)
+        inner = self.__dict__.get("_Pr__innerdict")
+        if inner is None:
+            return None
+        return inner.get(name, None)
 
     # ------------------------------------------------------------------
     # Tag handlers
@@ -379,16 +380,22 @@ class oMath2Latex(Tag2Method):
         """``<m:f>`` — fraction (bar, skewed, no-bar, or linear style)."""
         c = self.process_children_dict(elm)
         pr = c.get("fPr")
+        num = c.get("num") or ""
+        den = c.get("den") or ""
         if pr is None:
             logger.debug("Missing fPr in fraction; using default")
-            return F_DEFAULT.format(num=c.get("num"), den=c.get("den"))
+            return F_DEFAULT.format(num=num, den=den)
         latex_s = get_val(pr.type, default=F_DEFAULT, store=F)
-        return pr.text + latex_s.format(num=c.get("num"), den=c.get("den"))  # type: ignore[union-attr]
+        return pr.text + latex_s.format(num=num, den=den)  # type: ignore[union-attr]
 
     def do_func(self, elm: Any) -> str:
         """``<m:func>`` — named function applied to an argument."""
         c = self.process_children_dict(elm)
-        return c.get("fName").replace(FUNC_PLACE, c.get("e"))  # type: ignore[union-attr]
+        fname = c.get("fName")
+        e = c.get("e") or ""
+        if not fname:
+            return e
+        return fname.replace(FUNC_PLACE, e)
 
     def do_fname(self, elm: Any) -> str:
         """
@@ -482,20 +489,17 @@ class oMath2Latex(Tag2Method):
         base = t.get("e", "")
         latex_s = LIM_FUNC.get(base)
         if not latex_s:
-            logger.warning(
-                f"Unsupported lim function: {base!r}, falling back to subscript"
-            )
             lim = t.get("lim", "")
             # No outer braces when base is already a closed group (ends with })
             return (
                 f"{base}_{{{lim}}}" if base.endswith("}") else f"{{{base}}}_{{{lim}}}"
             )
-        return latex_s.format(lim=t.get("lim"))
+        return latex_s.format(lim=t.get("lim") or "")
 
     def do_limupp(self, elm: Any) -> str:
         """``<m:limUpp>`` — expression with a superscript overlay (``\\overset``)."""
         t = self.process_children_dict(elm, include=("e", "lim"))
-        return LIM_UPP.format(lim=t.get("lim"), text=t.get("e"))
+        return LIM_UPP.format(lim=t.get("lim") or "", text=t.get("e") or "")
 
     def do_borderbox(self, elm: Any) -> str:
         """``<m:borderBox>`` — bordered box around expression (LaTeX: ``\\boxed``)."""
