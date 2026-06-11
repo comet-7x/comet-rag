@@ -395,7 +395,7 @@ class DocxParser:
             _grp_fmt = None
 
         for c in self._iter_inner_content(paragraph):
-            # ---- Equation element ----
+            # Equation element
             if not isinstance(c, (Run, Hyperlink)):
                 _flush()
                 latex = self._convert_omath(c)
@@ -403,7 +403,7 @@ class DocxParser:
                     elems.append(_EqSeg(latex=latex))
                 continue
 
-            # ---- Hyperlink element ----
+            # Hyperlink element
             if isinstance(c, Hyperlink):
                 address = c.address
                 # Keep only external URLs; skip internal anchors (TOC noise)
@@ -420,7 +420,7 @@ class DocxParser:
             if not isinstance(c, Run):
                 continue
 
-            # ---- fldChar (field boundary marker) ----
+            # fldChar (field boundary marker)
             fld_char = c._element.find(f"{{{_W}}}fldChar")
             if fld_char is not None:
                 fld_type = fld_char.get(f"{{{_W}}}fldCharType")
@@ -443,7 +443,7 @@ class DocxParser:
                     _field_fmt = None
                 continue  # fldChar runs carry no displayable text
 
-            # ---- instrText: extract HYPERLINK url ----
+            # instrText: extract HYPERLINK url
             instr = c._element.find(f"{{{_W}}}instrText")
             if instr is not None:
                 if _field_phase == "instr" and instr.text:
@@ -452,11 +452,11 @@ class DocxParser:
                         _field_url = m.group(1)
                 continue  # never displayable
 
-            # ---- Skip non-display runs inside an instr block ----
+            # Skip non-display runs inside an instr block
             if _field_in and _field_phase == "instr":
                 continue
 
-            # ---- Accumulate field result display text ----
+            # Accumulate field result display text
             if _field_in and _field_phase == "result":
                 if c._element.find(f"{{{_W}}}t") is not None:
                     _field_text += c.text or ""
@@ -464,11 +464,11 @@ class DocxParser:
                         _field_fmt = _get_run_fmt(c)
                 continue
 
-            # ---- Hidden run ----
+            # Hidden run
             if _is_hidden_run(c):
                 continue
 
-            # ---- Footnote reference ----
+            # Footnote reference
             fn_ref = c._element.find(f"{{{_W}}}footnoteReference")
             if fn_ref is not None:
                 fn_id = int(fn_ref.get(f"{{{_W}}}id", -1))
@@ -478,7 +478,7 @@ class DocxParser:
                     elems.append((f"（{fn_text}）", _PLAIN, None))
                 continue
 
-            # ---- Normal run ----
+            # Normal run
             text = c.text or ""
             if not text:
                 continue
@@ -725,7 +725,7 @@ class DocxParser:
             part = next(
                 (
                     p
-                    for p in self._doc.part.package.parts
+                    for p in self._doc.part.package.parts # pyright: ignore[reportOptionalMemberAccess]
                     if p.partname.endswith("styles.xml")
                 ),  # pyright: ignore[reportOptionalMemberAccess]
                 None,
