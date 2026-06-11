@@ -97,6 +97,8 @@ def _merge_segs(elems: list[_Seg]) -> list[_Seg]:
 
 
 def _qname(element: Any) -> str:
+    if not isinstance(getattr(element, "tag", None), str):
+        return ""
     return etree.QName(element).localname
 
 
@@ -786,7 +788,10 @@ class DocxParser:
         if numpr is not None:
             numid_el = numpr.find(f"{{{_W}}}numId")
             if numid_el is not None:
-                val = int(numid_el.get(_XML_VAL, 0))
+                try:
+                    val = int(numid_el.get(_XML_VAL, 0))
+                except ValueError:
+                    val = 0
                 return None if val == 0 else val  # val=0 means "suppress"
 
         # 2. Style inheritance chain
@@ -812,7 +817,10 @@ class DocxParser:
             if numpr is not None:
                 numid_el = numpr.find("w:numId", ns)
                 if numid_el is not None:
-                    val = int(numid_el.get(_XML_VAL, 0))
+                    try:
+                        val = int(numid_el.get(_XML_VAL, 0))
+                    except ValueError:
+                        val = 0
                     return None if val == 0 else val
             based_on = style_el.find("w:basedOn", ns)
             current = based_on.get(_XML_VAL) if based_on is not None else None
@@ -904,7 +912,7 @@ class DocxParser:
             for val in (style.name or "", style.style_id or ""):
                 level = _extract(val)
                 if level is not None:
-                    return level
+                    return max(1, min(level, 9))
             style = getattr(style, "base_style", None)
         return None
 
@@ -914,10 +922,6 @@ class DocxParser:
             if instr.text and "SEQ" in instr.text:
                 return True
         return False
-
-    # ------------------------------------------------------------------
-    # Headers / Footers
-    # ------------------------------------------------------------------
 
     def _add_headers_footers(self) -> None:
         """Append header and footer text blocks for each document section."""
