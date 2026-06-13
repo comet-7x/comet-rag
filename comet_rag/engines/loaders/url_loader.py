@@ -37,11 +37,16 @@ class URLLoader(BaseLoader):
     def _build_metadata(self, file_path: str, source: SourceContent) -> dict[str, Any]:
         path = Path(file_path)
         file_type = path.suffix.lstrip(".").lower()
+        file_size = path.stat().st_size
+        if file_size <= 0:
+            raise ValueError(
+                f"File is empty and cannot be loaded. Path: {path.resolve()}, type: {file_type}"
+            )
         metadata = {
             "source_type": source.pre_source_type,
             "file_name": path.name,
             "file_type": file_type,
-            "file_size": path.stat().st_size,
+            "file_size": file_size,
         }
         try:
             metadata["parse_config"] = ParseConfig.from_extension(file_type)
@@ -252,3 +257,6 @@ class URLLoader(BaseLoader):
         for path in self._temp_files:
             Path(path).unlink(missing_ok=True)
         self._temp_files.clear()
+
+    async def acleanup(self) -> None:
+        await asyncio.create_task(self.acleanup())
