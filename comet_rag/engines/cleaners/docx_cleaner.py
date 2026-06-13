@@ -40,17 +40,9 @@ class DocxCleaner(BaseCleaner):
     async def aclean_to_string(self, parse_content: DocxParsedContent) -> str:
         if self._vision_model is None:
             return await asyncio.to_thread(self.clean_to_string, parse_content)
-
         blocks = await asyncio.to_thread(self.clean_to_blocks, parse_content)
-        parts: list[str] = []
-        for block in blocks:
-            if block.get("type") == "image":
-                text = await self._describe_image_block_async(block)
-            else:
-                text = self._block_to_text(block)
-            if text:
-                parts.append(text)
-        return "\n\n".join(parts)
+        results = await asyncio.gather(*(self._process_block(b) for b in blocks))
+        return "\n\n".join(r for r in results if r)
 
     def clean_to_markdown(
         self,
@@ -73,13 +65,7 @@ class DocxCleaner(BaseCleaner):
                 parts.append(text)
         result = "\n\n".join(parts)
         if output_dir is not None:
-            output_dir.mkdir(parents=True, exist_ok=True)
-            (output_dir / f"{filename}.md").write_text(result, encoding="utf-8")
-            if image_blocks:
-                images_dir = output_dir / "images"
-                images_dir.mkdir(exist_ok=True)
-                for block in image_blocks:
-                    self._save_image(block, images_dir)
+            self._write_markdown_and_images(result, output_dir, filename, image_blocks)
         return result
 
     async def aclean_to_markdown(
@@ -93,29 +79,13 @@ class DocxCleaner(BaseCleaner):
                 self.clean_to_markdown, parse_content, output_dir, filename
             )
         blocks = await asyncio.to_thread(self.clean_to_blocks, parse_content)
-        parts: list[str] = []
-        image_blocks: list[Block] = []
-        for block in blocks:
-            if block.get("type") == "image":
-                image_blocks.append(block)
-                text = await self._describe_image_block_async(block)
-            else:
-                text = self._block_to_markdown(block)
-            if text:
-                parts.append(text)
-        result = "\n\n".join(parts)
+        results = await asyncio.gather(*(self._process_block_markdown(b) for b in blocks))
+        result = "\n\n".join(r for r in results if r)
         if output_dir is not None:
-            output_dir.mkdir(parents=True, exist_ok=True)
+            image_blocks = [b for b in blocks if b.get("type") == "image"]
             await asyncio.to_thread(
-                lambda: (output_dir / f"{filename}.md").write_text(
-                    result, encoding="utf-8"
-                )
+                self._write_markdown_and_images, result, output_dir, filename, image_blocks
             )
-            if image_blocks:
-                images_dir = output_dir / "images"
-                images_dir.mkdir(exist_ok=True)
-                for block in image_blocks:
-                    self._save_image(block, images_dir)
         return result
 
     def clean_to_blocks(self, parse_content: DocxParsedContent) -> list[Block]:
@@ -155,6 +125,31 @@ class DocxCleaner(BaseCleaner):
         except Exception as exc:
             logger.warning(f"Vision model failed for image '{alt}': {exc}")
             return f"[image: {alt}]" if alt else "[image]"
+
+    async def _process_block(self, block: Block) -> str:
+        if block.get("type") == "image":
+            return await self._describe_image_block_async(block)
+        return self._block_to_text(block)
+
+    async def _process_block_markdown(self, block: Block) -> str:
+        if block.get("type") == "image":
+            return await self._describe_image_block_async(block)
+        return self._block_to_markdown(block)
+
+    def _write_markdown_and_images(
+        self,
+        result: str,
+        output_dir: Path,
+        filename: str,
+        image_blocks: list[Block],
+    ) -> None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / f"{filename}.md").write_text(result, encoding="utf-8")
+        if image_blocks:
+            images_dir = output_dir / "images"
+            images_dir.mkdir(exist_ok=True)
+            for block in image_blocks:
+                self._save_image(block, images_dir)
 
     def _block_to_text(self, block: Block) -> str:
         btype = block.get("type", "")
