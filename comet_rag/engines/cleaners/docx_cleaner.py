@@ -108,11 +108,6 @@ class DocxCleaner(BaseCleaner):
             logger.warning(f"Vision model failed for image '{alt}': {exc}")
             return f"[image: {alt}]" if alt else "[image]"
 
-    async def _process_block(self, block: Block) -> str:
-        if block.get("type") == "image":
-            return await self._describe_image_block_async(block)
-        return self._block_to_text(block)
-
     async def _process_block_markdown(self, block: Block) -> str:
         if block.get("type") == "image":
             return await self._describe_image_block_async(block)
