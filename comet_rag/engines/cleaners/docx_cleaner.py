@@ -130,7 +130,7 @@ class DocxCleaner(BaseCleaner):
 
     def _block_to_text(self, block: Block) -> str:
         btype = block.get("type", "")
-        content = block.get("content", "")
+        content = block.get("content") or ""
 
         if btype == "heading":
             level = max(1, min(block.get("level", 1), 6))
