@@ -26,24 +26,6 @@ class DocxCleaner(BaseCleaner):
         self._include_images = include_images
         self._vision_model = vision_model
 
-    def clean_to_string(self, parse_content: DocxParsedContent) -> str:
-        parts: list[str] = []
-        for block in self.clean_to_blocks(parse_content):
-            if block.get("type") == "image" and self._vision_model is not None:
-                text = self._describe_image_block_sync(block)
-            else:
-                text = self._block_to_text(block)
-            if text:
-                parts.append(text)
-        return "\n\n".join(parts)
-
-    async def aclean_to_string(self, parse_content: DocxParsedContent) -> str:
-        if self._vision_model is None:
-            return await asyncio.to_thread(self.clean_to_string, parse_content)
-        blocks = await asyncio.to_thread(self.clean_to_blocks, parse_content)
-        results = await asyncio.gather(*(self._process_block(b) for b in blocks))
-        return "\n\n".join(r for r in results if r)
-
     def clean_to_markdown(
         self,
         parse_content: DocxParsedContent,
@@ -197,7 +179,7 @@ class DocxCleaner(BaseCleaner):
         is_ordered = block.get("attribute", "unordered") == "ordered"
         prefix = "  " * indent
         lines: list[str] = []
-        for i, item in enumerate(block.get("content", []), start=1):
+        for i, item in enumerate(block.get("content") or [], start=1):
             if item.get("type") == "list":
                 lines.append(self._list_to_text(item, indent + 1))
             else:
