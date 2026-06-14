@@ -1,7 +1,7 @@
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
 
-class BaseCleaner:
+class BaseCleaner(ABC):
     @abstractmethod
     def clean_to_markdown(self, *args, **kwargs) -> str: ...
 

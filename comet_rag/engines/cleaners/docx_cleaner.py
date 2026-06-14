@@ -60,13 +60,19 @@ class DocxCleaner(BaseCleaner):
             return await asyncio.to_thread(
                 self.clean_to_markdown, parse_content, output_dir, filename
             )
-        blocks = await asyncio.to_thread(self.clean_to_blocks, parse_content)
-        results = await asyncio.gather(*(self._process_block_markdown(b) for b in blocks))
+        blocks = self.clean_to_blocks(parse_content)
+        results = await asyncio.gather(
+            *(self._process_block_markdown(b) for b in blocks)
+        )
         result = "\n\n".join(r for r in results if r)
         if output_dir is not None:
             image_blocks = [b for b in blocks if b.get("type") == "image"]
             await asyncio.to_thread(
-                self._write_markdown_and_images, result, output_dir, filename, image_blocks
+                self._write_markdown_and_images,
+                result,
+                output_dir,
+                filename,
+                image_blocks,
             )
         return result
 
@@ -157,6 +163,8 @@ class DocxCleaner(BaseCleaner):
         if block.get("type") == "image":
             alt = block.get("alt_text") or block.get("name", "")
             img_id = block.get("id", "")
+            if not img_id:
+                return f"[image: {alt}]" if alt else "[image]"
             fmt = block.get("format", "png")
             path = f"images/{img_id}.{fmt}" if img_id else ""
             return f"![{alt}]({path})"
@@ -168,7 +176,10 @@ class DocxCleaner(BaseCleaner):
         content = block.get("content", "")
         if not img_id or not content:
             return
-        (images_dir / f"{img_id}.{fmt}").write_bytes(base64.b64decode(content))
+        try:
+            (images_dir / f"{img_id}.{fmt}").write_bytes(base64.b64decode(content))
+        except Exception as exc:
+            logger.warning(f"Failed to save image '{img_id}.{fmt}': {exc}")
 
     def _list_to_text(self, block: Block, indent: int) -> str:
         is_ordered = block.get("attribute", "unordered") == "ordered"
