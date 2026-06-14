@@ -22,10 +22,11 @@ class DocxParsedContent(BaseParsedContent):
     def text(self) -> str:
         """
         Build a plain-text representation from the document blocks.
-        
+
         Returns:
             str: Extracted text from all blocks, separated by blank lines.
         """
+
         def _extract(b: "Block") -> str:
             t = b.get("type", "")
             if t in (
