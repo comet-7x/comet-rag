@@ -20,6 +20,13 @@ class DocxParsedContent(BaseParsedContent):
 
     @property
     def text(self) -> str:
+        """
+        Build a plain-text representation from the document blocks.
+
+        Returns:
+            str: Extracted text from all blocks, separated by blank lines.
+        """
+
         def _extract(b: "Block") -> str:
             t = b.get("type", "")
             if t in (
@@ -36,7 +43,7 @@ class DocxParsedContent(BaseParsedContent):
                 alt = b.get("alt_text") or b.get("name") or b.get("id") or ""
                 return f"![{alt}]" if alt else ""
             if t == "list":
-                parts = [_extract(item) for item in b.get("content", [])]
+                parts = [_extract(item) for item in (b.get("content") or [])]
                 return "\n".join(p for p in parts if p)
             return ""
 
