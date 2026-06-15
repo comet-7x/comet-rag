@@ -18,6 +18,8 @@ class BaseModelBackend(ABC):
 
 
 class ModelFactory:
+    """模型工厂"""
+
     @staticmethod
     def create(
         url: str,
@@ -26,5 +28,6 @@ class ModelFactory:
         api_key: str,
         model_config_dict: dict[str, Any] | None = None,
     ) -> BaseModelBackend:
+        """创建模型实例"""
         # TODO: 根据 model_platform 创建对应实现
         raise NotImplementedError("Model factory not implemented")
