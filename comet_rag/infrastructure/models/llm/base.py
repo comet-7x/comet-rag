@@ -4,11 +4,17 @@ from typing import Any
 
 
 class BaseModelBackend(ABC):
-    @abstractmethod
-    async def agenerate(self, prompt: str, **kwargs) -> str: ...
+    """LLM 后端基类"""
 
     @abstractmethod
-    async def agenerate_stream(self, prompt: str, **kwargs) -> AsyncIterator[str]: ...
+    async def agenerate(self, prompt: str, **kwargs) -> str:
+        """异步生成"""
+        ...
+
+    @abstractmethod
+    async def agenerate_stream(self, prompt: str, **kwargs) -> AsyncIterator[str]:
+        """异步流式生成"""
+        ...
 
 
 class ModelFactory:
