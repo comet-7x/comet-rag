@@ -1,35 +1,12 @@
 import asyncio
 import base64
 from pathlib import Path
-from typing import Protocol
 
 from loguru import logger
 
 from comet_rag.engines.cleaners.base_cleaner import BaseCleaner
+from comet_rag.engines.cleaners.vision_model import VisionModel
 from comet_rag.engines.parsers.types import Block, DocxParsedContent
-
-
-class VisionModel(Protocol):
-    def describe(self, base64_data: str, media_type: str, **kwargs) -> str: ...
-
-    """
-    Generate a text description of an image.
-
-    Parameters:
-        media_type (str): The MIME type of the image (e.g., "image/png")
-
-    Returns:
-        str: A text description of the image
-    """
-
-    async def adescribe(self, base64_data: str, media_type: str, **kwargs) -> str: ...
-
-    """
-    Generate a description of an image from base64-encoded data.
-
-    Returns:
-        str: A description of the image
-    """
 
 
 class DocxCleaner(BaseCleaner):
