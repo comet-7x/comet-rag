@@ -1,4 +1,5 @@
 from .base import BaseEmbeddingModel
+from .openai_embedding_model import OpenAIEmbeddingModel
 from .qwen3_vl_embedding import (
     DetokenizeResponse,
     EmbeddingData,
@@ -11,6 +12,7 @@ from .qwen3_vl_embedding import (
 
 __all__ = [
     "BaseEmbeddingModel",
+    "OpenAIEmbeddingModel",
     "DetokenizeResponse",
     "EmbeddingData",
     "EmbeddingResponse",
