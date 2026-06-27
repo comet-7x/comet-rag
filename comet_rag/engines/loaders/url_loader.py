@@ -259,4 +259,4 @@ class URLLoader(BaseLoader):
         self._temp_files.clear()
 
     async def acleanup(self) -> None:
-        await asyncio.create_task(self.acleanup())
+        await asyncio.to_thread(self.cleanup)
