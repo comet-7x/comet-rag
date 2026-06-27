@@ -1,5 +1,3 @@
-"""LLM 客户端封装"""
-
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any
@@ -11,12 +9,12 @@ class BaseModelBackend(ABC):
     @abstractmethod
     async def agenerate(self, prompt: str, **kwargs) -> str:
         """异步生成"""
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     async def agenerate_stream(self, prompt: str, **kwargs) -> AsyncIterator[str]:
         """异步流式生成"""
-        raise NotImplementedError
+        ...
 
 
 class ModelFactory:
