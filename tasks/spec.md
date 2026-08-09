@@ -20,7 +20,8 @@
 | A7 | Python ≥ 3.12，async-first，模型侧统一走 OpenAI 兼容协议打自建 Qwen3-VL 服务 | 现有代码 |
 | A8 | **首个里程碑 M1 = 打通 DOCX 全链路**。MinerU / PDF 是独立的后续里程碑 M2 | 已确认 |
 | A9 | 向量库**只实现 Milvus**，不做多后端兼容。但配一个 `InMemoryVectorStore`（测试必需，顺带验证抽象），两者跑同一套契约测试 | 已确认 |
-| A10 | **移除确认门**（`AWAITING_REVIEW` 及 `review_*` 字段）。理由：确认门的价值在于"中间态昂贵不可丢"，而 DOCX 链路的中间态（chunks）重算只要几秒，重算比挂起便宜。**但 `resume_stage` / `context` 断点续跑机制保留**——重试要从失败阶段续跑，不是从头重来 | 已确认 |
+| A10 | **移除确认门**（`AWAITING_REVIEW` 及 `review_*` 字段）。理由：确认门的价值在于"中间态昂贵不可丢"，而 DOCX 链路的中间态（chunks）重算只要几秒，重算比挂起便宜。**但断点续跑要保留**——重试要从失败阶段续跑，不是从头重来 | 已确认 |
+| A10-修正 | ⚠️ **原 A10 基于一个错误前提**。T4 实测（2026-08-09）证明：断点续跑目前**只由确认门驱动**——`resume_stage` 仅在 `NeedsReview` 时被赋值，`executor._mark_failed` 走可重试分支时不设它。多阶段流水线在可重试失败后是**从头全量重跑**（实测访问序列 `s1,s2,s3,s1,s2,s3`）。因此"保留断点续跑"不是保留，而是**新实现**：需改为由失败驱动。T5 范围相应扩大 | 已修正 |
 | A11 | Milvus collection schema **预留 sparse vector 字段**，M1 不写入、不实现混合检索逻辑（留给 M3）。理由：sparse 字段必须建表时声明，事后添加需全量重灌 | 已确认 |
 | A12 | 知识库建 `knowledge_bases` 表（不是纯字符串标签），**必须含 `embedding_model` 与 `embedding_dim` 字段** | 已确认 |
 
