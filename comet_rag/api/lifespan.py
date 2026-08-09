@@ -22,9 +22,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
 
     # 初始化资源（TODO: 替换为实际资源创建）
-    # from ..infrastructure.llm import ModelFactory
-    # from ..infrastructure.embedding import Qwen3VLEmbeddingModel
-    # from ..infrastructure.reranker import Qwen3VLReranker
+    # from ..infrastructure.models.llm import ModelFactory
+    # from ..infrastructure.models.embedding import Qwen3VLEmbeddingModel
+    # from ..infrastructure.models.reranker import Qwen3VLReranker
     # from ..infrastructure.vectorstore import MilvusStorage
     #
     # llm = ModelFactory.create(...)

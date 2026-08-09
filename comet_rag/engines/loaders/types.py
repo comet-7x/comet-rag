@@ -47,9 +47,9 @@ class SourceContent:
         elif pre_source_type == SourceType.LOCAL:
             try:
                 abs_path = os.path.abspath(self.source)
-                source_to_shape = Path(abs_path).as_posix()
+                source_to_hash = Path(abs_path).as_posix()
             except OSError:
-                source_to_shape = self.source
+                source_to_hash = self.source
         else:
             source_to_hash = self.source
         return compute_sha256(source_to_hash)
