@@ -91,32 +91,38 @@
 
 ---
 
-### T5 — `tasks/` 提升与去确认门
+### ✅ T5 — `tasks/` 提升与去确认门
 
 **描述：** 把 `poc/task_demo/task/` 搬到 `comet_rag/tasks/`，同时执行 A10（移除确认门）与 `Pipeline` 改名。
 
 **验收标准：**
-- [ ] 6 个模块迁入 `comet_rag/tasks/`：`models / states / store / executor / runner / service`
-- [ ] `runner.Pipeline` 更名 `StagePipeline`（避开与 `engines/pipelines/pipeline.py::Pipeline` 撞名）
-- [ ] 移除：`AWAITING_REVIEW` 状态、`review_required/review_payload/review_decision/review_comment/reviewed_at` 五字段、`ReviewDecision`、`NeedsReview`、`TaskService.review()`、状态机中相关迁移
-- [ ] **保留**：`resume_stage`、`context`、`StagePipeline` 的阶段推进与续跑（A10 的关键约束）
-- [ ] 🔴 **新增（A10-修正）**：断点续跑改为**由失败驱动**。`executor._mark_failed`
+- [x] 6 个模块迁入 `comet_rag/tasks/`：`models / states / store / executor / runner / service`
+- [x] `runner.Pipeline` 更名 `StagePipeline`（避开与 `engines/pipelines/pipeline.py::Pipeline` 撞名）
+- [x] 移除：`AWAITING_REVIEW` 状态、`review_required/review_payload/review_decision/review_comment/reviewed_at` 五字段、`ReviewDecision`、`NeedsReview`、`TaskService.review()`、状态机中相关迁移
+- [x] **保留**：`resume_stage`、`context`、`StagePipeline` 的阶段推进与续跑（A10 的关键约束）
+- [x] 🔴 **新增（A10-修正）**：断点续跑改为**由失败驱动**。`executor._mark_failed`
       走可重试分支时须把当前 `stage` 写入 `resume_stage`，否则删掉确认门后
       `resume_stage` 永远为 None、变成死代码，重试退化为全量重跑
-- [ ] `comet_rag/schemas/task.py` 删除，全仓无残留引用
+- [x] `comet_rag/schemas/task.py` 删除，全仓无残留引用
 
 **验证：**
-- [ ] T4 的测试改完 import 后**一字不改**地全绿
-- [ ] `test_retry_should_resume_from_failed_stage` 的 `xfail(strict=True)` 标记
+- [x] T4 的测试改完 import 后**一字不改**地全绿
+- [x] `test_retry_should_resume_from_failed_stage` 的 `xfail(strict=True)` 标记
       可以删除并通过；同时 `test_retry_currently_restarts_pipeline_from_first_stage`
       需相应更新（它记录的是将被取代的旧行为）
-- [ ] `grep -rn "review\|AWAITING" comet_rag/tasks/` 无输出
-- [ ] `grep -rn "schemas.task\|schemas import task" comet_rag/` 无输出
+- [x] `grep -rn "review\|AWAITING" comet_rag/tasks/` 无输出
+- [x] `grep -rn "schemas.task\|schemas import task" comet_rag/` 无输出
 
 **依赖：** T4
 **文件：** `comet_rag/tasks/*.py`（6 个）、删除 `comet_rag/schemas/task.py`
 **规模：** M（因 A10-修正而接近上限，若实现续跑时发现需改动 `StagePipeline`
 契约，应拆出独立任务）
+
+**产出：** 29 用例全绿，连跑 5 次零 flaky。断点续跑已由失败驱动。
+**顺带修掉一个留痕 bug：** 退回 PENDING 时若不先把当前阶段收成 failed，
+续跑时 `enter_stage` 会把那条失败记录关成 `succeeded`，阶段历史会骗人。
+**新增 `TaskService.retry(from_scratch=True)`：** 怀疑前置阶段产出有问题时强制整条重来。
+**未删除 `poc/task_demo/`**：该目录被 `.gitignore` 忽略、从未进过版本库，删掉不可恢复，留给你处置。
 
 ---
 

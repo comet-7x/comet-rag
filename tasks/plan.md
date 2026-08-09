@@ -99,7 +99,7 @@ T1 测试基建 ──┬─► T2 依赖分组(A1)
 ### Phase 1：任务框架落地（纯逻辑，零外部依赖）
 
 - [x] T4 — 把 `poc/task_demo/demo.py` 的 5 个场景转成 pytest
-- [ ] T5 — `poc/task_demo/task/` 提升为 `comet_rag/tasks/`，改名 `StagePipeline`，移除确认门（A10）
+- [x] T5 — `poc/task_demo/task/` 提升为 `comet_rag/tasks/`，改名 `StagePipeline`，移除确认门（A10）
 - [ ] T6 — `states.py` 状态机全矩阵测试
 - [ ] T7 — `TaskStore` 契约测试套件（`InMemoryTaskStore` 先过）
 - [ ] T8 — `TaskExecutor` 契约测试套件（`InProcessExecutor` 先过）

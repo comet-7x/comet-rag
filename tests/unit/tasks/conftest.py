@@ -1,8 +1,8 @@
 """任务框架测试夹具。
 
-导入路径集中在下方一处 —— T5 把 poc/task_demo/task/ 提升为 comet_rag/tasks/ 时
-只需改这一个 import 块，其余测试一行不动。这正是 T4 先于 T5 的意义：
-先用测试把行为钉死，搬迁时任何漂移都会立刻暴露。
+导入路径集中在下方一处。T5 从 poc/task_demo/task/ 迁到 comet_rag/tasks/ 时
+确实只改了这一个 import 块，其余测试一行未动 —— 这正是 T4 先于 T5 的价值：
+先用测试把行为钉死，搬迁中的任何漂移都会立刻暴露。
 """
 
 from __future__ import annotations
@@ -12,13 +12,13 @@ from typing import Any
 
 import pytest
 
-# ── T5 迁移时只改这一块 ────────────────────────────────────────────────────
-from poc.task_demo.task import (
+# ── 单一导入源（T5 已从 poc/task_demo/task 迁至此）────────────────────────────────────────────────────
+from comet_rag.tasks import (
     Done,
     InMemoryTaskStore,
     InProcessExecutor,
-    Pipeline,
     RetriableError,
+    StagePipeline,
     TaskContext,
     TaskService,
     register,
@@ -70,7 +70,7 @@ def svc(store: InMemoryTaskStore, executor: InProcessExecutor) -> TaskService:
 
 # ── 测试用 runner ──────────────────────────────────────────────────────────
 
-three_stage = Pipeline()
+three_stage = StagePipeline()
 
 
 @three_stage.stage("extract")
@@ -96,7 +96,7 @@ async def _load(ctx: TaskContext) -> Done:
 register("multi")(three_stage)
 
 
-failing_flow = Pipeline()
+failing_flow = StagePipeline()
 
 
 @failing_flow.stage("s1")

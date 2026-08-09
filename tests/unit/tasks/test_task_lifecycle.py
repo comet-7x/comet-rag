@@ -15,7 +15,7 @@ from datetime import timedelta
 
 import pytest
 
-from poc.task_demo.task import (
+from comet_rag.tasks import (
     InProcessExecutor,
     InvalidTransition,
     Task,
@@ -80,39 +80,79 @@ async def test_idempotency_key_returns_existing_task(
     assert state["visited"] == ["extract", "transform", "load"]  # 只跑了一遍
 
 
-async def test_retry_currently_restarts_pipeline_from_first_stage(
+async def test_retry_resumes_from_failed_stage(
     svc: TaskService, executor: InProcessExecutor, state: dict
 ) -> None:
-    """记录**当前**行为：可重试失败会让多阶段流水线从头全量重跑。
+    """重试只重跑失败的那个阶段（spec A10-修正）。
 
-    这不是我们想要的终态（见下一个 xfail 用例），但先把现状钉死 ——
-    T5 搬迁时若行为意外改变，这里会立刻变红。
+    对 RAG 入库链路而言这不是优化而是必要 —— embedding 阶段因模型服务 503
+    失败时，不该把已经花了几秒 CPU 的 docx 解析和分块整个重做一遍。
     """
     task = await svc.submit("resumable", {}, max_attempts=3)
+    await _settle(executor)
+
+    assert (await svc.store.require(task.task_id)).status is TaskStatus.SUCCEEDED
+    assert state["visited"] == ["s1", "s2", "s3", "s3"], "s1/s2 不该被重跑"
+
+
+async def test_stage_history_marks_the_failed_attempt(
+    svc: TaskService, executor: InProcessExecutor
+) -> None:
+    """失败那次的阶段留痕必须记成 failed。
+
+    续跑时 enter_stage 会关掉"上一条还开着口的记录"，若不在退回 PENDING 时
+    先把它收成 failed，这条失败记录会被关成 succeeded —— 阶段历史就骗人了。
+    """
+    task = await svc.submit("resumable", {}, max_attempts=3)
+    await _settle(executor)
+
+    history = [
+        (r.stage, r.status)
+        for r in (await svc.store.require(task.task_id)).stage_history
+    ]
+    assert history == [
+        ("s1", "succeeded"),
+        ("s2", "succeeded"),
+        ("s3", "failed"),
+        ("s3", "succeeded"),
+    ]
+
+
+async def test_success_clears_the_resume_anchor(
+    svc: TaskService, executor: InProcessExecutor
+) -> None:
+    """成功后必须清空 resume_stage，否则日后显式 retry 会从半途开始。"""
+    task = await svc.submit("resumable", {}, max_attempts=3)
+    await _settle(executor)
+
+    assert (await svc.store.require(task.task_id)).resume_stage is None
+
+
+async def test_explicit_retry_from_scratch_restarts_whole_pipeline(
+    svc: TaskService, executor: InProcessExecutor, state: dict
+) -> None:
+    """怀疑是前置阶段产出有问题时，from_scratch=True 强制整条重来。"""
+    task = await svc.submit("resumable", {}, max_attempts=1)
+    await _settle(executor)
+    assert (await svc.store.require(task.task_id)).status is TaskStatus.FAILED
+    assert state["visited"] == ["s1", "s2", "s3"]
+
+    await svc.retry(task.task_id, from_scratch=True)
     await _settle(executor)
 
     assert (await svc.store.require(task.task_id)).status is TaskStatus.SUCCEEDED
     assert state["visited"] == ["s1", "s2", "s3", "s1", "s2", "s3"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "断点续跑目前只由确认门驱动：resume_stage 仅在 NeedsReview 时被赋值，"
-        "executor._mark_failed 走可重试分支时不设它，于是流水线从头重跑。"
-        "spec A10 要求保留断点续跑，故 T5 必须改为由失败驱动。"
-        "实现后本标记应删除。"
-    ),
-)
-async def test_retry_should_resume_from_failed_stage(
+async def test_explicit_retry_defaults_to_resuming(
     svc: TaskService, executor: InProcessExecutor, state: dict
 ) -> None:
-    """期望行为：重试只重跑失败的那个阶段。
+    """判死后的显式 retry 默认也续跑 —— _mark_failed 两个分支都写了锚点。"""
+    task = await svc.submit("resumable", {}, max_attempts=1)
+    await _settle(executor)
+    assert (await svc.store.require(task.task_id)).resume_stage == "s3"
 
-    对 RAG 入库链路而言这不是优化而是必要 —— embedding 阶段因模型服务 503
-    失败时，不该把已经花了几秒 CPU 的 docx 解析和分块整个重做一遍。
-    """
-    task = await svc.submit("resumable", {}, max_attempts=3)
+    await svc.retry(task.task_id)
     await _settle(executor)
 
     assert (await svc.store.require(task.task_id)).status is TaskStatus.SUCCEEDED
