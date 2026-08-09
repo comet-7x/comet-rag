@@ -1,0 +1,54 @@
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # 这个 job 是 spec A1 的守门人：只装核心依赖（不带任何 extras）。
+  # 一旦有人往 engines/ 里加了基础设施依赖，这里会立刻红 ——
+  # 而在装了全部 extras 的开发机上是察觉不到的。
+  # ───────────────────────────────────────────────────────────────────────────
+  core-only:
+    name: 仅核心依赖（A1 守门）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 只装核心依赖
+        run: uv sync --no-default-groups
+
+      - name: 库可独立使用
+        run: |
+          uv run python -c "
+          from comet_rag.engines.pipelines import Pipeline
+          from comet_rag.engines.chunkers import TextChunker
+          assert TextChunker(chunk_size=50).chunk('x' * 300)
+          print('核心依赖下引擎可用 ✓')
+          "
+
+  unit:
+    name: 单元测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 安装依赖
+        run: uv sync --all-groups --all-extras
+
+      - name: 单元测试
+        # 默认 addopts 已排除 integration / e2e / benchmark
+        run: uv run pytest --cov=comet_rag --cov-report=term-missing --cov-report=xml
+
+      - name: 上传覆盖率
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: ignore
