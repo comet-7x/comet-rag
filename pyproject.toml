@@ -5,29 +5,73 @@ description = "Comet-RAG: A RAG application framework"
 readme = "README.md"
 requires-python = ">=3.12"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 核心依赖 = engines/ + infrastructure/models/ 所需的全部，且仅此。
+#
+# 这一组是 spec A1（"engines 不得依赖基础设施"）的强制执行手段：
+# `pip install comet-rag` 只装这些，用户为了跑一个 docx 解析器不必拖进
+# Redis / Postgres / Milvus / FastAPI。任何往这里加中间件依赖的改动都会
+# 破坏"库 + 服务"的双重定位 —— 见 spec §7 Ask first。
+# ─────────────────────────────────────────────────────────────────────────────
 dependencies = [
+    "pydantic>=2.9.0",
+    "httpx[socks]>=0.27.0",
+    "openai>=2.30.0",       # infrastructure/models/* 的 OpenAI 兼容客户端
+    "loguru>=0.7.3",
+    "magika>=1.0.2",        # engines/utils/file_detector.py
+    "python-docx>=1.2.0",   # engines/converters, engines/parsers/docx_parser
+    "lxml>=6.1.0",          # engines/parsers/docx_parser (含 omml.py)
+    "pyyaml>=6.0",          # config/settings.py —— 此前漏声明，靠传递依赖侥幸可用
+]
+
+[project.optional-dependencies]
+# 向量库后端
+milvus = ["pymilvus>=2.5.0"]
+
+# 参考服务：API（生产端）+ Worker（消费端）+ 持久化
+server = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
-    "pydantic>=2.9.0",
-    "pydantic-settings>=2.5.0",
+    "python-multipart>=0.0.9",  # FastAPI 接文件上传（POST /ingest）必需
     "sqlalchemy>=2.0.0",
     "alembic>=1.13.0",
-    "loguru>=0.7.3",
-    "snowflake>=1.12.0",
-    "openai>=2.30.0",
-    "httpx>=0.27.0",
-    "magika>=1.0.2",
-    "python-docx>=1.2.0",
-    "lxml>=6.1.0",
+    "asyncpg>=0.30.0",
+    "arq>=0.26.0",              # 任务队列，见 spec A3（选它而非 Celery 的理由）
+    "aioboto3>=13.0.0",
 ]
+
+# M2 才会用到。刻意独立成组：它会拖进 torch/modelscope/opencv 等数 GB 依赖，
+# 不应进入 `all`。装法：uv sync --extra mineru
+mineru = ["mineru>=2.0.0"]
+
+all = ["comet-rag[milvus,server]"]
 
 [dependency-groups]
 dev = [
     "commitizen>=4.8.2",
     "pre-commit>=4.2.0",
     "pytest>=9.0.2",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.0.0",
     "ruff>=0.6.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 默认只跑 unit：必须秒级完成，否则没人会在提交前跑它。
+# 需要中间件的用 -m integration / -m e2e 显式触发。
+addopts = "-m 'not integration and not e2e and not benchmark' --strict-markers"
+markers = [
+    "integration: 需要 docker-compose 起中间件（postgres/redis/milvus/minio）",
+    "e2e: 端到端链路，可能需要中间件",
+    "benchmark: 性能基线，不参与常规 CI",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+source = ["comet_rag"]
+omit = ["*/__pycache__/*", "comet_rag/api/main.py"]
 
 [tool.ruff.lint]
 select = [
