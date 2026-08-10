@@ -268,22 +268,37 @@
 
 ---
 
-### T12 — chunkers 单元测试
+### ✅ T12 — chunkers 单元测试
 
 **描述：** 纯函数，输入输出明确，边界条件多。零外部依赖，最容易补齐覆盖率。
 
 **验收标准：**
-- [ ] 覆盖全部 8 个 chunker（Text/Docx/Mdx/Python/TypeScript/Csv/Json/Xml）
-- [ ] 边界：空文本、纯空白、无分隔符超长文本、`chunk_overlap ≥ chunk_size`、单字符文本
-- [ ] 不变式：所有 chunk 拼接后覆盖原文（去除 overlap 后）；无空 chunk；`len(chunk) ≤ chunk_size` 或有明确例外并注明
-- [ ] `engines/chunkers/` 覆盖率 ≥ 80%
+- [x] 覆盖全部 8 个 chunker（Text/Docx/Mdx/Python/TypeScript/Csv/Json/Xml）
+- [x] 边界：空文本、纯空白、无分隔符超长文本、`chunk_overlap ≥ chunk_size`、单字符文本
+- [x] 不变式：所有 chunk 拼接后覆盖原文（去除 overlap 后）；无空 chunk；`len(chunk) ≤ chunk_size` 或有明确例外并注明
+- [x] `engines/chunkers/` 覆盖率 ≥ 80%
 
 **验证：**
-- [ ] `uv run pytest tests/unit/engines/test_chunkers.py --cov=comet_rag.engines.chunkers`
+- [x] `uv run pytest tests/unit/engines/test_chunkers.py --cov=comet_rag.engines.chunkers`
 
 **依赖：** T1
-**文件：** `tests/unit/engines/test_chunkers.py`
+**文件：** `tests/unit/engines/test_chunkers.py`（不变式，8 类参数化）、
+`tests/unit/engines/test_chunkers_variants.py`（其余 9 个代码分块器、CJK、
+keep_separator=False、Mdx 首行标题、已知局限特征化）
 **规模：** S
+
+**覆盖率 96%**（目标 ≥80%）。code_chunker 与 text_chunker 均 100%。
+
+**过程中的教训**：最初的测试文本是无空格无换行的中文，导致所有"不变式"
+测试都绕过了分隔符递归逻辑、落到按字符兜底的退化分支。测试全绿，
+但测的不是真正会跑的那条路 —— 是覆盖率报告（base_chunker 70%，
+`_split_text_with_separator` 整段未执行）暴露的。换成带段落/句子/空格
+结构的文本后，该文件覆盖率 70% → 94%。
+
+**发现的已知局限**：`chunk_overlap` 按整个 split 保留而非按字符切，
+当文本的自然切分单元大于 chunk_overlap 时**静默失效**（无报错）。
+对 RAG 的影响：正是最需要重叠防止语义断裂的场景反而没有保护。
+已写成特征化测试钉住当前行为，修复需改 `_merge_splits` 收缩策略（M1 之外）。
 
 ---
 
