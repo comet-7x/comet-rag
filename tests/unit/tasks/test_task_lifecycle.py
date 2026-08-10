@@ -25,6 +25,7 @@ from comet_rag.tasks import (
     Time,
     VersionConflict,
 )
+from tests.contracts.support import wait_for_terminal
 
 # ── 场景 1：多阶段推进 ──────────────────────────────────────────────────────
 
@@ -89,7 +90,7 @@ async def test_retry_resumes_from_failed_stage(
     失败时，不该把已经花了几秒 CPU 的 docx 解析和分块整个重做一遍。
     """
     task = await svc.submit("resumable", {}, max_attempts=3)
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
 
     assert (await svc.store.require(task.task_id)).status is TaskStatus.SUCCEEDED
     assert state["visited"] == ["s1", "s2", "s3", "s3"], "s1/s2 不该被重跑"
@@ -104,7 +105,7 @@ async def test_stage_history_marks_the_failed_attempt(
     先把它收成 failed，这条失败记录会被关成 succeeded —— 阶段历史就骗人了。
     """
     task = await svc.submit("resumable", {}, max_attempts=3)
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
 
     history = [
         (r.stage, r.status)
@@ -123,7 +124,7 @@ async def test_success_clears_the_resume_anchor(
 ) -> None:
     """成功后必须清空 resume_stage，否则日后显式 retry 会从半途开始。"""
     task = await svc.submit("resumable", {}, max_attempts=3)
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
 
     assert (await svc.store.require(task.task_id)).resume_stage is None
 
@@ -133,12 +134,12 @@ async def test_explicit_retry_from_scratch_restarts_whole_pipeline(
 ) -> None:
     """怀疑是前置阶段产出有问题时，from_scratch=True 强制整条重来。"""
     task = await svc.submit("resumable", {}, max_attempts=1)
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
     assert (await svc.store.require(task.task_id)).status is TaskStatus.FAILED
     assert state["visited"] == ["s1", "s2", "s3"]
 
     await svc.retry(task.task_id, from_scratch=True)
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
 
     assert (await svc.store.require(task.task_id)).status is TaskStatus.SUCCEEDED
     assert state["visited"] == ["s1", "s2", "s3", "s1", "s2", "s3"]
@@ -149,11 +150,11 @@ async def test_explicit_retry_defaults_to_resuming(
 ) -> None:
     """判死后的显式 retry 默认也续跑 —— _mark_failed 两个分支都写了锚点。"""
     task = await svc.submit("resumable", {}, max_attempts=1)
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
     assert (await svc.store.require(task.task_id)).resume_stage == "s3"
 
     await svc.retry(task.task_id)
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
 
     assert (await svc.store.require(task.task_id)).status is TaskStatus.SUCCEEDED
     assert state["visited"] == ["s1", "s2", "s3", "s3"]
@@ -205,7 +206,7 @@ async def test_retriable_failure_is_retried_until_success(
     svc: TaskService, executor: InProcessExecutor
 ) -> None:
     task = await svc.submit("flaky", {}, max_attempts=3)
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
 
     task = await svc.store.require(task.task_id)
     assert task.status is TaskStatus.SUCCEEDED
@@ -217,7 +218,7 @@ async def test_retries_stop_at_max_attempts(
     svc: TaskService, executor: InProcessExecutor
 ) -> None:
     task = await svc.submit("always_fails", {}, max_attempts=2)
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
 
     task = await svc.store.require(task.task_id)
     assert task.status is TaskStatus.FAILED
@@ -231,7 +232,7 @@ async def test_non_retriable_error_fails_immediately(
 ) -> None:
     """确定性错误（解析失败等）不该消耗重试次数 —— 重试一万次也还是坏文件。"""
     task = await svc.submit("boom", {}, max_attempts=5)
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
 
     task = await svc.store.require(task.task_id)
     assert task.status is TaskStatus.FAILED
@@ -245,14 +246,14 @@ async def test_failed_task_can_be_reopened_by_explicit_retry(
     svc: TaskService, executor: InProcessExecutor, state: dict
 ) -> None:
     task = await svc.submit("always_fails", {}, max_attempts=1)
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
     assert (await svc.store.require(task.task_id)).status is TaskStatus.FAILED
 
     state["attempts"] = 0  # 让它这次能成功？不能 —— always_fails 永远失败
     reopened = await svc.retry(task.task_id)
     assert reopened.status in (TaskStatus.PENDING, TaskStatus.RUNNING)
     assert reopened.error is None
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
 
 
 # ── 场景 4：乐观锁、状态机守卫与序列化往返 ──────────────────────────────────
@@ -352,7 +353,7 @@ async def test_public_view_hides_internal_fields(
 ) -> None:
     """给前端的裁剪视图不得泄漏 traceback、worker_id 等内部信息。"""
     task = await svc.submit("boom", {}, max_attempts=1)
-    await _settle(executor)
+    await wait_for_terminal(svc.store, task.task_id)
 
     view = (await svc.store.require(task.task_id)).public_view()
     for leaked in ("worker_id", "version", "idempotency_key", "context"):
@@ -418,21 +419,3 @@ async def test_sweep_stale_leaves_live_tasks_alone(store: TaskStore) -> None:
 
     assert await store.sweep_stale(lease=timedelta(seconds=30)) == []
     assert (await store.require(task.task_id)).status is TaskStatus.RUNNING
-
-
-# ── 辅助 ────────────────────────────────────────────────────────────────────
-
-
-async def _settle(executor: InProcessExecutor, *, timeout: float = 5.0) -> None:
-    """等到执行器彻底静止。
-
-    不能只 wait_all()：可重试失败会派生一个"等退避再重投"的独立协程，
-    它在下一轮才会把任务重新挂上 _bg。所以要反复等到确实没有活口。
-    """
-    deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        await executor.wait_all()
-        await asyncio.sleep(0.05)
-        if not any(not t.done() for t in (*executor._bg.values(), *executor._detached)):
-            return
-    raise AssertionError("执行器在超时内未静止")

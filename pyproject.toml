@@ -58,6 +58,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 让 `from tests.contracts...` 可用：契约测试基类要被 unit 与 integration
+# 两处的实现共用，不显式加这条就得依赖 editable 安装的内部行为。
+pythonpath = ["."]
 # 默认只跑 unit：必须秒级完成，否则没人会在提交前跑它。
 # 需要中间件的用 -m integration / -m e2e 显式触发。
 addopts = "-m 'not integration and not e2e and not benchmark' --strict-markers"

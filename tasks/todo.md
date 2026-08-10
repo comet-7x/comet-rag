@@ -145,43 +145,54 @@
 
 ---
 
-### T7 — `TaskStore` 契约测试套件
+### ✅ T7 — `TaskStore` 契约测试套件
 
 **描述：** 写一套**与实现无关**的契约测试，`InMemoryTaskStore` 先过，T20 的 `PostgresTaskStore` 必须过同一套。这是"换存储时行为不变"这句承诺的唯一兑现手段。
 
 **验收标准：**
-- [ ] 契约测试以 fixture 参数化接收任意 `TaskStore` 实现
-- [ ] 覆盖：CRUD、`idempotency_key` 幂等、乐观锁 CAS 冲突、`_IMMUTABLE` 字段拒改、`transition` 走状态机守卫、事件流递增、阶段留痕
-- [ ] 覆盖 `heartbeat(bump=False)` **不涨版本**（否则乐观锁退化为不停重试）
-- [ ] 覆盖 `sweep_stale`：还有重试次数退回 PENDING，否则判 FAILED
-- [ ] `InMemoryTaskStore` 全绿，覆盖率 ≥ 90%
+- [x] 契约测试以 fixture 参数化接收任意 `TaskStore` 实现
+- [x] 覆盖：CRUD、`idempotency_key` 幂等、乐观锁 CAS 冲突、`_IMMUTABLE` 字段拒改、`transition` 走状态机守卫、事件流递增、阶段留痕
+- [x] 覆盖 `heartbeat(bump=False)` **不涨版本**（否则乐观锁退化为不停重试）
+- [x] 覆盖 `sweep_stale`：还有重试次数退回 PENDING，否则判 FAILED
+- [x] `InMemoryTaskStore` 全绿，覆盖率 ≥ 90%
 
 **验证：**
-- [ ] `uv run pytest tests/unit/tasks/test_store_contract.py -q`
-- [ ] 并发场景：两协程同时 CAS 写同一任务，恰好一个成功一个抛 `VersionConflict`
+- [x] `uv run pytest tests/unit/tasks/test_store_contract.py -q`
+- [x] 并发场景：两协程同时 CAS 写同一任务，恰好一个成功一个抛 `VersionConflict`
 
 **依赖：** T5
-**文件：** `tests/unit/tasks/test_store_contract.py`、`tests/unit/tasks/conftest.py`
+**文件：** `tests/contracts/task_store.py`（契约基类，37 用例）、
+`tests/unit/tasks/test_store_contract.py`（InMemory 实现方）
 **规模：** M
+
+**产出：** 37 用例，`store.py` 覆盖率 99%。反向验证：把 heartbeat 改成涨版本、
+把 sweep_stale 改成一律判死，各自恰好一个对应用例变红。
 
 ---
 
-### T8 — `TaskExecutor` 契约测试套件
+### ✅ T8 — `TaskExecutor` 契约测试套件
 
 **描述：** 同 T7，但针对调度侧。`InProcessExecutor` 先过，T22 的 `ArqExecutor` 必须过同一套。
 
 **验收标准：**
-- [ ] 覆盖：正常完成、重复 `submit` 幂等不跑两遍、协作式取消（`request_cancel` 返回 True ≠ 已停）、可重试失败退避重排队、`max_attempts` 耗尽判死、`shutdown` 优雅关停
-- [ ] 断言并发上限被强制执行：`max_concurrency=4` 时并发峰值 ≤ 4
-- [ ] 断言未注册 `kind` 走失败分支而非崩溃
+- [x] 覆盖：正常完成、重复 `submit` 幂等不跑两遍、协作式取消（`request_cancel` 返回 True ≠ 已停）、可重试失败退避重排队、`max_attempts` 耗尽判死、`shutdown` 优雅关停
+- [x] 断言并发上限被强制执行：`max_concurrency=4` 时并发峰值 ≤ 4
+- [x] 断言未注册 `kind` 走失败分支而非崩溃
 
 **验证：**
-- [ ] `uv run pytest tests/unit/tasks/test_executor_contract.py -q`
-- [ ] 无 flaky：连跑 20 次全绿（`--count=20`，异步取消测试最易 flaky）
+- [x] `uv run pytest tests/unit/tasks/test_executor_contract.py -q`
+- [x] 无 flaky：连跑 20 次全绿（`--count=20`，异步取消测试最易 flaky）
 
 **依赖：** T5
-**文件：** `tests/unit/tasks/test_executor_contract.py`
+**文件：** `tests/contracts/task_executor.py`（契约基类，15 用例）、
+`tests/contracts/support.py`（只经 store 观察的等待原语）、
+`tests/unit/tasks/test_executor_contract.py`（InProcess 实现方）
 **规模：** M
+
+**产出：** 15 用例，连跑 8 次零 flaky。反向验证：把信号量放大 100 倍，
+并发闸门用例立刻变红。
+**关键约束：** 契约只通过 TaskStore 观察结果，绝不 gather 执行器内部协程 ——
+否则 ArqExecutor（跨进程，无本地协程）跑不了同一套。
 
 ---
 
