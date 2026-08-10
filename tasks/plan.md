@@ -119,9 +119,9 @@ T1 测试基建 ──┬─► T2 依赖分组(A1)
 
 ### Phase 2：引擎修复（还 S4 的技术债）
 
-- [ ] T9 — `astream_run` 改批量化（P1 / S4-3）
-- [ ] T10 — `url_loader` 复用 httpx client（P2b / S4-4）
-- [ ] T11 — `PipelineHooks` 测试隔离（P8）
+- [x] T9 — `astream_run` 改窗口化并发（P1 / S4-3，验收标准已修正）
+- [x] T10 — `url_loader` 复用 httpx client（P2b / S4-4）
+- [x] T11 — `PipelineHooks` 测试隔离（P8）
 - [ ] T12 — chunkers 单元测试
 - [ ] T13 — `docx_parser` 快照测试
 

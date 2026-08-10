@@ -71,10 +71,7 @@ class Pipeline:
     def stream_run(self, source: str | Path | SourceContent) -> Iterator[Chunk]:
         lc = self._load(source)
         try:
-            for chunk in self._process(lc):
-                if self._config.embed and self._embedding_model:
-                    chunk.embedding = self._embedding_model.embed(chunk.text)
-                yield chunk
+            yield from self._iter_embedded(self._process(lc))
         finally:
             lc.cleanup()
 
@@ -84,9 +81,7 @@ class Pipeline:
         lc = await self._aload(source)
         try:
             chunks = await asyncio.to_thread(self._process, lc)
-            for chunk in chunks:
-                if self._config.embed and self._embedding_model:
-                    chunk.embedding = await self._embedding_model.aembed(chunk.text)
+            async for chunk in self._aiter_embedded(chunks):
                 yield chunk
         finally:
             lc.cleanup()
@@ -129,24 +124,64 @@ class Pipeline:
             metadata={k: v for k, v in lc.metadata.items() if k != "parse_config"},
         )
 
-    def _embed_chunks(self, chunks: list[Chunk]) -> None:
+    # ── Embedding ──────────────────────────────────────────────────────────
+    #
+    # 全部四个入口（run / arun / stream_run / astream_run）都走下面这两个
+    # 窗口化实现，不再有第二种写法。此前 astream_run 是逐 chunk 串行
+    # `await aembed()` —— 200 个 chunk 就是 200 次**依次排队**的往返，
+    # 模型服务大部分时间在空转等网络。
+    #
+    # 注意窗口不等于"一个请求装多条"：当前模型层是一条一个请求
+    # （BaseEmbeddingModel.abatch_embed 扇出 N 个单条调用并用信号量限流），
+    # 所以这里的收益来自**并发**而非请求数。真正的请求级批量需要模型层
+    # 支持一次提交多条，属于后续优化。
+
+    def _require_model(self) -> BaseEmbeddingModel:
         if self._embedding_model is None:
             raise RuntimeError(
                 "Embedding model is not initialized, cannot execute embedding."
             )
-        embeddings = self._embedding_model.batch_embed(
-            [c.text for c in chunks], max_concurrency=self._config.max_concurrency
-        )
-        for chunk, emb in zip(chunks, embeddings, strict=True):
-            chunk.embedding = emb
+        return self._embedding_model
+
+    def _windows(self, chunks: list[Chunk]) -> Iterator[list[Chunk]]:
+        size = self._config.embed_batch_size
+        for start in range(0, len(chunks), size):
+            yield chunks[start : start + size]
+
+    def _iter_embedded(self, chunks: list[Chunk]) -> Iterator[Chunk]:
+        """按窗口并发 embed，每窗完成即产出 —— 保住流式语义。"""
+        if not (self._config.embed and self._embedding_model):
+            yield from chunks
+            return
+        model = self._require_model()
+        for window in self._windows(chunks):
+            embeddings = model.batch_embed(
+                [c.text for c in window], max_concurrency=self._config.max_concurrency
+            )
+            for chunk, emb in zip(window, embeddings, strict=True):
+                chunk.embedding = emb
+                yield chunk
+
+    async def _aiter_embedded(self, chunks: list[Chunk]) -> AsyncGenerator[Chunk, None]:
+        if not (self._config.embed and self._embedding_model):
+            for chunk in chunks:
+                yield chunk
+            return
+        model = self._require_model()
+        for window in self._windows(chunks):
+            embeddings = await model.abatch_embed(
+                [c.text for c in window], max_concurrency=self._config.max_concurrency
+            )
+            for chunk, emb in zip(window, embeddings, strict=True):
+                chunk.embedding = emb
+                yield chunk
+
+    def _embed_chunks(self, chunks: list[Chunk]) -> None:
+        # 复用窗口化实现：一次性把所有 chunk 丢给 batch_embed 会为超大文档
+        # 同时创建上万个待处理项，窗口化把峰值占用限制在 embed_batch_size。
+        for _ in self._iter_embedded(chunks):
+            pass
 
     async def _aembed_chunks(self, chunks: list[Chunk]) -> None:
-        if self._embedding_model is None:
-            raise RuntimeError(
-                "Embedding model is not initialized, cannot execute embedding."
-            )
-        embeddings = await self._embedding_model.abatch_embed(
-            [c.text for c in chunks], max_concurrency=self._config.max_concurrency
-        )
-        for chunk, emb in zip(chunks, embeddings, strict=True):
-            chunk.embedding = emb
+        async for _ in self._aiter_embedded(chunks):
+            pass

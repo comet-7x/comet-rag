@@ -358,9 +358,13 @@ def fake_embedding_model() -> BaseEmbeddingModel:
    *验证*：投递量 10× 于处理能力，进程存活，内存不随投递量线性增长。
 2. **并发闸门** —— 对模型服务的并发上限可配置且被强制执行。
    *验证*：配 `max_concurrency=4`，用记录并发峰值的 fake 模型断言峰值 ≤ 4。
-3. **批量优先** —— embedding 一律走 `abatch_embed`。
-   *验证*：`astream_run` 处理 200 chunk 的文档，fake 模型收到的 HTTP 调用次数 ≤ ⌈200/batch_size⌉，而非 200。
-   > **当前不满足**：`engines/pipelines/pipeline.py:89` 在 `astream_run` 里逐 chunk `await aembed()`，同文件 `_aembed_chunks`(148) 却用了 `abatch_embed`。同一个类两种写法，这是本条的首个修复目标。
+3. **并发优先** —— embedding 一律窗口化并发，不得逐条串行等待。
+   *验证*：`astream_run` 处理 200 chunk 的文档，fake 模型记录的并发峰值 > 1 且 ≤ `max_concurrency`；首个 chunk 产出时已 embed 数 ≤ `embed_batch_size`（流式语义未退化）。
+   > **原标准已修正（2026-08-10，T9）**：本条原写作"HTTP 调用次数 ≤ ⌈200/batch_size⌉"，前提是存在请求级批量。实测不成立——`BaseEmbeddingModel.abatch_embed` 是**扇出 N 个单条请求**并用信号量限流（`base.py:37-54`），而 `Qwen3VLEmbeddingModel.embed()` 发多模态 `messages` 结构、读 `data[0]`，天生单条。全仓不存在请求级批量。
+   >
+   > 真实问题仍在：修复前 `astream_run` 逐 chunk `await aembed()` 是**完全串行**（并发峰值恒为 1），而 `_aembed_chunks` 走 `abatch_embed` 是并发的。同一个类两种写法，200 chunk × 50ms 下相差约 16 倍。已于 T9 统一为窗口化并发。
+   >
+   > **后续优化**：真正的请求级批量（OpenAI `/embeddings` 的 `input: list[str]`）需要模型层支持一次提交多条，收益更大，但属于 M1 之外。
 4. **连接池单例** —— httpx client 应用级复用。
    *验证*：`grep -rn "AsyncClient(" comet_rag/` 的结果，要么接受外部注入，要么位于生命周期管理代码中。
    > **当前部分不满足**：`engines/loaders/url_loader.py:139` 与 `:244` 用 `async with httpx.AsyncClient(...)` 现建现销，每次 URL 加载都重建连接池与 TLS 握手。批量入库大量 URL 时这是明确的浪费。

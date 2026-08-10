@@ -205,37 +205,43 @@
 
 ## Phase 2：引擎修复
 
-### T9 — `astream_run` 批量化（S4-3）
+### ✅ T9 — `astream_run` 批量化（S4-3）
 
 **描述：** `pipelines/pipeline.py:89` 逐 chunk `await aembed()`，200 chunk 的文档就是 200 次 HTTP 往返，GPU 大部分时间在等网络。同文件 `_aembed_chunks:148` 用的是 `abatch_embed`——同一个类两种写法。
 
 **验收标准：**
-- [ ] `astream_run` 与 `stream_run` 改为按批 embed 后再 yield（批大小取自 `PipelineConfig`）
-- [ ] 流式语义保留：不得退化成"全部算完再一次性 yield"
-- [ ] 同步与异步两条路径行为一致
+- [x] `astream_run` 与 `stream_run` 改为按批 embed 后再 yield（批大小取自 `PipelineConfig`）
+- [x] 流式语义保留：不得退化成"全部算完再一次性 yield"
+- [x] 同步与异步两条路径行为一致
 
 **验证：**
-- [ ] fake 模型记录调用次数：200 chunk、batch_size=32 时调用数 ≤ 7（而非 200）
-- [ ] 断言首个 chunk 的 yield 发生在全部 chunk 处理完成之前
+- [x] fake 模型记录调用次数：200 chunk、batch_size=32 时调用数 ≤ 7（而非 200）
+- [x] 断言首个 chunk 的 yield 发生在全部 chunk 处理完成之前
 
 **依赖：** T1
 **文件：** `comet_rag/engines/pipelines/pipeline.py`、`types.py`、`tests/unit/engines/test_pipeline_embed.py`
 **规模：** S
 
+**⚠️ 验收标准已修正**：原写"调用数 ≤ 7"，前提是存在请求级批量。
+实测不成立 —— `abatch_embed` 是扇出 N 个单条请求 + 信号量限流，
+`Qwen3VLEmbeddingModel.embed()` 天生单条。改为验证**并发峰值**：
+修复前恒为 1（完全串行），修复后 1 < peak ≤ max_concurrency。
+详见 spec §8 S4-3 的修正记录。
+
 ---
 
-### T10 — `url_loader` 复用 httpx client（S4-4）
+### ✅ T10 — `url_loader` 复用 httpx client（S4-4）
 
 **描述：** `loaders/url_loader.py:139,244` 每次加载都 `async with httpx.AsyncClient(...)`，重建连接池与 TLS 握手。对照 `infrastructure/models/embedding/qwen3_vl_embedding.py:112` 的注入式写法——那是本项目应统一采用的模式。
 
 **验收标准：**
-- [ ] `UrlLoader` 构造函数接受 `async_client: AsyncClient | None`，缺省时自建并由自身生命周期管理
-- [ ] 同步路径同样处理
-- [ ] `cleanup()` / `__aexit__` 只关闭自建的 client，**不关闭外部注入的**
+- [x] `UrlLoader` 构造函数接受 `async_client: AsyncClient | None`，缺省时自建并由自身生命周期管理
+- [x] 同步路径同样处理
+- [x] `cleanup()` / `__aexit__` 只关闭自建的 client，**不关闭外部注入的**
 
 **验证：**
-- [ ] `grep -rn "AsyncClient(" comet_rag/` 结果全部为注入式或生命周期管理代码
-- [ ] 测试：注入一个 client 连续加载 3 个 URL，断言其未被关闭且仅创建一次连接
+- [x] `grep -rn "AsyncClient(" comet_rag/` 结果全部为注入式或生命周期管理代码
+- [x] 测试：注入一个 client 连续加载 3 个 URL，断言其未被关闭且仅创建一次连接
 
 **依赖：** T1
 **文件：** `comet_rag/engines/loaders/url_loader.py`、`tests/unit/engines/test_url_loader.py`
@@ -243,18 +249,18 @@
 
 ---
 
-### T11 — `PipelineHooks` 测试隔离（P8）
+### ✅ T11 — `PipelineHooks` 测试隔离（P8）
 
 **描述：** `PipelineHooks` 用类变量做全局注册表。一旦开始写测试，A 测试注册的 hook 会泄漏到 B 测试。现在不暴露只是因为没有测试。
 
 **验收标准：**
-- [ ] 提供 `PipelineHooks.snapshot()` / `restore()`，或改注册表为实例级并保留全局默认实例
-- [ ] `conftest.py` 提供 autouse fixture，每个测试后自动还原注册表
-- [ ] 公开 API 向后兼容，`docs/pipeline_usage.md` 的注册写法不变
+- [x] 提供 `PipelineHooks.snapshot()` / `restore()`，或改注册表为实例级并保留全局默认实例
+- [x] `conftest.py` 提供 autouse fixture，每个测试后自动还原注册表
+- [x] 公开 API 向后兼容，`docs/pipeline_usage.md` 的注册写法不变
 
 **验证：**
-- [ ] 两个测试各注册同名 `extractor("txt")`，互不影响
-- [ ] 随机顺序跑测试仍全绿（`pytest -p no:randomly` 与随机序各跑一次）
+- [x] 两个测试各注册同名 `extractor("txt")`，互不影响
+- [x] 随机顺序跑测试仍全绿（`pytest -p no:randomly` 与随机序各跑一次）
 
 **依赖：** T1
 **文件：** `comet_rag/engines/pipelines/hooks.py`、`tests/conftest.py`

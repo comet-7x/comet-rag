@@ -11,11 +11,29 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 TESTS_ROOT = Path(__file__).parent
+
+
+@pytest.fixture(autouse=True)
+def _isolate_pipeline_hooks() -> Iterator[None]:
+    """每个用例结束后还原 `PipelineHooks` 注册表。
+
+    注册表是进程级全局的，不隔离的话 A 用例注册的 hook 会跑进 B 用例，
+    而且是否踩雷取决于用例执行顺序 —— 这类 bug 排查起来极其费时。
+    autouse 而非按需，是因为"忘了加"正是这类污染的主要来源。
+    """
+    from comet_rag.engines.pipelines import PipelineHooks
+
+    state = PipelineHooks.snapshot()
+    try:
+        yield
+    finally:
+        PipelineHooks.restore(state)
 
 
 @pytest.fixture(scope="session")

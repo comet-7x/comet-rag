@@ -26,13 +26,58 @@ class DownloadRequestConfig(BaseModel):
 
 
 class URLLoader(BaseLoader):
-    def __init__(self, download_dir: str | Path | None = None) -> None:
+    """从 URL 下载到本地临时文件。
+
+    **连接复用（spec S4-4）**：httpx client 由实例持有并跨调用复用，
+    而不是每次下载现建现销 —— 后者每次都要重建连接池并重新 TLS 握手，
+    批量入库大量 URL 时是纯浪费。
+
+    client 有三种来源，优先级由高到低：
+      1. 单次调用传入的 `client=` —— 只在这一次生效（`batch_load` 用它共享连接）
+      2. 构造时注入的 client —— 由调用方负责关闭，本类不碰
+      3. 本类懒创建的 client —— 由本类在 `cleanup()` / `aclose()` 时关闭
+
+    第 2 与第 3 的区别很重要：关掉别人注入的 client 会连带影响调用方
+    其余还在用它的代码。参照 `Qwen3VLEmbeddingModel` 的同款处理。
+    """
+
+    def __init__(
+        self,
+        download_dir: str | Path | None = None,
+        *,
+        client: httpx.Client | None = None,
+        async_client: httpx.AsyncClient | None = None,
+        timeout: int = 30,
+        follow_redirects: bool = True,
+    ) -> None:
         self.download_dir = Path(download_dir) if download_dir else None
         self._temp_files: list[str] = []
+        self._timeout = timeout
+        self._follow_redirects = follow_redirects
+        self._client = client
+        self._async_client = async_client
+        # 只关自己造的
+        self._owns_client = client is None
+        self._owns_async_client = async_client is None
 
     @property
     def temp_files(self) -> list[str]:
         return self._temp_files.copy()
+
+    def _shared_client(self) -> httpx.Client:
+        """懒创建：只用异步路径的调用方不必平白多一个同步连接池。"""
+        if self._client is None:
+            self._client = httpx.Client(
+                timeout=self._timeout, follow_redirects=self._follow_redirects
+            )
+        return self._client
+
+    def _shared_async_client(self) -> httpx.AsyncClient:
+        if self._async_client is None:
+            self._async_client = httpx.AsyncClient(
+                timeout=self._timeout, follow_redirects=self._follow_redirects
+            )
+        return self._async_client
 
     def _build_metadata(self, file_path: str, source: SourceContent) -> dict[str, Any]:
         path = Path(file_path)
@@ -81,13 +126,7 @@ class URLLoader(BaseLoader):
             return response.content
 
         try:
-            if client is not None:
-                raw = _do_request(client)
-            else:
-                with httpx.Client(
-                    timeout=config.timeout, follow_redirects=config.follow_redirects
-                ) as c:
-                    raw = _do_request(c)
+            raw = _do_request(client if client is not None else self._shared_client())
         except Exception as e:
             raise ValueError(f"Download failed from {url}: {e!s}") from e
 
@@ -133,13 +172,9 @@ class URLLoader(BaseLoader):
             return response.content
 
         try:
-            if client is not None:
-                raw = await _do_request(client)
-            else:
-                async with httpx.AsyncClient(
-                    timeout=config.timeout, follow_redirects=config.follow_redirects
-                ) as c:
-                    raw = await _do_request(c)
+            raw = await _do_request(
+                client if client is not None else self._shared_async_client()
+            )
         except Exception as e:
             raise ValueError(f"Async download failed from {url}: {e!s}") from e
 
@@ -218,12 +253,8 @@ class URLLoader(BaseLoader):
         from concurrent.futures import ThreadPoolExecutor
 
         config = download_config or DownloadRequestConfig()
-        with (
-            httpx.Client(
-                timeout=config.timeout, follow_redirects=config.follow_redirects
-            ) as client,
-            ThreadPoolExecutor(max_workers=max_concurrency) as executor,
-        ):
+        client = self._shared_client()
+        with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
             futures = [
                 executor.submit(
                     self.load, s, download_config=config, client=client, **kwargs
@@ -241,22 +272,38 @@ class URLLoader(BaseLoader):
     ) -> list[LoaderContent]:
         config = download_config or DownloadRequestConfig()
         semaphore = asyncio.Semaphore(max_concurrency)
-        async with httpx.AsyncClient(
-            timeout=config.timeout, follow_redirects=config.follow_redirects
-        ) as client:
+        client = self._shared_async_client()
 
-            async def _load(source: SourceContent | str) -> LoaderContent:
-                async with semaphore:
-                    return await self.aload(
-                        source, download_config=config, client=client, **kwargs
-                    )
+        async def _load(source: SourceContent | str) -> LoaderContent:
+            async with semaphore:
+                return await self.aload(
+                    source, download_config=config, client=client, **kwargs
+                )
 
-            return await asyncio.gather(*[_load(s) for s in sources])
+        return await asyncio.gather(*[_load(s) for s in sources])
 
     def cleanup(self) -> None:
+        """删除临时文件并关闭**自建**的同步 client。
+
+        注入进来的 client 一律不碰 —— 调用方其余代码可能还在用它。
+        异步 client 无法在同步上下文里正确关闭，请用 `aclose()`。
+        """
         for path in self._temp_files:
             Path(path).unlink(missing_ok=True)
         self._temp_files.clear()
+        if self._owns_client and self._client is not None:
+            self._client.close()
+            self._client = None
 
     async def acleanup(self) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """异步收尾：临时文件 + 两个自建 client 都关掉。"""
         await asyncio.to_thread(self.cleanup)
+        if self._owns_async_client and self._async_client is not None:
+            await self._async_client.aclose()
+            self._async_client = None
+
+    async def __aexit__(self, *_):
+        await self.aclose()

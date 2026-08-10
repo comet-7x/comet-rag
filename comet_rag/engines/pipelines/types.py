@@ -44,5 +44,18 @@ class PipelineConfig(BaseModel):
     chunk_size: int = Field(default=2000, gt=0)
     chunk_overlap: int = Field(default=200, ge=0)
     embed: bool = False
-    max_concurrency: int = Field(default=8, gt=0)
+    max_concurrency: int = Field(
+        default=8, gt=0, description="调用模型服务的并发上限（同时在飞的请求数）"
+    )
+    embed_batch_size: int = Field(
+        default=32,
+        gt=0,
+        description=(
+            "流式模式下每次并发处理多少个 chunk。"
+            "首个 chunk 在第一个窗口完成后即可产出，因此该值越小首字延迟越低、"
+            "整体吞吐越差；越大则相反。非流式模式下它只用来限制同时在内存中的"
+            "待处理量。注意它**不是**单个 HTTP 请求携带的条数 —— "
+            "当前模型层是一条一个请求（见 BaseEmbeddingModel.abatch_embed）。"
+        ),
+    )
     docx: DocxConfig = Field(default_factory=DocxConfig)
