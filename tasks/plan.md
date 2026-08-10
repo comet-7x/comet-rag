@@ -100,14 +100,20 @@ T1 测试基建 ──┬─► T2 依赖分组(A1)
 
 - [x] T4 — 把 `poc/task_demo/demo.py` 的 5 个场景转成 pytest
 - [x] T5 — `poc/task_demo/task/` 提升为 `comet_rag/tasks/`，改名 `StagePipeline`，移除确认门（A10）
-- [ ] T6 — `states.py` 状态机全矩阵测试
+- [x] T6 — `states.py` 状态机全矩阵测试
 - [x] T7 — `TaskStore` 契约测试套件（`InMemoryTaskStore` 先过）
 - [x] T8 — `TaskExecutor` 契约测试套件（`InProcessExecutor` 先过）
 
-**Checkpoint B**
-- [ ] `comet_rag/tasks/` 单元测试覆盖率 ≥ 90%
-- [ ] 确认门已移除，且**断点续跑仍工作**：runner 在第 3 阶段抛 `RetriableError`，重试从第 3 阶段而非第 1 阶段开始
-- [ ] `poc/task_demo/` 可删除（其价值已被测试固化）
+**Checkpoint B** ✅ 2026-08-10
+- [x] `comet_rag/tasks/` 覆盖率 91%（含分支）。states 100% / store 98% / service 96% / runner 94%
+- [x] 确认门已移除，断点续跑改由失败驱动并经测试验证（`s1,s2,s3,s3`）
+- [x] 全套 321 用例 / 1.9s，连跑 6 次零 flaky
+- [ ] `poc/task_demo/` **未删除**：该目录被 `.gitignore` 整体忽略、从未进过版本库，
+      删除不可恢复，留给开发者处置。注意其中 `demo.py` 已失效（依赖已移除的确认门）
+
+> **已知覆盖缺口**：`executor.py` 停在 81%（分支）。剩余未覆盖的是防御性路径——
+> 关停超时硬掐、`_on_done` 的兜底异常记录、跨线程 `cancel` 探测。触发它们需要
+> 制造竞态或多线程环境，硬凑会写出 flaky 测试，故不追这个数字。
 
 ---
 

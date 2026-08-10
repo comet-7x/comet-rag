@@ -126,22 +126,29 @@
 
 ---
 
-### T6 — 状态机全矩阵测试
+### ✅ T6 — 状态机全矩阵测试
 
 **描述：** `states.py` 是纯函数零依赖，且 bug 后果最严重（"已取消的任务又变成成功了"，只在生产偶发）。投入产出比最高的测试。
 
 **验收标准：**
-- [ ] 参数化覆盖去掉确认门后的 6×6 迁移矩阵，合法与非法各自断言
-- [ ] `can_transition(x, x)` 恒真（自迁移）
-- [ ] 终态（SUCCEEDED / CANCELLED）不可再迁出；FAILED 仅可迁往 PENDING
-- [ ] `states.py` 分支覆盖率 100%
+- [x] 参数化覆盖去掉确认门后的 6×6 迁移矩阵，合法与非法各自断言
+- [x] `can_transition(x, x)` 恒真（自迁移）
+- [x] 终态（SUCCEEDED / CANCELLED）不可再迁出；FAILED 仅可迁往 PENDING
+- [x] `states.py` 分支覆盖率 100%
 
 **验证：**
-- [ ] `uv run pytest tests/unit/tasks/test_states.py --cov=comet_rag.tasks.states --cov-report=term-missing`
+- [x] `uv run pytest tests/unit/tasks/test_states.py --cov=comet_rag.tasks.states --cov-report=term-missing`
 
 **依赖：** T5
-**文件：** `tests/unit/tasks/test_states.py`
+**文件：** `tests/unit/tasks/test_states.py`（74 用例）、
+`tests/unit/tasks/test_runner_and_service.py`（21 用例，为达 Checkpoint B 覆盖率补）
 **规模：** S
+
+**关键做法：** 期望矩阵**手写**，刻意不从 `_ALLOWED` 推导。
+写成 `can_transition(a,b) == (b in _ALLOWED[a])` 是拿实现验证实现，恒真、一无所证。
+手写表是独立的第二份真相，改状态机必须同时改它——那正是我们想要的摩擦。
+**反向验证：** 放开终态出口、收紧 RUNNING→PENDING、新增状态值忘改表，三种
+退化各自被精确捕获（用例 ID 直接点名坏掉的格子）。
 
 ---
 
