@@ -1,0 +1,63 @@
+{
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "**一级标题**",
+      "is_numbered": false
+    },
+    {
+      "type": "text",
+      "content": "这是第一段正文，用于验证纯文本提取。",
+      "style": "Normal"
+    },
+    {
+      "type": "text",
+      "content": "**加粗**与*斜体*混排。",
+      "style": "Normal"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "content": "**二级标题**",
+      "is_numbered": false
+    },
+    {
+      "type": "text",
+      "content": "二级标题下的正文。",
+      "style": "Normal"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "content": "**三级标题**",
+      "is_numbered": false
+    },
+    {
+      "type": "text",
+      "content": "第一项",
+      "style": "List Bullet"
+    },
+    {
+      "type": "text",
+      "content": "第二项",
+      "style": "List Bullet"
+    },
+    {
+      "type": "text",
+      "content": "嵌套项",
+      "style": "List Bullet 2"
+    },
+    {
+      "type": "text",
+      "content": "有序第一项",
+      "style": "List Number"
+    },
+    {
+      "type": "text",
+      "content": "有序第二项",
+      "style": "List Number"
+    }
+  ],
+  "text": "**一级标题**\n\n这是第一段正文，用于验证纯文本提取。\n\n**加粗**与*斜体*混排。\n\n**二级标题**\n\n二级标题下的正文。\n\n**三级标题**\n\n第一项\n\n第二项\n\n嵌套项\n\n有序第一项\n\n有序第二项"
+}

@@ -123,12 +123,14 @@ T1 测试基建 ──┬─► T2 依赖分组(A1)
 - [x] T10 — `url_loader` 复用 httpx client（P2b / S4-4）
 - [x] T11 — `PipelineHooks` 测试隔离（P8）
 - [x] T12 — chunkers 单元测试
-- [ ] T13 — `docx_parser` 快照测试
+- [x] T13 — `docx_parser` 快照测试
 
-**Checkpoint C-1**
-- [ ] S4-3 验证通过：200 chunk 文档，fake 模型收到调用数 ≤ ⌈200/batch_size⌉
-- [ ] S4-4 验证通过：`grep -rn "AsyncClient(" comet_rag/` 结果全部为注入式或生命周期管理
-- [ ] `tests/unit` 全套 < 10s
+**Checkpoint C-1** ✅ 2026-08-10
+- [x] S4-3 验证通过（**标准已修正**）：并发峰值 1 < peak ≤ max_concurrency；
+      修复前恒为 1。原"调用数 ≤ 7"的标准基于不存在的请求级批量，见 spec S4-3 修正记录
+- [x] S4-4 验证通过：全仓 4 处 client 创建点，全部为懒创建实例级或注入式带兜底
+- [x] `tests/unit` 全套 559 用例 / 7.0s（< 10s）
+- [x] 引擎侧覆盖率：chunkers 96%、parsers 86%（docx_parser 82%、omml 92%）
 
 ---
 

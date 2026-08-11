@@ -302,25 +302,34 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 
 ---
 
-### T13 — `docx_parser` 快照测试
+### ✅ T13 — `docx_parser` 快照测试
 
 **描述：** 962 行零测试，是全仓改动风险最高的文件。**本任务只加测试，不重构**——先建保护网。
 
 **验收标准：**
-- [ ] `tests/fixtures/docx/` 放入代表性样本：含标题层级、表格、图片、公式（OMML）、页眉页脚、嵌套列表
-- [ ] 每个样本一份快照，`DocxParser().parse()` 输出与快照比对
-- [ ] `omml.py` 公式转 LaTeX 单独测（616 行，逻辑独立）
-- [ ] 快照更新流程写入 `tests/README.md`，避免日后无脑覆盖快照
+- [x] `tests/fixtures/docx/` 放入代表性样本：含标题层级、表格、图片、公式（OMML）、页眉页脚、嵌套列表
+- [x] 每个样本一份快照，`DocxParser().parse()` 输出与快照比对
+- [x] `omml.py` 公式转 LaTeX 单独测（616 行，逻辑独立）
+- [x] 快照更新流程写入 `tests/README.md`，避免日后无脑覆盖快照
 
 **验证：**
-- [ ] `uv run pytest tests/unit/engines/test_docx_parser.py -q`
-- [ ] 故意改动 `docx_parser.py` 一处逻辑，快照测试应失败
+- [x] `uv run pytest tests/unit/engines/test_docx_parser.py -q`
+- [x] 故意改动 `docx_parser.py` 一处逻辑，快照测试应失败
 
 **依赖：** T1
 **文件：** `tests/unit/engines/test_docx_parser.py`、`tests/fixtures/docx/*`、`tests/README.md`
 **规模：** M
 
 ---
+
+
+**产出**：`docx_parser.py` 覆盖率 82%、`omml.py` 92%。
+**样本为生成而非提交二进制**：.docx 是 zip，进 git 即不可 review；
+且 `poc/docs/` 里的真实文档含实际项目内容，本项目计划开源不应提交。
+补偿措施：另有一条可选用例，本地存在 poc/docs 时拿 4 个真实 Word 文档跑冒烟（已通过）。
+**发现疑似缺陷**：`<m:d>` 无 dPr 时 `do_d`(omml.py:360) 返回裸内容，括号丢失；
+而 D_DEFAULT 已定义默认圆括号、同模块 do_f 在 fPr 缺失时会套默认值。
+已标 xfail(strict) + 当前行为特征化测试，M1 内不重构（plan R2）。
 
 ## Phase 3：第一条端到端切片（全内存）★
 
