@@ -17,6 +17,7 @@ import pytest
 from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
+from comet_rag.infrastructure.knowledge_base import InMemoryKnowledgeBaseRepository
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
 from comet_rag.services.ingestion import (
@@ -24,6 +25,7 @@ from comet_rag.services.ingestion import (
     IngestRunner,
     register_ingest_runner,
 )
+from comet_rag.services.knowledge_base import KnowledgeBaseService, KnowledgeBaseSpec
 from comet_rag.tasks import (
     InMemoryTaskStore,
     InProcessExecutor,
@@ -36,6 +38,7 @@ from tests.contracts.support import wait_for_terminal
 DIM = 3
 STUB_TYPE = "stub"
 KB = "kb-test"
+MODEL = "fake-embed"
 
 
 # ── 测试替身 ───────────────────────────────────────────────────────────────
@@ -146,17 +149,30 @@ def task_store() -> InMemoryTaskStore:
 
 
 @pytest.fixture
+def kb_service(store: InMemoryVectorStore) -> KnowledgeBaseService:
+    return KnowledgeBaseService(
+        repository=InMemoryKnowledgeBaseRepository(),
+        vector_store=store,
+        embedding_model=MODEL,
+        embedding_dim=DIM,
+    )
+
+
+@pytest.fixture
 async def svc(
     task_store: InMemoryTaskStore,
     model: FakeEmbeddingModel,
     store: InMemoryVectorStore,
     loader: StubLoader,
+    kb_service: KnowledgeBaseService,
 ) -> AsyncIterator[TaskService]:
+    # 入库前知识库必须存在（T19 起 IngestRunner 会做一致性检查）
+    await kb_service.create(KnowledgeBaseSpec(kb_id=KB))
     register_ingest_runner(
         IngestRunner(
             embedding_model=model,
             vector_store=store,
-            embedding_dim=DIM,
+            knowledge_base=kb_service,
             loader=loader,
             config=PipelineConfig(embed_batch_size=2, max_concurrency=4),
         )
@@ -444,3 +460,15 @@ async def test_invalid_request_fails_without_retry(svc: TaskService) -> None:
 
     assert done.status is TaskStatus.FAILED
     assert done.attempts == 1
+
+
+async def test_ingest_into_unknown_kb_fails_fast(svc: TaskService) -> None:
+    """往不存在的知识库灌数据是确定性错误，一次判死不进重试（spec A12）。"""
+    task = await svc.submit(INGEST_KIND, request(kb_id="从未建过"), max_attempts=3)
+
+    done = await wait_for_terminal(svc.store, task.task_id)
+
+    assert done.status is TaskStatus.FAILED
+    assert done.attempts == 1
+    assert done.error is not None
+    assert done.error.retriable is False

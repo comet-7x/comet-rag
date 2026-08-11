@@ -156,7 +156,7 @@ def _use_stub_loader(ctx: Any, document: Path) -> None:
         IngestRunner(
             embedding_model=ctx.embedding_model,
             vector_store=ctx.vector_store,
-            embedding_dim=ctx.embedding_dim,
+            knowledge_base=ctx.knowledge_base,
             loader=LocalStubLoader(document),
             config=PipelineConfig(embed_batch_size=2, max_concurrency=4),
         )
@@ -195,6 +195,7 @@ async def test_ingest_then_search(client: httpx.AsyncClient) -> None:
     created = await client.post("/kb", json={"kb_id": KB})
     assert created.status_code == 201, created.text
     assert created.json()["embedding_dim"] == DIM
+    assert created.json()["embedding_model"] == "stub-embed"
 
     submitted = await client.post(
         "/ingest", json={"kb_id": KB, "source": "fruits.stub"}
@@ -337,6 +338,7 @@ async def test_knowledge_base_lifecycle(client: httpx.AsyncClient) -> None:
 
     info = await client.get(f"/kb/{KB}")
     assert info.json()["chunk_count"] == 3
+    assert info.json()["embedding_model"] == "stub-embed"
 
     deleted = await client.delete(f"/kb/{KB}")
     assert deleted.status_code == 204
@@ -347,3 +349,75 @@ async def test_knowledge_base_lifecycle(client: httpx.AsyncClient) -> None:
 
 async def test_health_endpoint(client: httpx.AsyncClient) -> None:
     assert (await client.get("/admin/health")).status_code == 200
+
+
+# ── 知识库元数据（T19）──────────────────────────────────────────────────────
+
+
+async def test_ingest_into_unknown_kb_returns_failed_task(
+    client: httpx.AsyncClient,
+) -> None:
+    """往不存在的知识库灌数据必须失败，不能顺手建一个 ——
+    打错一个字就凭空多出一个库，而且没人会发现。"""
+    submitted = await client.post(
+        "/ingest", json={"kb_id": "从未建过", "source": "fruits.stub"}
+    )
+    done = await poll_until_terminal(client, submitted.json()["task_id"])
+
+    assert done["status"] == "failed"
+
+
+async def test_kb_records_embedding_model(client: httpx.AsyncClient) -> None:
+    """spec A12：这个字段是知识库表存在的全部理由。"""
+    await client.post("/kb", json={"kb_id": KB, "description": "水果知识库"})
+
+    info = (await client.get(f"/kb/{KB}")).json()
+
+    assert info["embedding_model"] == "stub-embed"
+    assert info["embedding_dim"] == DIM
+    assert info["description"] == "水果知识库"
+
+
+async def test_kb_creation_is_idempotent(client: httpx.AsyncClient) -> None:
+    first = await client.post("/kb", json={"kb_id": KB, "name": "原名"})
+    again = await client.post("/kb", json={"kb_id": KB, "name": "新名"})
+
+    assert again.status_code == 201
+    assert again.json()["created_at"] == first.json()["created_at"]
+    assert again.json()["name"] == "原名"
+
+
+async def test_kb_list(client: httpx.AsyncClient) -> None:
+    await client.post("/kb", json={"kb_id": "kb-a"})
+    await client.post("/kb", json={"kb_id": "kb-b"})
+
+    body = (await client.get("/kb")).json()
+
+    assert body["total"] >= 2
+    assert {k["kb_id"] for k in body["knowledge_bases"]} >= {"kb-a", "kb-b"}
+
+
+async def test_changing_embedding_model_returns_409(
+    client: httpx.AsyncClient,
+) -> None:
+    """**spec A12 在 HTTP 层的兑现**。
+
+    同维度的两个不同模型产出的向量落在完全不同的语义空间里，混用不报错、
+    只是检索静默劣化，事后还分不清哪些 chunk 该重算 —— 必须当场拒绝。
+
+    这里直接改服务持有的模型名来模拟"改了配置重启"，因为那是唯一能在
+    单个应用实例内复现该场景的方式。
+    """
+    await client.post("/kb", json={"kb_id": KB})
+
+    # 模拟运维改了 config.yaml 里的 embedding 模型后重启
+    ctx = client._transport.app.state.ctx  # type: ignore[attr-defined]
+    ctx.knowledge_base._model = "换成了别的模型"
+
+    conflicted = await client.post("/kb", json={"kb_id": KB})
+
+    assert conflicted.status_code == 409
+    body = conflicted.json()
+    # 报错要说清后果，而不只是干巴巴一句"不匹配"
+    assert "语义空间" in body["error"]
+    assert "trace_id" in body

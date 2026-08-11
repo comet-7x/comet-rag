@@ -506,26 +506,43 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 **中间件没起时集成用例 skip 而非 fail**，已反向验证（停掉 redis 后
 对应用例 skip、其余照跑）。让核心依赖环境红一片只会训练出"看到红色就忽略"。
 
-### T19 — `knowledge_bases` 表 + KB service（A12）
+### ✅ T19 — `knowledge_bases` 表 + KB service（A12）
 
 **描述：** KB 必须是表而非纯字符串标签——**要记录 embedding 模型版本**。否则换模型后新旧向量混在同一空间，检索**静默劣化**且事后无法分辨该重算哪些 chunk。
 
 **验收标准：**
-- [ ] 表含：`kb_id`、`name`、`embedding_model`、`embedding_dim`、`created_at`、`description`
-- [ ] `services/knowledge_base.py`：create / get / list / delete
-- [ ] 建 KB 时按 `embedding_dim` 调 `aensure_collection`
-- [ ] 向已有 KB 写入维度不符的向量**必须报错**，不得静默写入
-- [ ] 删除 KB 同时清理对应 Milvus partition
+- [x] 表含：`kb_id`、`name`、`embedding_model`、`embedding_dim`、`created_at`、`description`
+- [x] `services/knowledge_base.py`：create / get / list / delete
+- [x] 建 KB 时按 `embedding_dim` 调 `aensure_collection`
+- [x] 向已有 KB 写入维度不符的向量**必须报错**，不得静默写入
+- [x] 删除 KB 同时清理对应 Milvus partition
 
 **验证：**
-- [ ] `uv run pytest -m integration tests/integration/test_kb.py`
-- [ ] 维度不符用例断言抛出明确异常
+- [x] `uv run pytest -m integration tests/integration/test_kb.py`
+- [x] 维度不符用例断言抛出明确异常
 
 **依赖：** T18、T14
 **文件：** `comet_rag/infrastructure/database/models.py`、`services/knowledge_base.py`、alembic 迁移、`tests/integration/test_kb.py`
 **规模：** M
 
 ---
+
+
+**知识库元数据也做了 ABC + 两实现 + 契约**（内存 / Postgres，10 条契约两边都过）。
+不这么做的话 Checkpoint C 的"e2e 零 docker 可跑"当场就没了 —— 而 Checkpoint D
+要求那条 e2e 在真实后端下一字不改地继续通过。
+
+**A12 有两个执行点**：
+· 建库/重复建库 → `KnowledgeBaseService.create` 校验模型一致
+· 入库前 → `IngestRunner` 调 `resolve_for_ingest` 校验，且**维度取自知识库**
+  而非配置（同一进程可服务多个不同维度的库）
+维度不符能被向量库拦下，但**同维度的不同模型谁也拦不住** —— 只有这张表能。
+
+**删除顺序**：先删向量、后删元数据。反过来中途失败会留下无主向量 ——
+没有元数据就没人知道它们属于谁、该不该清，只能人工翻库。
+
+**首个 alembic 迁移已验证双向可用**（upgrade → downgrade → upgrade），
+且命名约定生效（`pk_knowledge_bases` 而非数据库随机命名）。
 
 ### T20 — `PostgresTaskStore`
 

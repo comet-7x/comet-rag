@@ -10,6 +10,7 @@ from fastapi import Depends, Request
 
 from ..core.context import Context
 from ..infrastructure.vectorstore import BaseVectorStore
+from ..services.knowledge_base import KnowledgeBaseService
 from ..services.retrieval import RetrievalService
 from ..tasks import TaskService
 
@@ -36,6 +37,11 @@ def get_vector_store(ctx: ContextDep) -> BaseVectorStore:
     return ctx.vector_store
 
 
+def get_knowledge_base(ctx: ContextDep) -> KnowledgeBaseService:
+    return ctx.knowledge_base
+
+
 TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
 RetrievalDep = Annotated[RetrievalService, Depends(get_retrieval)]
 VectorStoreDep = Annotated[BaseVectorStore, Depends(get_vector_store)]
+KnowledgeBaseDep = Annotated[KnowledgeBaseService, Depends(get_knowledge_base)]

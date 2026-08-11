@@ -44,6 +44,7 @@ from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.vectorstore import BaseVectorStore, VectorRecord
+from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.tasks import (
     Done,
     RetriableError,
@@ -127,13 +128,13 @@ class IngestRunner:
         *,
         embedding_model: BaseEmbeddingModel,
         vector_store: BaseVectorStore,
-        embedding_dim: int,
+        knowledge_base: KnowledgeBaseService,
         loader: BaseLoader | None = None,
         config: PipelineConfig | None = None,
     ) -> None:
         self._embedding_model = embedding_model
         self._vector_store = vector_store
-        self._embedding_dim = embedding_dim
+        self._kb = knowledge_base
         self._loader = loader or AutoLoader()
         self._config = config or PipelineConfig()
         self._flow = self._build_flow()
@@ -200,9 +201,16 @@ class IngestRunner:
         source_id: str = task.context["source_id"]
         file_type: str = task.context["file_type"]
 
+        # 入库前的一致性检查（spec A12 在写路径上的执行点）：
+        # 库必须存在，且建库时的 embedding 模型必须与当前配置一致。
+        # 维度不符会被向量库拦下，但**同维度的不同模型**谁也拦不住 ——
+        # 混用不报错、只是检索静默劣化，事后还分不清哪些 chunk 该重算。
+        # 这两类都是确定性错误，刻意放在 _classify 之外让它们一次判死。
+        kb = await self._kb.resolve_for_ingest(request.kb_id)
+
         try:
             await self._vector_store.aensure_collection(
-                request.kb_id, dim=self._embedding_dim
+                request.kb_id, dim=kb.embedding_dim
             )
 
             # 重新入库同一文档时先清掉旧版本的全部 chunk：新版本可能切得更少，

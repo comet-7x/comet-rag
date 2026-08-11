@@ -16,6 +16,11 @@ from comet_rag.api.middleware import TraceMiddleware, get_trace_id
 from comet_rag.api.routes import admin, ingest, kb, search, tasks
 from comet_rag.config.schemas import APPConfig
 from comet_rag.config.settings import get_config
+from comet_rag.infrastructure.knowledge_base import (
+    EmbeddingModelChanged,
+    KnowledgeBaseExists,
+    KnowledgeBaseNotFound,
+)
 from comet_rag.infrastructure.vectorstore import CollectionNotFound, DimensionMismatch
 from comet_rag.tasks import TaskBusy, TaskNotFound, VersionConflict
 
@@ -48,6 +53,21 @@ def _install_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(DimensionMismatch)
     async def _dim(request: Request, exc: DimensionMismatch) -> JSONResponse:  # noqa: RUF029
         """409 而非 400：请求本身没错，是知识库已有的维度与当前模型对不上。"""
+        return _problem(request, status.HTTP_409_CONFLICT, str(exc))
+
+    @app.exception_handler(KnowledgeBaseNotFound)
+    async def _kb_missing(request: Request, exc: KnowledgeBaseNotFound) -> JSONResponse:  # noqa: RUF029
+        return _problem(request, status.HTTP_404_NOT_FOUND, str(exc))
+
+    @app.exception_handler(KnowledgeBaseExists)
+    async def _kb_exists(request: Request, exc: KnowledgeBaseExists) -> JSONResponse:  # noqa: RUF029
+        return _problem(request, status.HTTP_409_CONFLICT, str(exc))
+
+    @app.exception_handler(EmbeddingModelChanged)
+    async def _model_changed(
+        request: Request, exc: EmbeddingModelChanged
+    ) -> JSONResponse:  # noqa: RUF029
+        """409：请求没错，是这个知识库当初用的模型和现在配的不是一个。"""
         return _problem(request, status.HTTP_409_CONFLICT, str(exc))
 
     @app.exception_handler(TaskBusy)

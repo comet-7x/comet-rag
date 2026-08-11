@@ -14,12 +14,17 @@ from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.core.context import Context, wire_runners
 from comet_rag.core.logging import logger
 from comet_rag.engines.pipelines import PipelineConfig
+from comet_rag.infrastructure.knowledge_base import (
+    InMemoryKnowledgeBaseRepository,
+    KnowledgeBaseRepository,
+)
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import (
     BaseVectorStore,
     InMemoryVectorStore,
 )
+from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
 from comet_rag.tasks import (
     InMemoryTaskStore,
@@ -51,6 +56,38 @@ def build_vector_store(config: APPConfig) -> BaseVectorStore:
             api_key=settings.api_key,
         )
     raise ValueError(f"不支持的 vector_store 后端：{backend}")
+
+
+def build_database(config: APPConfig):
+    """关系库引擎。只在真的需要时创建 —— 全 memory 的部署不该被迫连库。"""
+    from comet_rag.infrastructure.database import Database  # noqa: PLC0415
+
+    settings = config.infrastructure_config.database
+    if settings is None:
+        raise ValueError("选择了 postgres 后端但未配置 infrastructure_config.database")
+    return Database(
+        settings.dsn,
+        echo=settings.echo,
+        pool_size=settings.pool_size,
+        max_overflow=settings.max_overflow,
+    )
+
+
+def build_kb_repository(config: APPConfig, database=None) -> KnowledgeBaseRepository:
+    """知识库元数据仓储。
+
+    跟着 `task_store` 走而非单独配一个开关：两者都是关系型元数据，
+    分开配只会让"任务在 Postgres、知识库在内存"这种没人想要的组合成为可能。
+    """
+    if config.backends.task_store is Backend.MEMORY:
+        return InMemoryKnowledgeBaseRepository()
+    from comet_rag.infrastructure.database.kb_repository import (  # noqa: PLC0415
+        PostgresKnowledgeBaseRepository,
+    )
+
+    if database is None:
+        raise ValueError("postgres 后端需要传入 database")
+    return PostgresKnowledgeBaseRepository(database)
 
 
 def build_task_store(config: APPConfig) -> TaskStore:
@@ -114,6 +151,7 @@ def build_context(
     vector_store: BaseVectorStore | None = None,
     task_store: TaskStore | None = None,
     task_executor: TaskExecutor | None = None,
+    kb_repository: KnowledgeBaseRepository | None = None,
     pipeline_config: PipelineConfig | None = None,
 ) -> Context:
     """按配置装配全套资源。
@@ -122,11 +160,25 @@ def build_context(
     却会去连真实服务。有了这些参数，测试无需 monkeypatch 就能用同一条装配路径，
     也就真正测到了装配逻辑本身。
     """
+    needs_database = config.backends.task_store is Backend.POSTGRES and (
+        task_store is None or kb_repository is None
+    )
+    database = build_database(config) if needs_database else None
+
     embedding_model = embedding_model or build_embedding_model(config)
     reranker = reranker if reranker is not None else build_reranker(config)
     vector_store = vector_store or build_vector_store(config)
     task_store = task_store or build_task_store(config)
     task_executor = task_executor or build_task_executor(config, task_store)
+    kb_repository = kb_repository or build_kb_repository(config, database)
+
+    embedding_settings = config.infrastructure_config.embedding_model
+    knowledge_base = KnowledgeBaseService(
+        repository=kb_repository,
+        vector_store=vector_store,
+        embedding_model=embedding_settings.model_name,
+        embedding_dim=embedding_settings.dim,
+    )
 
     context = Context(
         embedding_model=embedding_model,
@@ -140,7 +192,10 @@ def build_context(
             vector_store=vector_store,
             reranker=reranker,
         ),
-        embedding_dim=config.infrastructure_config.embedding_model.dim,
+        kb_repository=kb_repository,
+        knowledge_base=knowledge_base,
+        embedding_dim=embedding_settings.dim,
+        database=database,
     )
     wire_runners(context, ingest_config=pipeline_config)
 
@@ -155,7 +210,9 @@ def build_context(
 
 __all__ = [
     "build_context",
+    "build_database",
     "build_embedding_model",
+    "build_kb_repository",
     "build_reranker",
     "build_task_executor",
     "build_task_store",

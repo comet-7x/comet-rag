@@ -26,10 +26,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from comet_rag.core.logging import logger
+from comet_rag.infrastructure.knowledge_base import KnowledgeBaseRepository
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import BaseVectorStore
 from comet_rag.services.ingestion import IngestRunner, register_ingest_runner
+from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
 from comet_rag.tasks import TaskExecutor, TaskService, TaskStore
 
@@ -47,8 +49,12 @@ class Context:
     task_executor: TaskExecutor
     task_service: TaskService
     retrieval: RetrievalService
+    kb_repository: KnowledgeBaseRepository
+    knowledge_base: KnowledgeBaseService
     embedding_dim: int
     reranker: BaseReranker | None = None
+    #: 仅在 task_store/kb 用 postgres 时存在。关停时要 dispose 连接池。
+    database: Any = None
     #: 需要在关停时释放、但不属于上面任何一类的资源（按注册顺序逆序关闭）
     _extra_closers: list[Any] = field(default_factory=list)
 
@@ -62,6 +68,9 @@ class Context:
         if self.reranker is not None:
             await _safe(_maybe_close(self.reranker), "reranker")
         await _safe(_maybe_close(self.embedding_model), "embedding_model")
+        # 数据库放最后：上面几步失败时的错误处理可能还要读写任务状态
+        if self.database is not None:
+            await _safe(_maybe_close(self.database), "database")
         for closer in reversed(self._extra_closers):
             await _safe(_maybe_close(closer), type(closer).__name__)
 
@@ -97,7 +106,7 @@ def wire_runners(context: Context, *, ingest_config: Any = None) -> None:
         IngestRunner(
             embedding_model=context.embedding_model,
             vector_store=context.vector_store,
-            embedding_dim=context.embedding_dim,
+            knowledge_base=context.knowledge_base,
             config=ingest_config,
         )
     )
