@@ -39,13 +39,6 @@ class RedisConfig(BaseModel):
     timeout: int = Field(10, description="超时时间")
 
 
-class MongoConfig(BaseModel):
-    """文档数据库配置 (如 MongoDB)"""
-
-    host: str = Field(..., description="主机地址")
-    port: int = Field(..., description="端口号")
-
-
 class VectorDatabaseConfig(BaseModel):
     """向量数据库配置 (如 Milvus, Pinecone)"""
 
@@ -72,11 +65,59 @@ class ModelConfig(BaseModel):
     api_key: str | None = Field(None, description="API 访问密钥")
 
 
+class EmbeddingModelConfig(ModelConfig):
+    """Embedding 模型。比通用模型多一个**必填**的维度。
+
+    维度不是可选信息：建 collection 要它，写入校验要它（spec A12）。
+    留空等到运行时才发现不匹配，那时向量库里已经灌进脏数据了。
+    """
+
+    dim: int = Field(..., gt=0, description="向量维度，必须与模型实际输出一致")
+
+
+class Backend(StrEnum):
+    """后端选择。
+
+    `memory` 让整条链路在零中间件下可跑 —— 测试、本地开发、以及 plan 里
+    "先内存后真实"的端到端验证都靠它。生产用真实后端。
+    """
+
+    MEMORY = "memory"
+    MILVUS = "milvus"
+    POSTGRES = "postgres"
+    INPROCESS = "inprocess"
+    ARQ = "arq"
+
+
+class BackendsConfig(BaseModel):
+    """把"用哪个实现"从代码里挪到配置里。
+
+    换后端只改这里，业务代码一行不动 —— 这是 Phase 4 能"每次只换一个后端、
+    端到端测试始终在保护"的前提。
+    """
+
+    vector_store: Backend = Field(default=Backend.MEMORY, description="memory | milvus")
+    task_store: Backend = Field(default=Backend.MEMORY, description="memory | postgres")
+    task_executor: Backend = Field(
+        default=Backend.INPROCESS, description="inprocess | arq"
+    )
+    max_concurrency: int = Field(
+        default=8, gt=0, description="执行器同时在跑的任务上限"
+    )
+
+
 class InfrastructureConfig(BaseModel):
-    embedding_model: ModelConfig = Field(..., description="嵌入模型配置")
-    reranker: ModelConfig = Field(..., description="重排序模型配置")
+    embedding_model: EmbeddingModelConfig = Field(..., description="嵌入模型配置")
+    #: 可选：没配就跳过重排，检索仍可用（见 services/retrieval.py）
+    reranker: ModelConfig | None = Field(default=None, description="重排序模型配置")
+    vector_database: VectorDatabaseConfig | None = Field(
+        default=None, description="向量库连接，backends.vector_store 非 memory 时必填"
+    )
 
 
 class APPConfig(BaseModel):
     server_config: ServerConfig = Field(..., description="服务配置")
     infrastructure_config: InfrastructureConfig = Field(..., description="基础设施配置")
+    backends: BackendsConfig = Field(
+        default_factory=BackendsConfig, description="各资源用哪个实现"
+    )

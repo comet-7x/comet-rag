@@ -411,19 +411,19 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 **产出**：39 用例，services 覆盖率 99%。反向验证：关掉断点续跑后
 `test_retry_resumes_from_indexing_without_reparsing` 立刻变红。
 
-### T17a — `Context` 与 `lifespan` 资源装配
+### ✅ T17a — `Context` 与 `lifespan` 资源装配
 
 **描述：** `api/lifespan.py` 的资源初始化目前全是注释，`core/context.py` 是 0 字节空文件。本任务只做资源装配，不碰路由。
 
 **验收标准：**
-- [ ] `core/context.py` 定义 `Context`，持有 store / executor / vectorstore / 模型 / httpx client
-- [ ] `lifespan` 按配置装配并挂 `app.state.ctx`；关停时**逆序**释放
-- [ ] 后端实现由配置决定（内存 / 真实），为 Phase 4 的逐个替换留好开关
-- [ ] `api/deps.py` 从 `app.state.ctx` 取依赖，路由不得直接 new 资源
+- [x] `core/context.py` 定义 `Context`，持有 store / executor / vectorstore / 模型 / httpx client
+- [x] `lifespan` 按配置装配并挂 `app.state.ctx`；关停时**逆序**释放
+- [x] 后端实现由配置决定（内存 / 真实），为 Phase 4 的逐个替换留好开关
+- [x] `api/deps.py` 从 `app.state.ctx` 取依赖，路由不得直接 new 资源
 
 **验证：**
-- [ ] 起停应用无资源泄漏警告；httpx client 全局仅一个实例
-- [ ] 配置切换到内存后端时，启动不触碰任何中间件
+- [x] 起停应用无资源泄漏警告；httpx client 全局仅一个实例
+- [x] 配置切换到内存后端时，启动不触碰任何中间件
 
 **依赖：** T15、T16
 **文件：** `comet_rag/core/context.py`、`api/lifespan.py`、`api/deps.py`
@@ -431,19 +431,19 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 
 ---
 
-### T17b — API 路由接线
+### ✅ T17b — API 路由接线
 
 **描述：** `/search` 目前直接回显 query（`api/routes/search.py:8`）。本任务把路由接到 T17a 装配好的服务上。
 
 **验收标准：**
-- [ ] 路由：`POST /ingest`、`GET /tasks/{id}`、`GET /tasks`、`POST /search`、KB 的 CRUD
-- [ ] `/tasks/{id}` 返回 `Task.public_view()`（**不泄漏** traceback、worker_id、context）
-- [ ] 出入参 Pydantic 模型补齐（`schemas/` 下 `ingest.py`、`task.py`、`kb.py`；注意 `schemas/task.py` 已被 T5 删除，此处是全新的 API 层模型，不是任务领域模型）
-- [ ] 异常映射：`TaskNotFound` → 404、`VersionConflict` → 409、闸门超限 → 429
+- [x] 路由：`POST /ingest`、`GET /tasks/{id}`、`GET /tasks`、`POST /search`、KB 的 CRUD
+- [x] `/tasks/{id}` 返回 `Task.public_view()`（**不泄漏** traceback、worker_id、context）
+- [x] 出入参 Pydantic 模型补齐（`schemas/` 下 `ingest.py`、`task.py`、`kb.py`；注意 `schemas/task.py` 已被 T5 删除，此处是全新的 API 层模型，不是任务领域模型）
+- [x] 异常映射：`TaskNotFound` → 404、`VersionConflict` → 409、闸门超限 → 429
 
 **验证：**
-- [ ] `uv run pytest tests/e2e/test_ingest_search.py -q`（内存后端，**无需 docker**）
-- [ ] `uv run uvicorn comet_rag.api.main:app` 能起，`/docs` 可访问
+- [x] `uv run pytest tests/e2e/test_ingest_search.py -q`（内存后端，**无需 docker**）
+- [x] `uv run uvicorn comet_rag.api.main:app` 能起，`/docs` 可访问
 
 **依赖：** T17a
 **文件：** `api/routes/ingest.py`、`routes/tasks.py`、`routes/search.py`、`routes/kb.py`、`schemas/*.py`
@@ -456,6 +456,20 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 > 一旦进入 Phase 4 之后再发现，就要动数据。**务必人工评审后再继续。**
 
 ---
+
+
+**装配路径新增 `core/bootstrap.py`（组合根）**：唯一知道"用哪个实现"的地方。
+后端由 `backends` 配置段决定（memory / milvus / postgres / inprocess / arq），
+业务代码里不出现任何 `if backend == ...`。worker 进程将复用同一套装配。
+
+**`main.py` 改成 `create_app()` 工厂 + PEP 562 懒加载 `app`**：
+原先模块级 `get_config()` 让"import 这个模块"等价于"必须有一份合法配置"，
+测试与工具全被绑架；且 e2e 得以走**真实装配路径**而非另抄一份接线。
+
+**发现并修掉两个既有缺陷**（详见提交说明）：
+· `schemas/__init__.py` 自 T5 起 import 已删除的 `task.py` —— 全仓 600+ 测试全绿却没人发现
+· `setup_logging()` 把 patcher 装在 `logger.patch()` 的副本上而非全局，
+  导致所有 `from loguru import logger` 的模块日志被**静默丢弃**
 
 ## Phase 4：换上真实后端
 

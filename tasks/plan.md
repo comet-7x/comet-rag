@@ -141,15 +141,21 @@ T1 测试基建 ──┬─► T2 依赖分组(A1)
 - [x] T14 — `BaseVectorStore` 接口重设计 + `InMemoryVectorStore` + 契约测试
 - [x] T15 — `services/ingestion.py`：注册 `kind="ingest"` 的多阶段 runner
 - [x] T16 — `services/retrieval.py`：召回 + rerank
-- [ ] T17a — `Context` 与 `lifespan` 资源装配（全部注入内存实现）
-- [ ] T17b — API 路由接线
+- [x] T17a — `Context` 与 `lifespan` 资源装配（全部注入内存实现）
+- [x] T17b — API 路由接线
 
-**Checkpoint C：端到端跑通（内存版）** ← 最重要的检查点
-- [ ] `tests/e2e` 有一条完整用例：`POST /ingest` → 轮询 `GET /tasks/{id}` 见 stage 推进 → `SUCCEEDED` → `POST /search` 命中刚入库的内容
-- [ ] 该用例**不需要 docker**，纯内存跑完
-- [ ] chunk metadata 携带 `kb_id`
-- [ ] 相同 `idempotency_key` 重复提交不产生第二个任务
-- [ ] **人工评审**：抽象是否真的成立？此处发现问题的修复成本远低于 Phase 4 之后
+**Checkpoint C：端到端跑通（内存版）** ✅ 2026-08-11
+- [x] `tests/e2e/test_ingest_search.py` 12 个用例：`POST /kb` → `POST /ingest` →
+      轮询 `GET /tasks/{id}` 见 stage 推进 → `SUCCEEDED` → `POST /search` 命中
+- [x] **不需要 docker**，纯内存跑完（1.9s）
+- [x] chunk metadata 携带 `kb_id`；跨知识库检索不串数据
+- [x] 相同 `idempotency_key` 重复提交不产生第二个任务
+- [x] `/tasks/{id}` 不外泄 traceback / worker_id / version / context
+- [ ] **人工评审**：抽象是否真的成立？← 等开发者确认
+
+> **抽象经受住了考验**：三个 ABC（TaskStore / TaskExecutor / BaseVectorStore）
+> 在零中间件下拼出了完整链路，没有为了跑通而回头改任何接口。
+> e2e 只经公开 HTTP API 观察，Phase 4 换后端时应当一字不改地继续通过。
 
 ---
 

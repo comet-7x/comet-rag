@@ -1,0 +1,43 @@
+# Comet-RAG 配置示例
+#
+# 复制为 config.yaml 后按实际环境修改。config.yaml 已被 .gitignore 忽略，
+# 不会误提交真实端点与密钥。
+
+server_config:
+  app_name: comet-rag
+  env: test          # test | dev | prod
+  host: 0.0.0.0
+  port: 8000
+
+infrastructure_config:
+  embedding_model:
+    base_url: http://your-embedding-service/v1
+    model_name: Qwen/Qwen3-VL-Embedding-8B
+    api_key: EMPTY
+    # ⚠️ 必须与模型实际输出维度一致。
+    #
+    # 配错不会立刻报错，而是在第一次入库时抛 DimensionMismatch；
+    # 更糟的是若某天换了模型却忘了改这里，新旧向量会混在同一个空间，
+    # 检索静默劣化且事后无法分辨该重算哪些（spec A12）。
+    #
+    # 确认方法：对模型发一次 embedding 请求，数一下返回向量的长度。
+    dim: 4096
+
+  # 可选。不配则跳过重排，检索仍可用，只是精度下降。
+  reranker:
+    base_url: http://your-reranker-service/v1
+    model_name: Qwen/Qwen3-VL-Reranker-8B
+    api_key: EMPTY
+
+  # backends.vector_store 为 memory 时可省略
+  # vector_database:
+  #   endpoint: http://localhost:19530
+  #   api_key: null
+  #   collection_name: comet_rag
+
+# 各资源用哪个实现。全 memory 时零外部依赖，适合本地开发与测试。
+backends:
+  vector_store: memory      # memory | milvus
+  task_store: memory        # memory | postgres
+  task_executor: inprocess  # inprocess | arq
+  max_concurrency: 8
