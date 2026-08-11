@@ -161,7 +161,7 @@ T1 测试基建 ──┬─► T2 依赖分组(A1)
 
 ### Phase 4：换上真实后端（每次只换一个）
 
-- [ ] T18 — `docker-compose.yml` + `infrastructure/database/` + alembic 初始化
+- [x] T18 — `docker-compose.yml` + `infrastructure/database/` + alembic 初始化
 - [ ] T19 — `knowledge_bases` 表 + `services/knowledge_base.py`（A12）
 - [ ] T20 — `PostgresTaskStore`（必须通过 T7 的同一套契约测试）
 - [ ] T21 — `MilvusStore`（必须通过 T14 的同一套契约测试）

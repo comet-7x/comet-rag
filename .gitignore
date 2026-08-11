@@ -183,3 +183,4 @@ config.yaml
 
 # 运行时日志（setup_logging 默认写到这里）
 logs/
+.docker-data/

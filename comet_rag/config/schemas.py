@@ -27,6 +27,18 @@ class SqlDatabaseConfig(BaseModel):
     password: str = Field(..., description="密码")  # 生产环境建议用 SecretStr
     database: str = Field(..., description="数据库名称")
     connect_timeout: int = Field(30, description="连接超时时间(秒)")
+    pool_size: int = Field(10, gt=0, description="连接池常驻连接数")
+    max_overflow: int = Field(20, ge=0, description="峰值时允许超出的连接数")
+    echo: bool = Field(False, description="打印 SQL，仅调试用")
+
+    @property
+    def dsn(self) -> str:
+        """异步 DSN。驱动写死 asyncpg —— 同步驱动在 async 引擎里会静默阻塞
+        整个事件循环，且症状是"偶尔很慢"而非报错，极难定位。"""
+        return (
+            f"postgresql+asyncpg://{self.username}:{self.password}"
+            f"@{self.host}:{self.port}/{self.database}"
+        )
 
 
 class RedisConfig(BaseModel):
@@ -112,6 +124,12 @@ class InfrastructureConfig(BaseModel):
     reranker: ModelConfig | None = Field(default=None, description="重排序模型配置")
     vector_database: VectorDatabaseConfig | None = Field(
         default=None, description="向量库连接，backends.vector_store 非 memory 时必填"
+    )
+    database: SqlDatabaseConfig | None = Field(
+        default=None, description="关系库连接，backends.task_store=postgres 时必填"
+    )
+    redis: RedisConfig | None = Field(
+        default=None, description="Redis 连接，backends.task_executor=arq 时必填"
     )
 
 

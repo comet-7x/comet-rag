@@ -473,25 +473,38 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 
 ## Phase 4：换上真实后端
 
-### T18 — docker-compose + database + alembic
+### ✅ T18 — docker-compose + database + alembic
 
 **描述：** 首次引入外部中间件。只做接线，不含业务表。
 
 **验收标准：**
-- [ ] `docker-compose.yml`：postgres、redis、milvus（含 etcd/minio）、minio
-- [ ] `infrastructure/database/`：async engine、session factory、`Base`
-- [ ] alembic 初始化并配好 async 模板
-- [ ] `config/schemas.py` 按 A6 删除 `MongoConfig`；补 `RedisConfig` 等的实际接线
+- [x] `docker-compose.yml`：postgres、redis、milvus（含 etcd/minio）、minio
+- [x] `infrastructure/database/`：async engine、session factory、`Base`
+- [x] alembic 初始化并配好 async 模板
+- [x] `config/schemas.py` 按 A6 删除 `MongoConfig`；补 `RedisConfig` 等的实际接线
 
 **验证：**
-- [ ] `docker compose up -d && uv run alembic upgrade head` 成功
-- [ ] `uv run pytest -m integration` 能连上各中间件
+- [x] `docker compose up -d && uv run alembic upgrade head` 成功
+- [x] `uv run pytest -m integration` 能连上各中间件
 
 **依赖：** T2
 **文件：** `docker-compose.yml`、`comet_rag/infrastructure/database/*.py`、`alembic/`、`config/schemas.py`
 **规模：** M
 
 ---
+
+
+**产出**：5 个容器全部健康（postgres / redis / milvus / etcd / minio），
+7 条集成冒烟用例通过。
+
+**端口避让**：MinIO 映射到 9010/9011 而非 9000/9001 —— 本机 9000/9001 已被占用，
+撞了之后的报错很难一眼看出原因。
+
+**alembic.ini 的 DSN 刻意留空**：该文件进版本库，写死密码迟早误提交。
+取值逻辑在 `env.py`：优先 `-x dsn=...`，否则读 config.yaml。
+
+**中间件没起时集成用例 skip 而非 fail**，已反向验证（停掉 redis 后
+对应用例 skip、其余照跑）。让核心依赖环境红一片只会训练出"看到红色就忽略"。
 
 ### T19 — `knowledge_bases` 表 + KB service（A12）
 

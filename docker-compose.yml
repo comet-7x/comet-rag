@@ -1,0 +1,113 @@
+# Comet-RAG 本地开发中间件。
+#
+#   docker compose up -d              # 全部
+#   docker compose up -d postgres redis   # 只起轻量的两个（几十 MB）
+#
+# 端口刻意避开常用默认值：MinIO 用 9010/9011 而非 9000/9001，
+# 后者在很多机器上已被别的服务占着，撞了之后的报错很难一眼看出原因。
+#
+# 数据卷都挂在 ./.docker-data 下，`docker compose down -v` 或直接删目录即可重置。
+
+name: comet-rag
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: comet-rag-postgres
+    environment:
+      POSTGRES_USER: comet
+      POSTGRES_PASSWORD: comet
+      POSTGRES_DB: comet_rag
+      # 本地开发用，关掉 fsync 换速度。**不要照搬到生产**。
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command: >
+      postgres -c fsync=off -c synchronous_commit=off -c full_page_writes=off
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./.docker-data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U comet -d comet_rag"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: comet-rag-redis
+    command: redis-server --save "" --appendonly no
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # ── 以下三个共同构成 Milvus standalone ──────────────────────────────────
+  # Milvus 自己不存元数据也不存对象，etcd 与 MinIO 是它的硬依赖，
+  # 不是"可选组件"。三者要一起起、一起停。
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.16
+    container_name: comet-rag-etcd
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: >
+      etcd -advertise-client-urls=http://etcd:2379
+      -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    volumes:
+      - ./.docker-data/etcd:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    container_name: comet-rag-minio
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    command: minio server /minio_data --console-address ":9001"
+    ports:
+      - "9010:9000"   # S3 API（宿主 9000 常被占用，故映射到 9010）
+      - "9011:9001"   # 控制台
+    volumes:
+      - ./.docker-data/minio:/minio_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  milvus:
+    image: milvusdb/milvus:v2.5.4
+    container_name: comet-rag-milvus
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - ./.docker-data/milvus:/var/lib/milvus
+    ports:
+      - "19530:19530"   # gRPC
+      - "9091:9091"     # 指标与健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 10s
+      timeout: 10s
+      # Milvus 冷启动要 30~60s，重试给够，否则 depends_on 会误判失败
+      retries: 30
+      start_period: 60s
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy

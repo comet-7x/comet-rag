@@ -29,11 +29,30 @@ infrastructure_config:
     model_name: Qwen/Qwen3-VL-Reranker-8B
     api_key: EMPTY
 
-  # backends.vector_store 为 memory 时可省略
+  # 以下三段只在对应 backend 非 memory/inprocess 时必填。
+  # 默认值与 docker-compose.yml 一致，起完容器即可直接用。
+
+  # backends.vector_store = milvus 时必填
   # vector_database:
   #   endpoint: http://localhost:19530
   #   api_key: null
   #   collection_name: comet_rag
+
+  # backends.task_store = postgres 时必填
+  # database:
+  #   host: localhost
+  #   port: 5432
+  #   username: comet
+  #   password: comet
+  #   database: comet_rag
+  #   pool_size: 10
+  #   max_overflow: 20
+
+  # backends.task_executor = arq 时必填
+  # redis:
+  #   host: localhost
+  #   port: 6379
+  #   db_index: 0
 
 # 各资源用哪个实现。全 memory 时零外部依赖，适合本地开发与测试。
 backends:

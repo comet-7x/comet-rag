@@ -99,3 +99,34 @@ python-docx 产出的 XML 比 Word 真实输出简单得多，覆盖不到 Word 
 **已知局限写成特征化测试，而不是回避。** 例如 `chunk_overlap` 在自然切分
 单元较粗时会静默失效（`unit/engines/test_chunkers_variants.py`），
 用测试把当前行为钉住，哪天变了（无论修好还是改坏）都会立刻被发现。
+
+## 集成测试与中间件
+
+```bash
+docker compose up -d                  # postgres + redis + milvus(+etcd+minio)
+docker compose up -d postgres redis   # 只要轻量的两个（几十 MB，秒起）
+uv run pytest -m integration
+```
+
+**中间件没起时对应用例会 skip，不会 fail。** 集成测试是可选的：核心依赖环境
+（CI 的 core-only job、只想跑单元测试的贡献者）根本没有 docker，让它们红一片
+只会训练出"看到红色就忽略"的习惯，那比没有测试更糟。
+
+端口刻意避开常用默认值：MinIO 映射到 **9010/9011** 而非 9000/9001 ——
+后者在很多机器上已被占用，撞了之后的报错很难一眼看出原因。
+可用 `COMET_TEST_POSTGRES_DSN` / `COMET_TEST_REDIS_URL` / `COMET_TEST_MILVUS_URI`
+指向别的实例。
+
+## 数据库迁移
+
+```bash
+uv run alembic upgrade head            # DSN 从 config.yaml 读
+uv run alembic -x dsn=postgresql+asyncpg://... upgrade head   # 显式指定
+uv run alembic revision --autogenerate -m "描述"
+```
+
+`alembic.ini` 里的 `sqlalchemy.url` **刻意留空** —— 那个文件要进版本库，
+写死密码迟早误提交。取值逻辑见 `alembic/env.py`。
+
+新增 ORM 模型必须定义在 `comet_rag/infrastructure/database/models.py`
+（或被它 import），否则 `--autogenerate` 收集不到，会把那张表判为"该删掉"。
