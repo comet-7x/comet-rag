@@ -178,9 +178,7 @@ async def test_reingest_replaces_instead_of_duplicating(
         submitted = await client.post(
             "/ingest", json={"kb_id": KB, "source": "fruits.stub"}
         )
-        await poll_until_terminal(
-            client, submitted.json()["task_id"], timeout=20.0
-        )
+        await poll_until_terminal(client, submitted.json()["task_id"], timeout=20.0)
 
     info = (await client.get(f"/kb/{KB}")).json()
     assert info["chunk_count"] == 3, "重复入库产生了副本"

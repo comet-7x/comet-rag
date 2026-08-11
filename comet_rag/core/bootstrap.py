@@ -112,7 +112,14 @@ def build_task_executor(config: APPConfig, store: TaskStore) -> TaskExecutor:
     if backend is Backend.ARQ:
         from comet_rag.tasks.executor_arq import ArqExecutor  # noqa: PLC0415
 
-        return ArqExecutor(store)
+        settings = config.infrastructure_config.redis
+        if settings is None:
+            raise ValueError(
+                "backends.task_executor=arq 但未配置 infrastructure_config.redis"
+            )
+        # 注意这里**不传** max_concurrency：跨进程部署的闸门在 worker 侧
+        # （arq 的 max_jobs），生产端限流拦不住别的生产端。见 executor_arq.py。
+        return ArqExecutor(store, redis_url=settings.url)
     raise ValueError(f"不支持的 task_executor 后端：{backend}")
 
 

@@ -627,23 +627,59 @@ partition key 不需要；kb_id 仍写进 metadata，为将来可能的迁移留
 
 ## Phase 5：跨进程与容错
 
-### T22 — `ArqExecutor`
+### ✅ T22 — `ArqExecutor`
 
 **描述：** 实现 `TaskExecutor` 的 ARQ 版。**队列里只放 `task_id`**，任务数据一律从 `TaskStore` 读——这是重试、崩溃恢复、断点续跑能退化成同一个动作 `submit(task_id)` 的前提。
 
 **验收标准：**
-- [ ] `submit()` → `enqueue_job("run_task", task_id)`；`_job_id` 用 `task_id` 保证幂等
-- [ ] 跨任务复用 httpx 连接池与 redis 连接（A3 选 ARQ 的核心理由，必须兑现）
-- [ ] `request_cancel` 跨进程语义：写 CANCELLING 状态，由 worker 的 `ctx.checkpoint()` 感知
-- [ ] 通过 **T8 的同一套契约测试**
+- [x] `submit()` → `enqueue_job("run_task", task_id)`；~~`_job_id` 用 `task_id`~~ 用 `task_id:attempts`（见下方偏离说明）
+- [x] 跨任务复用 redis 连接（A3 选 ARQ 的核心理由，必须兑现）
+- [ ] 跨任务复用 httpx 连接池 —— 由 worker 侧共享 `Context` 提供，**归 T23**
+- [x] `request_cancel` 跨进程语义：写 CANCELLING 状态，由 worker 的 `ctx.checkpoint()` 感知
+- [x] 通过 **T8 的同一套契约测试**（15 条，一行未改）
 
 **验证：**
-- [ ] `uv run pytest -m integration tests/integration/test_executor_arq.py`
-- [ ] 断言入队 payload 只含 `task_id`，不含任务数据
+- [x] `uv run pytest -m integration tests/integration/test_executor_arq.py` → 21 passed
+- [x] 断言入队 payload 只含 `task_id`，不含任务数据
 
 **依赖：** T8、T18
 **文件：** `comet_rag/tasks/executor_arq.py`、`tests/integration/test_executor_arq.py`
 **规模：** M
+
+**产出**：T8 的 15 条执行器契约**一行未改**地通过。契约当初就是照这一天设计的
+（只经 TaskStore 观察、绝不 gather 内部协程），这次是兑现。另加 6 条 ARQ 专项。
+
+**⚠️ 与本条目原文的偏离：`_job_id` 不能只用 `task_id`。** 实测：arq 的
+`enqueue_job` 在 `arq:job:{id}` 或 `arq:result:{id}` 存在时直接返回 `None`，
+而结果键默认保留**一小时**。只用 task_id 的话，第一次失败后的重投会被自己
+上一轮的结果键挡掉，任务永远停在 PENDING，**且不报任何错**。改用
+`task_id:attempts`：同一次尝试内重复投递照样去重，跨尝试的重投是新 job。
+`test_job_id_must_vary_per_attempt` 把退化写法的现场固定了下来。
+
+**先做了一次重构**：把 `InProcessExecutor` 里与调度无关的部分提到
+`StoreDrivenExecutor`（RUNNING 抢占、超时、失败分类、续跑锚点、取消受理）。
+两种执行器真正的差别只剩三处：拉起方式、重试怎么重排队、有没有本地
+hard cancel。不这么做就要抄一份一百来行的状态推进逻辑，而它一定会漂 ——
+"漂"的症状正是"换个部署方式行为就变了"，那是本项目最想消灭的东西。
+重构后 176 条既有用例全绿，才动手写 ArqExecutor。
+
+**跨进程逼出了一个真 bug（乐观锁没有重读重试）**：runner 一边 `enter_stage`，
+另一边有人请求取消，两次写入撞在同一个版本号上 —— `transition` 直接抛
+`VersionConflict`，取消**失败了**，任务永远停不下来。
+根因是 `TaskStore` 把两种语义混为一谈：调用方**没传** `expected_version` 时，
+CAS 只是方法内部"读—改—写"的护栏，撞了就该重读重来；**传了**才是
+"我要的就是这一版"的断言，那种冲突必须原样上抛。修在基类 `_cas()`，
+所有实现一起受益，且守卫在每一轮重读后重新过一遍。
+内存实现跑不出这个 bug（读写之间没有真正的 await 间隙），
+换成 Postgres + 真 Redis 后窗口宽到必撞 —— 这正是 plan "先内存后真实" 里
+"真实后端阶段还能抓到东西" 的那一类收获。
+**反向验证**：`_CAS_RETRIES` 调回 1，跨进程取消用例 3/3 稳定变红。
+
+**顺带修掉一处会变成 500 的竞态**：`TaskService.submit` 读到 PENDING 与真正
+入队之间隔着一次网络往返，worker 可能已把任务捞走，`executor.submit` 于是
+以"只有 PENDING 可提交"拒绝。但调用方的目的（任务排上了）其实已达成，
+一次幂等的重复 POST 不该变成 500。只在**确认它真的离开了 PENDING** 时才咽下，
+否则照抛（`test_submit_still_raises_when_the_task_really_is_pending` 守着这条）。
 
 ---
 

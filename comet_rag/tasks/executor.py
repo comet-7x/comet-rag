@@ -7,6 +7,16 @@
 **取消语义（务必让调用方知道）**：`request_cancel` 返回 True 只代表*已受理*，
 不代表*已停止*。RUNNING 任务先被打成 CANCELLING，真正落 CANCELLED 要等 runner
 走到下一个 `ctx.checkpoint()`。查 `task.status.is_terminal` 才是「真停了」。
+
+## 三层结构
+
+    TaskExecutor          纯接口，调用方只看得到 submit / request_cancel / shutdown
+    StoreDrivenExecutor   「一个 task_id 该怎么被执行」—— 进程内与跨进程共用
+    InProcessExecutor     asyncio 版：本地协程 + 信号量闸门
+
+进程内与跨进程执行器的**真差别只有两点**：任务在哪儿被拉起、重试怎么重排队。
+状态机推进、超时、失败分类、断点续跑锚点这些是同一件事，抄成两份必然会漂——
+而"漂"的症状是"换个部署方式行为就变了"，那正是本项目要消灭的东西。
 """
 
 from __future__ import annotations
@@ -16,6 +26,8 @@ import logging
 import traceback
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Coroutine
+from typing import Any
 
 from .models import TaskError, TaskStatus
 from .runner import (
@@ -44,70 +56,72 @@ class TaskExecutor(ABC):
     async def shutdown(self, *, timeout: float | None = 10.0) -> None: ...
 
 
-class InProcessExecutor(TaskExecutor):
-    """进程内 asyncio 执行器：信号量限并发 + 超时 + 可重试失败退避重排队。"""
+class StoreDrivenExecutor(TaskExecutor):
+    """执行器的共用骨架：**只经 TaskStore 观察与推进任务**。
+
+    子类要补的只有三件事：
+
+      * `submit()`      —— 把 task_id 送到该去的地方（本地协程 / Redis 队列）
+      * `_schedule_retry()` —— 可重试失败后怎么重排队
+      * `shutdown()`    —— 各自的资源怎么释放
+
+    其余（RUNNING 抢占、超时、成功收尾、失败分类、续跑锚点、取消受理）
+    都在这里，两种部署形态跑的是同一份代码。
+    """
 
     def __init__(
         self,
         store: TaskStore,
         *,
-        max_concurrency: int = 4,
         default_timeout: float | None = None,
         retry_backoff: float = 1.0,
-        hard_cancel: bool = True,
         worker_id: str | None = None,
+        worker_prefix: str = "exec",
     ) -> None:
         self._store = store
-        self._sem = asyncio.Semaphore(max_concurrency)
         self._timeout = default_timeout
         self._backoff = retry_backoff
-        self._hard_cancel = hard_cancel  # 是否在协作取消之外再补一刀 asyncio.cancel
-        self._worker_id = worker_id or f"inproc-{uuid.uuid4().hex[:6]}"
-        self._bg: dict[str, asyncio.Task[None]] = {}
+        self._worker_id = worker_id or f"{worker_prefix}-{uuid.uuid4().hex[:6]}"
+        #: 本实例正在执行的任务。关停时要把它们排干，否则会留下 RUNNING 僵尸。
+        self._inflight: set[str] = set()
         self._detached: set[asyncio.Task[None]] = set()
         self._closed = False
 
-    # 提交
-    async def submit(self, task_id: str, *, delay: float = 0.0) -> None:
-        if self._closed:
-            raise RuntimeError("执行器已关停，拒绝新任务")
-        task = await self._store.require(task_id)
-        if task.status is not TaskStatus.PENDING:
-            raise ValueError(f"只有 PENDING 可提交，当前 {task.status.value}")
-        running = self._bg.get(task_id)
-        if running is not None and not running.done():
-            return  # 幂等：重复 submit 不会跑两遍
-        bg = asyncio.create_task(
-            self._run(task_id, delay), name=f"{task.kind}:{task_id}"
-        )
-        self._bg[task_id] = bg
-        bg.add_done_callback(self._on_done)
+    @property
+    def worker_id(self) -> str:
+        return self._worker_id
 
-    async def _run(self, task_id: str, delay: float) -> None:
+    # ── 执行 ───────────────────────────────────────────────────────────────
+
+    async def execute(self, task_id: str) -> None:
+        """把一个任务从 PENDING 推到终态。**进程内与跨进程共用这一份。**
+
+        是 public 的：跨进程实现的 worker 侧入口（arq 的 job 函数）要调它，
+        而那已经算不上"内部"了。
+        """
+        self._inflight.add(task_id)
         try:
-            if delay:
-                await asyncio.sleep(delay)
-            async with self._sem:  # 排队期间可能已被取消，故进来先复查
-                task = await self._store.get(task_id)
-                if task is None or task.status is not TaskStatus.PENDING:
-                    return
-                runner = get_runner(task.kind)  # 未注册的 kind 直接走失败分支
-                await self._store.transition(
-                    task_id,
-                    TaskStatus.RUNNING,
-                    attempts=task.attempts + 1,
-                    worker_id=self._worker_id,
-                    error=None,
-                    message="执行中",
-                )
-                ctx = TaskContext(self._store, task_id, worker_id=self._worker_id)
-                coro = runner(ctx)
-                outcome = (
-                    await asyncio.wait_for(coro, self._timeout)
-                    if self._timeout
-                    else await coro
-                )
-                await self._finish(task_id, outcome)
+            # 排队期间可能已被取消/删除/被别的 worker 抢走，进来先复查
+            task = await self._store.get(task_id)
+            if task is None or task.status is not TaskStatus.PENDING:
+                return
+            runner = get_runner(task.kind)  # 未注册的 kind 直接走失败分支
+            await self._store.transition(
+                task_id,
+                TaskStatus.RUNNING,
+                attempts=task.attempts + 1,
+                worker_id=self._worker_id,
+                error=None,
+                message="执行中",
+            )
+            ctx = TaskContext(self._store, task_id, worker_id=self._worker_id)
+            coro = runner(ctx)
+            outcome = (
+                await asyncio.wait_for(coro, self._timeout)
+                if self._timeout
+                else await coro
+            )
+            await self._finish(task_id, outcome)
         except asyncio.CancelledError:
             # 已经在被取消的协程里再 await 是不可靠的，把收尾工作甩给独立协程
             self._detach(self._mark_cancelled(task_id))
@@ -116,8 +130,17 @@ class InProcessExecutor(TaskExecutor):
             await self._mark_cancelled(task_id)
         except Exception as exc:  # noqa: BLE001 —— runner 的任何异常都在这里收口
             await self._mark_failed(task_id, exc)
+        finally:
+            self._inflight.discard(task_id)
 
-    # 收尾
+    @abstractmethod
+    async def _schedule_retry(self, task_id: str, delay: float) -> None:
+        """可重试失败后重新排队。**不得在此阻塞等待 delay**——
+        进程内实现要立刻返回（否则本轮协程收不了尾），跨进程实现用队列的延迟投递。
+        """
+
+    # ── 收尾 ───────────────────────────────────────────────────────────────
+
     async def _finish(self, task_id: str, outcome: Outcome) -> None:
         if not isinstance(outcome, Done):
             raise TypeError(f"runner 必须返回 Done，得到 {type(outcome).__name__}")
@@ -133,6 +156,11 @@ class InProcessExecutor(TaskExecutor):
         )
 
     async def _mark_cancelled(self, task_id: str) -> None:
+        """落 CANCELLED。**幂等**：任务已是终态就直接返回。
+
+        取消路径上可能有多个来源同时想收尾（协程被 cancel + runner 自己
+        抛 TaskCancelled），让它幂等比让调用方去协调便宜得多。
+        """
         task = await self._store.get(task_id)
         if task is None or task.status.is_terminal:
             return
@@ -164,9 +192,7 @@ class InProcessExecutor(TaskExecutor):
                 message=f"第 {task.attempts} 次失败，{delay:.3g}s 后重试",
                 note="可重试失败，重排队",
             )
-            # 不能在这里直接 submit：此刻**自己**还挂在 self._bg[task_id] 上，
-            # 会被 submit 的幂等守卫挡掉。交给一个独立协程等本轮收尾后再排。
-            self._detach(self._resubmit_later(task_id, delay))
+            await self._schedule_retry(task_id, delay)
             return
 
         logger.warning("任务 %s 失败：%s", task_id, err.message)
@@ -177,6 +203,118 @@ class InProcessExecutor(TaskExecutor):
             resume_stage=resume_stage,
             message="执行失败",
         )
+
+    # ── 取消 ───────────────────────────────────────────────────────────────
+
+    async def _accept_cancel(self, task_id: str) -> bool:
+        """取消请求的**状态侧**受理，两种执行器完全一致。
+
+        跨进程时这就是取消的全部——`asyncio.Task.cancel()` 传不过进程边界，
+        只能靠 runner 在 `ctx.checkpoint()` 里看见 CANCELLING 自己退出。
+        进程内实现在此之上还会补一刀本地 cancel，让卡在长 await 上的 runner
+        立刻醒过来。
+        """
+        task = await self._store.get(task_id)
+        if task is None or task.status.is_terminal:
+            return False
+        if task.status is TaskStatus.RUNNING:
+            await self._store.transition(
+                task_id, TaskStatus.CANCELLING, message="正在取消…"
+            )
+        elif task.status is not TaskStatus.CANCELLING:
+            # PENDING：没有真在跑的 runner，可以直接落终态
+            await self._store.transition(
+                task_id,
+                TaskStatus.CANCELLED,
+                error=TaskError(code="cancelled", message="任务被主动取消"),
+                message="已取消",
+            )
+        return True
+
+    async def request_cancel(self, task_id: str) -> bool:
+        """受理取消。任务不存在或已是终态 → False。"""
+        return await self._accept_cancel(task_id)
+
+    # ── 生命周期 ───────────────────────────────────────────────────────────
+
+    def _detach(self, coro: Coroutine[Any, Any, None]) -> None:
+        """跑一段「必须完成、但不能被外层取消牵连」的收尾协程，并持引用防 GC。"""
+        task = asyncio.ensure_future(coro)
+        self._detached.add(task)
+        task.add_done_callback(self._detached.discard)
+
+    async def wait_all(self) -> None:
+        """等本实例的收尾协程与在跑任务都结束（测试 / 优雅关停用）。"""
+        while self._detached:
+            pending = [t for t in self._detached if not t.done()]
+            if not pending:
+                # 已结束但 done-callback 还没轮到执行，让出一轮即可被摘掉
+                await asyncio.sleep(0)
+                continue
+            await asyncio.gather(*pending, return_exceptions=True)
+
+
+class InProcessExecutor(StoreDrivenExecutor):
+    """进程内 asyncio 执行器：信号量限并发 + 超时 + 可重试失败退避重排队。"""
+
+    def __init__(
+        self,
+        store: TaskStore,
+        *,
+        max_concurrency: int = 4,
+        default_timeout: float | None = None,
+        retry_backoff: float = 1.0,
+        hard_cancel: bool = True,
+        worker_id: str | None = None,
+    ) -> None:
+        super().__init__(
+            store,
+            default_timeout=default_timeout,
+            retry_backoff=retry_backoff,
+            worker_id=worker_id,
+            worker_prefix="inproc",
+        )
+        self._sem = asyncio.Semaphore(max_concurrency)
+        self._hard_cancel = hard_cancel  # 是否在协作取消之外再补一刀 asyncio.cancel
+        self._bg: dict[str, asyncio.Task[None]] = {}
+
+    # 提交
+    async def submit(self, task_id: str, *, delay: float = 0.0) -> None:
+        if self._closed:
+            raise RuntimeError("执行器已关停，拒绝新任务")
+        task = await self._store.require(task_id)
+        if task.status is not TaskStatus.PENDING:
+            raise ValueError(f"只有 PENDING 可提交，当前 {task.status.value}")
+        running = self._bg.get(task_id)
+        if running is not None and not running.done():
+            return  # 幂等：重复 submit 不会跑两遍
+        bg = asyncio.create_task(
+            self._run(task_id, delay), name=f"{task.kind}:{task_id}"
+        )
+        self._bg[task_id] = bg
+        bg.add_done_callback(self._on_done)
+
+    async def _run(self, task_id: str, delay: float) -> None:
+        """延迟 + 并发闸门，然后交给共用的 `execute()`。
+
+        闸门在**这一层**而不在 `execute()` 里：跨进程实现的闸门属于 worker
+        （arq 的 `max_jobs`），生产端不该也无法限流消费端。
+        """
+        try:
+            if delay:
+                await asyncio.sleep(delay)
+            async with self._sem:
+                await self.execute(task_id)
+        except asyncio.CancelledError:
+            # 在拿到闸门之前就被取消：execute() 还没接手，这里补收尾。
+            # `_mark_cancelled` 幂等，与 execute() 内那次重复也无害。
+            self._detach(self._mark_cancelled(task_id))
+            raise
+
+    async def _schedule_retry(self, task_id: str, delay: float) -> None:
+        # 不能在这里直接 submit：此刻**自己**还挂在 self._bg[task_id] 上，
+        # 会被 submit 的幂等守卫挡掉。交给一个独立协程等本轮收尾后再排。
+        self._detach(self._resubmit_later(task_id, delay))
 
     async def _resubmit_later(self, task_id: str, delay: float) -> None:
         """退避重排队：先等本轮协程彻底收尾，再计时重投。"""
@@ -194,25 +332,10 @@ class InProcessExecutor(TaskExecutor):
 
     # 取消
     async def request_cancel(self, task_id: str) -> bool:
-        """受理取消。任务不存在或已是终态 → False。"""
-        task = await self._store.get(task_id)
-        if task is None or task.status.is_terminal:
-            return False
-        if task.status is TaskStatus.RUNNING:
-            await self._store.transition(
-                task_id, TaskStatus.CANCELLING, message="正在取消…"
-            )
-        elif task.status is not TaskStatus.CANCELLING:
-            # PENDING：没有真在跑的 runner，可以直接落终态
-            await self._store.transition(
-                task_id,
-                TaskStatus.CANCELLED,
-                error=TaskError(code="cancelled", message="任务被主动取消"),
-                message="已取消",
-            )
-        if self._hard_cancel:
+        accepted = await self._accept_cancel(task_id)
+        if accepted and self._hard_cancel:
             self._cancel_bg(task_id)
-        return True
+        return accepted
 
     def _cancel_bg(self, task_id: str) -> None:
         """掐掉在跑的协程，让卡在长 await 上的 runner 立刻醒过来。
@@ -237,12 +360,6 @@ class InProcessExecutor(TaskExecutor):
             loop.call_soon_threadsafe(bg.cancel)
 
     # 生命周期
-    def _detach(self, coro) -> None:
-        """跑一段「必须完成、但不能被外层取消牵连」的收尾协程，并持引用防 GC。"""
-        task = asyncio.ensure_future(coro)
-        self._detached.add(task)
-        task.add_done_callback(self._detached.discard)
-
     def _on_done(self, bg: asyncio.Task[None]) -> None:
         """解绑 + 兜底记录异常。
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any
@@ -45,6 +46,10 @@ class TaskBusy(RuntimeError):
 
 # 这些字段不许经 update() 改：status 必须走 transition()，其余是不可变身份
 _IMMUTABLE = frozenset({"task_id", "kind", "created_at", "version", "status"})
+
+#: 内部 read-modify-write 撞版本时的重读次数。冲突本就罕见（同一任务同时
+#: 只有一个 runner 在推进），几次足够；再多只是把真正的死锁拖成慢性病。
+_CAS_RETRIES = 5
 
 
 class TaskStore(ABC):
@@ -150,17 +155,60 @@ class TaskStore(ABC):
             kind=kind, status=status, owner_id=owner_id, limit=limit, offset=offset
         )
 
+    async def _cas(
+        self,
+        task_id: str,
+        expected_version: int | None,
+        mutate: Callable[[Task], Any],
+        *,
+        bump: bool = True,
+    ) -> tuple[Task, Any]:
+        """读—改—写，**撞版本就重读重来**。返回 (落库后的任务, mutate 的返回值)。
+
+        这里有个必须说清的区分，它是跨进程部署下的一处真实 bug 的修复
+        （T22 集成测试逼出来的）：
+
+          * 调用方**没传** `expected_version` —— CAS 只是本方法内部
+            "读出来—改—写回去"的护栏，防的是丢失更新。撞上了就该重读重来，
+            把冲突抛给调用方毫无意义：它压根没做过任何版本假设。
+          * 调用方**传了** `expected_version` —— 它在断言"我要的就是这一版"
+            （比如 API 层的条件更新）。这种冲突必须原样抛出，吞掉就等于
+            悄悄覆盖了别人的写入。
+
+        进程内跑不出这个 bug：InMemoryTaskStore 的读写之间没有真正的 await
+        间隙。换成 Postgres + 跨进程后窗口宽到必然撞上 —— runner 一边
+        `enter_stage`，另一边有人请求取消，两个写入就撞了。
+
+        `mutate` 必须是**纯内存且可重复执行**的：它每轮都拿到一份新快照。
+        """
+        conflict: VersionConflict | None = None
+        for _ in range(_CAS_RETRIES):
+            task = await self.require(task_id)
+            self._check_version(task, expected_version)
+            extra = mutate(task)
+            try:
+                saved = await self._save(task, expected_version=task.version, bump=bump)
+            except VersionConflict as exc:
+                if expected_version is not None:
+                    raise  # 调用方的版本假设，不能替它重试
+                conflict = exc
+                continue
+            return saved, extra
+        raise conflict  # type: ignore[misc]  —— 循环至少跑一轮，必然已赋值
+
     async def update(
         self, task_id: str, *, expected_version: int | None = None, **fields: Any
     ) -> Task:
         """改非状态字段。传 expected_version 即启用乐观锁。"""
         self._check_fields(fields)
-        task = await self.require(task_id)
-        self._check_version(task, expected_version)
-        for k, v in fields.items():
-            setattr(task, k, v)
-        task.updated_at = Time.now()
-        return await self._save(task, expected_version=task.version)
+
+        def mutate(task: Task) -> None:
+            for k, v in fields.items():
+                setattr(task, k, v)
+            task.updated_at = Time.now()
+
+        saved, _ = await self._cas(task_id, expected_version, mutate)
+        return saved
 
     async def transition(
         self,
@@ -171,54 +219,61 @@ class TaskStore(ABC):
         note: str | None = None,
         **fields: Any,
     ) -> Task:
-        """**唯一**能改 status 的入口：先过状态机守卫，再统一维护时间戳与事件。"""
+        """**唯一**能改 status 的入口：先过状态机守卫，再统一维护时间戳与事件。
+
+        守卫在 `_cas` 的每一轮里重新过一遍 —— 重读之后状态可能已经变了，
+        拿旧状态判定过的迁移未必还合法。
+        """
         self._check_fields(fields)
-        task = await self.require(task_id)
-        self._check_version(task, expected_version)
-        frm = task.status
-        assert_transition(frm, to)
 
-        for k, v in fields.items():
-            setattr(task, k, v)
-        task.status = to
-        now = Time.now()
-        task.updated_at = now
-        if to is TaskStatus.RUNNING:
-            task.started_at = task.started_at or now
-            task.finished_at = None
-            task.heartbeat_at = now
-        elif to is TaskStatus.PENDING:
-            task.finished_at = None
-            task.heartbeat_at = None
-            task.worker_id = None
-            # 带着错误退回排队 = 可重试失败或租约回收。此时当前阶段的留痕
-            # 还开着口，必须在这里收成 failed；否则续跑时 enter_stage 会
-            # 把这条失败记录关成 "succeeded"，阶段历史就骗人了。
-            if task.error is not None:
-                self._close_stage(task, "failed")
-        elif to.is_terminal:
-            task.finished_at = now
-            task.heartbeat_at = None
-            self._close_stage(
-                task, "succeeded" if to is TaskStatus.SUCCEEDED else to.value
-            )
-            if to is TaskStatus.SUCCEEDED:
-                task.progress = 1.0
+        def mutate(task: Task) -> TaskStatus:
+            frm = task.status
+            assert_transition(frm, to)
 
-        saved = await self._save(task, expected_version=task.version)
+            for k, v in fields.items():
+                setattr(task, k, v)
+            task.status = to
+            now = Time.now()
+            task.updated_at = now
+            if to is TaskStatus.RUNNING:
+                task.started_at = task.started_at or now
+                task.finished_at = None
+                task.heartbeat_at = now
+            elif to is TaskStatus.PENDING:
+                task.finished_at = None
+                task.heartbeat_at = None
+                task.worker_id = None
+                # 带着错误退回排队 = 可重试失败或租约回收。此时当前阶段的留痕
+                # 还开着口，必须在这里收成 failed；否则续跑时 enter_stage 会
+                # 把这条失败记录关成 "succeeded"，阶段历史就骗人了。
+                if task.error is not None:
+                    self._close_stage(task, "failed")
+            elif to.is_terminal:
+                task.finished_at = now
+                task.heartbeat_at = None
+                self._close_stage(
+                    task, "succeeded" if to is TaskStatus.SUCCEEDED else to.value
+                )
+                if to is TaskStatus.SUCCEEDED:
+                    task.progress = 1.0
+            return frm
+
+        saved, frm = await self._cas(task_id, expected_version, mutate)
         await self._append_event(
             task_id,
             "transition",
             note or f"{frm.value} → {to.value}",
-            {"from": frm.value, "to": to.value, "stage": task.stage},
+            {"from": frm.value, "to": to.value, "stage": saved.stage},
         )
         return saved
 
     async def heartbeat(self, task_id: str) -> None:
         """续租。跨进程部署时，靠它 + sweep_stale 回收崩溃 worker 留下的僵尸任务。"""
-        task = await self.require(task_id)
-        task.heartbeat_at = Time.now()
-        await self._save(task, expected_version=task.version, bump=False)
+
+        def mutate(task: Task) -> None:
+            task.heartbeat_at = Time.now()
+
+        await self._cas(task_id, None, mutate, bump=False)
 
     async def sweep_stale(self, lease: timedelta) -> list[str]:
         """回收心跳超时的 RUNNING 任务：还有重试次数就退回排队，否则判失败。
@@ -264,14 +319,16 @@ class TaskStore(ABC):
     async def enter_stage(self, task_id: str, stage: str, **fields: Any) -> Task:
         """进入新阶段：关掉上一条阶段记录，开一条新的。"""
         self._check_fields(fields)
-        task = await self.require(task_id)
-        self._close_stage(task, "succeeded")
-        task.stage = stage
-        task.stage_history.append(StageRecord(stage=stage, started_at=Time.now()))
-        for k, v in fields.items():
-            setattr(task, k, v)
-        task.updated_at = Time.now()
-        saved = await self._save(task, expected_version=task.version)
+
+        def mutate(task: Task) -> None:
+            self._close_stage(task, "succeeded")
+            task.stage = stage
+            task.stage_history.append(StageRecord(stage=stage, started_at=Time.now()))
+            for k, v in fields.items():
+                setattr(task, k, v)
+            task.updated_at = Time.now()
+
+        saved, _ = await self._cas(task_id, None, mutate)
         await self._append_event(
             task_id, "stage", f"进入阶段：{stage}", {"stage": stage}
         )

@@ -39,8 +39,25 @@ class TaskService:
             **fields,
         )
         if task.status is TaskStatus.PENDING and task.attempts == 0:
-            await self.executor.submit(task.task_id)
+            await self._enqueue(task.task_id)
         return await self.store.require(task.task_id)
+
+    async def _enqueue(self, task_id: str) -> None:
+        """排期，并咽下"有人抢先一步"这一种失败。
+
+        跨进程部署下，「读到 PENDING」与「真正入队」之间隔着一次网络往返，
+        worker 完全可能在这个缝里把任务捞走。此时 `executor.submit` 会以
+        "只有 PENDING 可提交" 拒绝 —— 但调用方的目的（任务被排上了）其实
+        已经达成，报错反而会让一次幂等的重复 POST 变成 500。
+
+        只在**确认它真的离开了 PENDING** 时才咽：否则就是真错误，必须上抛。
+        """
+        try:
+            await self.executor.submit(task_id)
+        except ValueError:
+            current = await self.store.get(task_id)
+            if current is None or current.status is TaskStatus.PENDING:
+                raise
 
     async def get(self, task_id: str) -> Task | None:
         return await self.store.get(task_id)

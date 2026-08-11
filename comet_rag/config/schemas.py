@@ -50,6 +50,15 @@ class RedisConfig(BaseModel):
     db_index: int = Field(0, description="数据库索引编号")
     timeout: int = Field(10, description="超时时间")
 
+    @property
+    def url(self) -> str:
+        """DSN 形式。arq 只认这个，拼接放在这里而不是调用点 ——
+        密码要 URL 编码这种细节只该有一处。"""
+        from urllib.parse import quote  # noqa: PLC0415
+
+        auth = f":{quote(self.password, safe='')}@" if self.password else ""
+        return f"redis://{auth}{self.host}:{self.port}/{self.db_index}"
+
 
 class VectorDatabaseConfig(BaseModel):
     """向量数据库配置 (如 Milvus, Pinecone)"""

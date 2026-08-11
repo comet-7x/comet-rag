@@ -253,6 +253,52 @@ async def test_force_delete_cancels_first(svc: TaskService, store: TaskStore) ->
     assert await svc.get(task.task_id) is None
 
 
+class _StolenExecutor(InProcessExecutor):
+    """模拟"读到 PENDING 之后、真正入队之前，worker 抢先把任务捞走了"。
+
+    这个缝在跨进程部署下是真实存在的：两次读之间隔着一次网络往返。
+    进程内也存在，只是窄得多 —— 所以只能靠注入来确定性地复现。
+    """
+
+    async def submit(self, task_id: str, *, delay: float = 0.0) -> None:
+        await self._store.transition(task_id, TaskStatus.RUNNING)  # 别人抢走了
+        await super().submit(task_id, delay=delay)  # 于是这里必然拒绝
+
+
+async def test_submit_tolerates_being_beaten_to_the_queue(
+    store: TaskStore,
+) -> None:
+    """竞态下的重复提交不该变成 500 —— 任务已经排上了，目的达成。"""
+    executor = _StolenExecutor(store, retry_backoff=0.01)
+    svc = TaskService(store, executor)
+    try:
+        task = await svc.submit("rs-demo", {})
+    finally:
+        await executor.shutdown(timeout=5.0)
+
+    assert task.status is TaskStatus.RUNNING
+
+
+async def test_submit_still_raises_when_the_task_really_is_pending(
+    store: TaskStore,
+) -> None:
+    """反面：任务仍在 PENDING 却入队失败，那是真错误，绝不能咽掉。
+
+    没有这条，上面那个 try/except 就退化成"吞掉所有 ValueError"，
+    执行器彻底坏掉时也会一声不吭。
+    """
+
+    class _BrokenExecutor(InProcessExecutor):
+        async def submit(self, task_id: str, *, delay: float = 0.0) -> None:
+            raise ValueError("执行器坏了")
+
+    executor = _BrokenExecutor(store, retry_backoff=0.01)
+    svc = TaskService(store, executor)
+
+    with pytest.raises(ValueError, match="执行器坏了"):
+        await svc.submit("rs-demo", {})
+
+
 async def _minutes_ago(store: TaskStore, task_id: str, minutes: int):
     from comet_rag.tasks import Time
 
