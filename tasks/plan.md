@@ -138,7 +138,7 @@ T1 测试基建 ──┬─► T2 依赖分组(A1)
 
 本阶段是全计划的价值高点：不装任何中间件就验证整套抽象是否成立。
 
-- [ ] T14 — `BaseVectorStore` 接口重设计 + `InMemoryVectorStore` + 契约测试
+- [x] T14 — `BaseVectorStore` 接口重设计 + `InMemoryVectorStore` + 契约测试
 - [ ] T15 — `services/ingestion.py`：注册 `kind="ingest"` 的多阶段 runner
 - [ ] T16 — `services/retrieval.py`：召回 + rerank
 - [ ] T17a — `Context` 与 `lifespan` 资源装配（全部注入内存实现）

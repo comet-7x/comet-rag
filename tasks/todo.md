@@ -333,26 +333,32 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 
 ## Phase 3：第一条端到端切片（全内存）★
 
-### T14 — `BaseVectorStore` 接口重设计 + `InMemoryVectorStore`
+### ✅ T14 — `BaseVectorStore` 接口重设计 + `InMemoryVectorStore`
 
 **描述：** 现有 ABC 缺 `kb_id` / 分区参数。本任务定死接口并配契约测试——T21 的 `MilvusStore` 必须过同一套。内存实现不是玩具，它是验证抽象没绑死 Milvus 的工具。
 
 **验收标准：**
-- [ ] 接口含 `kb_id` 维度；`filter` 参数是结构化 `dict`，**禁止**接收 Milvus 表达式字符串
-- [ ] 新增 `aensure_collection(kb_id, dim, ...)`，隐藏"Milvus 要显式建表、内存版不用"的差异
-- [ ] `InMemoryVectorStore` 实现（numpy 余弦相似度，约 80 行）
-- [ ] 契约测试含 **"写入后立即查询"** 用例（拦截 Milvus flush 语义差异，R1）
-- [ ] 契约测试含"维度不符应报错"用例（A12）
+- [x] 接口含 `kb_id` 维度；`filter` 参数是结构化 `dict`，**禁止**接收 Milvus 表达式字符串
+- [x] 新增 `aensure_collection(kb_id, dim, ...)`，隐藏"Milvus 要显式建表、内存版不用"的差异
+- [x] `InMemoryVectorStore` 实现（numpy 余弦相似度，约 80 行）
+- [x] 契约测试含 **"写入后立即查询"** 用例（拦截 Milvus flush 语义差异，R1）
+- [x] 契约测试含"维度不符应报错"用例（A12）
 
 **验证：**
-- [ ] `uv run pytest tests/unit/infrastructure/test_vectorstore_contract.py -q`
-- [ ] 接口签名中不出现任何 Milvus 专有概念（人工 review）
+- [x] `uv run pytest tests/unit/infrastructure/test_vectorstore_contract.py -q`
+- [x] 接口签名中不出现任何 Milvus 专有概念（人工 review）
 
 **依赖：** T1
 **文件：** `comet_rag/infrastructure/vectorstore/__init__.py`、`base.py`、`memory.py`、`tests/unit/infrastructure/test_vectorstore_contract.py`
 **规模：** M
 
 ---
+
+
+**产出**：27 个契约用例。反向验证用一个模拟 Milvus「写入后不 flush 查不到」
+的假实现跑契约，**14 个用例失败** —— T21 忘了 flush/load 会当场变红（plan R1）。
+**刻意不用 numpy**：它目前只是 pdftext（MinerU 依赖）带进来的传递依赖、未声明，
+用了就会让不装 mineru extra 的用户崩 —— 与 T2 修掉的 pyyaml 漏声明同类。纯 Python 足够。
 
 ### T15 — `services/ingestion.py` 入库 runner
 
