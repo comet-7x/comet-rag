@@ -130,21 +130,31 @@ class UnknownKind(KeyError):
     pass
 
 
-def register(kind: str) -> Callable[[Runner], Runner]:
+def register(kind: str, *, replace: bool = False) -> Callable[[Runner], Runner]:
     """把 kind 与 runner 绑定。
 
     这是「submit(task_id) 而非 spawn(task, coro)」得以成立的关键：
     执行器只要有 task_id，就能用 kind 查到函数、用 request/context 重建执行，
-    于是重跑、崩溃恢复、确认门续跑全都成立。
+    于是重跑、崩溃恢复、失败后断点续跑全都成立。
+
+    默认拒绝重复注册 —— 静默覆盖会让「明明注册了却跑的是别人的 runner」
+    极难排查。但**装配代码**需要幂等：runner 常是持有依赖的可调用对象
+    （见 `services/ingestion.py`），应用每次启动都要重新绑定一次，
+    此时用 `replace=True` 显式声明意图。
     """
 
     def deco(fn: Runner) -> Runner:
-        if kind in _REGISTRY:
-            raise ValueError(f"kind 重复注册：{kind}")
+        if kind in _REGISTRY and not replace:
+            raise ValueError(f"kind 重复注册：{kind}。装配代码请显式传 replace=True。")
         _REGISTRY[kind] = fn
         return fn
 
     return deco
+
+
+def unregister(kind: str) -> None:
+    """解绑。主要给测试用，避免用例间互相污染全局注册表。"""
+    _REGISTRY.pop(kind, None)
 
 
 def get_runner(kind: str) -> Runner:

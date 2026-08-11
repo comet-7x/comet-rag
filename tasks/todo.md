@@ -360,20 +360,20 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 **刻意不用 numpy**：它目前只是 pdftext（MinerU 依赖）带进来的传递依赖、未声明，
 用了就会让不装 mineru extra 的用户崩 —— 与 T2 修掉的 pyyaml 漏声明同类。纯 Python 足够。
 
-### T15 — `services/ingestion.py` 入库 runner
+### ✅ T15 — `services/ingestion.py` 入库 runner
 
 **描述：** 把 `engines.Pipeline` 与 `tasks` 框架接起来：注册 `kind="ingest"` 的多阶段 runner。这是"生产端投递、消费端执行"落地的第一块。
 
 **验收标准：**
-- [ ] 用 `StagePipeline` 定义阶段：`loading → parsing → chunking → embedding → upserting`
-- [ ] 每阶段调 `ctx.checkpoint()`（协作式取消）与 `ctx.report(progress=...)`
-- [ ] 中间态写 `ctx.put()` 且**可 JSON 序列化**（断点续跑前提）
-- [ ] 模型/向量库调用超时与网络错误包成 `RetriableError`；解析失败等确定性错误**不可重试**
-- [ ] chunk metadata 带 `kb_id`
+- [x] 用 `StagePipeline` 定义阶段：`loading → parsing → chunking → embedding → upserting`
+- [x] 每阶段调 `ctx.checkpoint()`（协作式取消）与 `ctx.report(progress=...)`
+- [x] 中间态写 `ctx.put()` 且**可 JSON 序列化**（断点续跑前提）
+- [x] 模型/向量库调用超时与网络错误包成 `RetriableError`；解析失败等确定性错误**不可重试**
+- [x] chunk metadata 带 `kb_id`
 
 **验证：**
-- [ ] 用 fake 模型 + `InMemoryVectorStore` + `InMemoryTaskStore` 跑通全部阶段
-- [ ] 在 `embedding` 阶段注入失败，重试后**从 embedding 而非 loading 开始**（断点续跑，A10 关键约束）
+- [x] 用 fake 模型 + `InMemoryVectorStore` + `InMemoryTaskStore` 跑通全部阶段
+- [x] 在 `embedding` 阶段注入失败，重试后**从 embedding 而非 loading 开始**（断点续跑，A10 关键约束）
 
 **依赖：** T5、T9、T14
 **文件：** `comet_rag/services/ingestion.py`、`tests/unit/services/test_ingestion.py`
@@ -381,25 +381,35 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 
 ---
 
-### T16 — `services/retrieval.py` 检索
+### ✅ T16 — `services/retrieval.py` 检索
 
 **描述：** query → 向量召回 → rerank → 排序结果。
 
 **验收标准：**
-- [ ] 按 `kb_id` 限定检索范围
-- [ ] rerank 可选（无 reranker 时跳过，不报错）
-- [ ] 返回结构含 `score`、`text`、`metadata`，按分数降序
-- [ ] `top_k` 与 rerank 前的召回数（`fetch_k`）分开配置
+- [x] 按 `kb_id` 限定检索范围
+- [x] rerank 可选（无 reranker 时跳过，不报错）
+- [x] 返回结构含 `score`、`text`、`metadata`，按分数降序
+- [x] `top_k` 与 rerank 前的召回数（`fetch_k`）分开配置
 
 **验证：**
-- [ ] 灌入已知内容后检索，断言目标 chunk 排在首位
-- [ ] 跨 `kb_id` 检索**不得**串出别的知识库内容
+- [x] 灌入已知内容后检索，断言目标 chunk 排在首位
+- [x] 跨 `kb_id` 检索**不得**串出别的知识库内容
 
 **依赖：** T14
 **文件：** `comet_rag/services/retrieval.py`、`tests/unit/services/test_retrieval.py`
 **规模：** M
 
 ---
+
+
+**阶段划分与原计划不同（3 而非 5），两处合并都有硬理由**：
+· 取源合进 extracting —— 它的产出是本地临时文件路径，不是跨进程可恢复的状态，
+  换个 worker 续跑时文件根本不存在；重试时重新下载才是正确行为。
+· 向量化与写入合成 indexing —— 拆开的话向量要经 context 跨阶段，
+  200 chunk × 1024 维会撑爆任务表。合并后按窗口边算边写、内存有界，
+  且 upsert 按稳定 chunk id 幂等，整段重跑安全。
+**产出**：39 用例，services 覆盖率 99%。反向验证：关掉断点续跑后
+`test_retry_resumes_from_indexing_without_reparsing` 立刻变红。
 
 ### T17a — `Context` 与 `lifespan` 资源装配
 
