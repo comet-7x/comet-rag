@@ -164,13 +164,23 @@ T1 测试基建 ──┬─► T2 依赖分组(A1)
 - [x] T18 — `docker-compose.yml` + `infrastructure/database/` + alembic 初始化
 - [x] T19 — `knowledge_bases` 表 + `services/knowledge_base.py`（A12）
 - [x] T20 — `PostgresTaskStore`（通过 T7 的 37 条契约，一行未改）
-- [ ] T21 — `MilvusStore`（必须通过 T14 的同一套契约测试）
+- [x] T21 — `MilvusStore`（通过 T14 的 27 条契约，一行未改）
 
-**Checkpoint D**
-- [ ] Phase 3 的 e2e 用例在真实后端下**一字不改**地通过（仅换注入的实现）
-- [ ] 契约测试对 `InMemory` 与真实实现结果一致，尤其"写入后立即查询"
-- [ ] Milvus collection 含预留的 sparse vector 字段（A11）
-- [ ] 向已有 KB 写入维度不符的向量会**报错**而非静默写入（A12）
+**Checkpoint D** ✅ 2026-08-11
+- [x] e2e 在真实后端下**只改配置**即通过：`test_e2e_postgres.py`（4 条）
+      与 `test_e2e_full_stack.py`（4 条，Postgres + Milvus 同时真实），
+      断言与全内存版一字不差
+- [x] 契约对 InMemory 与真实实现结果一致：TaskStore 37 条、VectorStore 27 条、
+      KB 仓储 10 条，各自两种实现都跑过
+- [x] Milvus collection 含预留的 sparse vector 字段（A11，实测已验证 schema）
+- [x] 维度不符报 `DimensionMismatch`；**同维度换模型**报 `EmbeddingModelChanged`
+      —— 后者是维度检查拦不住的那一半（A12）
+- [x] 三层测试：unit 753（零依赖 10.8s）、e2e 17（全内存 2.3s）、
+      integration 92（真实中间件 73s）
+
+> **"先内存后真实"这条策略在此完成验证**：三个抽象（TaskStore /
+> TaskExecutor / BaseVectorStore）加上 KB 仓储，换后端时业务代码与测试断言
+> 一行未动。Phase 3 花在内存实现上的时间，在这里全部收回。
 
 ---
 

@@ -582,26 +582,48 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 "所有读先于任一写"后才真正区分开：原子 CAS 出 1 个赢家，先查后写出 10 个
 （9 次更新被静默丢弃）。**反向验证不是形式，它这次抓到的是测试本身的缺陷。**
 
-### T21 — `MilvusStore`
+### ✅ T21 — `MilvusStore`
 
 **描述：** 全计划风险最高的实现（R1）。Milvus 写入后不 flush 查不到，这类差异不体现在签名上，只能靠契约测试拦截。
 
 **验收标准：**
-- [ ] collection schema 含 `id`、`kb_id`（partition key）、`text`、`dense_vector`、**预留的 `sparse_vector` 字段**（A11，M1 不写入）、`metadata` JSON
-- [ ] 按 `kb_id` 分区
-- [ ] `filter` dict 转 Milvus 表达式的逻辑**封装在实现内部**，不外泄
-- [ ] 写入后正确处理 flush/load，保证"写完立即可查"
-- [ ] 通过 **T14 的同一套契约测试**，一行不改
+- [x] collection schema 含 `id`、`kb_id`（partition key）、`text`、`dense_vector`、**预留的 `sparse_vector` 字段**（A11，M1 不写入）、`metadata` JSON
+- [x] 按 `kb_id` 分区
+- [x] `filter` dict 转 Milvus 表达式的逻辑**封装在实现内部**，不外泄
+- [x] 写入后正确处理 flush/load，保证"写完立即可查"
+- [x] 通过 **T14 的同一套契约测试**，一行不改
 
 **验证：**
-- [ ] `uv run pytest -m integration tests/integration/test_vectorstore_milvus.py`
-- [ ] 契约测试的"写入后立即查询"用例必须过（R1 的拦截点）
+- [x] `uv run pytest -m integration tests/integration/test_vectorstore_milvus.py`
+- [x] 契约测试的"写入后立即查询"用例必须过（R1 的拦截点）
 
 **依赖：** T18、T14
 **文件：** `comet_rag/infrastructure/vectorstore/milvus.py`、`tests/integration/test_vectorstore_milvus.py`
 **规模：** M
 
 ---
+
+
+**产出**：T14 的 27 条契约一行未改地通过，另加 4 条全栈端到端
+（Postgres + Milvus 同时真实）。
+
+**⚠️ 与本条目原文的偏离**：原写"kb_id 作 partition key"，那基于"多 kb 共用
+一个 collection"的假设。实际按已确认的**一 kb 一 collection**实现，
+partition key 不需要；kb_id 仍写进 metadata，为将来可能的迁移留路。
+
+**三个关键决定都是实测出来的，不是猜的**：
+· 一致性级别 `Session` 而非每次 flush —— 实测 Bounded（默认）写完立即查
+  **命中 0 条**；Session 0.34s 可见、Strong 0.62s。每次 flush 会封存 segment、
+  把吞吐打垮，是错的解法。
+· sparse 字段可预留 —— 实测空 dict `{}` 可插入、省略字段则报 DataNotMatch；
+  且 Milvus 要求所有向量字段 load 前都有索引，故字段与索引一起建。
+· kb_id → collection 名需映射 —— Milvus 只接受 `[A-Za-z_][A-Za-z0-9_]*`，
+  而 kb_id 可含中文与连字符。用"可读部分 + 短哈希"，避免 `a-b` 与 `a_b` 撞名。
+
+**反向验证**：把一致性退回 Bounded，5 条用例变红。值得注意的是
+`test_upsert_is_visible_immediately` 那次**恰好没红** —— Bounded 有陈旧容忍
+窗口，数据有时来得及传播。这正说明该类缺陷为何危险：开发机上"能跑"，
+上了负载才偶发。
 
 ## Phase 5：跨进程与容错
 
