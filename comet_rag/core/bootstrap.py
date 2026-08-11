@@ -90,7 +90,7 @@ def build_kb_repository(config: APPConfig, database=None) -> KnowledgeBaseReposi
     return PostgresKnowledgeBaseRepository(database)
 
 
-def build_task_store(config: APPConfig) -> TaskStore:
+def build_task_store(config: APPConfig, database=None) -> TaskStore:
     backend = config.backends.task_store
     if backend is Backend.MEMORY:
         return InMemoryTaskStore()
@@ -99,7 +99,9 @@ def build_task_store(config: APPConfig) -> TaskStore:
             PostgresTaskStore,
         )
 
-        return PostgresTaskStore()
+        if database is None:
+            raise ValueError("postgres 后端需要传入 database")
+        return PostgresTaskStore(database)
     raise ValueError(f"不支持的 task_store 后端：{backend}")
 
 
@@ -168,7 +170,7 @@ def build_context(
     embedding_model = embedding_model or build_embedding_model(config)
     reranker = reranker if reranker is not None else build_reranker(config)
     vector_store = vector_store or build_vector_store(config)
-    task_store = task_store or build_task_store(config)
+    task_store = task_store or build_task_store(config, database)
     task_executor = task_executor or build_task_executor(config, task_store)
     kb_repository = kb_repository or build_kb_repository(config, database)
 

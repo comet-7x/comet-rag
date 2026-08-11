@@ -544,26 +544,43 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 **首个 alembic 迁移已验证双向可用**（upgrade → downgrade → upgrade），
 且命名约定生效（`pk_knowledge_bases` 而非数据库随机命名）。
 
-### T20 — `PostgresTaskStore`
+### ✅ T20 — `PostgresTaskStore`
 
 **描述：** 实现 `TaskStore` 的 7 个抽象方法。业务规则（状态机守卫、时间戳、事件留痕）由基类模板方法提供，**不得重写**。
 
 **验收标准：**
-- [ ] `tasks` 与 `task_events` 两张表；`status` 列为 **varchar 而非 PG enum**（保留将来加状态值的零成本可逆性）
-- [ ] `_save` 用 `UPDATE ... WHERE version = :expected` 实现 CAS
-- [ ] `heartbeat` 走 `bump=False` 路径，不涨版本
-- [ ] `idempotency_key` 建唯一索引
-- [ ] 通过 **T7 的同一套契约测试**，一行不改
+- [x] `tasks` 与 `task_events` 两张表；`status` 列为 **varchar 而非 PG enum**（保留将来加状态值的零成本可逆性）
+- [x] `_save` 用 `UPDATE ... WHERE version = :expected` 实现 CAS
+- [x] `heartbeat` 走 `bump=False` 路径，不涨版本
+- [x] `idempotency_key` 建唯一索引
+- [x] 通过 **T7 的同一套契约测试**，一行不改
 
 **验证：**
-- [ ] `uv run pytest -m integration tests/integration/test_store_postgres.py`
-- [ ] 并发 CAS：10 协程同时写，恰好 1 成功 9 冲突
+- [x] `uv run pytest -m integration tests/integration/test_store_postgres.py`
+- [x] 并发 CAS：10 协程同时写，恰好 1 成功 9 冲突
 
 **依赖：** T18、T7
 **文件：** `comet_rag/tasks/store_postgres.py`、alembic 迁移、`tests/integration/test_store_postgres.py`
 **规模：** M
 
 ---
+
+
+**产出**：40 条用例通过（T7 的 37 条契约 + 3 条 Postgres 特有），
+另有 4 条端到端跑在 Postgres 后端上、断言与内存版逐字相同。
+
+**两处并发用了两种手段，因为冲突概率的量级不同**：
+· 乐观锁（任务状态）—— 同一任务同时只有一个 runner 推进，冲突罕见
+· 悲观锁（事件序号）—— 所有写入者抢同一个号，冲突**必然**
+
+事件序号最初也想用乐观思路（子查询取号 + 冲突重试），12 路并发下直接崩了。
+重试次数加多少都只是把失败概率往后推。改用 `SELECT ... FOR UPDATE` 锁父任务行。
+
+**⚠️ 过程中发现自己写了一条空转的测试**：最初的"真并发 CAS"用例，
+在把原子 CAS 换成"先查后写"之后**照样全绿** —— asyncio 的调度让每个事务
+读→写→提交一气呵成，危险窗口根本没出现。加 `asyncio.Barrier` 强制
+"所有读先于任一写"后才真正区分开：原子 CAS 出 1 个赢家，先查后写出 10 个
+（9 次更新被静默丢弃）。**反向验证不是形式，它这次抓到的是测试本身的缺陷。**
 
 ### T21 — `MilvusStore`
 
