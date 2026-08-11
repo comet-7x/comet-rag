@@ -675,6 +675,14 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 - [ ] `config/schemas.py` 中未使用的配置类清理干净
 - [ ] `docs/` 全量校对：`pipeline_usage.md`、新增 `deployment.md`、`architecture.md`
 - [ ] README 更新：库用法与服务部署两条路径分开写
+- [ ] 🔴 **统一启动入口**（2026-08-11 记）：目前两条路径行为不一致 ——
+      `uvicorn comet_rag.api.main:app` 用 uvicorn 默认的 127.0.0.1:8000，
+      `python -m comet_rag.api.main` 才用 config.yaml 的 host/port。
+      根因是 host/port 属于**服务器**职责、不属于 ASGI app，config 里的值
+      在前一条路径上没机会参与。
+      方案：加 `comet-rag serve` console script 作为唯一推荐入口
+      （读 config，支持 `--port` 覆盖），`uvicorn` 那条留给需要 `--reload`
+      的开发场景并在文档里说明。约 40 行 + pyproject 注册。
 - [ ] `tests/unit` 覆盖率 ≥ 70%，`comet_rag/tasks/` ≥ 90%
 
 **验证：**
