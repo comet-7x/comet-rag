@@ -11,13 +11,19 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from comet_rag.tasks import (
+    Done,
     InMemoryTaskStore,
+    InProcessExecutor,
     Task,
+    TaskContext,
     TaskStatus,
     VersionConflict,
+    register,
 )
 from comet_rag.tasks.store import _CAS_RETRIES
 
@@ -120,3 +126,80 @@ async def test_retries_are_bounded() -> None:
         await store.update(task.task_id, message="永远撞车")
 
     assert store.save_calls == _CAS_RETRIES
+
+
+# ── 认领必须原子（PR 评审 #1）────────────────────────────────────────────────
+
+
+class _RacyClaimStore(InMemoryTaskStore):
+    """让两个执行器都读到同一份 PENDING 快照，再放它们去抢。
+
+    不加这道屏障的话，asyncio 的调度往往让第一个 `execute()` 一口气跑完认领，
+    危险窗口根本不出现 —— 测试会绿，但它**什么也没验到**。
+    """
+
+    def __init__(self, barrier: asyncio.Barrier) -> None:
+        super().__init__()
+        self.barrier = barrier
+        self.armed = False
+
+    async def _load(self, task_id: str):
+        task = await super()._load(task_id)
+        if self.armed and task is not None and task.status is TaskStatus.PENDING:
+            await self.barrier.wait()  # 都读完了，再一起放行
+        return task
+
+
+async def test_two_executors_cannot_both_claim_the_same_task() -> None:
+    """**同一个任务只能被认领一次**，否则 runner 的副作用会跑两遍。
+
+    陷阱比"少个锁"深一层：`RUNNING → RUNNING` 是合法的自迁移，而 `_cas`
+    对没传版本号的冲突会重读重试 —— 于是输的那个不但没被拦下，还会把赢家的
+    `worker_id` 覆盖掉，围栏（`_still_mine`）反过来把**真正在跑的那个**挡在门外。
+
+    ⚠️ 这条用例的关键在于**赢家必须还停在 RUNNING 上**。第一版写成瞬间返回的
+    runner，结果赢家早已落到 SUCCEEDED，输家重试时被状态机自然拦下
+    （SUCCEEDED → RUNNING 非法），用例于是**在有 bug 的代码上照样绿**。
+    加了 `gate` 把赢家按在 RUNNING 上，才真正复现出 `runs == ["B", "A"]`。
+    """
+    runs: list[str] = []
+    gate = asyncio.Event()
+
+    @register("cas-claim-race", replace=True)
+    async def _runner(ctx: TaskContext) -> Done:
+        runs.append(ctx.worker_id or "?")
+        await gate.wait()  # 赢家停在 RUNNING 上，把危险窗口撑开
+        return Done(result="ok")
+
+    barrier = asyncio.Barrier(2)
+    store = _RacyClaimStore(barrier)
+    task = await store.create("cas-claim-race")
+
+    a = InProcessExecutor(store, worker_id="worker-A")
+    b = InProcessExecutor(store, worker_id="worker-B")
+    store.armed = True
+    running = asyncio.ensure_future(
+        asyncio.gather(
+            a.execute(task.task_id), b.execute(task.task_id), return_exceptions=True
+        )
+    )
+    try:
+        await asyncio.sleep(0.2)  # 两边都走到 runner / 重试之后再看
+        claimed_while_running = list(runs)
+        gate.set()
+        await running
+    finally:
+        store.armed = False
+        gate.set()
+        await a.shutdown(timeout=5.0)
+        await b.shutdown(timeout=5.0)
+
+    assert len(claimed_while_running) == 1, (
+        f"任务被 {claimed_while_running} 同时执行 —— 认领不是原子的"
+    )
+    final = await store.require(task.task_id)
+    assert final.status is TaskStatus.SUCCEEDED
+    assert final.attempts == 1, f"attempts={final.attempts}，有人重复认领过"
+    assert final.worker_id == claimed_while_running[0], (
+        "任务上记的 worker 不是真正在跑它的那个 —— 输家把赢家的所有权覆盖了"
+    )

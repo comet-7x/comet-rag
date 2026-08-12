@@ -25,6 +25,7 @@ Milvus 要求所有向量字段在 load 前都有索引，所以字段和索引�
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 from collections.abc import Sequence
@@ -65,6 +66,19 @@ def collection_name_for(kb_id: str, *, prefix: str = "comet") -> str:
     return f"{prefix}_{readable}_{digest}" if readable else f"{prefix}_{digest}"
 
 
+def _quote_key(key: str) -> str:
+    """把元数据键渲染成 Milvus JSON 路径里的字面量。
+
+    **键和值一样需要转义**（PR 评审 #5）。原来只转义了值，键是直接插进
+    `metadata["..."]` 的 —— 一个带引号或反斜杠的键就能改变表达式结构，
+    轻则查询报错，重则改变谓词语义。检索的 filter 来自 HTTP 请求体，
+    也就是说这个键是调用方完全可控的。
+    """
+    if not isinstance(key, str) or not key:
+        raise ValueError(f"元数据键必须是非空字符串，收到 {key!r}")
+    return key.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _quote(value: Any) -> str:
     """把值渲染成 Milvus 表达式字面量。
 
@@ -92,7 +106,7 @@ def build_expression(filter: Filter | None) -> str:
         return ""
     clauses: list[str] = []
     for key, expected in filter.items():
-        field = f'{_METADATA}["{key}"]'
+        field = f'{_METADATA}["{_quote_key(key)}"]'
         if isinstance(expected, (list, tuple, set)):
             rendered = ", ".join(_quote(v) for v in expected)
             clauses.append(f"{field} in [{rendered}]")
@@ -131,15 +145,22 @@ class MilvusStore(BaseVectorStore):
     def _name(self, kb_id: str) -> str:
         return collection_name_for(kb_id, prefix=self._prefix)
 
-    def _dim_of(self, kb_id: str) -> int:
-        """读回已有 collection 的向量维度。不存在则抛 `CollectionNotFound`。"""
+    async def _dim_of(self, kb_id: str) -> int:
+        """读回已有 collection 的向量维度。不存在则抛 `CollectionNotFound`。
+
+        同步客户端的调用一律甩进线程（PR 评审 #8）：`has_collection` /
+        `describe_collection` 都是真网络请求，直接在事件循环上调，Milvus 一慢
+        就会把整个进程堵住 —— API 的其他请求、runner 的取消检查点、worker 的
+        心跳全部跟着停摆。**心跳停摆会被租约回收误判成 worker 已死**，
+        于是一次 Milvus 抖动被放大成任务被重复执行。
+        """
         cached = self._dims.get(kb_id)
         if cached is not None:
             return cached
         name = self._name(kb_id)
-        if not self._sync.has_collection(name):
+        if not await asyncio.to_thread(self._sync.has_collection, name):
             raise CollectionNotFound(kb_id)
-        desc = self._sync.describe_collection(name)
+        desc = await asyncio.to_thread(self._sync.describe_collection, name)
         for field in desc["fields"]:
             if field["name"] == _DENSE:
                 dim = int(field["params"]["dim"])
@@ -152,12 +173,13 @@ class MilvusStore(BaseVectorStore):
             raise ValueError(f"维度必须为正整数，收到 {dim}")
         name = self._name(kb_id)
 
-        if self._sync.has_collection(name):
-            existing = self._dim_of(kb_id)
+        if await asyncio.to_thread(self._sync.has_collection, name):
+            existing = await self._dim_of(kb_id)
             if existing != dim:
                 raise DimensionMismatch(kb_id, existing, dim)
             return
 
+        # 这两个是纯本地构造（不打网络），留在事件循环上没问题
         schema = self._sync.create_schema(auto_id=False, enable_dynamic_field=False)
         schema.add_field(_ID, DataType.VARCHAR, is_primary=True, max_length=128)
         schema.add_field(_TEXT, DataType.VARCHAR, max_length=65535)
@@ -175,7 +197,8 @@ class MilvusStore(BaseVectorStore):
             field_name=_SPARSE, index_type="SPARSE_INVERTED_INDEX", metric_type="IP"
         )
 
-        self._sync.create_collection(
+        await asyncio.to_thread(
+            self._sync.create_collection,
             name,
             schema=schema,
             index_params=index,
@@ -187,13 +210,13 @@ class MilvusStore(BaseVectorStore):
     async def adrop_collection(self, kb_id: str) -> None:
         self._dims.pop(kb_id, None)
         name = self._name(kb_id)
-        if self._sync.has_collection(name):
-            self._sync.drop_collection(name)
+        if await asyncio.to_thread(self._sync.has_collection, name):
+            await asyncio.to_thread(self._sync.drop_collection, name)
 
     # ── 写入 ───────────────────────────────────────────────────────────────
 
     async def aupsert(self, kb_id: str, records: Sequence[VectorRecord]) -> list[str]:
-        dim = self._dim_of(kb_id)
+        dim = await self._dim_of(kb_id)
         # 先整体校验：宁可一条不写，也不要写一半留下不一致的库
         for record in records:
             if len(record.embedding) != dim:
@@ -224,7 +247,7 @@ class MilvusStore(BaseVectorStore):
     ) -> int:
         if ids is None and filter is None:
             raise ValueError("ids 与 filter 至少给一个，否则等于清空整个知识库")
-        self._dim_of(kb_id)  # 顺带校验 collection 存在
+        await self._dim_of(kb_id)  # 顺带校验 collection 存在
         name = self._name(kb_id)
 
         id_expr = ""
@@ -254,7 +277,7 @@ class MilvusStore(BaseVectorStore):
         top_k: int = 5,
         filter: Filter | None = None,
     ) -> list[SearchHit]:
-        dim = self._dim_of(kb_id)
+        dim = await self._dim_of(kb_id)
         if len(query_embedding) != dim:
             raise DimensionMismatch(kb_id, dim, len(query_embedding))
 
@@ -280,7 +303,7 @@ class MilvusStore(BaseVectorStore):
         return hits
 
     async def acount(self, kb_id: str, *, filter: Filter | None = None) -> int:
-        self._dim_of(kb_id)
+        await self._dim_of(kb_id)
         rows = await self._async.query(
             self._name(kb_id),
             filter=build_expression(filter),
@@ -290,7 +313,7 @@ class MilvusStore(BaseVectorStore):
 
     async def aclose(self) -> None:
         await self._async.close()
-        self._sync.close()
+        await asyncio.to_thread(self._sync.close)
 
 
 __all__ = ["MilvusStore", "build_expression", "collection_name_for"]

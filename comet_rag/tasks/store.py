@@ -276,18 +276,34 @@ class TaskStore(ABC):
         await self._cas(task_id, None, mutate, bump=False)
 
     async def sweep_stale(self, lease: timedelta) -> list[str]:
-        """回收心跳超时的 RUNNING 任务：还有重试次数就退回排队，否则判失败。
+        """回收心跳超时的任务：还有重试次数就退回排队，否则判失败。
 
         这段逻辑对内存/Redis/DB 完全一致 —— 正是它让 TaskStore 值得做成 ABC 而非 Protocol。
 
         注意：它是给**跨进程**部署兜底的（worker 崩了，没人再写心跳）。单进程模式下
         协程还活着，回收反而会造成一份任务两个执行者，所以单机不要挂这个定时器。
+
+        **CANCELLING 也要扫**（评审指出的缺口）。取消是协作式的：先把状态写成
+        CANCELLING，再等 runner 走到 `ctx.checkpoint()` 自己退出并落 CANCELLED。
+        worker 若在这中间死掉，那一步就永远不会发生 —— 任务卡在 CANCELLING，
+        既不是终态、也没人再推进它，而它恰恰是**用户已经明确要求停掉**的任务。
         """
         now, revived = Time.now(), []
-        for task in await self._query(status=TaskStatus.RUNNING, limit=1000):
-            beat = task.heartbeat_at or task.started_at or task.updated_at
-            if now - beat <= lease:
+        for task in await self._stale_candidates(lease, now):
+            if task.status is TaskStatus.CANCELLING:
+                # 用户要的是"停下来"，那就直接给他终态；重排队等于违背原意
+                await self.transition(
+                    task.task_id,
+                    TaskStatus.CANCELLED,
+                    error=TaskError(
+                        code="cancelled_lease_expired",
+                        message="worker 在处理取消的过程中失联",
+                    ),
+                    note="租约过期（取消中）",
+                )
+                revived.append(task.task_id)
                 continue
+
             err = TaskError(
                 code="lease_expired", message="worker 心跳超时", retriable=True
             )
@@ -299,6 +315,21 @@ class TaskStore(ABC):
             await self.transition(task.task_id, nxt, error=err, note="租约过期")
             revived.append(task.task_id)
         return revived
+
+    async def _stale_candidates(self, lease: timedelta, now: Any) -> list[Task]:
+        """所有心跳已超时的**活跃**任务。
+
+        活跃 = RUNNING 或 CANCELLING，也就是 `TaskStatus.is_active` 的定义。
+        分两次查是因为 `_query` 一次只收一个 status；这里任务量小（上限 1000），
+        不值得为它给存储层加一个多状态查询原语。
+        """
+        candidates: list[Task] = []
+        for status in (TaskStatus.RUNNING, TaskStatus.CANCELLING):
+            for task in await self._query(status=status, limit=1000):
+                beat = task.heartbeat_at or task.started_at or task.updated_at
+                if now - beat > lease:
+                    candidates.append(task)
+        return candidates
 
     async def delete(self, task_id: str, *, force: bool = False) -> bool:
         """删除。原稿对 RUNNING 任务的行为是未定义的，这里显式规定：

@@ -25,4 +25,6 @@ async def search(payload: SearchRequest, retrieval: RetrievalDep) -> SearchRespo
         chunks=[SearchResultItem(**c.to_dict()) for c in result.chunks],
         reranked=result.reranked,
         fetched=result.fetched,
+        effective_top_k=result.effective_top_k,
+        degraded=result.degraded,
     )

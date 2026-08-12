@@ -18,10 +18,12 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from comet_rag.config.settings import get_config
-from comet_rag.infrastructure.database import Base
 
 # 只为让 Base.metadata 收集到全部表定义。新增模型模块务必加进来。
-from comet_rag.infrastructure.database import models  # noqa: F401
+from comet_rag.infrastructure.database import (
+    Base,
+    models,  # noqa: F401
+)
 
 config = context.config
 

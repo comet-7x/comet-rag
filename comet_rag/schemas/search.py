@@ -34,3 +34,9 @@ class SearchResponse(BaseModel):
     #: 客户端据此判断结果质量。
     reranked: bool
     fetched: int
+    #: 实际生效的 top_k。服务降级到 L2 时会小于请求值。
+    #: 没有它的话，客户端分不清"结果少是因为库里就这么多"还是"服务在降级"——
+    #: 前者该改查询，后者该等一等或扩容，处理方式完全相反。
+    effective_top_k: int = 0
+    #: 当前降级级别；正常时为 null。
+    degraded: str | None = None

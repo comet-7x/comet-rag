@@ -39,7 +39,7 @@ from .runner import (
     TaskContext,
     get_runner,
 )
-from .store import TaskStore
+from .store import TaskStore, VersionConflict
 
 logger = logging.getLogger("app.task")
 
@@ -117,14 +117,29 @@ class StoreDrivenExecutor(TaskExecutor):
             if task is None or task.status is not TaskStatus.PENDING:
                 return
             runner = get_runner(task.kind)  # 未注册的 kind 直接走失败分支
-            await self._store.transition(
-                task_id,
-                TaskStatus.RUNNING,
-                attempts=task.attempts + 1,
-                worker_id=self._worker_id,
-                error=None,
-                message="执行中",
-            )
+            try:
+                # **认领必须是原子的**：带上刚读到的版本号，谁先写谁赢。
+                #
+                # 不带版本号的话，"查到 PENDING" 与 "迁到 RUNNING" 之间有窗口，
+                # 两个 worker 都能通过检查；更糟的是 RUNNING→RUNNING 是合法的
+                # 自迁移，而 `_cas` 对没传版本号的冲突会重读重试 —— 于是后到的
+                # 那个会把先到者的 `worker_id` 覆盖掉，围栏（`_still_mine`）
+                # 反过来把**真正在跑的那个**挡在门外，同一份活跑两遍。
+                await self._store.transition(
+                    task_id,
+                    TaskStatus.RUNNING,
+                    expected_version=task.version,
+                    attempts=task.attempts + 1,
+                    worker_id=self._worker_id,
+                    error=None,
+                    message="执行中",
+                )
+            except VersionConflict:
+                # 别人抢先了。这不是错误，更不能走 `_mark_failed` ——
+                # 那时 claimed 还是 False，围栏不生效，会把一条正被别人正常
+                # 执行的任务判死。
+                logger.info("任务 %s 已被其他 worker 认领，本次放弃", task_id)
+                return
             claimed = True
             ctx = TaskContext(
                 self._store, task_id, worker_id=self._worker_id, lane=self._lane

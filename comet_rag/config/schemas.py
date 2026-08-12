@@ -34,10 +34,21 @@ class SqlDatabaseConfig(BaseModel):
     @property
     def dsn(self) -> str:
         """异步 DSN。驱动写死 asyncpg —— 同步驱动在 async 引擎里会静默阻塞
-        整个事件循环，且症状是"偶尔很慢"而非报错，极难定位。"""
+        整个事件循环，且症状是"偶尔很慢"而非报错，极难定位。
+
+        用户名/密码/库名一律**百分号编码**（PR 评审 #7）。直接拼接的话，
+        密码里一个 `@` 或 `/` 就会被解析成 URL 语法：连接串看着没问题、
+        报错却是"host 不存在"或直接连到别的库去 —— 而这类密码在生产里很常见。
+        用 stdlib 的 `quote` 而不是 SQLAlchemy 的 URL 构造器，是因为本模块属于
+        核心包，不能依赖 server extra 里的 sqlalchemy（spec A1）。
+        """
+        from urllib.parse import quote  # noqa: PLC0415
+
+        user = quote(self.username, safe="")
+        password = quote(self.password, safe="")
+        database = quote(self.database, safe="")
         return (
-            f"postgresql+asyncpg://{self.username}:{self.password}"
-            f"@{self.host}:{self.port}/{self.database}"
+            f"postgresql+asyncpg://{user}:{password}@{self.host}:{self.port}/{database}"
         )
 
 

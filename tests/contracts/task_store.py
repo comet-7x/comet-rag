@@ -380,6 +380,42 @@ class TaskStoreContract:
 
         assert await store.sweep_stale(lease=timedelta(seconds=30)) == []
 
+    async def test_sweep_finalizes_stale_cancelling_tasks(
+        self, store: TaskStore
+    ) -> None:
+        """**CANCELLING 也必须被回收**（PR 评审 #2 指出的缺口）。
+
+        取消是协作式的：先写 CANCELLING，再等 runner 走到 `ctx.checkpoint()`
+        自己退出并落 CANCELLED。worker 若在这中间死掉，那一步永远不会发生 ——
+        任务卡在 CANCELLING：既不是终态、没人再推进、也不会被回收，
+        而它恰恰是**用户已经明确要求停掉**的那一个。
+        """
+        task = await store.create("demo", max_attempts=3)
+        await store.transition(task.task_id, TaskStatus.RUNNING, worker_id="dead")
+        await store.transition(task.task_id, TaskStatus.CANCELLING)
+        await store.update(task.task_id, heartbeat_at=Time.now() - timedelta(minutes=5))
+
+        revived = await store.sweep_stale(lease=timedelta(seconds=30))
+
+        assert revived == [task.task_id], "卡在 CANCELLING 的任务没被回收"
+        done = await store.require(task.task_id)
+        # 直接给终态而不是重排队：用户要的是"停下来"，重跑等于违背原意
+        assert done.status is TaskStatus.CANCELLED
+        assert done.finished_at is not None
+        assert done.error is not None
+        assert done.error.code == "cancelled_lease_expired"
+
+    async def test_sweep_leaves_live_cancelling_tasks_alone(
+        self, store: TaskStore
+    ) -> None:
+        """心跳正常的 CANCELLING 说明 runner 还活着，正在往检查点走。"""
+        task = await store.create("demo", max_attempts=3)
+        await store.transition(task.task_id, TaskStatus.RUNNING, worker_id="alive")
+        await store.transition(task.task_id, TaskStatus.CANCELLING)
+
+        assert await store.sweep_stale(lease=timedelta(seconds=30)) == []
+        assert (await store.require(task.task_id)).status is TaskStatus.CANCELLING
+
     # ── 删除 ───────────────────────────────────────────────────────────────
 
     async def test_delete_idle_task(self, store: TaskStore) -> None:

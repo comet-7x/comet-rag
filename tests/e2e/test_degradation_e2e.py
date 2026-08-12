@@ -187,3 +187,37 @@ async def test_admin_limits_exposes_the_degradation_state(
     assert body["degradation"]["failure_rate"] > 0
     assert body["model_gate"]["limit"] > 0
     assert "pending" in body["backlog"]
+
+
+async def test_degraded_top_k_is_surfaced_to_the_client(
+    app_and_client: tuple[httpx.AsyncClient, FlakyReranker],
+) -> None:
+    """**降级后的 top_k 必须告诉客户端**（PR 评审 #12）。
+
+    不暴露的话，客户端分不清"结果少是因为库里就这么多"还是"服务在降级
+    运行"—— 前者该改查询，后者该等一等或扩容，处理方式完全相反。
+    """
+    client, reranker = app_and_client
+    await _ingest(client)
+
+    normal = (
+        await client.post("/search", json={"kb_id": KB, "query": "苹果", "top_k": 3})
+    ).json()
+    assert normal["effective_top_k"] == 3
+    assert normal["degraded"] is None, "正常时不该报降级"
+
+    # 打到 L2（砍 top_k）：本用例配的第二档阈值是 90%，而窗口里还留着前面
+    # 那些成功的调用 —— 灌 20 条只到 80%，够不着。灌满一窗口才稳。
+    ctx = client._transport.app.state.ctx  # noqa: SLF001
+    for _ in range(200):
+        ctx.degradation.record(False)
+
+    degraded = (
+        await client.post("/search", json={"kb_id": KB, "query": "苹果", "top_k": 3})
+    ).json()
+
+    assert degraded["degraded"] is not None, "降级了却没在响应里说"
+    assert degraded["effective_top_k"] < 3, (
+        f"L2 应当砍 top_k，实际 effective_top_k={degraded['effective_top_k']}"
+    )
+    assert len(degraded["chunks"]) <= degraded["effective_top_k"]

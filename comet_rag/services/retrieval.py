@@ -74,12 +74,21 @@ class RetrievalResult:
     #: 重排是否真的执行了。为 False 时要么没配 reranker，要么被降级/显式关闭。
     reranked: bool
     fetched: int
+    #: **实际生效的 top_k**。降级到 L2 时会小于请求值（PR 评审 #12）。
+    #: 不暴露它的话，客户端分不清"结果少是因为库里就这么多"还是
+    #: "结果少是因为服务在降级运行"—— 前者该改查询，后者该等或扩容，
+    #: 处理方式完全相反。
+    effective_top_k: int = 0
+    #: 当前降级级别（NORMAL / NO_RERANK / …）。NORMAL 时为 None。
+    degraded: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "chunks": [c.to_dict() for c in self.chunks],
             "reranked": self.reranked,
             "fetched": self.fetched,
+            "effective_top_k": self.effective_top_k,
+            "degraded": self.degraded,
         }
 
 
@@ -99,17 +108,28 @@ class RetrievalService:
         self._degradation = degradation
 
     async def search(self, query: SearchQuery) -> RetrievalResult:
-        candidates = await self._recall(query)
-        if not candidates:
-            return RetrievalResult(chunks=[], reranked=False, fetched=0)
-
         # 降级顺序的落点：L1 关 rerank（最贵、且没它检索仍可用），
         # L2 再砍 top_k。两级都只影响**质量**，不影响"能不能拿到结果"。
         top_k = query.top_k
         allow_rerank = True
+        level: str | None = None
         if self._degradation is not None:
+            current = self._degradation.level()
+            level = current.name if current else None
             top_k = self._degradation.adjust_top_k(top_k)
             allow_rerank = self._degradation.allow_rerank()
+        if level == "NORMAL":
+            level = None
+
+        candidates = await self._recall(query)
+        if not candidates:
+            return RetrievalResult(
+                chunks=[],
+                reranked=False,
+                fetched=0,
+                effective_top_k=top_k,
+                degraded=level,
+            )
 
         should_rerank = query.rerank and allow_rerank and self._reranker is not None
         if not should_rerank:
@@ -117,6 +137,8 @@ class RetrievalService:
                 chunks=candidates[:top_k],
                 reranked=False,
                 fetched=len(candidates),
+                effective_top_k=top_k,
+                degraded=level,
             )
 
         chunks, did_rerank = await self._rerank(self._reranker, query.query, candidates)
@@ -124,6 +146,8 @@ class RetrievalService:
             chunks=chunks[:top_k],
             reranked=did_rerank,
             fetched=len(candidates),
+            effective_top_k=top_k,
+            degraded=level,
         )
 
     async def _recall(self, query: SearchQuery) -> list[RetrievedChunk]:
