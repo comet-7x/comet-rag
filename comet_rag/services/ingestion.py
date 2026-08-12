@@ -36,6 +36,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
+from comet_rag.core.concurrency import Overloaded
 from comet_rag.core.logging import logger
 from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.loaders.base_loader import BaseLoader
@@ -104,6 +105,10 @@ def _classify(exc: Exception, stage: str) -> Exception:
     HTTP 状态码单独判断：5xx 与 429 是"稍后再来"，4xx 是"你请求得不对"，
     后者重试没有任何意义。
     """
+    if isinstance(exc, Overloaded):
+        # 自家闸门满了，是最典型的"稍后再来"：退避重试正好让压力回落。
+        # 判死就浪费了一次本来能成功的入库。
+        return RetriableError(f"{stage} 阶段被并发闸门拒绝：{exc!s}", code="overloaded")
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
         if code >= 500 or code == 429:

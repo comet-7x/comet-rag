@@ -45,7 +45,7 @@ class FakeEmbedding(BaseEmbeddingModel):
     def embed(self, data, **kwargs):  # pragma: no cover
         return [0.0] * DIM
 
-    async def aembed(self, data, **kwargs):
+    async def _aembed(self, data, **kwargs):
         return [0.0] * DIM
 
     async def close_client(self) -> None:
@@ -59,7 +59,7 @@ class FakeReranker(BaseReranker):
     def score(self, query, documents, **kwargs):  # pragma: no cover
         return []
 
-    async def ascore(self, query, documents, **kwargs):  # pragma: no cover
+    async def _ascore(self, query, documents, **kwargs):  # pragma: no cover
         return []
 
     async def aclose(self) -> None:
@@ -205,3 +205,43 @@ async def test_aclose_is_idempotent(context) -> None:
     """关停路径可能被走两次（异常 + finally），不能第二次就炸。"""
     await context.aclose()
     await context.aclose()
+
+
+# ── 闸门必须由组合根挂上（spec S4-2）──────────────────────────────────────
+
+
+def test_build_context_binds_one_gate_to_both_models() -> None:
+    """闸门只在组合根这一处挂。**漏挂不会报错，只是限流悄悄失效** ——
+    所以必须有一条用例盯着这个动作本身。
+
+    这条是补写的：最初只测了 `Gate` 本身与模型层，把 bootstrap 里那行
+    `bind_gate` 删掉，全套测试照样全绿 —— 于是"不允许裸调"这条验收标准
+    实际上没有任何东西守着。
+    """
+    embedding, reranker = FakeEmbedding(), FakeReranker()
+    context = build_context(
+        make_config(),
+        embedding_model=embedding,
+        reranker=reranker,
+        vector_store=InMemoryVectorStore(),
+    )
+
+    gate = context.model_gate
+    assert gate is not None, "组合根没建闸门"
+    assert embedding._gate is gate, "embedding 模型没挂上闸门 —— 它会裸调模型服务"  # noqa: SLF001
+    assert reranker._gate is gate, "reranker 没挂上闸门"  # noqa: SLF001
+    assert gate.stats.limit == make_config().limits.model_concurrency
+
+
+def test_injected_test_doubles_get_the_gate_too() -> None:
+    """注入进来的替身同样要挂闸门。
+
+    否则测试跑的是"没有闸门"那条路、生产跑的是另一条 —— 两边行为不一致，
+    再多的测试也证明不了生产的限流是对的。
+    """
+    embedding = FakeEmbedding()
+    assert embedding._gate is None  # noqa: SLF001
+    build_context(
+        make_config(), embedding_model=embedding, vector_store=InMemoryVectorStore()
+    )
+    assert embedding._gate is not None  # noqa: SLF001

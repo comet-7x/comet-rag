@@ -14,10 +14,27 @@ from .models import Task, TaskEvent, TaskStatus
 from .store import TaskStore
 
 
+class Backlogged(RuntimeError):
+    """待执行任务已堆到上限，拒收新任务（spec S4-1）。
+
+    **明确拒绝，不静默丢弃**：API 层翻译成 429，客户端知道该退避重来。
+    不设这道界的话，投递量一大队列就无限堆积 —— 表面上"全都收下了"，
+    实际是把 OOM 和"排队两小时"往后推。
+    """
+
+
 class TaskService:
-    def __init__(self, store: TaskStore, executor: TaskExecutor) -> None:
+    def __init__(
+        self,
+        store: TaskStore,
+        executor: TaskExecutor,
+        *,
+        max_backlog: int = 0,
+    ) -> None:
         self.store = store
         self.executor = executor
+        #: 待执行任务上限，0 = 不限（单进程/当库用时的默认）
+        self._max_backlog = max_backlog
 
     # 提交与查询
     async def submit(
@@ -30,6 +47,7 @@ class TaskService:
         max_attempts: int = 1,
         **fields: Any,
     ) -> Task:
+        await self._check_backlog()
         task = await self.store.create(
             kind,
             request=request,
@@ -41,6 +59,39 @@ class TaskService:
         if task.status is TaskStatus.PENDING and task.attempts == 0:
             await self._enqueue(task.task_id)
         return await self.store.require(task.task_id)
+
+    async def backlog(self) -> dict[str, Any]:
+        """当前积压。给 `/admin/limits` 用 —— 限流是否生效不该靠猜。
+
+        `pending` 最多数到上限为止：积压很深时全表计数本身就是最慢的查询，
+        而运维只需要知道"到顶了没有"。
+        """
+        cap = self._max_backlog or 1000
+        pending = await self.store.list_tasks(status=TaskStatus.PENDING, limit=cap)
+        return {
+            "pending": len(pending),
+            "at_least": len(pending) >= cap,  # 到了上限就说明可能还有更多
+            "max_backlog": self._max_backlog or None,
+        }
+
+    async def _check_backlog(self) -> None:
+        """积压到上限就拒收。**在建记录之前**查 —— 建完再拒等于白建一条。
+
+        只查 `max_backlog` 条而不是 count(*)：判断"满没满"只需要知道有没有
+        第 N 条，全表计数在积压很深时反而是最慢的那个查询。
+
+        判据是 `>=` 而非 `>`：积压已经到 N 了，再收一条就是 N+1，
+        那就**超过**了上限。写成 `>` 的话实际容量是 N+1（实测差这一条）。
+        """
+        if not self._max_backlog:
+            return
+        pending = await self.store.list_tasks(
+            status=TaskStatus.PENDING, limit=self._max_backlog
+        )
+        if len(pending) >= self._max_backlog:
+            raise Backlogged(
+                f"待执行任务已达上限 {self._max_backlog}，暂不受理新任务，请稍后重试"
+            )
 
     async def _enqueue(self, task_id: str) -> None:
         """排期，并咽下"有人抢先一步"这一种失败。

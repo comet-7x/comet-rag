@@ -11,6 +11,7 @@ worker 不需要 FastAPI，但同样需要 runner 与全套资源。
 from __future__ import annotations
 
 from comet_rag.config.schemas import APPConfig, Backend
+from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.context import Context, wire_runners
 from comet_rag.core.logging import logger
 from comet_rag.engines.pipelines import PipelineConfig
@@ -144,6 +145,21 @@ def build_task_executor(
     raise ValueError(f"不支持的 task_executor 后端：{backend}")
 
 
+def build_model_gate(config: APPConfig) -> Gate:
+    """**一个进程一个闸门，embedding 与 rerank 共用它。**
+
+    分开限流等于没限：两边各配 8，模型服务看到的是 16。它们抢的本来就是
+    同一块 GPU，只有合起来算才对得上"这台机器最多同时处理几个请求"。
+    """
+    limits = config.limits
+    return build_gate(
+        limit=limits.model_concurrency,
+        max_waiting=limits.model_queue,
+        acquire_timeout=limits.model_wait_timeout,
+        name="model",
+    )
+
+
 def build_embedding_model(config: APPConfig) -> BaseEmbeddingModel:
     from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import (  # noqa: PLC0415
         Qwen3VLEmbeddingModel,
@@ -198,6 +214,13 @@ def build_context(
 
     embedding_model = embedding_model or build_embedding_model(config)
     reranker = reranker if reranker is not None else build_reranker(config)
+
+    # 闸门在这里挂上 —— 注入进来的替身同样要挂，否则测试跑的是"没有闸门"
+    # 的那条路，而生产是另一条，两边行为不一致就白测了。
+    gate = build_model_gate(config)
+    embedding_model.bind_gate(gate)
+    if reranker is not None:
+        reranker.bind_gate(gate)
     vector_store = vector_store or build_vector_store(config)
     task_store = task_store or build_task_store(config, database)
     task_executor = task_executor or build_task_executor(
@@ -219,7 +242,9 @@ def build_context(
         vector_store=vector_store,
         task_store=task_store,
         task_executor=task_executor,
-        task_service=TaskService(task_store, task_executor),
+        task_service=TaskService(
+            task_store, task_executor, max_backlog=config.limits.max_backlog
+        ),
         retrieval=RetrievalService(
             embedding_model=embedding_model,
             vector_store=vector_store,
@@ -229,6 +254,7 @@ def build_context(
         knowledge_base=knowledge_base,
         embedding_dim=embedding_settings.dim,
         database=database,
+        model_gate=gate,
     )
     wire_runners(context, ingest_config=pipeline_config)
 
@@ -245,6 +271,7 @@ __all__ = [
     "build_context",
     "build_database",
     "build_embedding_model",
+    "build_model_gate",
     "build_kb_repository",
     "build_reranker",
     "build_task_executor",

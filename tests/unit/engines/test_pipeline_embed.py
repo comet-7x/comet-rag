@@ -43,7 +43,7 @@ class RecordingEmbeddingModel(BaseEmbeddingModel):
         self.calls += 1
         return [float(len(str(data)))]
 
-    async def aembed(self, data, **kwargs) -> list[float]:
+    async def _aembed(self, data, **kwargs) -> list[float]:
         self.calls += 1
         self.live += 1
         self.peak = max(self.peak, self.live)

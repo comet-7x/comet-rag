@@ -53,6 +53,9 @@ class Context:
     knowledge_base: KnowledgeBaseService
     embedding_dim: int
     reranker: BaseReranker | None = None
+    #: 对模型服务的进程级并发闸门。放进 Context 是为了让 /admin/health
+    #: 能读到它的实时统计 —— 过载时最先想看的就是这几个数。
+    model_gate: Any = None
     #: 仅在 task_store/kb 用 postgres 时存在。关停时要 dispose 连接池。
     database: Any = None
     #: 需要在关停时释放、但不属于上面任何一类的资源（按注册顺序逆序关闭）

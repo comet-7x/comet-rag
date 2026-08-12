@@ -39,7 +39,7 @@ class KeywordEmbeddingModel(BaseEmbeddingModel):
     def embed(self, data, **kwargs) -> list[float]:
         return self._vector(str(data))
 
-    async def aembed(self, data, **kwargs) -> list[float]:
+    async def _aembed(self, data, **kwargs) -> list[float]:
         return self._vector(str(data))
 
     async def close_client(self) -> None:  # pragma: no cover
@@ -58,7 +58,7 @@ class ReversingReranker(BaseReranker):
     def score(self, query, documents, **kwargs) -> list[float]:  # pragma: no cover
         raise NotImplementedError
 
-    async def ascore(self, query, documents, **kwargs) -> list[float]:
+    async def _ascore(self, query, documents, **kwargs) -> list[float]:
         self.calls += 1
         self.last_documents = list(documents)
         if self.failure is not None:

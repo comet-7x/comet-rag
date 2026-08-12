@@ -59,7 +59,7 @@ class FakeEmbeddingModel(BaseEmbeddingModel):
         self.calls += 1
         return self._vector(str(data))
 
-    async def aembed(self, data, **kwargs) -> list[float]:
+    async def _aembed(self, data, **kwargs) -> list[float]:
         self.calls += 1
         if self.fail_times > 0:
             self.fail_times -= 1

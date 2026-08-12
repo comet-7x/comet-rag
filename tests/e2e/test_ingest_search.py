@@ -60,7 +60,7 @@ class KeywordEmbedding(BaseEmbeddingModel):
     def embed(self, data, **kwargs):  # pragma: no cover
         return self._vector(str(data))
 
-    async def aembed(self, data, **kwargs):
+    async def _aembed(self, data, **kwargs):
         return self._vector(str(data))
 
     async def close_client(self) -> None:

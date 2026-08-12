@@ -16,6 +16,7 @@ from comet_rag.api.middleware import TraceMiddleware, get_trace_id
 from comet_rag.api.routes import admin, ingest, kb, search, tasks
 from comet_rag.config.schemas import APPConfig
 from comet_rag.config.settings import get_config
+from comet_rag.core.concurrency import Overloaded
 from comet_rag.infrastructure.knowledge_base import (
     EmbeddingModelChanged,
     KnowledgeBaseExists,
@@ -23,6 +24,7 @@ from comet_rag.infrastructure.knowledge_base import (
 )
 from comet_rag.infrastructure.vectorstore import CollectionNotFound, DimensionMismatch
 from comet_rag.tasks import TaskBusy, TaskNotFound, VersionConflict
+from comet_rag.tasks.service import Backlogged
 
 
 def _problem(request: Request, code: int, message: str) -> JSONResponse:
@@ -73,6 +75,20 @@ def _install_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(TaskBusy)
     async def _busy(request: Request, exc: TaskBusy) -> JSONResponse:  # noqa: RUF029
         return _problem(request, status.HTTP_409_CONFLICT, str(exc))
+
+    @app.exception_handler(Overloaded)
+    async def _overloaded(request: Request, exc: Overloaded) -> JSONResponse:  # noqa: RUF029
+        """429 而非 503：这是**本服务**主动限流，且客户端退避重试就能成功。
+
+        静默排队或直接 500 都会让客户端继续加压，正好是过载时最不该发生的事
+        （spec S4-1）。
+        """
+        return _problem(request, status.HTTP_429_TOO_MANY_REQUESTS, str(exc))
+
+    @app.exception_handler(Backlogged)
+    async def _backlogged(request: Request, exc: Backlogged) -> JSONResponse:  # noqa: RUF029
+        """429：待执行任务已堆到上限，收下也只是让它排得更久。"""
+        return _problem(request, status.HTTP_429_TOO_MANY_REQUESTS, str(exc))
 
     @app.exception_handler(ValueError)
     async def _bad_request(request: Request, exc: ValueError) -> JSONResponse:  # noqa: RUF029

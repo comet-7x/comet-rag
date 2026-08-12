@@ -245,7 +245,7 @@ class Qwen3VLReranker(BaseReranker):
             )
             raise CometRAGException(error_msg) from e
 
-    async def ascore(
+    async def _ascore(
         self,
         query: str | ScoreMultiModalParam,
         documents: str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],

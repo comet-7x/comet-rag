@@ -127,6 +127,38 @@ class BackendsConfig(BaseModel):
     )
 
 
+class LimitsConfig(BaseModel):
+    """资源上限（spec S4-1、S4-2）。**每一项都是"有界"这件事的具体落点。**
+
+    默认值按"一块消费级 GPU 上跑一个 vLLM"来定，请按实际服务能力调整 ——
+    调大不会更快，只会让请求在服务端排队，反而拖长 p99。
+    """
+
+    model_concurrency: int = Field(
+        default=8,
+        gt=0,
+        description="本进程对模型服务的**总**并发上限。注意不是每个任务的，"
+        "是整个进程的 —— 前者会随任务数翻倍（见 core/concurrency.py）",
+    )
+    model_queue: int = Field(
+        default=256,
+        ge=0,
+        description="闸门外允许排队的请求数，0 表示不限。"
+        "排队者本身占内存，不设界就是把 OOM 往后推",
+    )
+    model_wait_timeout: float = Field(
+        default=30.0,
+        gt=0,
+        description="等闸门的最长时间。等太久算过载 —— 上游多半早就超时了",
+    )
+    max_backlog: int = Field(
+        default=1000,
+        ge=0,
+        description="待执行任务数上限，超了直接拒收（HTTP 429）。0 表示不限。"
+        "没有它的话，投递量一大队列就无限堆积",
+    )
+
+
 class InfrastructureConfig(BaseModel):
     embedding_model: EmbeddingModelConfig = Field(..., description="嵌入模型配置")
     #: 可选：没配就跳过重排，检索仍可用（见 services/retrieval.py）
@@ -147,4 +179,7 @@ class APPConfig(BaseModel):
     infrastructure_config: InfrastructureConfig = Field(..., description="基础设施配置")
     backends: BackendsConfig = Field(
         default_factory=BackendsConfig, description="各资源用哪个实现"
+    )
+    limits: LimitsConfig = Field(
+        default_factory=LimitsConfig, description="并发闸门与背压上限"
     )
