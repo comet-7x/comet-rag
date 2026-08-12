@@ -13,6 +13,7 @@ from __future__ import annotations
 from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.context import Context, wire_runners
+from comet_rag.core.degradation import DegradationController, DegradationSettings
 from comet_rag.core.logging import logger
 from comet_rag.engines.pipelines import PipelineConfig
 from comet_rag.infrastructure.knowledge_base import (
@@ -145,7 +146,21 @@ def build_task_executor(
     raise ValueError(f"不支持的 task_executor 后端：{backend}")
 
 
-def build_model_gate(config: APPConfig) -> Gate:
+def build_degradation(config: APPConfig) -> DegradationController:
+    limits = config.limits
+    return DegradationController(
+        DegradationSettings(
+            failure_rate=limits.degrade_failure_rate,
+            saturation=limits.degrade_saturation,
+            recover_after=limits.degrade_recover_after,
+            min_samples=limits.degrade_min_samples,
+        )
+    )
+
+
+def build_model_gate(
+    config: APPConfig, degradation: DegradationController | None = None
+) -> Gate:
     """**一个进程一个闸门，embedding 与 rerank 共用它。**
 
     分开限流等于没限：两边各配 8，模型服务看到的是 16。它们抢的本来就是
@@ -157,6 +172,9 @@ def build_model_gate(config: APPConfig) -> Gate:
         max_waiting=limits.model_queue,
         acquire_timeout=limits.model_wait_timeout,
         name="model",
+        # 观测点挂在闸门上：所有对模型服务的调用都必然穿过它，
+        # 于是降级判据的数据来源天然完整，不会有谁忘了插桩。
+        observer=None if degradation is None else degradation.record,
     )
 
 
@@ -217,7 +235,8 @@ def build_context(
 
     # 闸门在这里挂上 —— 注入进来的替身同样要挂，否则测试跑的是"没有闸门"
     # 的那条路，而生产是另一条，两边行为不一致就白测了。
-    gate = build_model_gate(config)
+    degradation = build_degradation(config)
+    gate = build_model_gate(config, degradation)
     embedding_model.bind_gate(gate)
     if reranker is not None:
         reranker.bind_gate(gate)
@@ -249,12 +268,14 @@ def build_context(
             embedding_model=embedding_model,
             vector_store=vector_store,
             reranker=reranker,
+            degradation=degradation,
         ),
         kb_repository=kb_repository,
         knowledge_base=knowledge_base,
         embedding_dim=embedding_settings.dim,
         database=database,
         model_gate=gate,
+        degradation=degradation,
     )
     wire_runners(context, ingest_config=pipeline_config)
 
@@ -271,6 +292,7 @@ __all__ = [
     "build_context",
     "build_database",
     "build_embedding_model",
+    "build_degradation",
     "build_model_gate",
     "build_kb_repository",
     "build_reranker",

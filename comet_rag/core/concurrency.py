@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Self
@@ -79,10 +80,15 @@ class Gate:
         max_waiting: int = 0,
         acquire_timeout: float | None = None,
         name: str = "model",
+        observer: Callable[[bool], None] | None = None,
     ) -> None:
         if limit <= 0:
             raise ValueError(f"闸门上限必须为正，收到 {limit}")
         self.name = name
+        #: 每次调用的成败都报给它（降级判据的数据来源）。观测点放在闸门上，
+        #: 是因为所有对模型服务的调用都必然穿过这里 —— 与"闸门绕不过去"
+        #: 同一个理由，不需要在每个调用点插桩，也就不会有人漏插。
+        self._observer = observer
         self._limit = limit
         self._max_waiting = max_waiting
         self._timeout = acquire_timeout
@@ -163,6 +169,10 @@ class Gate:
         tb: TracebackType | None,
     ) -> None:
         self.release()
+        # 取消不算失败：那是调用方主动放弃，不是下游出了问题。
+        # 把它算进失败率会让"用户取消了几个任务"看起来像服务故障。
+        if self._observer is not None and exc_type is not asyncio.CancelledError:
+            self._observer(exc_type is None)
 
 
 def build_gate(
@@ -171,12 +181,14 @@ def build_gate(
     max_waiting: int,
     acquire_timeout: float | None,
     name: str = "model",
+    observer: Callable[[bool], None] | None = None,
 ) -> Gate:
     gate = Gate(
         limit=limit,
         max_waiting=max_waiting,
         acquire_timeout=acquire_timeout,
         name=name,
+        observer=observer,
     )
     logger.info(
         f"并发闸门就绪 name={name} limit={limit} "

@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from comet_rag.core.degradation import DegradationController
 from comet_rag.core.logging import logger
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
@@ -89,27 +90,38 @@ class RetrievalService:
         embedding_model: BaseEmbeddingModel,
         vector_store: BaseVectorStore,
         reranker: BaseReranker | None = None,
+        degradation: DegradationController | None = None,
     ) -> None:
         self._embedding_model = embedding_model
         self._vector_store = vector_store
         self._reranker = reranker
+        #: 分级降级（S4-5）。None = 不降级（当库用、单测）。
+        self._degradation = degradation
 
     async def search(self, query: SearchQuery) -> RetrievalResult:
         candidates = await self._recall(query)
         if not candidates:
             return RetrievalResult(chunks=[], reranked=False, fetched=0)
 
-        should_rerank = query.rerank and self._reranker is not None
+        # 降级顺序的落点：L1 关 rerank（最贵、且没它检索仍可用），
+        # L2 再砍 top_k。两级都只影响**质量**，不影响"能不能拿到结果"。
+        top_k = query.top_k
+        allow_rerank = True
+        if self._degradation is not None:
+            top_k = self._degradation.adjust_top_k(top_k)
+            allow_rerank = self._degradation.allow_rerank()
+
+        should_rerank = query.rerank and allow_rerank and self._reranker is not None
         if not should_rerank:
             return RetrievalResult(
-                chunks=candidates[: query.top_k],
+                chunks=candidates[:top_k],
                 reranked=False,
                 fetched=len(candidates),
             )
 
         chunks, did_rerank = await self._rerank(self._reranker, query.query, candidates)
         return RetrievalResult(
-            chunks=chunks[: query.top_k],
+            chunks=chunks[:top_k],
             reranked=did_rerank,
             fetched=len(candidates),
         )

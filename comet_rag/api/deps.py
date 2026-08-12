@@ -8,7 +8,9 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from ..core.concurrency import Overloaded
 from ..core.context import Context
+from ..core.degradation import Level
 from ..infrastructure.vectorstore import BaseVectorStore
 from ..services.knowledge_base import KnowledgeBaseService
 from ..services.retrieval import RetrievalService
@@ -45,3 +47,32 @@ TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
 RetrievalDep = Annotated[RetrievalService, Depends(get_retrieval)]
 VectorStoreDep = Annotated[BaseVectorStore, Depends(get_vector_store)]
 KnowledgeBaseDep = Annotated[KnowledgeBaseService, Depends(get_knowledge_base)]
+
+
+def admission_guard(ctx: ContextDep) -> None:
+    """降级的**最后一级**：拒绝新的写入任务（spec S4-5）。
+
+    放在 API 层而不是 `TaskService` 里，有两个理由：
+
+    · `comet_rag/tasks/` 是与产品无关的通用框架，不该认识"降级"这个概念；
+    · "收不收这个请求"本来就是入口的职责 —— 读路径不受影响，正是这一级
+      想保住的东西。
+
+    顺带一提，闸门的饱和度也在这里报给控制器：每个写请求都会经过它，
+    采样频率天然跟着负载走，负载越高看得越勤。
+    """
+    degradation = getattr(ctx, "degradation", None)
+    if degradation is None:
+        return
+    gate = getattr(ctx, "model_gate", None)
+    if gate is not None:
+        stats = gate.stats
+        degradation.observe_saturation(stats.waiting, stats.limit)
+    if not degradation.accept_writes():
+        raise Overloaded(
+            "degradation",
+            f"服务已降级至 {Level.REJECT_WRITES.name}，暂不受理新的入库任务",
+        )
+
+
+AdmissionDep = Annotated[None, Depends(admission_guard)]

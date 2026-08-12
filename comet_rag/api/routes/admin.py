@@ -26,7 +26,9 @@ async def limits(request: Request) -> dict[str, Any]:
     ctx = request.app.state.ctx
     gate = getattr(ctx, "model_gate", None)
     backlog = await ctx.task_service.backlog()
+    degradation = getattr(ctx, "degradation", None)
     return {
         "model_gate": asdict(gate.stats) if gate is not None else None,
         "backlog": backlog,
+        "degradation": degradation.stats if degradation is not None else None,
     }

@@ -157,6 +157,25 @@ class LimitsConfig(BaseModel):
         description="待执行任务数上限，超了直接拒收（HTTP 429）。0 表示不限。"
         "没有它的话，投递量一大队列就无限堆积",
     )
+    degrade_failure_rate: tuple[float, float, float] = Field(
+        default=(0.2, 0.5, 0.8),
+        description="触发三级降级的失败率阈值（关 rerank / 降 top_k / 拒新任务）",
+    )
+    degrade_saturation: tuple[float, float, float] = Field(
+        default=(2.0, 5.0, 10.0),
+        description="触发三级降级的闸门饱和度阈值（等待者数 ÷ 并发上限）",
+    )
+    degrade_recover_after: float = Field(
+        default=30.0,
+        gt=0,
+        description="降级后要稳定这么久才恢复一级。太短会在阈值边界上来回抖",
+    )
+    degrade_min_samples: int = Field(
+        default=20,
+        gt=0,
+        description="样本不足这个数时一律判正常。"
+        "服务刚起来或流量很低时，头几次失败不该被当成故障",
+    )
 
 
 class InfrastructureConfig(BaseModel):

@@ -4,13 +4,15 @@ from fastapi import APIRouter, status
 
 from ...schemas.ingest import IngestAccepted, IngestSubmit
 from ...services.ingestion import INGEST_KIND
-from ..deps import TaskServiceDep
+from ..deps import AdmissionDep, TaskServiceDep
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED, response_model=IngestAccepted)
-async def submit_ingest(payload: IngestSubmit, tasks: TaskServiceDep) -> IngestAccepted:
+async def submit_ingest(
+    payload: IngestSubmit, tasks: TaskServiceDep, _: AdmissionDep
+) -> IngestAccepted:
     """**202 而非 200**：解析与向量化是长任务，这里只表示"已受理"。
 
     客户端拿 task_id 轮询 `GET /tasks/{id}` 看进度。
