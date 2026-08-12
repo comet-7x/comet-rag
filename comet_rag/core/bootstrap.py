@@ -27,6 +27,7 @@ from comet_rag.infrastructure.vectorstore import (
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
 from comet_rag.tasks import (
+    LANE_CPU,
     InMemoryTaskStore,
     InProcessExecutor,
     TaskExecutor,
@@ -105,12 +106,24 @@ def build_task_store(config: APPConfig, database=None) -> TaskStore:
     raise ValueError(f"不支持的 task_store 后端：{backend}")
 
 
-def build_task_executor(config: APPConfig, store: TaskStore) -> TaskExecutor:
+def build_task_executor(
+    config: APPConfig, store: TaskStore, *, lane: str | None = None
+) -> TaskExecutor:
+    """`lane` = 本进程服务哪条负载道。
+
+    API 进程与单进程部署都传 None（不分道，只作生产端）；worker 进程由
+    `workers/base.py` 按自己的画像传 cpu / io。
+    """
     backend = config.backends.task_executor
     if backend is Backend.INPROCESS:
+        # 单进程下分道毫无意义：移交只会变成一次没必要的入队往返，
+        # 而且 InProcessExecutor 压根没有"另一条队列"可投。
         return InProcessExecutor(store, max_concurrency=config.backends.max_concurrency)
     if backend is Backend.ARQ:
-        from comet_rag.tasks.executor_arq import ArqExecutor  # noqa: PLC0415
+        from comet_rag.tasks.executor_arq import (  # noqa: PLC0415
+            LANE_QUEUES,
+            ArqExecutor,
+        )
 
         settings = config.infrastructure_config.redis
         if settings is None:
@@ -119,7 +132,15 @@ def build_task_executor(config: APPConfig, store: TaskStore) -> TaskExecutor:
             )
         # 注意这里**不传** max_concurrency：跨进程部署的闸门在 worker 侧
         # （arq 的 max_jobs），生产端限流拦不住别的生产端。见 executor_arq.py。
-        return ArqExecutor(store, redis_url=settings.url)
+        return ArqExecutor(
+            store,
+            redis_url=settings.url,
+            lane=lane,
+            lanes=LANE_QUEUES,
+            # 生产端首投进第一个阶段所在的道。投错也能自愈（目标 worker 会
+            # 再移交一次），但投对能省掉一次空转往返。
+            entry_lane=LANE_CPU,
+        )
     raise ValueError(f"不支持的 task_executor 后端：{backend}")
 
 
@@ -162,6 +183,7 @@ def build_context(
     task_executor: TaskExecutor | None = None,
     kb_repository: KnowledgeBaseRepository | None = None,
     pipeline_config: PipelineConfig | None = None,
+    executor_lane: str | None = None,
 ) -> Context:
     """按配置装配全套资源。
 
@@ -178,7 +200,9 @@ def build_context(
     reranker = reranker if reranker is not None else build_reranker(config)
     vector_store = vector_store or build_vector_store(config)
     task_store = task_store or build_task_store(config, database)
-    task_executor = task_executor or build_task_executor(config, task_store)
+    task_executor = task_executor or build_task_executor(
+        config, task_store, lane=executor_lane
+    )
     kb_repository = kb_repository or build_kb_repository(config, database)
 
     embedding_settings = config.infrastructure_config.embedding_model

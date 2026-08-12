@@ -29,7 +29,10 @@ from .models import (
     Time,
 )
 from .runner import (
+    LANE_CPU,
+    LANE_IO,
     Done,
+    Handoff,
     Outcome,
     RetriableError,
     Runner,
@@ -46,7 +49,10 @@ from .states import InvalidTransition, assert_transition, can_transition
 from .store import InMemoryTaskStore, TaskBusy, TaskNotFound, TaskStore, VersionConflict
 
 __all__ = [
+    "LANE_CPU",
+    "LANE_IO",
     "Done",
+    "Handoff",
     "InMemoryTaskStore",
     "InProcessExecutor",
     "InvalidTransition",

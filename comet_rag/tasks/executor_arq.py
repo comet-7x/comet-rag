@@ -38,6 +38,7 @@ from arq.connections import RedisSettings
 
 from .executor import StoreDrivenExecutor, logger
 from .models import TaskStatus
+from .runner import LANE_CPU, LANE_IO
 from .store import TaskStore
 
 #: arq 侧的函数名。worker 注册的 `run_task` 必须与之一致，否则任务入队即失踪。
@@ -45,6 +46,10 @@ JOB_NAME = "run_task"
 
 #: 默认队列名。与 arq 的 `arq:queue` 区分开，免得跟同 Redis 里别的 arq 应用串味。
 DEFAULT_QUEUE = "comet:queue"
+
+#: 负载道 → 队列名。**一条道一条队列**是分道扩容能成立的前提：
+#: 共用队列的话，CPU 密集的活会被 IO worker 捞走，分道就白分了。
+LANE_QUEUES: dict[str, str] = {LANE_CPU: "comet:cpu", LANE_IO: "comet:io"}
 
 
 class ArqExecutor(StoreDrivenExecutor):
@@ -59,6 +64,9 @@ class ArqExecutor(StoreDrivenExecutor):
         retry_backoff: float = 1.0,
         worker_id: str | None = None,
         pool: ArqRedis | None = None,
+        lane: str | None = None,
+        lanes: dict[str, str] | None = None,
+        entry_lane: str | None = None,
     ) -> None:
         super().__init__(
             store,
@@ -66,11 +74,16 @@ class ArqExecutor(StoreDrivenExecutor):
             retry_backoff=retry_backoff,
             worker_id=worker_id,
             worker_prefix="arq",
+            lane=lane,
         )
         self._redis_url = redis_url
         self._queue = queue_name
         self._job_name = job_name
         self._pool = pool
+        #: lane → 队列。空 dict = 不分道，一切都进 `queue_name`。
+        self._lanes = dict(lanes or {})
+        #: 生产端投递的默认道（任务的第一个阶段在哪条道上）。不分道时为 None。
+        self._entry_lane = entry_lane
         #: 传进来的池归调用方管，我们不能替它关（worker 与 executor 常共用一个池）
         self._owns_pool = pool is None
         self._pool_lock = asyncio.Lock()
@@ -96,7 +109,7 @@ class ArqExecutor(StoreDrivenExecutor):
 
     # ── 提交 ───────────────────────────────────────────────────────────────
 
-    def job_id_for(self, task_id: str, attempts: int) -> str:
+    def job_id_for(self, task_id: str, attempts: int, lane: str | None = None) -> str:
         """入队幂等键。
 
         **不能只用 task_id**（todo.md 原文如此，实测行不通）：arq 的
@@ -106,22 +119,47 @@ class ArqExecutor(StoreDrivenExecutor):
 
         带上 attempts 后两件事同时成立：同一次尝试内重复投递被去重（幂等），
         跨尝试的重投是新 job（可重试）。
-        """
-        return f"{task_id}:{attempts}"
 
-    async def submit(self, task_id: str, *, delay: float = 0.0) -> None:
+        再带上 lane，是因为**移交不涨 attempts**（移交不是一次尝试）：
+        cpu 道跑完投给 io 道时 attempts 没变，只靠 attempts 的话新 job 会被
+        上一条的结果键挡掉 —— 又是同一个"静默卡死"。
+        """
+        return (
+            f"{task_id}:{attempts}" if lane is None else f"{task_id}:{attempts}:{lane}"
+        )
+
+    def _target_lane(self, lane: str | None) -> str | None:
+        """没指名道姓时投哪条道。
+
+        · worker 侧重投（`_schedule_retry`）→ 本 worker 自己那条道，
+          因为失败的阶段本来就属于它；
+        · 生产端首次投递 → `entry_lane`，即流水线第一个阶段所在的道。
+
+        顺带一提，投错道是**自愈**的：目标 worker 拿到后，流水线发现
+        `resume_stage` 所在的道与自己不同，会立刻再移交一次。所以
+        `TaskService.retry()` 这种不知道该投哪儿的调用者可以放心用默认值。
+        """
+        return lane if lane is not None else (self._lane or self._entry_lane)
+
+    def _queue_for(self, lane: str | None) -> str:
+        return self._lanes.get(lane, self._queue) if lane else self._queue
+
+    async def submit(
+        self, task_id: str, *, delay: float = 0.0, lane: str | None = None
+    ) -> None:
         if self._closed:
             raise RuntimeError("执行器已关停，拒绝新任务")
         task = await self._store.require(task_id)
         if task.status is not TaskStatus.PENDING:
             raise ValueError(f"只有 PENDING 可提交，当前 {task.status.value}")
 
+        target = self._target_lane(lane)
         pool = await self.pool()
         job = await pool.enqueue_job(
             self._job_name,
             task_id,  # ← 载荷**只有** task_id
-            _job_id=self.job_id_for(task_id, task.attempts),
-            _queue_name=self._queue,
+            _job_id=self.job_id_for(task_id, task.attempts, target),
+            _queue_name=self._queue_for(target),
             _defer_by=delay or None,
         )
         if job is None:
@@ -135,6 +173,10 @@ class ArqExecutor(StoreDrivenExecutor):
         跨进程这里反而更简单：入队即返回，谁先空出来谁来跑。
         """
         await self.submit(task_id, delay=delay)
+
+    async def _schedule_handoff(self, task_id: str, lane: str) -> None:
+        """把任务投到目标道的队列上。这就是分道扩容的全部机制。"""
+        await self.submit(task_id, lane=lane)
 
     # ── 取消 ───────────────────────────────────────────────────────────────
     #

@@ -18,6 +18,7 @@ from comet_rag.infrastructure.database.kb_repository import (
 )
 from comet_rag.infrastructure.knowledge_base import KnowledgeBaseRepository
 from tests.contracts.knowledge_base import KnowledgeBaseRepositoryContract
+from tests.integration.conftest import truncate_tables
 
 pytestmark = pytest.mark.integration
 
@@ -43,5 +44,5 @@ async def _require_migrated(database: Database) -> None:
 
 
 async def _truncate(database: Database) -> None:
-    async with database.transaction() as session:
-        await session.execute(text("TRUNCATE TABLE knowledge_bases"))
+    """锁等待有上限 —— 见 `conftest.truncate_tables`。"""
+    await truncate_tables(database, "knowledge_bases")

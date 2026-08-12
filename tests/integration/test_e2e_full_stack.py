@@ -15,7 +15,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from sqlalchemy import text
 
 from comet_rag.api.main import create_app
 from comet_rag.config.schemas import (
@@ -29,7 +28,6 @@ from comet_rag.config.schemas import (
     VectorDatabaseConfig,
 )
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.database import Database
 from tests.e2e.test_ingest_search import (  # 复用替身，不重写
     DIM,
     STUB_TYPE,
@@ -37,6 +35,7 @@ from tests.e2e.test_ingest_search import (  # 复用替身，不重写
     _use_stub_loader,
     poll_until_terminal,
 )
+from tests.integration.conftest import truncate_tables
 
 pytestmark = pytest.mark.integration
 
@@ -95,20 +94,9 @@ def make_config(milvus_uri: str) -> APPConfig:
 
 
 async def _clean_postgres(dsn: str) -> None:
-    db = Database(dsn)
-    try:
-        async with db.session() as session:
-            for table in ("tasks", "knowledge_bases"):
-                exists = (
-                    await session.execute(text(f"SELECT to_regclass('{table}')"))
-                ).scalar_one()
-                if exists is None:
-                    pytest.skip(f"{table} 表不存在，先跑 `uv run alembic upgrade head`")
-        async with db.transaction() as session:
-            await session.execute(text("TRUNCATE TABLE tasks CASCADE"))
-            await session.execute(text("TRUNCATE TABLE knowledge_bases CASCADE"))
-    finally:
-        await db.aclose()
+    """清表。锁等待有上限，拿不到就报错而不是静默挂起 ——
+    实现与理由见 `conftest.truncate_tables`。"""
+    await truncate_tables(dsn, "tasks", "knowledge_bases")
 
 
 @pytest.fixture

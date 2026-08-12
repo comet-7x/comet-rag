@@ -683,23 +683,84 @@ CAS 只是方法内部"读—改—写"的护栏，撞了就该重读重来；**
 
 ---
 
-### T23 — workers 入口
+### ✅ T23 — workers 入口
 
 **描述：** 按**负载特征**分 worker，不按业务名词分。preprocessor 是 CPU 密集（多进程扩容），embedder 是 IO 密集（单进程高并发）——**扩容方式反了会让模型服务过载排队，整体更慢**。
 
 **验收标准：**
-- [ ] `workers/preprocessor.py`：解析+清洗+分块，CPU 密集部分走 `to_thread` / `ProcessPoolExecutor`
-- [ ] `workers/embedder.py`：向量化+写入，单进程内用信号量控制并发
-- [ ] 两者共享 `Context` 装配逻辑，不各自 new 资源
-- [ ] 两个 `WorkerSettings` 的并发参数默认值与注释说明扩容方式差异
+- [x] `workers/preprocessor.py`：解析+清洗+分块，CPU 密集部分走 `to_thread`（不用 `ProcessPoolExecutor`，理由见下）
+- [x] `workers/embedder.py`：向量化+写入，单进程内用信号量控制并发（两级闸门）
+- [x] 两者共享 `Context` 装配逻辑，不各自 new 资源
+- [x] 两个 `WorkerSettings` 的并发参数默认值与注释说明扩容方式差异
 
 **验证：**
-- [ ] `uv run arq comet_rag.workers.preprocessor.WorkerSettings` 能起并消费
-- [ ] e2e：API 提交 → worker 消费 → 状态推进至 SUCCEEDED
+- [x] `uv run arq comet_rag.workers.preprocessor.WorkerSettings` 能起并消费
+- [x] e2e：API 提交 → worker 消费 → 状态推进至 SUCCEEDED
 
 **依赖：** T22、T15
 **文件：** `comet_rag/workers/preprocessor.py`、`workers/embedder.py`、`workers/base.py`
 **规模：** M
+
+**先要回答一个本条目没写的问题：分开的两个 worker，各自跑哪些阶段？**
+入库是**一个** kind、一条三阶段流水线。两个 worker 若都消费同一条队列，
+"CPU 密集 / IO 密集"就只是文档里的措辞——解析照样会落到 embedder 上，
+把它的事件循环堵死。**分道必须能把阶段路由到不同的池**，否则等于没分。
+
+**实现：给阶段声明 lane，换道时移交。**
+`StagePipeline.stage(name, lane=...)`；`TaskContext.lane` 是本 worker 服务的道；
+下一个阶段的 lane 与之不同时，流水线返回新的 `Handoff` 结果 —— 任务退回
+PENDING、写 `resume_stage`、投到目标道的队列。
+
+关键在于**没有引入新的执行模型**：移交复用的正是断点续跑那套
+`resume_stage` 机制，两者在实现上是同一件事，区别只在原因。
+于是单进程部署（`lane=None`）一行行为都没变 —— 762 条既有用例全绿。
+
+切口选在 chunking 与 indexing 之间，因为那里同时是**负载性质翻转处**
+（解析→调模型）和**中间态最小处**（只有一串 chunk 文本要交接；
+若切在 indexing 中间，就得把 200×1024 维的向量塞进任务表）。
+
+**移交不能算作一次尝试。** `execute()` 进 RUNNING 时把 attempts 加了 1，
+移交时必须退回去。不退的话，一条两次移交的流水线开跑即吃掉 2 次重试
+预算，真出故障时反而没得重试。`test_handoff_does_not_consume_a_retry_attempt`
+守这条；反向验证：去掉那行退账，用例立刻变红。
+
+**job_id 里还得再加 lane。** 移交不涨 attempts，只靠 `task_id:attempts`
+的话，投给 io 道的新 job 会被 cpu 道刚写下的结果键挡掉 —— 又是 T22 那个
+"静默卡死"。这是同一个坑的第二次出现，也说明它确实容易踩。
+
+**为什么不用 `ProcessPoolExecutor`（与本条目原文的偏离）。**
+本条目写的是"`to_thread` / `ProcessPoolExecutor`"。选了前者，因为：
+extractor 是运行时注册进 `PipelineHooks` 的可调用对象，跨进程要求可 pickle；
+而 preprocessor 本来就靠**副本数**扩容，再套一层进程池是把同一件事做两遍，
+却多出一套要单独调参与监控的东西。`to_thread` 的作用不是并行（GIL 挡着），
+而是让心跳与 `ctx.checkpoint()` 在解析期间还跑得动 —— 这一点已写进注释，
+免得后人以为它能并行而去调大 `max_jobs`。
+
+**并发默认值本身就是设计**：preprocessor 2 / embedder 32。
+`tests/unit/test_worker_profiles.py` 把这个不对称钉住了 ——
+两个值对调时立刻变红（已反向验证）。同一文件还拦住另一个失效模式：
+**流水线声明了一条没有 worker 服务的 lane**，任务会静静停在没人消费的
+队列上，PENDING、无错误、无日志，从 API 上完全看不出来。
+
+**顺带兑现 T22 挂账的那条**：跨任务复用 httpx 连接池 —— 由 worker 侧共享
+`Context` 提供，`test_workers_reuse_one_http_client_across_tasks` 守着。
+
+**顺手修掉一个会让测试静默挂起的坑（不属于 T23，但被它撞出来了）**：
+连跑两遍集成测试时，第二遍在第 8 个用例上挂死，11 分钟没有任何输出才被
+人工掐掉 —— 卡在哪个用例都看不出来。根因是 `TRUNCATE` 要 ACCESS EXCLUSIVE
+锁，而 PostgreSQL 默认**无限期等**。四个测试文件各自拼了一份 TRUNCATE，
+现在统一走 `conftest.truncate_tables`，先 `SET LOCAL lock_timeout='5s'`，
+拿不到锁就报错并指出"多半是上一个用例漏关了会话"。
+静默挂起比失败糟得多：前者连从哪儿查起都不知道。
+
+**另一处隔离修正**：`test_e2e_workers` 用的是**生产队列名**（它验的就是生产
+`PROFILE`），而它开场要清队列 —— 用 db 0 的话会把开发机上真跑着的
+`comet:cpu` / `comet:io` 一起删掉。改用独立的 redis db 15。
+
+**记一条给 T28 的账**：`pyproject.toml` 没有 `[build-system]`，包没被装进
+venv，因此 `arq comet_rag.workers.…` 只能在项目根目录下跑（config.yaml 也
+是从 cwd 读的，两者恰好一致）。T28 要加 `comet-rag serve` 控制台脚本，
+届时必须先补上构建后端，顺便解决"配置文件路径不可指定"。
 
 ---
 

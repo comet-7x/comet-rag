@@ -46,6 +46,8 @@ from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.vectorstore import BaseVectorStore, VectorRecord
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.tasks import (
+    LANE_CPU,
+    LANE_IO,
     Done,
     RetriableError,
     StagePipeline,
@@ -145,10 +147,22 @@ class IngestRunner:
     # ── 阶段 ───────────────────────────────────────────────────────────────
 
     def _build_flow(self) -> StagePipeline:
+        """分道理由见 `LANE_CPU` / `LANE_IO` 的注释。
+
+        切在 chunking 与 indexing 之间，是因为这里正好是**负载性质翻转**的
+        地方：前两个阶段是解析与切分（CPU 密集，靠多进程扩容），indexing 是
+        调模型 + 写向量库（IO 密集，靠单进程高并发扩容）。
+
+        切口也恰好是**中间态最小**的地方：交接时 context 里只有一串 chunk
+        文本；换成在 indexing 中间切，就得把 200×1024 维的向量塞进任务表。
+
+        单进程部署（`InProcessExecutor`）下 lane 全部被忽略，三个阶段照旧
+        一口气跑完 —— 分道不是新的执行模型，只是多 worker 时的路由信息。
+        """
         flow = StagePipeline()
-        flow.stage("extracting")(self._extract)
-        flow.stage("chunking")(self._chunk)
-        flow.stage("indexing")(self._index)
+        flow.stage("extracting", lane=LANE_CPU)(self._extract)
+        flow.stage("chunking", lane=LANE_CPU)(self._chunk)
+        flow.stage("indexing", lane=LANE_IO)(self._index)
         return flow
 
     async def _extract(self, ctx: TaskContext) -> None:

@@ -12,8 +12,11 @@ from __future__ import annotations
 import os
 import socket
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 pytestmark = pytest.mark.integration
 
@@ -56,6 +59,45 @@ def redis_url() -> str:
 def milvus_uri() -> str:
     _require("localhost", 19530, "Milvus")
     return MILVUS_URI
+
+
+#: `TRUNCATE` 要 ACCESS EXCLUSIVE 锁。有别的连接还开着事务时，
+#: 默认行为是**无限期等下去** —— 症状就是整个测试进程静默挂起，没有任何输出，
+#: 排查时甚至看不出卡在哪个用例上。曾经真的挂过 11 分钟才被人工掐掉。
+#: 加上超时，就把"静默挂起"换成了一条指名道姓的报错。
+LOCK_TIMEOUT = "5s"
+
+
+async def truncate_tables(target: Any, *tables: str) -> None:
+    """清表。表不存在则 skip（提示先跑迁移），拿不到锁则**报错而不是干等**。
+
+    `target` 可以是 DSN 字符串（自建自弃一个引擎），也可以是现成的 `Database`。
+    """
+    from comet_rag.infrastructure.database import Database
+
+    own = isinstance(target, str)
+    db = Database(target) if own else target
+    try:
+        async with db.session() as session:
+            for table in tables:
+                exists = (
+                    await session.execute(text(f"SELECT to_regclass('{table}')"))
+                ).scalar_one()
+                if exists is None:
+                    pytest.skip(f"{table} 表不存在，先跑 `uv run alembic upgrade head`")
+        async with db.transaction() as session:
+            await session.execute(text(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'"))
+            for table in tables:
+                # CASCADE：一并清掉靠外键挂着的行（如 task_events）
+                await session.execute(text(f"TRUNCATE TABLE {table} CASCADE"))
+    except OperationalError as exc:  # lock_timeout 到点
+        pytest.fail(
+            f"清 {tables} 时在 {LOCK_TIMEOUT} 内拿不到锁 —— "
+            f"多半是上一个用例漏关了会话或事务：{exc}"
+        )
+    finally:
+        if own:
+            await db.aclose()
 
 
 @pytest.fixture

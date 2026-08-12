@@ -17,6 +17,7 @@ from comet_rag.infrastructure.database import Database
 from comet_rag.tasks import TaskStatus, TaskStore, VersionConflict
 from comet_rag.tasks.store_postgres import PostgresTaskStore
 from tests.contracts.task_store import TaskStoreContract
+from tests.integration.conftest import truncate_tables
 
 pytestmark = pytest.mark.integration
 
@@ -31,9 +32,8 @@ async def _require_migrated(database: Database) -> None:
 
 
 async def _truncate(database: Database) -> None:
-    async with database.transaction() as session:
-        # CASCADE 一并清掉 task_events
-        await session.execute(text("TRUNCATE TABLE tasks CASCADE"))
+    """CASCADE 一并清掉 task_events。锁等待有上限 —— 见 `conftest.truncate_tables`。"""
+    await truncate_tables(database, "tasks")
 
 
 @pytest.fixture

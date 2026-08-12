@@ -28,7 +28,6 @@ from arq import ArqRedis, create_pool
 from arq.connections import RedisSettings
 from arq.jobs import Job
 from arq.worker import Worker
-from sqlalchemy import text
 
 from comet_rag.infrastructure.database import Database
 from comet_rag.tasks import (
@@ -45,6 +44,7 @@ from comet_rag.tasks.executor_arq import JOB_NAME, ArqExecutor, run_task
 from comet_rag.tasks.store_postgres import PostgresTaskStore
 from tests.contracts.support import wait_for_terminal, wait_until
 from tests.contracts.task_executor import TaskExecutorContract
+from tests.integration.conftest import truncate_tables
 
 pytestmark = pytest.mark.integration
 
@@ -215,7 +215,9 @@ async def test_job_id_must_vary_per_attempt(pool: ArqRedis) -> None:
     """
 
     class _NaiveJobId(ArqExecutor):
-        def job_id_for(self, task_id: str, attempts: int) -> str:
+        def job_id_for(
+            self, task_id: str, attempts: int, lane: str | None = None
+        ) -> str:
             return task_id  # ← todo.md 的原始写法
 
         # 让 arq 的结果键更快过期都救不了：默认一小时，实际部署里必挂
@@ -265,18 +267,9 @@ async def _attempts_reached(store: TaskStore, task_id: str, n: int) -> bool:
 
 
 async def _clean(dsn: str) -> None:
-    db = Database(dsn)
-    try:
-        async with db.session() as session:
-            exists = (
-                await session.execute(text("SELECT to_regclass('tasks')"))
-            ).scalar_one()
-            if exists is None:
-                pytest.skip("tasks 表不存在，先跑 `uv run alembic upgrade head`")
-        async with db.transaction() as session:
-            await session.execute(text("TRUNCATE TABLE tasks CASCADE"))
-    finally:
-        await db.aclose()
+    """清表。锁等待有上限，拿不到就报错而不是静默挂起 ——
+    实现与理由见 `conftest.truncate_tables`。"""
+    await truncate_tables(dsn, "tasks")
 
 
 @pytest.fixture

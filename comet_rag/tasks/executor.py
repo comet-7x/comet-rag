@@ -32,6 +32,7 @@ from typing import Any
 from .models import TaskError, TaskStatus
 from .runner import (
     Done,
+    Handoff,
     Outcome,
     RetriableError,
     TaskCancelled,
@@ -77,11 +78,14 @@ class StoreDrivenExecutor(TaskExecutor):
         retry_backoff: float = 1.0,
         worker_id: str | None = None,
         worker_prefix: str = "exec",
+        lane: str | None = None,
     ) -> None:
         self._store = store
         self._timeout = default_timeout
         self._backoff = retry_backoff
         self._worker_id = worker_id or f"{worker_prefix}-{uuid.uuid4().hex[:6]}"
+        #: 本实例服务哪条负载道。None = 全都做（单进程），此时永远不会有移交。
+        self._lane = lane
         #: 本实例正在执行的任务。关停时要把它们排干，否则会留下 RUNNING 僵尸。
         self._inflight: set[str] = set()
         self._detached: set[asyncio.Task[None]] = set()
@@ -90,6 +94,10 @@ class StoreDrivenExecutor(TaskExecutor):
     @property
     def worker_id(self) -> str:
         return self._worker_id
+
+    @property
+    def lane(self) -> str | None:
+        return self._lane
 
     # ── 执行 ───────────────────────────────────────────────────────────────
 
@@ -114,7 +122,9 @@ class StoreDrivenExecutor(TaskExecutor):
                 error=None,
                 message="执行中",
             )
-            ctx = TaskContext(self._store, task_id, worker_id=self._worker_id)
+            ctx = TaskContext(
+                self._store, task_id, worker_id=self._worker_id, lane=self._lane
+            )
             coro = runner(ctx)
             outcome = (
                 await asyncio.wait_for(coro, self._timeout)
@@ -139,11 +149,25 @@ class StoreDrivenExecutor(TaskExecutor):
         进程内实现要立刻返回（否则本轮协程收不了尾），跨进程实现用队列的延迟投递。
         """
 
+    async def _schedule_handoff(self, task_id: str, lane: str) -> None:
+        """把任务交到另一条负载道上。
+
+        默认退化成"就地重排队"：单进程部署里根本不分道，也就不会走到这儿；
+        真要走到了（比如有人给 InProcessExecutor 配了 lane），重排一次总比
+        把任务丢了强。跨进程实现覆写它，投到目标道对应的队列。
+        """
+        await self._schedule_retry(task_id, 0.0)
+
     # ── 收尾 ───────────────────────────────────────────────────────────────
 
     async def _finish(self, task_id: str, outcome: Outcome) -> None:
+        if isinstance(outcome, Handoff):
+            await self._hand_off(task_id, outcome)
+            return
         if not isinstance(outcome, Done):
-            raise TypeError(f"runner 必须返回 Done，得到 {type(outcome).__name__}")
+            raise TypeError(
+                f"runner 必须返回 Done 或 Handoff，得到 {type(outcome).__name__}"
+            )
         await self._store.transition(
             task_id,
             TaskStatus.SUCCEEDED,
@@ -154,6 +178,34 @@ class StoreDrivenExecutor(TaskExecutor):
             resume_stage=None,
             message=outcome.message,
         )
+
+    async def _hand_off(self, task_id: str, outcome: Handoff) -> None:
+        """交棒：退回 PENDING + 写续跑锚点 + 投到目标道。
+
+        **不消耗重试次数**。`execute()` 进 RUNNING 时把 attempts 加了 1，
+        那笔账要在这里退回去 —— 移交是正常流程，不是一次失败的尝试。
+        不退的话，一条三阶段两次移交的流水线开跑即耗掉 2 次重试预算，
+        真出故障时反而没得重试了。
+        """
+        task = await self._store.get(task_id)
+        if task is None or task.status is not TaskStatus.RUNNING:
+            return  # 期间被取消了，别把它拽回 PENDING
+        await self._store.transition(
+            task_id,
+            TaskStatus.PENDING,
+            attempts=max(task.attempts - 1, 0),
+            resume_stage=outcome.resume_stage,
+            message=outcome.message,
+            note=f"移交 {self._lane} → {outcome.lane}",
+        )
+        logger.info(
+            "任务 %s 移交 %s → %s（续跑自 %s）",
+            task_id,
+            self._lane,
+            outcome.lane,
+            outcome.resume_stage,
+        )
+        await self._schedule_handoff(task_id, outcome.lane)
 
     async def _mark_cancelled(self, task_id: str) -> None:
         """落 CANCELLED。**幂等**：任务已是终态就直接返回。
@@ -266,6 +318,7 @@ class InProcessExecutor(StoreDrivenExecutor):
         retry_backoff: float = 1.0,
         hard_cancel: bool = True,
         worker_id: str | None = None,
+        lane: str | None = None,
     ) -> None:
         super().__init__(
             store,
@@ -273,6 +326,9 @@ class InProcessExecutor(StoreDrivenExecutor):
             retry_backoff=retry_backoff,
             worker_id=worker_id,
             worker_prefix="inproc",
+            # 默认 None = 不分道，整条流水线在本进程跑完。单进程部署下
+            # 分道毫无意义 —— 移交只会变成一次没有必要的入队往返。
+            lane=lane,
         )
         self._sem = asyncio.Semaphore(max_concurrency)
         self._hard_cancel = hard_cancel  # 是否在协作取消之外再补一刀 asyncio.cancel

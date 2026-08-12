@@ -21,6 +21,17 @@ from typing import Any, Protocol
 from .models import Task, TaskStatus, Time
 from .store import TaskStore
 
+# 负载分道
+#
+# 按**负载特征**给阶段分道，而不是按业务名词。这是通用概念，不含 RAG 语义：
+# CPU 密集的阶段靠**多进程**扩容（GIL 决定了加协程无用），IO 密集的阶段靠
+# **单进程高并发**扩容（加进程只会让下游连接数翻倍）。
+#
+# 两者混在同一批 worker 里，扩容就必然有一边是错的：按 CPU 扩会把模型服务
+# 的连接数乘上进程数，按 IO 扩则解析阶段抢不到 CPU。
+LANE_CPU = "cpu"
+LANE_IO = "io"
+
 
 # 结果类型
 @dataclass(slots=True)
@@ -32,7 +43,23 @@ class Done:
     message: str = "已完成"
 
 
-Outcome = Done
+@dataclass(slots=True)
+class Handoff:
+    """本 worker 该做的阶段做完了，**剩下的交给另一条道上的 worker**。
+
+    既不是成功也不是失败：任务退回 PENDING、带上 `resume_stage`，由目标
+    队列上的 worker 接手续跑。**不消耗重试次数** —— 移交是正常流程，
+    把它算成一次尝试会让真正的故障少一次重试机会。
+
+    单进程部署下永远不会产生：`TaskContext.lane` 为 None 时不分道。
+    """
+
+    lane: str
+    resume_stage: str
+    message: str = "已移交"
+
+
+Outcome = Done | Handoff
 
 
 class TaskCancelled(Exception):
@@ -61,11 +88,14 @@ class TaskContext:
         task_id: str,
         *,
         worker_id: str | None = None,
+        lane: str | None = None,
         heartbeat_interval: timedelta = timedelta(seconds=10),
     ) -> None:
         self.store = store
         self.task_id = task_id
         self.worker_id = worker_id
+        #: 本 worker 服务哪条道。None = 全都做（单进程部署），此时不会有移交。
+        self.lane = lane
         self._hb_interval = heartbeat_interval
         self._last_beat = Time.now()
 
@@ -183,25 +213,36 @@ class StagePipeline:
     续跑语义：`resume_stage` 由执行器在**可重试失败**时写入当前阶段名，
     重试时本流水线跳过它之前的所有阶段，直接从失败处重来。被跳过阶段的
     产出必须已经写进 `task.context`（用 `ctx.put()`），否则续跑会读不到。
+
+    分道语义：阶段可以声明 `lane`（见 `LANE_CPU` / `LANE_IO`）。当下一个
+    阶段的 lane 与本 worker 服务的 lane 不同时，流水线返回 `Handoff` ——
+    任务退回队列，由那条道上的 worker 接手。移交点复用的正是 `resume_stage`
+    这套已有机制：**移交与续跑在实现上是同一件事**，区别只在原因。
     """
 
-    stages: list[tuple[str, StageFn]] = field(default_factory=list)
+    stages: list[tuple[str, StageFn, str | None]] = field(default_factory=list)
 
-    def stage(self, name: str) -> Callable[[StageFn], StageFn]:
+    def stage(
+        self, name: str, *, lane: str | None = None
+    ) -> Callable[[StageFn], StageFn]:
         def deco(fn: StageFn) -> StageFn:
-            self.stages.append((name, fn))
+            self.stages.append((name, fn, lane))
             return fn
 
         return deco
 
     async def __call__(self, ctx: TaskContext) -> Outcome:
-        names = [n for n, _ in self.stages]
+        names = [n for n, _, _ in self.stages]
         task = await ctx.snapshot()
         start = names.index(task.resume_stage) if task.resume_stage in names else 0
         total = len(self.stages)
 
         for i in range(start, total):
-            name, fn = self.stages[i]
+            name, fn, lane = self.stages[i]
+            # 换道就地停下，把剩下的交出去。注意判断在 enter_stage **之前**：
+            # 否则会留下一条本 worker 根本没执行过的阶段记录。
+            if lane is not None and ctx.lane is not None and lane != ctx.lane:
+                return Handoff(lane=lane, resume_stage=name)
             await ctx.checkpoint()
             await ctx.enter_stage(name, progress=i / total)
             outcome = await fn(ctx)

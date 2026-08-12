@@ -117,6 +117,38 @@ uv run pytest -m integration
 可用 `COMET_TEST_POSTGRES_DSN` / `COMET_TEST_REDIS_URL` / `COMET_TEST_MILVUS_URI`
 指向别的实例。
 
+### 跑 arq 的用例时，Redis 键怎么隔离
+
+worker 相关的集成测试要真的用 Redis，隔离方式分两种，选哪种取决于
+**队列名本身是不是被测对象**：
+
+| 用例 | 隔离方式 | 为什么 |
+|---|---|---|
+| `test_executor_arq.py`、`test_workers_split.py` | 每个用例一条随机队列名（db 0） | 队列名无所谓，随机最省事 |
+| `test_e2e_workers.py` | 生产队列名 + **独立 redis db 15** | 它验的就是生产 `PROFILE`，队列名不能改 |
+
+第二种若也用 db 0，`_drain_queues` 会把开发机上真跑着的 `comet:cpu` /
+`comet:io` 一起删掉 —— 测试删掉开发者的队列，属于最难联想到原因的那类事故。
+
+worker 跑在测试进程自己的事件循环里（arq 的 `async_run()`）。调度全程走真实
+Redis，少掉的只有 `fork`；而"生产端与消费端之间除了 Redis 与 TaskStore 再无
+别的通道"这一点，靠**两个 executor 实例 + 两条独立数据库连接**来证明
+（见 `test_executor_arq.py` 下半部分）。
+
+⚠️ **runner 注册表是进程级全局的**。测试把三个 `Context`（API + 两个 worker）
+挤进同一个进程，最后一次 `wire_runners` 说了算 —— 真实部署下各进程各有一份，
+不存在这个问题。`test_e2e_workers.py` 里有注释标出了这处差异。
+
+### 清表一律走 `conftest.truncate_tables`
+
+`TRUNCATE` 要 ACCESS EXCLUSIVE 锁；有别的连接还开着事务时，PostgreSQL 的默认
+行为是**无限期等下去**。症状是整个 pytest 进程静默挂起 —— 没有输出、没有报错，
+连卡在哪个用例上都看不出来（本项目真的挂过一次，11 分钟后人工掐掉才发现）。
+
+所以清表统一走那一个 helper，它会先 `SET LOCAL lock_timeout`，拿不到锁就
+`pytest.fail` 并指出"多半是上一个用例漏关了会话"。**新写的集成测试不要再自己
+拼 TRUNCATE**：把"静默挂起"换成一条指名道姓的报错，是这个 helper 存在的全部理由。
+
 ## 数据库迁移
 
 ```bash
