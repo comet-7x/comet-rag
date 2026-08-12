@@ -330,6 +330,34 @@ async def test_swallowed_race_is_logged(store: TaskStore) -> None:
     assert any("已被接手" in r for r in records), f"咽掉了却没留痕：{records}"
 
 
+async def test_unknown_state_is_never_swallowed(store: TaskStore) -> None:
+    """抑制条件是**显式白名单**，不是"只要不是 PENDING"（PR 评审 #10）。
+
+    这里伪造一个"submit 被拒、但任务仍停在一个不该被抑制的状态"的情形：
+    白名单写法会上抛，反向条件写法（`!= PENDING`）会默默咽掉。
+
+    真实价值在将来：状态机日后加一个新状态时，它会掉进 `raise` 分支被人看见，
+    而不是被一句"反正不是 PENDING"顺手纳入抑制范围。
+    """
+    from comet_rag.tasks import service as service_module  # noqa: PLC0415
+
+    class _RejectingExecutor(InProcessExecutor):
+        async def submit(self, task_id: str, *, delay: float = 0.0) -> None:
+            raise ValueError("只有 PENDING 可提交，当前 某个未来的新状态")
+
+    executor = _RejectingExecutor(store, retry_backoff=0.01)
+    svc = TaskService(store, executor)
+    # 把白名单临时清空 = 模拟"当前状态不在已知的良性集合里"
+    original = service_module._ALREADY_HANDLED
+    service_module._ALREADY_HANDLED = frozenset()
+    try:
+        with pytest.raises(ValueError, match="只有 PENDING 可提交"):
+            await svc.submit("rs-demo", {})
+    finally:
+        service_module._ALREADY_HANDLED = original
+        await executor.shutdown(timeout=5.0)
+
+
 async def _minutes_ago(store: TaskStore, task_id: str, minutes: int):
     from comet_rag.tasks import Time
 

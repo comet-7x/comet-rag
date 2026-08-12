@@ -15,6 +15,19 @@ from .executor import TaskExecutor
 from .models import Task, TaskEvent, TaskStatus
 from .store import TaskStore
 
+#: 这几种状态意味着"这个任务已经有人管了或已经有结果了"，此时 `submit` 被拒
+#: 是良性的竞态，不是错误。**逐一列出而不是写成 `!= PENDING`**：
+#: 日后状态机加了新状态，会掉进 `raise` 分支被看见，而不是被默默咽掉。
+_ALREADY_HANDLED = frozenset(
+    {
+        TaskStatus.RUNNING,  # 别的 worker 抢先认领了 —— 最常见的一种
+        TaskStatus.CANCELLING,  # 已在取消途中，此时排期毫无意义
+        TaskStatus.CANCELLED,  # 用户已取消，不该再排
+        TaskStatus.SUCCEEDED,  # 已经跑完了
+        TaskStatus.FAILED,  # 跑过并判死（如 kind 未注册），排期的目的已达成
+    }
+)
+
 
 class Backlogged(RuntimeError):
     """待执行任务已堆到上限，拒收新任务（spec S4-1）。
@@ -112,27 +125,26 @@ class TaskService:
             )
 
     async def _enqueue(self, task_id: str) -> None:
-        """排期，并咽下"有人抢先一步"这一种失败。
+        """排期，并且**只**咽下"别人抢先接手了"这一种失败。
 
         跨进程部署下，「读到 PENDING」与「真正入队」之间隔着一次网络往返，
         worker 完全可能在这个缝里把任务捞走。此时 `executor.submit` 会以
         "只有 PENDING 可提交" 拒绝 —— 但调用方的目的（任务被排上了）其实
         已经达成，报错反而会让一次幂等的重复 POST 变成 500。
 
-        只在**确认它真的离开了 PENDING** 时才咽：否则就是真错误，必须上抛。
+        抑制条件写成**显式的状态白名单**（PR 评审 #10）。原来写的是
+        "只要不是 PENDING 就咽"，行为上等价，但那是个**反向条件** ——
+        它表达的是"排除掉一种"，而不是"我认得这几种，其余一律上抛"。
+        日后状态机加一个状态，反向条件会默默把它也纳入抑制范围。
 
-        关于"会不会把不相干的错误也咽掉"（PR 评审 #10）：
-          · 执行器已关停抛的是 `RuntimeError`，**不在捕获范围内**，照常上抛；
-          · 任务被并发取消 → 状态离开 PENDING → 咽掉是对的：它已经不该被排期了；
-          · 任何让它留在 PENDING 的失败 → 上抛。
-        也就是说，被咽掉的只有"别人已经接手了"这一种。
-        但**咽掉必须留痕** —— 原来是完全静默的，真出了没预料到的情况也查不出来。
+        另外澄清一点：执行器已关停抛的是 `RuntimeError`，压根不在
+        `except ValueError` 的捕获范围内，从来就是照常上抛的。
         """
         try:
             await self.executor.submit(task_id)
         except ValueError:
             current = await self.store.get(task_id)
-            if current is None or current.status is TaskStatus.PENDING:
+            if current is None or current.status not in _ALREADY_HANDLED:
                 raise
             logger.info(
                 f"任务 {task_id} 在入队前已被接手（当前 {current.status.value}），"

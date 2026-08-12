@@ -208,6 +208,28 @@ def build_reranker(config: APPConfig) -> BaseReranker | None:
     )
 
 
+def _assert_gated(gate: Gate, *models: object) -> None:
+    """**启动时就确认闸门真的挂上了**（PR 评审 #9/#12）。
+
+    闸门是"静默失效"型的保护：没挂上不会报错、不会打日志，只是限流不生效 ——
+    而那正是本项目实测出"配置写 4、实际 128"的那个缺陷。
+
+    静态守卫（`tests/unit/test_layering.py`）能拦住仓库内直接 new 模型的写法，
+    但拦不住**注入进来的自定义实现**：某个第三方子类把 `bind_gate` 覆写成空操作，
+    静态检查看不见。所以这里在装配的最后一步再验一次 —— 宁可起不来，
+    也别带着一个失效的闸门上线。
+    """
+    for model in models:
+        if model is None:
+            continue
+        bound = getattr(model, "_gate", None)
+        if bound is not gate:
+            raise RuntimeError(
+                f"{type(model).__name__} 没有正确挂上并发闸门"
+                f"（bind_gate 被覆写了？）—— 限流会静默失效，拒绝启动"
+            )
+
+
 def build_context(
     config: APPConfig,
     *,
@@ -241,6 +263,7 @@ def build_context(
     embedding_model.bind_gate(gate)
     if reranker is not None:
         reranker.bind_gate(gate)
+    _assert_gated(gate, embedding_model, reranker)
     vector_store = vector_store or build_vector_store(config)
     task_store = task_store or build_task_store(config, database)
     task_executor = task_executor or build_task_executor(

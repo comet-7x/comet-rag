@@ -245,3 +245,39 @@ def test_injected_test_doubles_get_the_gate_too() -> None:
         make_config(), embedding_model=embedding, vector_store=InMemoryVectorStore()
     )
     assert embedding._gate is not None  # noqa: SLF001
+
+
+def test_startup_fails_when_the_gate_does_not_stick() -> None:
+    """**闸门没挂上就拒绝启动**（PR 评审 #9/#12）。
+
+    静态守卫拦得住仓库内直接 new 模型的写法，但拦不住**注入进来的实现**：
+    某个子类把 `bind_gate` 覆写成空操作，AST 检查看不见。
+
+    闸门是"静默失效"型保护 —— 没挂上不报错、不打日志，只是限流不生效。
+    宁可起不来，也别带着一个失效的闸门上线。
+    """
+
+    class SilentlyUngated(FakeEmbedding):
+        def bind_gate(self, gate) -> None:  # 假装挂了，其实没有
+            return None
+
+    with pytest.raises(RuntimeError, match="没有正确挂上并发闸门"):
+        build_context(
+            make_config(),
+            embedding_model=SilentlyUngated(),
+            vector_store=InMemoryVectorStore(),
+        )
+
+
+def test_reranker_is_checked_too() -> None:
+    class SilentlyUngatedReranker(FakeReranker):
+        def bind_gate(self, gate) -> None:
+            return None
+
+    with pytest.raises(RuntimeError, match="没有正确挂上并发闸门"):
+        build_context(
+            make_config(),
+            embedding_model=FakeEmbedding(),
+            reranker=SilentlyUngatedReranker(),
+            vector_store=InMemoryVectorStore(),
+        )
