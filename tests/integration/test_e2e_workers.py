@@ -40,6 +40,7 @@ from comet_rag.config.schemas import (
     BackendsConfig,
     EmbeddingModelConfig,
     InfrastructureConfig,
+    IngestPolicyConfig,
     RedisConfig,
     ServerConfig,
     SqlDatabaseConfig,
@@ -122,6 +123,9 @@ def make_config(milvus_uri: str) -> APPConfig:
             vector_store=Backend.MILVUS,
             task_executor=Backend.ARQ,  # ← 本用例的主角
         ),
+        # 这些用例走的正是"服务端读本地文件"这条**危险能力**，
+        # 所以必须显式打开 —— 默认是拒绝的（PR 评审 #4）。
+        ingest_policy=IngestPolicyConfig(allow_local=True),
     )
 
 

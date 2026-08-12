@@ -22,6 +22,7 @@ from comet_rag.config.schemas import (
     BackendsConfig,
     EmbeddingModelConfig,
     InfrastructureConfig,
+    IngestPolicyConfig,
     ServerConfig,
     SqlDatabaseConfig,
 )
@@ -83,6 +84,9 @@ def make_postgres_config() -> APPConfig:
             task_store=Backend.POSTGRES,  # ← 换的就是这一行
             vector_store=Backend.MEMORY,  # Milvus 留给 T21
         ),
+        # 这些用例走的正是"服务端读本地文件"这条**危险能力**，
+        # 所以必须显式打开 —— 默认是拒绝的（PR 评审 #4）。
+        ingest_policy=IngestPolicyConfig(allow_local=True),
     )
 
 

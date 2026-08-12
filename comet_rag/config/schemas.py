@@ -179,6 +179,36 @@ class LimitsConfig(BaseModel):
     )
 
 
+class IngestPolicyConfig(BaseModel):
+    """入库来源准入（spec §7 Never 之外的一条硬边界，PR 评审 #4）。
+
+    `POST /ingest` 的 `source` 是调用方给的字符串，会被直接交给 loader ——
+    不加约束的话，服务能读到的文件、能连到的网络，调用方都能拿到
+    （任意文件读取 + SSRF）。**默认是拒绝**，需要的能力显式打开。
+    """
+
+    allow_local: bool = Field(
+        default=False,
+        description="是否允许从**服务器本地路径**入库。默认关：这是危险能力，"
+        "开了之后调用方能让服务读取它权限内的任意文件",
+    )
+    local_roots: list[str] = Field(
+        default_factory=list,
+        description="allow_local 时限定的根目录（会展开符号链接后做包含性检查）。"
+        "为空 = 整个文件系统，生产环境务必配置",
+    )
+    allow_url: bool = Field(default=True, description="是否允许从 http/https 入库")
+    allow_private_network: bool = Field(
+        default=False,
+        description="是否允许访问私网/环回/链路本地地址。**默认关 —— 这是挡 SSRF "
+        "的主力**，云上元数据服务（169.254.169.254）正是靠它挡住的",
+    )
+    allowed_url_hosts: list[str] = Field(
+        default_factory=list,
+        description="URL 主机白名单。为空 = 不限（私网仍被上一条挡着）",
+    )
+
+
 class InfrastructureConfig(BaseModel):
     embedding_model: EmbeddingModelConfig = Field(..., description="嵌入模型配置")
     #: 可选：没配就跳过重排，检索仍可用（见 services/retrieval.py）
@@ -202,4 +232,7 @@ class APPConfig(BaseModel):
     )
     limits: LimitsConfig = Field(
         default_factory=LimitsConfig, description="并发闸门与背压上限"
+    )
+    ingest_policy: IngestPolicyConfig = Field(
+        default_factory=IngestPolicyConfig, description="入库来源准入策略"
     )

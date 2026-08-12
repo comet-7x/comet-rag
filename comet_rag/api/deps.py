@@ -14,6 +14,7 @@ from ..core.degradation import Level
 from ..infrastructure.vectorstore import BaseVectorStore
 from ..services.knowledge_base import KnowledgeBaseService
 from ..services.retrieval import RetrievalService
+from ..services.source_policy import SourcePolicy
 from ..tasks import TaskService
 
 
@@ -76,3 +77,10 @@ def admission_guard(ctx: ContextDep) -> None:
 
 
 AdmissionDep = Annotated[None, Depends(admission_guard)]
+
+
+def get_source_policy(ctx: ContextDep) -> SourcePolicy | None:
+    return getattr(ctx, "source_policy", None)
+
+
+SourcePolicyDep = Annotated["SourcePolicy | None", Depends(get_source_policy)]

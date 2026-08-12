@@ -137,3 +137,68 @@ def test_single_process_paths_never_pull_in_lease_reclaim(module: Path) -> None:
         f"租约回收只能挂在 workers/ 上：单进程模式下启用它会造成"
         f"一份任务两个执行者。"
     )
+
+
+# ── 模型必须经组合根装配（PR 评审 #9）───────────────────────────────────────
+
+#: 具体的模型实现。直接 new 它们就绕过了 `bind_gate()`，
+#: 于是 `_gate is None`，闸门**静默失效**（不报错、不打日志）。
+CONCRETE_MODELS = (
+    "Qwen3VLEmbeddingModel",
+    "OpenAIEmbeddingModel",
+    "Qwen3VLReranker",
+)
+
+#: 只有这些地方可以直接构造：组合根负责装配，模型模块自己是定义处。
+MAY_CONSTRUCT_MODELS = ("core/bootstrap.py",)
+
+
+def _model_construction_sites(module: Path) -> set[str]:
+    """找出模块里直接实例化具体模型类的地方。"""
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    hits: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        called = node.func
+        name = (
+            called.id
+            if isinstance(called, ast.Name)
+            else called.attr
+            if isinstance(called, ast.Attribute)
+            else None
+        )
+        if name in CONCRETE_MODELS:
+            hits.add(name)
+    return hits
+
+
+def _package_modules() -> list[Path]:
+    root = PROJECT_ROOT / "comet_rag"
+    return sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+@pytest.mark.parametrize("module", _package_modules(), ids=lambda p: p.name)
+def test_models_are_only_constructed_by_the_composition_root(module: Path) -> None:
+    """**并发闸门只在 `build_context()` 里挂上**（`bind_gate()`）。
+
+    任何绕开组合根直接 new 模型的地方，`_gate` 都是 None —— `aembed` 会
+    直接放行，退回"每次调用一个信号量"的老样子。而那正是本项目实测出
+    "配置写 4、实际 128"的那个缺陷（见 `core/concurrency.py`）。
+
+    危险之处在于它**不报错也不打日志**：静默地把限流关掉。
+    所以用结构性守卫顶上 —— 这条与"单进程不得启用租约回收"是同一套思路：
+    易错的约定，就把它变成够不着的结构。
+    """
+    relative = module.relative_to(PROJECT_ROOT / "comet_rag").as_posix()
+    if relative.startswith("infrastructure/models/"):
+        return  # 定义处自己不算
+    if any(relative.endswith(allowed) for allowed in MAY_CONSTRUCT_MODELS):
+        return
+
+    hits = _model_construction_sites(module)
+    assert not hits, (
+        f"{module.relative_to(PROJECT_ROOT)} 直接构造了 {sorted(hits)}，"
+        f"绕过了 build_context() 的 bind_gate() —— 闸门会静默失效。"
+        f"请从 Context 取，或在 core/bootstrap.py 里装配。"
+    )

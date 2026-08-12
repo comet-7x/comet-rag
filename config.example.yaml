@@ -81,3 +81,20 @@ limits:
   degrade_saturation: [2.0, 5.0, 10.0]    # 闸门等待者数 ÷ 并发上限
   degrade_min_samples: 20                 # 样本不足时一律判正常
   degrade_recover_after: 30.0             # 指标回落后要稳定这么久才恢复一级
+
+# 入库来源准入（安全边界，PR 评审 #4）。
+# POST /ingest 的 source 是调用方给的字符串，会被交给 loader 去读文件或发请求 ——
+# 不加约束的话，服务能读到的文件、能连到的网络，调用方都能拿到。
+ingest_policy:
+  # 是否允许从**服务器本地路径**入库。默认 false：开了等于给调用方一个
+  # 任意文件读取通道（读到的内容会切块入库，再从 /search 读出来）。
+  allow_local: false
+  # allow_local 为 true 时限定的根目录。展开符号链接与 .. 之后再做包含性检查。
+  # 留空 = 整个文件系统，生产环境务必配置。
+  local_roots: []
+  allow_url: true
+  # 是否允许访问私网/环回/链路本地地址。默认 false —— 这是挡 SSRF 的主力，
+  # 云上元数据服务（169.254.169.254，含临时凭据）正是靠它挡住的。
+  allow_private_network: false
+  # URL 主机白名单。留空 = 不限（私网仍被上一条挡着）。
+  allowed_url_hosts: []

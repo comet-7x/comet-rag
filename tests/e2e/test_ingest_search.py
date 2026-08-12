@@ -22,6 +22,7 @@ from comet_rag.config.schemas import (
     APPConfig,
     EmbeddingModelConfig,
     InfrastructureConfig,
+    IngestPolicyConfig,
     ServerConfig,
 )
 from comet_rag.engines.loaders.base_loader import BaseLoader
@@ -119,6 +120,9 @@ def make_config() -> APPConfig:
                 base_url="http://unused", model_name="stub-embed", dim=DIM
             )
         ),
+        # 这些用例走的正是"服务端读本地文件"这条**危险能力**，
+        # 所以必须显式打开 —— 默认是拒绝的（PR 评审 #4）。
+        ingest_policy=IngestPolicyConfig(allow_local=True),
     )
 
 
@@ -430,3 +434,62 @@ async def test_changing_embedding_model_returns_409(
     # 报错要说清后果，而不只是干巴巴一句"不匹配"
     assert "语义空间" in body["error"]
     assert "trace_id" in body
+
+
+# ── 来源准入（PR 评审 #4）──────────────────────────────────────────────────
+
+
+async def test_ingest_refuses_arbitrary_server_paths_by_default(
+    document: Path,
+) -> None:
+    """**默认部署下 `/ingest` 不许读服务器上的任意文件。**
+
+    本文件其余用例都显式打开了 `allow_local`（它们验的正是这条危险能力），
+    所以这里另起一个**默认配置**的应用 —— 否则测的是被放开之后的样子。
+    """
+    app = create_app(
+        APPConfig(
+            server_config=ServerConfig(app_name="locked", host="127.0.0.1", port=0),
+            infrastructure_config=InfrastructureConfig(
+                embedding_model=EmbeddingModelConfig(
+                    base_url="http://unused", model_name="stub-embed", dim=DIM
+                )
+            ),
+        ),
+        embedding_model=KeywordEmbedding(),
+        vector_store=InMemoryVectorStore(),
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        httpx.AsyncClient(transport=transport, base_url="http://test") as http,
+        app.router.lifespan_context(app),
+    ):
+        await http.post("/kb", json={"kb_id": KB})
+
+        for source in ("/etc/passwd", "../../etc/shadow", str(document)):
+            resp = await http.post("/ingest", json={"kb_id": KB, "source": source})
+            assert resp.status_code == 403, (
+                f"{source} 竟然被受理了（{resp.status_code}）—— 任意文件读取通道"
+            )
+
+        # 拒绝必须发生在**建任务之前**：不该留下任何任务记录
+        listed = await http.get("/tasks")
+        assert listed.json()["tasks"] == [], "被拒的请求留下了任务记录"
+
+
+async def test_ingest_refuses_ssrf_targets(client: httpx.AsyncClient) -> None:
+    """云元数据服务是 SSRF 最经典的目标 —— 那里有临时凭据。
+
+    注意本用例用的是已经 `allow_local=True` 的那个 client：
+    放开本地路径**不等于**放开内网访问，两者是各自独立的开关。
+    """
+    await client.post("/kb", json={"kb_id": KB})
+
+    for source in (
+        "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+        "http://127.0.0.1:6379/",
+        "http://localhost:5432/",
+        "file:///etc/passwd",
+    ):
+        resp = await client.post("/ingest", json={"kb_id": KB, "source": source})
+        assert resp.status_code == 403, f"{source} 没被挡住（{resp.status_code}）"

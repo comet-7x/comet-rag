@@ -58,6 +58,8 @@ class Context:
     model_gate: Any = None
     #: 分级降级控制器（S4-5）。读路径与写路径都要问它。
     degradation: Any = None
+    #: 入库来源准入策略。写路径在**建任务之前**问它。
+    source_policy: Any = None
     #: 仅在 task_store/kb 用 postgres 时存在。关停时要 dispose 连接池。
     database: Any = None
     #: 需要在关停时释放、但不属于上面任何一类的资源（按注册顺序逆序关闭）

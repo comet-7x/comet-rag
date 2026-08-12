@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from comet_rag.core.logging import logger
+
 from .executor import TaskExecutor
 from .models import Task, TaskEvent, TaskStatus
 from .store import TaskStore
@@ -102,6 +104,13 @@ class TaskService:
         已经达成，报错反而会让一次幂等的重复 POST 变成 500。
 
         只在**确认它真的离开了 PENDING** 时才咽：否则就是真错误，必须上抛。
+
+        关于"会不会把不相干的错误也咽掉"（PR 评审 #10）：
+          · 执行器已关停抛的是 `RuntimeError`，**不在捕获范围内**，照常上抛；
+          · 任务被并发取消 → 状态离开 PENDING → 咽掉是对的：它已经不该被排期了；
+          · 任何让它留在 PENDING 的失败 → 上抛。
+        也就是说，被咽掉的只有"别人已经接手了"这一种。
+        但**咽掉必须留痕** —— 原来是完全静默的，真出了没预料到的情况也查不出来。
         """
         try:
             await self.executor.submit(task_id)
@@ -109,6 +118,10 @@ class TaskService:
             current = await self.store.get(task_id)
             if current is None or current.status is TaskStatus.PENDING:
                 raise
+            logger.info(
+                f"任务 {task_id} 在入队前已被接手（当前 {current.status.value}），"
+                f"本次投递跳过"
+            )
 
     async def get(self, task_id: str) -> Task | None:
         return await self.store.get(task_id)

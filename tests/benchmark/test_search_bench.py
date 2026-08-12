@@ -17,6 +17,7 @@ from comet_rag.config.schemas import (
     APPConfig,
     EmbeddingModelConfig,
     InfrastructureConfig,
+    IngestPolicyConfig,
     LimitsConfig,
     ServerConfig,
 )
@@ -81,6 +82,9 @@ def make_config() -> APPConfig:
             ),
         ),
         limits=LimitsConfig(model_concurrency=64, max_backlog=0),
+        # 这些用例走的正是"服务端读本地文件"这条**危险能力**，
+        # 所以必须显式打开 —— 默认是拒绝的（PR 评审 #4）。
+        ingest_policy=IngestPolicyConfig(allow_local=True),
     )
 
 

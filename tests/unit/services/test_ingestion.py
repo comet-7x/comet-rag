@@ -401,6 +401,60 @@ async def test_reingest_removes_chunks_that_no_longer_exist(
     assert await store.acount(KB) == 1
 
 
+async def test_reingest_never_leaves_the_document_missing(
+    svc: TaskService, store: InMemoryVectorStore
+) -> None:
+    """**替换过程中，这份文档必须始终查得到**（PR 评审 #3）。
+
+    "先删掉旧的全部块、再写新的"是天然写法，但删完到写完之间存在一个窗口，
+    期间这份文档在库里**根本不存在**。任务在这中间失败、被取消、或 worker
+    崩掉，用户就永久失去了原本好好的那一版 —— 而他只想更新一下。
+
+    做法是在每次写入后都数一遍，全程不得归零。上面两条用例只看**结果**
+    （替换掉了、尾巴清了），看不见中间这个空窗。
+    """
+    first = await svc.submit(INGEST_KIND, request())
+    await wait_for_terminal(svc.store, first.task_id)
+    assert await store.acount(KB) == 3
+
+    # ⚠️ 必须在**每一次改动之后**采样，不能只盯 upsert。
+    # 第一版只包了 upsert，于是"先删后写"里那次删除完全没被看见 ——
+    # 反向验证时用例照样绿，等于没测。
+    seen: list[int] = []
+    original_upsert, original_delete = store.aupsert, store.adelete
+
+    async def watching_upsert(kb_id, records):
+        result = await original_upsert(kb_id, records)
+        seen.append(await store.acount(kb_id))
+        return result
+
+    async def watching_delete(kb_id, **kwargs):
+        result = await original_delete(kb_id, **kwargs)
+        seen.append(await store.acount(kb_id))
+        return result
+
+    store.aupsert = watching_upsert  # type: ignore[method-assign]
+    store.adelete = watching_delete  # type: ignore[method-assign]
+    try:
+        with PipelineHooks.temporary():
+
+            @PipelineHooks.chunker(STUB_TYPE)
+            def _fewer(text: str, config: PipelineConfig) -> list[str]:
+                return ["只剩一块。"]
+
+            again = await svc.submit(INGEST_KIND, request())
+            await wait_for_terminal(svc.store, again.task_id)
+    finally:
+        store.aupsert = original_upsert  # type: ignore[method-assign]
+        store.adelete = original_delete  # type: ignore[method-assign]
+
+    assert seen, "第二次入库一次都没动过向量库 —— 用例没测到东西"
+    assert all(count > 0 for count in seen), (
+        f"替换过程中文档一度消失（每次改动后的块数：{seen}）—— 说明是先删后写"
+    )
+    assert await store.acount(KB) == 1, "旧版本的尾巴没清掉，会变成查得到的幽灵"
+
+
 async def test_idempotency_key_prevents_duplicate_work(
     svc: TaskService, calls: dict[str, int]
 ) -> None:

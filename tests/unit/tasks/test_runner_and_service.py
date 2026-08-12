@@ -299,6 +299,37 @@ async def test_submit_still_raises_when_the_task_really_is_pending(
         await svc.submit("rs-demo", {})
 
 
+async def test_shutdown_error_is_never_swallowed(store: TaskStore) -> None:
+    """执行器已关停时抛的是 `RuntimeError`，**不在 `_enqueue` 的捕获范围内**。
+
+    这是对 PR 评审 #10 的回答：被咽掉的只有"别人已经接手了"这一种
+    （`ValueError` + 任务已离开 PENDING）。关停、连接断开等等抛的都不是
+    `ValueError`，照常上抛。
+    """
+    executor = InProcessExecutor(store, retry_backoff=0.01)
+    await executor.shutdown(timeout=5.0)
+    svc = TaskService(store, executor)
+
+    with pytest.raises(RuntimeError, match="已关停"):
+        await svc.submit("rs-demo", {})
+
+
+async def test_swallowed_race_is_logged(store: TaskStore) -> None:
+    """咽掉可以，但**不能静默** —— 否则真出了没预料到的情况也查不出来。"""
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="INFO")
+    executor = _StolenExecutor(store, retry_backoff=0.01)
+    try:
+        await TaskService(store, executor).submit("rs-demo", {})
+    finally:
+        logger.remove(sink)
+        await executor.shutdown(timeout=5.0)
+
+    assert any("已被接手" in r for r in records), f"咽掉了却没留痕：{records}"
+
+
 async def _minutes_ago(store: TaskStore, task_id: str, minutes: int):
     from comet_rag.tasks import Time
 

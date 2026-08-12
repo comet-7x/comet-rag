@@ -19,6 +19,7 @@ from comet_rag.config.schemas import (
     APPConfig,
     EmbeddingModelConfig,
     InfrastructureConfig,
+    IngestPolicyConfig,
     LimitsConfig,
     ServerConfig,
 )
@@ -95,6 +96,9 @@ def make_config() -> APPConfig:
             degrade_recover_after=1.0,
             degrade_min_samples=5,
         ),
+        # 这些用例走的正是"服务端读本地文件"这条**危险能力**，
+        # 所以必须显式打开 —— 默认是拒绝的（PR 评审 #4）。
+        ingest_policy=IngestPolicyConfig(allow_local=True),
     )
 
 

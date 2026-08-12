@@ -1,6 +1,7 @@
 import asyncio
 import io
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -59,6 +60,11 @@ class URLLoader(BaseLoader):
         # 只关自己造的
         self._owns_client = client is None
         self._owns_async_client = async_client is None
+        #: 保护"共享 client 正在被用"与"关掉它"这两件事互斥（PR 评审 #11）。
+        #: `batch_load` 改用共享 client 之后（S4-4 要求复用连接池），
+        #: 另一处调 `cleanup()` 就可能把它脚下的连接池抽掉，
+        #: 在途请求会撞上"client has been closed"。
+        self._client_lock = threading.Lock()
 
     @property
     def temp_files(self) -> list[str]:
@@ -250,10 +256,26 @@ class URLLoader(BaseLoader):
         max_concurrency: int = 10,
         **kwargs,
     ) -> list[LoaderContent]:
-        from concurrent.futures import ThreadPoolExecutor
-
         config = download_config or DownloadRequestConfig()
-        client = self._shared_client()
+        # 持锁跑完整批：期间 `cleanup()` 会等，而不是把连接池抽掉。
+        # 用锁而不是引用计数，是因为这里要的语义就是"用完再关"，
+        # 而 `batch_load` 本身是阻塞的，锁的持有区间是明确有界的。
+        with self._client_lock:
+            client = self._shared_client()
+            return self._batch_load_with(
+                client, sources, config, max_concurrency, **kwargs
+            )
+
+    def _batch_load_with(
+        self,
+        client: httpx.Client,
+        sources,
+        config,
+        max_concurrency: int,
+        **kwargs,
+    ) -> list[LoaderContent]:
+        from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
             futures = [
                 executor.submit(
@@ -291,9 +313,11 @@ class URLLoader(BaseLoader):
         for path in self._temp_files:
             Path(path).unlink(missing_ok=True)
         self._temp_files.clear()
-        if self._owns_client and self._client is not None:
-            self._client.close()
-            self._client = None
+        # 等 `batch_load` 用完再关（PR 评审 #11）。
+        with self._client_lock:
+            if self._owns_client and self._client is not None:
+                self._client.close()
+                self._client = None
 
     async def acleanup(self) -> None:
         await self.aclose()

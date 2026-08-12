@@ -23,6 +23,7 @@ from comet_rag.infrastructure.knowledge_base import (
     KnowledgeBaseNotFound,
 )
 from comet_rag.infrastructure.vectorstore import CollectionNotFound, DimensionMismatch
+from comet_rag.services.source_policy import SourceNotAllowed
 from comet_rag.tasks import TaskBusy, TaskNotFound, VersionConflict
 from comet_rag.tasks.service import Backlogged
 
@@ -75,6 +76,15 @@ def _install_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(TaskBusy)
     async def _busy(request: Request, exc: TaskBusy) -> JSONResponse:  # noqa: RUF029
         return _problem(request, status.HTTP_409_CONFLICT, str(exc))
+
+    @app.exception_handler(SourceNotAllowed)
+    async def _source_denied(request: Request, exc: SourceNotAllowed) -> JSONResponse:  # noqa: RUF029
+        """403 而非 400：请求格式没问题，是这个来源**不被允许**。
+
+        错误信息里刻意不回显解析出来的 IP 之类的细节 —— 那等于把内网探测
+        结果送给调用方，SSRF 防护会退化成一个好用的扫描器。
+        """
+        return _problem(request, status.HTTP_403_FORBIDDEN, str(exc))
 
     @app.exception_handler(Overloaded)
     async def _overloaded(request: Request, exc: Overloaded) -> JSONResponse:  # noqa: RUF029

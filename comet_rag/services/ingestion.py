@@ -18,6 +18,21 @@
 内存占用有界；且 upsert 以稳定的 chunk id 为主键、天然幂等，
 整段重跑是安全的（顶多重算一次向量，不会产生副本）。
 
+## 重新入库：先写后删，绝不先删后写
+
+替换一份文档时，天然的写法是"先删掉旧的全部块，再写新的"。**那是错的**
+（PR 评审 #3）：删完到写完之间存在一个窗口，期间这份文档在库里**根本不存在**。
+任务在这中间失败、被取消、或 worker 崩掉，用户就永久失去了原本好好的那一版
+—— 而他只是想更新一下。
+
+改成：先数旧版本有几块 → 原地覆盖着写新的 → 最后清掉多出来的尾巴。
+成立的前提是 chunk id 为 `sha256(source_id:序号)`，确定性且按序号，
+所以写入天然是原地覆盖。
+
+残留的局限（M1 接受）：写入窗口期间检索可能读到**新旧混合**的块。
+要彻底消除得上"写影子版本 + 原子切换"，那需要向量库层面的版本概念，
+留到以后。**混合远好过空白**：前者结果稍旧，后者是这份文档凭空消失。
+
 ## 阶段边界的纪律
 
 每个阶段必须**仅凭 `task.context` 就能独立开跑** —— 这是断点续跑
@@ -212,6 +227,20 @@ class IngestRunner:
         await ctx.put(chunks=chunks, text=None)
         await ctx.report(message=f"已切分 {len(chunks)} 块")
 
+    async def _drop_stale_tail(
+        self, kb_id: str, source_id: str, new_count: int, previous: int
+    ) -> None:
+        """删掉旧版本比新版本多出来的那些块。
+
+        chunk id 是 `sha256(f"{source_id}:{index}")` —— **确定性、按序号**。
+        所以重新入库是**原地覆盖** 0..N-1，唯一会变成幽灵的只有序号 ≥ N 的尾巴。
+        """
+        if previous <= new_count:
+            return
+        stale = [compute_sha256(f"{source_id}:{i}") for i in range(new_count, previous)]
+        await self._vector_store.adelete(kb_id, ids=stale)
+        logger.info(f"清理旧版本多余的 {len(stale)} 块 source_id={source_id[:12]}")
+
     async def _index(self, ctx: TaskContext) -> Done:
         """向量化并写入。按窗口边算边写，内存占用与文档大小无关。"""
         task = await ctx.snapshot()
@@ -232,9 +261,9 @@ class IngestRunner:
                 request.kb_id, dim=kb.embedding_dim
             )
 
-            # 重新入库同一文档时先清掉旧版本的全部 chunk：新版本可能切得更少，
-            # 不删的话尾部的旧 chunk 会永远留在库里成为幽灵。
-            await self._vector_store.adelete(
+            # 旧版本有多少块 —— 用来算写完之后该清掉哪些尾巴。
+            # **必须在写之前数**：写完之后新旧混在一起就分不出来了。
+            previous = await self._vector_store.acount(
                 request.kb_id, filter={"source_id": source_id}
             )
 
@@ -272,6 +301,10 @@ class IngestRunner:
                     progress=0.66 + 0.34 * written / max(len(chunks), 1),
                     message=f"已写入 {written}/{len(chunks)} 块",
                 )
+
+            # 新版本比旧的短时，清掉多出来的尾巴。
+            # **这一步必须放在全部写完之后**（PR 评审 #3）。
+            await self._drop_stale_tail(request.kb_id, source_id, len(chunks), previous)
         except Exception as exc:
             raise _classify(exc, "indexing") from exc
 

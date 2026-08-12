@@ -28,6 +28,7 @@ from comet_rag.infrastructure.vectorstore import (
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
+from comet_rag.services.source_policy import build_source_policy
 from comet_rag.tasks import (
     LANE_CPU,
     InMemoryTaskStore,
@@ -276,6 +277,7 @@ def build_context(
         database=database,
         model_gate=gate,
         degradation=degradation,
+        source_policy=build_source_policy(config.ingest_policy),
     )
     wire_runners(context, ingest_config=pipeline_config)
 
