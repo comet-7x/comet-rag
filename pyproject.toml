@@ -46,6 +46,21 @@ mineru = ["mineru>=2.0.0"]
 
 all = ["comet-rag[milvus,server]"]
 
+# 唯一推荐的启动入口。见 docs/deployment.md 与 comet_rag/cli.py 顶部：
+# `uvicorn comet_rag.api.main:app` 那条路读不到 config.yaml 里的 host/port，
+# 因为它们属于**服务器**职责、不属于 ASGI app。
+[project.scripts]
+comet-rag = "comet_rag.cli:main"
+
+# 加上构建后端，包才会被真正装进 venv。此前没有它，`comet_rag` 只能从项目
+# 根目录 import —— `arq comet_rag.workers.…` 换个目录就找不到模块了。
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["comet_rag"]
+
 [dependency-groups]
 dev = [
     "commitizen>=4.8.2",

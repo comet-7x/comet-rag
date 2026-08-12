@@ -960,30 +960,57 @@ mean/median/stddev，**没有 P95/P99** —— 而验收标准要的恰恰是后
 
 ---
 
-### T28 — 清理与文档
+### 🟡 T28 — 清理与文档
 
 **验收标准：**
-- [ ] `poc/task_demo/` 删除（价值已被 T4–T8 的测试固化）
-- [ ] `config/schemas.py` 中未使用的配置类清理干净
-- [ ] `docs/` 全量校对：`pipeline_usage.md`、新增 `deployment.md`、`architecture.md`
-- [ ] README 更新：库用法与服务部署两条路径分开写
-- [ ] 🔴 **统一启动入口**（2026-08-11 记）：目前两条路径行为不一致 ——
-      `uvicorn comet_rag.api.main:app` 用 uvicorn 默认的 127.0.0.1:8000，
-      `python -m comet_rag.api.main` 才用 config.yaml 的 host/port。
-      根因是 host/port 属于**服务器**职责、不属于 ASGI app，config 里的值
-      在前一条路径上没机会参与。
-      方案：加 `comet-rag serve` console script 作为唯一推荐入口
-      （读 config，支持 `--port` 覆盖），`uvicorn` 那条留给需要 `--reload`
-      的开发场景并在文档里说明。约 40 行 + pyproject 注册。
-- [ ] `tests/unit` 覆盖率 ≥ 70%，`comet_rag/tasks/` ≥ 90%
+- [ ] `poc/task_demo/` 删除 —— **待你确认**：该目录被 gitignore、从未进过版本库，
+      删掉不可恢复。价值已被 T4–T8 的测试固化，但那是我的判断，不是你的。
+- [x] `config/schemas.py` 中未使用的配置类清理干净（删掉 `S3Config`，全仓 0 引用）
+- [x] `docs/` 全量校对：新增 `deployment.md`、`architecture.md`、`benchmark.md`
+- [x] README 更新：库用法与服务部署两条路径分开写
+- [x] 🔴 **统一启动入口**（2026-08-11 记）—— 见下
+- [x] `tests/unit` 覆盖率 ≥ 70%（**78%**），`comet_rag/tasks/` ≥ 90%（**96%**）
 
 **验证：**
-- [ ] `uv run pytest --cov=comet_rag --cov-report=term-missing`
-- [ ] 按 README 在干净环境走一遍，两条路径都能跑通
+- [x] `uv run pytest --cov=comet_rag --cov-report=term-missing`
+- [x] 按 README 在干净环境走一遍，两条路径都能跑通
 
 **依赖：** T24、T26、T27
-**文件：** `README.md`、`docs/*.md`、删除 `poc/task_demo/`
+**文件：** `README.md`、`docs/*.md`、`comet_rag/cli.py`、`pyproject.toml`
 **规模：** S
+
+**启动入口：把歧义变成了可演示的对照。**
+
+    comet-rag serve                  → 0.0.0.0:8100   （config.yaml 里写的）
+    uvicorn comet_rag.api.main:app   → 127.0.0.1:8000 （uvicorn 默认）
+
+同一份配置、两条命令、两个结果。根因不是 bug 而是职责划分：host/port 属于
+**服务器**、不属于 ASGI 应用，uvicorn 命令行直接拿走 app，配置里那两个值
+根本没机会参与。`comet-rag serve` 把"读配置 → 起服务器"合成一条命令；
+`test_cli.py` 里有一条用例专门钉住"配置里的 host/port 真的被用上了"。
+
+**顺带解决了两件挂账的事：**
+· `pyproject.toml` 补上 `[build-system]`，包才真正装进 venv —— 此前
+  `arq comet_rag.workers.…` 换个目录就找不到模块；
+· 配置路径可指定了：`--config` > `$COMET_RAG_CONFIG` > `./config.yaml`。
+  环境变量这条不是可有可无 —— `--reload` 与 worker 都会另起子进程，
+  只有它传得过去。
+
+新增 `comet-rag config` 打印生效配置（密码脱敏）：排查配置问题时先跑它，
+省掉"我改的是不是这个文件"那一轮。脱敏有专门的用例守着 ——
+排查现场最容易顺手把密码贴进工单。
+
+**README 的示例当天就被新守卫抓到一个错。** `test_docs_examples.py` 原本只扫
+`docs/*.md`，把 README 加进去之后立刻红：我写的是
+`for chunk in pipeline.run(...)`，而 `run()` 返回的是 `PipelineResult`，
+可迭代的是 `result.chunks`。**README 是第一批用户看到的第一段代码**，
+却一直不在守卫范围内。
+
+**覆盖率这条标准需要说清楚怎么量。** `comet_rag/tasks/` 只看 unit 是 80%，
+因为 `ArqExecutor`（33%）与 `PostgresTaskStore`（28%）天生要中间件。
+合并三层后是 **96%**。把"要中间件才能覆盖的代码"算成未覆盖，会推着人去写
+mock 掉一切的假单测 —— 那种测试通过率好看，但换个后端立刻失效。
+量法与理由写进了 `tests/README.md`。
 
 ---
 

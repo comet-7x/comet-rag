@@ -28,10 +28,20 @@ DOCS_DIR = PROJECT_ROOT / "docs"
 _CODE_BLOCK = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
 
+def _iter_docs() -> list[Path]:
+    """docs/*.md **加上 README** —— README 是第一批用户看到的第一段代码，
+    却曾经不在守卫范围内。补进来的当天就抓到一个错的示例：
+    `for chunk in pipeline.run(...)`，而 `run()` 返回的是 `PipelineResult`，
+    真正可迭代的是 `result.chunks`。"""
+    return [PROJECT_ROOT / "README.md", *sorted(DOCS_DIR.glob("*.md"))]
+
+
 def _iter_blocks() -> list[tuple[str, int, str]]:
     """返回 (文档名, 块序号, 源码) 三元组。"""
     blocks: list[tuple[str, int, str]] = []
-    for doc in sorted(DOCS_DIR.glob("*.md")):
+    for doc in _iter_docs():
+        if not doc.exists():  # pragma: no cover
+            continue
         text = doc.read_text(encoding="utf-8")
         for i, match in enumerate(_CODE_BLOCK.finditer(text)):
             blocks.append((doc.name, i, match.group(1)))

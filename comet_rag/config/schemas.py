@@ -68,16 +68,6 @@ class VectorDatabaseConfig(BaseModel):
     collection_name: str = Field(..., description="集合/数据库名称")
 
 
-class S3Config(BaseModel):
-    """对象存储配置 (S3 标准)"""
-
-    endpoint_url: str = Field(..., description="S3 服务地址")
-    access_key: str = Field(..., description="访问密钥 ID")
-    secret_key: str = Field(..., description="私钥")
-    bucket_name: str = Field(..., description="存储桶名称")
-    region: str | None = Field(None, description="地域，如 cn-north-1")
-
-
 class ModelConfig(BaseModel):
     """模型配置 (如 OpenAI, Cohere)"""
 

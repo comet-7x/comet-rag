@@ -60,3 +60,24 @@ backends:
   task_store: memory        # memory | postgres
   task_executor: inprocess  # inprocess | arq
   max_concurrency: 8
+
+# 资源上限（spec S4-1、S4-2）。默认值按"一块消费级 GPU 上跑一个 vLLM"来定，
+# 请按模型服务的实际能力调整 —— 调大不会更快，只会让请求在服务端排队，
+# 反而拖长 p99。运行时可从 GET /admin/limits 看实时数字。
+limits:
+  # 本进程对模型服务的**总**并发上限。注意不是每个任务的，是整个进程的：
+  # 前者会随任务数翻倍（曾实测配 4 实际 128，见 core/concurrency.py）。
+  model_concurrency: 8
+  # 闸门外允许排队的请求数。排队者本身占内存，不设界就是把 OOM 往后推。
+  model_queue: 256
+  # 等闸门的最长时间。等太久算过载 —— 上游多半早就超时了。
+  model_wait_timeout: 30.0
+  # 待执行任务上限，超了直接返回 429。0 表示不限。
+  max_backlog: 1000
+
+  # 分级降级（spec S4-5）：先关 rerank → 再降 top_k → 最后拒绝新任务。
+  # 三个数分别对应这三级的触发阈值。
+  degrade_failure_rate: [0.2, 0.5, 0.8]   # 最近窗口内的失败/超时率
+  degrade_saturation: [2.0, 5.0, 10.0]    # 闸门等待者数 ÷ 并发上限
+  degrade_min_samples: 20                 # 样本不足时一律判正常
+  degrade_recover_after: 30.0             # 指标回落后要稳定这么久才恢复一级

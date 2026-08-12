@@ -172,3 +172,27 @@ uv run alembic revision --autogenerate -m "描述"
 
 新增 ORM 模型必须定义在 `comet_rag/infrastructure/database/models.py`
 （或被它 import），否则 `--autogenerate` 收集不到，会把那张表判为"该删掉"。
+
+
+## 覆盖率怎么量
+
+spec S5 要求 `tests/unit` ≥ 70%、`comet_rag/tasks/` ≥ 90%。
+
+```bash
+uv run pytest --cov=comet_rag --cov-report=term          # unit：78%
+```
+
+但 `comet_rag/tasks/` 这条**不能只看 unit**：`ArqExecutor` 与
+`PostgresTaskStore` 天生要中间件才跑得起来，只算 unit 的话它们分别是 33% 与
+28%，看着像没测，实际是被 120 条集成用例盖着的。合并三层才是真实数字：
+
+```bash
+uv run coverage erase
+uv run pytest -q --cov=comet_rag.tasks --cov-append
+uv run pytest -q -m e2e --cov=comet_rag.tasks --cov-append
+uv run pytest -q -m integration --cov=comet_rag.tasks --cov-append
+uv run coverage report --include="*/comet_rag/tasks/*"     # 96%
+```
+
+把"要中间件才能覆盖的代码"算成未覆盖，会推着人去写 mock 掉一切的假单测 ——
+那种测试通过率很好看，但换个后端立刻失效。契约测试的存在正是为了不走那条路。
