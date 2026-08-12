@@ -298,8 +298,18 @@ async def split_pair(
     try:
         async with _running(worker):
             yield producer, consumer, store_producer, store_consumer
-            await producer.shutdown(timeout=10.0)
-            await consumer.shutdown(timeout=10.0)
+        # ⚠️ 顺序要紧：**先让 worker 的 job 协程被取消，再关执行器，最后关库。**
+        #
+        # job 被取消时，`execute()` 会 detach 一个 `_mark_cancelled` 协程去写库
+        # （在被取消的协程里 await 不可靠，只能甩出去）。若此时已经在关数据库，
+        # 那次写入会连着一个正在拆的连接池 —— 连接被丢弃时事务既没提交也没回滚，
+        # PostgreSQL 要等到发现套接字断了才收拾，这段时间里它持有的锁**还在**。
+        #
+        # 后果是隔壁文件的 `TRUNCATE TABLE tasks` 拿不到 ACCESS EXCLUSIVE 锁。
+        # 症状极具迷惑性：报错出现在一个跟这里毫无关系的文件里，而且时有时无。
+        # `shutdown()` 内部会 `wait_all()`，把那些 detach 出去的协程排干。
+        await producer.shutdown(timeout=10.0)
+        await consumer.shutdown(timeout=10.0)
     finally:
         await db_producer.aclose()
         await db_consumer.aclose()

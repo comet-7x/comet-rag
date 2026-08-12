@@ -202,6 +202,10 @@ async def test_killed_worker_task_is_reclaimed_and_finished_by_another(
             job.cancel()
         if worker.tasks:
             await asyncio.gather(*worker.tasks.values(), return_exceptions=True)
+        # 取消 job 会 detach 出写库的收尾协程，必须排干后才能让 `store` 夹具
+        # 去关数据库 —— 否则连接会连着未结束的事务被拆掉，它持有的锁要等到
+        # PostgreSQL 发现套接字断了才释放，期间隔壁文件的 TRUNCATE 会被卡住。
+        await taker.shutdown(timeout=10.0)
 
     assert done.status is TaskStatus.SUCCEEDED, done
     assert done.attempts == 2, "接管应当是第二次尝试"

@@ -960,11 +960,14 @@ mean/median/stddev，**没有 P95/P99** —— 而验收标准要的恰恰是后
 
 ---
 
-### 🟡 T28 — 清理与文档
+### ✅ T28 — 清理与文档
 
 **验收标准：**
-- [ ] `poc/task_demo/` 删除 —— **待你确认**：该目录被 gitignore、从未进过版本库，
-      删掉不可恢复。价值已被 T4–T8 的测试固化，但那是我的判断，不是你的。
+- [x] `poc/task_demo/` 删除 —— **先归档再删**（你的选择）：
+      `poc/task_demo-archive.tar.gz`（19K，8 个源文件 1679 行，已验证可解出），
+      `poc/` 整个被 gitignore 覆盖，归档不会误入版本库。
+      价值已被 T4–T8 的 176 条测试固化，且现行实现比原型多了断点续跑、
+      租约围栏、CAS 重读等一大截。
 - [x] `config/schemas.py` 中未使用的配置类清理干净（删掉 `S3Config`，全仓 0 引用）
 - [x] `docs/` 全量校对：新增 `deployment.md`、`architecture.md`、`benchmark.md`
 - [x] README 更新：库用法与服务部署两条路径分开写
@@ -1005,6 +1008,21 @@ mean/median/stddev，**没有 P95/P99** —— 而验收标准要的恰恰是后
 `for chunk in pipeline.run(...)`，而 `run()` 返回的是 `PipelineResult`，
 可迭代的是 `result.chunks`。**README 是第一批用户看到的第一段代码**，
 却一直不在守卫范围内。
+
+**收尾时被自己的守卫抓到一次真 bug。** 全套集成测试偶发地在
+`test_store_postgres.py` 上一口气报 46 个 `LockNotAvailableError`（耗时从
+89s 涨到 330s ＝ 46 × 5s 锁超时），而单跑那个文件永远绿。
+
+根因在两个文件之外：`test_executor_arq.py` 的夹具把 `shutdown()` 放在了
+"取消 worker 的 job 协程"**之前**。job 被取消时 `execute()` 会 detach 一个
+`_mark_cancelled` 协程去写库，夹具紧接着关数据库 —— 那次写入连着一个正在拆
+的连接池，连接被丢弃时事务既没提交也没回滚，PostgreSQL 要等发现套接字断了
+才收拾，**期间它持有的锁还在**，于是隔壁文件的 TRUNCATE 拿不到锁。
+
+两条教训：异步测试的关停顺序是**先停生产者 → 再排干 → 最后关连接**，
+顺序错了不当场报错、只在别处偶发；以及，**若没有 T23 加的那个 `lock_timeout`，
+这件事至今仍表现为"整个测试进程静默挂起"，根本无从查起** ——
+当时加它只是为了把挂起变成报错，没想到它自己就是发现这个 bug 的工具。
 
 **覆盖率这条标准需要说清楚怎么量。** `comet_rag/tasks/` 只看 unit 是 80%，
 因为 `ArqExecutor`（33%）与 `PostgresTaskStore`（28%）天生要中间件。

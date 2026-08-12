@@ -102,11 +102,11 @@ uv run ruff check && uv run ruff format
 
 ## 文档
 
-| | |
-|---|---|
-| [architecture.md](docs/architecture.md) | 分层、核心抽象、两种部署形态 |
-| [deployment.md](docs/deployment.md) | 配置、扩容、运维、排查 |
-| [benchmark.md](docs/benchmark.md) | 性能基线与它**不能**回答的问题 |
-| [pipeline_usage.md](docs/pipeline_usage.md) | 只当库用时看这个 |
-| [docx_parser_internals.md](docs/docx_parser_internals.md) | docx 解析内幕 |
-| [mineru_integration.md](docs/mineru_integration.md) | MinerU 集成（M2） |
+|                                                          |                                      |
+| -------------------------------------------------------- | ------------------------------------ |
+| [architecture.md](docs/architecture.md)                   | 分层、核心抽象、两种部署形态         |
+| [deployment.md](docs/deployment.md)                       | 配置、扩容、运维、排查               |
+| [benchmark.md](docs/benchmark.md)                         | 性能基线与它**不能**回答的问题 |
+| [pipeline_usage.md](docs/pipeline_usage.md)               | 只当库用时看这个                     |
+| [docx_parser_internals.md](docs/docx_parser_internals.md) | docx 解析内幕                        |
+| [mineru_integration.md](docs/mineru_integration.md)       | MinerU 集成（M2）                    |

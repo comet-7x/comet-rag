@@ -149,6 +149,20 @@ Redis，少掉的只有 `fork`；而"生产端与消费端之间除了 Redis 与
 `pytest.fail` 并指出"多半是上一个用例漏关了会话"。**新写的集成测试不要再自己
 拼 TRUNCATE**：把"静默挂起"换成一条指名道姓的报错，是这个 helper 存在的全部理由。
 
+**它后来真的抓到了一次。** 全套集成测试偶发地在 `test_store_postgres.py`
+上一口气报 46 个 `LockNotAvailableError`，而单跑那个文件永远是绿的。
+根因在**两个文件之外**：`test_executor_arq.py` 的夹具把执行器的 `shutdown()`
+放在了"取消 worker 的 job 协程"**之前**。
+
+job 被取消时，`execute()` 会 detach 一个 `_mark_cancelled` 协程去写库
+（在被取消的协程里 await 不可靠，只能甩出去）。夹具紧接着关数据库，
+那次写入于是连着一个正在拆的连接池 —— 连接被丢弃时事务既没提交也没回滚，
+PostgreSQL 要等到发现套接字断了才收拾，**这段时间里它持有的锁还在**。
+
+教训有两条：**异步测试的关停顺序是"先停生产者、再排干、最后关连接"**，
+顺序错了不会当场报错，只会在别处偶发；以及，若没有那个 `lock_timeout`，
+这件事至今仍表现为"整个测试进程静默挂起"，根本无从查起。
+
 ### 崩溃恢复为什么必须起真进程
 
 `test_crash_recovery.py` 会 `subprocess` 起一个真的 arq worker，再对它
