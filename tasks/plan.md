@@ -204,7 +204,7 @@ T1 测试基建 ──┬─► T2 依赖分组(A1)
 
 - [x] T25 — 全链路并发闸门与有界背压（S4-1、S4-2）
 - [x] T26 — 分级降级（S4-5）
-- [ ] T27 — benchmark 基线（S4-6）
+- [x] T27 — benchmark 基线（S4-6）
 - [ ] T28 — 清理 `schemas/task.py` 残留、更新文档
 
 **Checkpoint F：M1 完成**

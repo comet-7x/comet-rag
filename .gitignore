@@ -184,3 +184,6 @@ config.yaml
 # 运行时日志（setup_logging 默认写到这里）
 logs/
 .docker-data/
+
+# 基准测试生成物（见 docs/benchmark.md）
+bench-report.json

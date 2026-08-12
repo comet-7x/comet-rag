@@ -145,12 +145,21 @@ async def client(document: Path) -> AsyncIterator[httpx.AsyncClient]:
         yield http
 
 
-def _use_stub_loader(ctx: Any, document: Path) -> None:
+def _use_stub_loader(
+    ctx: Any, document: Path, config: PipelineConfig | None = None
+) -> None:
     """只替换 loader 这一个依赖。
 
     真实 `AutoLoader` 会把 "fruits.stub" 判为未知来源；而其余部件
     （向量库、任务库、执行器、路由、异常映射）全是 `create_app` 装配的真货 ——
     替身越少，端到端测试越有意义。
+
+    ⚠️ `config` 必须显式传：本函数会**重新注册** runner，从而覆盖掉
+    `create_app(pipeline_config=...)` 装配的那一份。默认值刻意保持小批量
+    （2/4），因为端到端用例要的是"看得见阶段推进"，不是吞吐。
+    基准测试必须传自己的配置 —— 否则量到的是这里的默认值，而不是被测的东西。
+    这个坑真的踩过：`test_embedding_overlaps_io` 一开始怎么算都对不上，
+    根因就是它以为自己配的是 32/16，实际跑的是 2/4。
     """
     register_ingest_runner(
         IngestRunner(
@@ -158,7 +167,7 @@ def _use_stub_loader(ctx: Any, document: Path) -> None:
             vector_store=ctx.vector_store,
             knowledge_base=ctx.knowledge_base,
             loader=LocalStubLoader(document),
-            config=PipelineConfig(embed_batch_size=2, max_concurrency=4),
+            config=config or PipelineConfig(embed_batch_size=2, max_concurrency=4),
         )
     )
 

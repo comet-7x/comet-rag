@@ -919,19 +919,44 @@ S4-5 明确要求了留痕，两头都得顾。
 
 ---
 
-### T27 — benchmark 基线（S4-6）
+### ✅ T27 — benchmark 基线（S4-6）
 
 **验收标准：**
-- [ ] `tests/benchmark/` 覆盖：单文档入库耗时、批量入库吞吐、检索 P50/P95/P99
-- [ ] 输出可存档，供 PR 前后对比
-- [ ] 基线数值记入 `docs/benchmark.md`
+- [x] `tests/benchmark/` 覆盖：单文档入库耗时、批量入库吞吐、检索 P50/P95/P99
+- [x] 输出可存档（`bench-report.json`），供 PR 前后对比（`--bench-baseline`）
+- [x] 基线数值记入 `docs/benchmark.md`
 
 **验证：**
-- [ ] `uv run pytest tests/benchmark --benchmark-only` 产出报告
+- [x] ~~`--benchmark-only`~~ → `uv run pytest -m benchmark` 产出报告（见下方偏离说明）
 
 **依赖：** T23
 **文件：** `tests/benchmark/*.py`、`docs/benchmark.md`
 **规模：** S
+
+**⚠️ 与本条目原文的偏离：没有用 pytest-benchmark**（`--benchmark-only` 是它的
+参数）。理由有二：它面向同步微基准，会对同一个函数反复校准重跑，而这里每次
+测量都带状态（入库会写库、建 collection），重跑会互相污染；它报的是
+mean/median/stddev，**没有 P95/P99** —— 而验收标准要的恰恰是后者。
+自己写了个三十行的采集器，顺带支持 `--bench-baseline` 做前后对比。
+
+**除一条外都不断言耗时。** 机器一换数字就变，那种用例只会训练出"红了就重跑"
+的习惯。回归靠对比发现，是人看的，不是 CI 判的。
+
+唯一带断言的是 `overlap_speedup`，因为它的判据是**结构性**的：给替身加 5ms
+延迟，200 段串行需 1000ms，窗口化并发实测 92ms。阈值取 `serial/4`，离实测值
+很远。它守的是 T9 修好的那件事 —— 反向验证：把 `_index` 改回逐条 `await`，
+实测 1097ms，立刻变红。
+
+**基准跑错了配置，比没有基准更糟。** 第一版怎么算都对不上：`overlap_speedup`
+只有 1.74×，而理论值该是 10× 以上。根因是
+`tests/e2e/test_ingest_search.py::_use_stub_loader` 会**重新注册** runner，
+覆盖掉 `create_app(pipeline_config=...)` 装配的那份 —— 基准以为自己配的是
+`32/16`，实际跑的是那里硬编码的 `2/4`。修好后是 10.95×。
+现在 `_use_stub_loader` 接受显式 config，并在 docstring 里写明了这个陷阱。
+
+**基线数值**（全内存后端，200 段文档）：单文档入库 P50 19.2ms、
+批量吞吐 85 doc/s（17 043 chunk/s）、检索 P50 3.21ms / P95 3.39ms。
+全部连同"这些数字不代表真实 QPS"的说明记进 `docs/benchmark.md`。
 
 ---
 
