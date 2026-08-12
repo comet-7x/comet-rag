@@ -149,6 +149,16 @@ Redis，少掉的只有 `fork`；而"生产端与消费端之间除了 Redis 与
 `pytest.fail` 并指出"多半是上一个用例漏关了会话"。**新写的集成测试不要再自己
 拼 TRUNCATE**：把"静默挂起"换成一条指名道姓的报错，是这个 helper 存在的全部理由。
 
+### 崩溃恢复为什么必须起真进程
+
+`test_crash_recovery.py` 会 `subprocess` 起一个真的 arq worker，再对它
+`SIGKILL`。**在测试进程里 cancel 一个协程不算崩溃** —— `execute()` 会接住
+`CancelledError`、把任务干净地落成 CANCELLED，恰恰绕开了要验的那条路
+（"worker 死得连一个字都没写下"）。
+
+子进程从 `cwd` 读一份临时 config.yaml，入口是 `tests/integration/crash_worker.py`，
+所以这条链路顺带也验了 `arq <module>.WorkerSettings` 这个 CLI 入口能起来。
+
 ## 数据库迁移
 
 ```bash

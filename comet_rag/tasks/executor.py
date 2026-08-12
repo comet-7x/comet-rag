@@ -29,7 +29,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Coroutine
 from typing import Any
 
-from .models import TaskError, TaskStatus
+from .models import Task, TaskError, TaskStatus
 from .runner import (
     Done,
     Handoff,
@@ -108,6 +108,9 @@ class StoreDrivenExecutor(TaskExecutor):
         而那已经算不上"内部"了。
         """
         self._inflight.add(task_id)
+        #: 是否已经把任务"认领"下来（成功迁到 RUNNING）。认领之后的每一次
+        #: 写入都要先过 `_still_mine` 这道栅栏，见那里的说明。
+        claimed = False
         try:
             # 排队期间可能已被取消/删除/被别的 worker 抢走，进来先复查
             task = await self._store.get(task_id)
@@ -122,6 +125,7 @@ class StoreDrivenExecutor(TaskExecutor):
                 error=None,
                 message="执行中",
             )
+            claimed = True
             ctx = TaskContext(
                 self._store, task_id, worker_id=self._worker_id, lane=self._lane
             )
@@ -134,14 +138,46 @@ class StoreDrivenExecutor(TaskExecutor):
             await self._finish(task_id, outcome)
         except asyncio.CancelledError:
             # 已经在被取消的协程里再 await 是不可靠的，把收尾工作甩给独立协程
-            self._detach(self._mark_cancelled(task_id))
+            self._detach(self._mark_cancelled(task_id, claimed=claimed))
             raise
         except TaskCancelled:
-            await self._mark_cancelled(task_id)
+            await self._mark_cancelled(task_id, claimed=claimed)
         except Exception as exc:  # noqa: BLE001 —— runner 的任何异常都在这里收口
-            await self._mark_failed(task_id, exc)
+            await self._mark_failed(task_id, exc, claimed=claimed)
         finally:
             self._inflight.discard(task_id)
+
+    async def _still_mine(self, task_id: str, *, claimed: bool) -> Task | None:
+        """**围栏（fencing）**：确认这条任务还归本 worker 管，否则一个字都别写。
+
+        没有这道栅栏，租约回收（T24）会主动制造数据损坏：sweep 把超时的
+        RUNNING 任务退回 PENDING、另一个 worker 接手，而**原 worker 其实还活着**
+        （只是心跳慢了）。它跑完后照样去写终态，于是
+
+          · 写成功 → 覆盖掉接手者正在做的那一份；
+          · 写失败（PENDING → SUCCEEDED 非法）→ 异常被 `execute` 收口成
+            `_mark_failed`，把一条正在被别人正常执行的任务判死。
+
+        第二种尤其恶劣：任务明明成功了，最终却是 FAILED，而且看日志像是
+        runner 自己出的错。租约机制天然允许误判（活着但慢），所以**必须**
+        有围栏，不能指望"超时了就一定是真死了"。
+
+        `claimed=False` 表示还没迁到 RUNNING（比如 kind 没注册、前置校验失败）。
+        那种情况下 `worker_id` 本来就是空的，不该被围栏挡住 —— 否则任务连
+        失败都写不进去。
+        """
+        task = await self._store.get(task_id)
+        if task is None:
+            return None
+        if claimed and task.worker_id != self._worker_id:
+            logger.warning(
+                "任务 %s 已被 %s 接管（本 worker %s），放弃写入",
+                task_id,
+                task.worker_id or "回收队列",
+                self._worker_id,
+            )
+            return None
+        return task
 
     @abstractmethod
     async def _schedule_retry(self, task_id: str, delay: float) -> None:
@@ -168,6 +204,9 @@ class StoreDrivenExecutor(TaskExecutor):
             raise TypeError(
                 f"runner 必须返回 Done 或 Handoff，得到 {type(outcome).__name__}"
             )
+        # 走到这里必然已认领过（RUNNING 之后才会有 outcome），故 claimed=True
+        if await self._still_mine(task_id, claimed=True) is None:
+            return
         await self._store.transition(
             task_id,
             TaskStatus.SUCCEEDED,
@@ -187,9 +226,9 @@ class StoreDrivenExecutor(TaskExecutor):
         不退的话，一条三阶段两次移交的流水线开跑即耗掉 2 次重试预算，
         真出故障时反而没得重试了。
         """
-        task = await self._store.get(task_id)
+        task = await self._still_mine(task_id, claimed=True)
         if task is None or task.status is not TaskStatus.RUNNING:
-            return  # 期间被取消了，别把它拽回 PENDING
+            return  # 期间被取消或被回收了，别把它拽回 PENDING
         await self._store.transition(
             task_id,
             TaskStatus.PENDING,
@@ -207,13 +246,13 @@ class StoreDrivenExecutor(TaskExecutor):
         )
         await self._schedule_handoff(task_id, outcome.lane)
 
-    async def _mark_cancelled(self, task_id: str) -> None:
+    async def _mark_cancelled(self, task_id: str, *, claimed: bool = True) -> None:
         """落 CANCELLED。**幂等**：任务已是终态就直接返回。
 
         取消路径上可能有多个来源同时想收尾（协程被 cancel + runner 自己
         抛 TaskCancelled），让它幂等比让调用方去协调便宜得多。
         """
-        task = await self._store.get(task_id)
+        task = await self._still_mine(task_id, claimed=claimed)
         if task is None or task.status.is_terminal:
             return
         await self._store.transition(
@@ -223,9 +262,11 @@ class StoreDrivenExecutor(TaskExecutor):
             message="已取消",
         )
 
-    async def _mark_failed(self, task_id: str, exc: BaseException) -> None:
+    async def _mark_failed(
+        self, task_id: str, exc: BaseException, *, claimed: bool = True
+    ) -> None:
         err = _to_task_error(exc)
-        task = await self._store.get(task_id)
+        task = await self._still_mine(task_id, claimed=claimed)
         if task is None or task.status.is_terminal:
             return
 

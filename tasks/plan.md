@@ -190,13 +190,13 @@ T1 测试基建 ──┬─► T2 依赖分组(A1)
 
 - [X] T22 — `ArqExecutor`（必须通过 T8 的同一套契约测试）
 - [X] T23 — `workers/preprocessor.py` 与 `workers/embedder.py`
-- [ ] T24 — `sweep_stale` 定时器与崩溃恢复
+- [x] T24 — `sweep_stale` 定时器与崩溃恢复
 
 **Checkpoint E**
 
-- [ ] `kill -9` 掉 worker，任务在租约超时内退回 PENDING 并被另一 worker 接管完成
+- [x] `kill -9` 掉 worker，任务在租约超时内退回 PENDING 并被另一 worker 接管完成
 - [X] preprocessor 用多进程扩容、embedder 用单进程高并发（不得反过来）
-- [ ] 优雅关停：`SIGTERM` 后在跑的任务能落到一致状态，不留 RUNNING 僵尸
+- [x] 优雅关停：`SIGTERM` 后在跑的任务能落到一致状态，不留 RUNNING 僵尸
 
 ---
 

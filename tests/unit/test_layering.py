@@ -97,3 +97,43 @@ def test_guard_actually_detects_violations() -> None:
     tree = ast.parse("import sqlalchemy\nfrom comet_rag.api import deps\n")
     assert _imported_roots(tree) & FORBIDDEN_IN_ENGINES == {"sqlalchemy"}
     assert any(n.startswith(FORBIDDEN_INTERNAL) for n in _imported_full(tree))
+
+
+# ── 单进程模式不得挂上租约回收（T24）────────────────────────────────────────
+
+#: 除了 workers/ 自己，谁都不该 import 它。写成路径前缀，子模块一并覆盖。
+MAINTENANCE = "comet_rag.workers.maintenance"
+
+#: 单进程部署会加载的东西：组合根、API、以及任务框架本身
+SINGLE_PROCESS_TREES = ("core", "api", "tasks", "services", "engines", "infrastructure")
+
+
+def _single_process_modules() -> list[Path]:
+    root = PROJECT_ROOT / "comet_rag"
+    return sorted(
+        p
+        for tree in SINGLE_PROCESS_TREES
+        for p in (root / tree).rglob("*.py")
+        if "__pycache__" not in p.parts
+    )
+
+
+@pytest.mark.parametrize("module", _single_process_modules(), ids=lambda p: p.name)
+def test_single_process_paths_never_pull_in_lease_reclaim(module: Path) -> None:
+    """**单进程模式绝不能启用租约回收**（T24 的验收标准之一）。
+
+    那时任务的协程还活在本进程里，只是心跳没来得及写。回收会把它退回队列
+    让别人再跑一遍 —— "一份任务两个执行者"，而且两边都不知道对方存在。
+
+    保证方式不是加一个开关（开关会被配错），而是**结构上够不着**：
+    `sweep_cron` 只在 `workers/` 下注册，单进程部署压根不加载那个包。
+    本用例把这条结构性保证钉住 —— 哪天有人图省事在 `core/bootstrap.py` 里
+    import 它，这里立刻变红。
+    """
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    hits = {name for name in _imported_full(tree) if name.startswith(MAINTENANCE)}
+    assert not hits, (
+        f"{module.relative_to(PROJECT_ROOT)} 导入了 {MAINTENANCE}。"
+        f"租约回收只能挂在 workers/ 上：单进程模式下启用它会造成"
+        f"一份任务两个执行者。"
+    )

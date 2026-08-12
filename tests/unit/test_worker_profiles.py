@@ -9,10 +9,19 @@ from __future__ import annotations
 
 import pytest
 
+from comet_rag.config.schemas import (
+    APPConfig,
+    EmbeddingModelConfig,
+    InfrastructureConfig,
+    RedisConfig,
+    ServerConfig,
+)
 from comet_rag.services.ingestion import IngestRunner
-from comet_rag.tasks import LANE_CPU, LANE_IO
+from comet_rag.tasks import LANE_CPU, LANE_IO, TaskContext
 from comet_rag.tasks.executor_arq import LANE_QUEUES
+from comet_rag.workers.base import build_settings
 from comet_rag.workers.embedder import PROFILE as EMBEDDER
+from comet_rag.workers.maintenance import DEFAULT_LEASE, sweep_cron
 from comet_rag.workers.preprocessor import PROFILE as PREPROCESSOR
 
 PROFILES = (PREPROCESSOR, EMBEDDER)
@@ -72,6 +81,48 @@ def test_every_lane_the_ingest_pipeline_uses_has_a_worker() -> None:
     assert declared <= served, f"这些道没有 worker 服务：{sorted(declared - served)}"
     assert declared <= set(LANE_QUEUES), (
         f"这些道没有对应队列：{sorted(declared - set(LANE_QUEUES))}"
+    )
+
+
+def test_lease_is_far_larger_than_the_heartbeat_interval() -> None:
+    """租约取得太紧 = 误判活着的 worker 已死 = 一份任务两个执行者。
+
+    心跳每 `TaskContext.heartbeat_interval` 一次（默认 10s），租约必须留出
+    好几倍余量 —— 一次 GC 停顿、一段慢查询都可能让心跳迟到。
+    """
+    beat = TaskContext(None, "x")._hb_interval  # type: ignore[arg-type]  # noqa: SLF001
+    assert beat * 5 <= DEFAULT_LEASE, (
+        f"租约 {DEFAULT_LEASE} 相对心跳间隔 {beat} 太紧，会误收还活着的 worker"
+    )
+
+
+def test_workers_carry_the_sweep_cron_and_it_is_unique() -> None:
+    """回收定时器挂在每个 worker 上；靠 arq 的 unique 保证多副本下只跑一份。
+
+    `unique=False` 会让 N 个副本同时回收同一批任务 —— 那正是回收本身要防的
+    "多个执行者"，只是搬到了回收器上。
+    """
+    job = sweep_cron()
+    assert job.unique is True
+    assert job.run_at_startup is True, "集群刚起来时该先扫一遍上一轮的僵尸"
+    assert all(p.sweep for p in PROFILES), "有 worker 没挂回收定时器"
+
+    for profile in PROFILES:
+        settings = build_settings(profile, config=_dummy_config())
+        names = [cj.name for cj in settings.cron_jobs]
+        assert names == ["sweep_stale_tasks"], f"{profile.name} 的 cron 是 {names}"
+
+
+def _dummy_config() -> APPConfig:
+    """只为让 `build_settings` 能拼出 RedisSettings，不连任何东西。"""
+    return APPConfig(
+        server_config=ServerConfig(app_name="t", host="127.0.0.1", port=0),
+        infrastructure_config=InfrastructureConfig(
+            embedding_model=EmbeddingModelConfig(
+                base_url="http://unused", model_name="stub", dim=4
+            ),
+            redis=RedisConfig(host="localhost", port=6379),
+        ),
     )
 
 

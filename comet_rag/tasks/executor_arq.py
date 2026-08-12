@@ -37,8 +37,8 @@ from arq import ArqRedis, create_pool
 from arq.connections import RedisSettings
 
 from .executor import StoreDrivenExecutor, logger
-from .models import TaskStatus
-from .runner import LANE_CPU, LANE_IO
+from .models import Task, TaskStatus
+from .runner import LANE_CPU, LANE_IO, UnknownKind, get_runner
 from .store import TaskStore
 
 #: arq 侧的函数名。worker 注册的 `run_task` 必须与之一致，否则任务入队即失踪。
@@ -128,18 +128,37 @@ class ArqExecutor(StoreDrivenExecutor):
             f"{task_id}:{attempts}" if lane is None else f"{task_id}:{attempts}:{lane}"
         )
 
-    def _target_lane(self, lane: str | None) -> str | None:
-        """没指名道姓时投哪条道。
+    def _target_lane(self, task: Task, lane: str | None) -> str | None:
+        """没指名道姓时投哪条道。按可靠程度从高到低试：
 
-        · worker 侧重投（`_schedule_retry`）→ 本 worker 自己那条道，
-          因为失败的阶段本来就属于它；
-        · 生产端首次投递 → `entry_lane`，即流水线第一个阶段所在的道。
+        1. 调用方指定的（移交就是这条）；
+        2. **任务自己的 `resume_stage` 属于哪条道** —— 崩溃回收（T24）与
+           人工 `retry()` 都走这里，它们只知道 task_id，不知道该投哪儿；
+        3. 本 worker 自己那条道（可重试失败重投，失败的阶段本来就归它）；
+        4. `entry_lane`，即流水线第一个阶段所在的道（生产端首次投递）。
 
-        顺带一提，投错道是**自愈**的：目标 worker 拿到后，流水线发现
-        `resume_stage` 所在的道与自己不同，会立刻再移交一次。所以
-        `TaskService.retry()` 这种不知道该投哪儿的调用者可以放心用默认值。
+        投错道虽然能**自愈**（目标 worker 一拿到就会再移交一次），但不能
+        指望它：回收往往正是因为某条道整个挂了，把任务投进那条道等于让它
+        接着躺着。所以第 2 步值得多查一次注册表。
         """
-        return lane if lane is not None else (self._lane or self._entry_lane)
+        if lane is not None:
+            return lane
+        by_stage = self._lane_of_resume_stage(task)
+        return by_stage or self._lane or self._entry_lane
+
+    @staticmethod
+    def _lane_of_resume_stage(task: Task) -> str | None:
+        """任务续跑点所属的道。查不到（kind 没注册、不是流水线）就返回 None。
+
+        这里刻意吞掉查询失败：投递路径不该因为注册表的状态而炸 —— 拿不到
+        就退回下一级默认值，最坏也只是多一次移交。
+        """
+        try:
+            runner = get_runner(task.kind)
+        except UnknownKind:
+            return None
+        lane_of = getattr(runner, "lane_of", None)
+        return lane_of(task.resume_stage) if callable(lane_of) else None
 
     def _queue_for(self, lane: str | None) -> str:
         return self._lanes.get(lane, self._queue) if lane else self._queue
@@ -153,7 +172,7 @@ class ArqExecutor(StoreDrivenExecutor):
         if task.status is not TaskStatus.PENDING:
             raise ValueError(f"只有 PENDING 可提交，当前 {task.status.value}")
 
-        target = self._target_lane(lane)
+        target = self._target_lane(task, lane)
         pool = await self.pool()
         job = await pool.enqueue_job(
             self._job_name,

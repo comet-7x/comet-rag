@@ -764,22 +764,57 @@ venv，因此 `arq comet_rag.workers.…` 只能在项目根目录下跑（confi
 
 ---
 
-### T24 — `sweep_stale` 与崩溃恢复
+### ✅ T24 — `sweep_stale` 与崩溃恢复
 
 **描述：** `store.py` 注释写明"单进程不要挂这个定时器"。上 ARQ 后是跨进程，**必须挂**——否则 worker 崩了任务永远卡在 RUNNING。
 
 **验收标准：**
-- [ ] ARQ cron job 定期跑 `sweep_stale(lease)`，`lease` 可配且 > 心跳间隔数倍
-- [ ] 单进程模式（`InProcessExecutor`）**不得**启用，避免一份任务两个执行者
-- [ ] 回收动作打日志并写 `TaskEvent`
+- [x] ARQ cron job 定期跑 `sweep_stale(lease)`，`lease` 可配且 > 心跳间隔数倍（90s vs 10s，9 倍）
+- [x] 单进程模式（`InProcessExecutor`）**不得**启用，避免一份任务两个执行者
+- [x] 回收动作打日志并写 `TaskEvent`
 
 **验证：**
-- [ ] 集成测试：任务跑到一半 `kill -9` worker，租约超时后任务退回 PENDING 并被另一 worker 接管完成
-- [ ] 断言单进程模式下定时器未注册
+- [x] 集成测试：任务跑到一半 `kill -9` worker，租约超时后任务退回 PENDING 并被另一 worker 接管完成
+- [x] 断言单进程模式下定时器未注册
 
 **依赖：** T23
 **文件：** `comet_rag/workers/maintenance.py`、`tests/integration/test_crash_recovery.py`
 **规模：** S
+
+**"单进程不得启用"不是靠开关，是靠结构。** 开关会被配错，而且配错的症状
+（一份任务两个执行者）没有任何报错。`sweep_cron` 只在 `workers/` 下注册，
+单进程部署根本不加载那个包。`test_layering.py` 用 AST 把这条钉住：哪天有人
+图省事在 `core/bootstrap.py` 里 import 它，立刻变红（已反向验证）。
+
+**回收后必须重新入队，这一步极易漏。** `sweep_stale` 只改数据库状态，而 ARQ
+部署下"PENDING"不代表队列里有它 —— 漏了这步，任务只是从"卡在 RUNNING"
+变成"卡在 PENDING"，看着更健康，实际一样没人跑。反向验证：去掉重投，
+崩溃恢复用例立刻红。
+
+**投回哪条道也要挑。** 回收只知道 task_id，于是照 `resume_stage` 反查它属于
+哪条道（`StagePipeline.lane_of`）。投错虽能自愈（目标 worker 会再移交一次），
+但不能指望 —— 回收往往正是因为某条道整个挂了，把任务投进那条道等于让它接着躺着。
+
+**必须补的一道围栏：`_still_mine`。** 租约判死做不到准确 —— "没心跳"和"死了"
+本来就分不清。所以一定存在这种局面：原 worker 其实还活着、只是慢了，被回收后
+它跑完照样想写终态。不拦的话：
+
+  · 写成功 → 覆盖掉接管者正在做的那一份；
+  · 写失败（PENDING → SUCCEEDED 非法）→ 异常被 `execute()` 收口成
+    `_mark_failed`，**把一条正在被别人正常执行的任务判死**。
+
+第二种尤其恶劣：任务明明成功了最终却是 FAILED，看日志还像是 runner 自己出的错。
+所以是 **lease 负责少误判，围栏负责误判了也不出错**，两者缺一不可。
+反向验证：拆掉围栏，`test_stale_worker_cannot_write_after_being_reclaimed` 变红。
+
+**崩溃用真进程 + 真 SIGKILL。** 在测试进程里 cancel 一个协程不算崩溃 ——
+`execute()` 会接住 `CancelledError` 把任务干净落成 CANCELLED，恰好绕开要验的
+那条路。子进程跑的是 `arq` 命令行本身，所以这条链路顺带也验了 CLI 入口。
+
+**定时器挂在每个 worker 上，不单起进程。** arq 的 cron 默认 `unique=True`，
+job id 里带着计划时刻，多副本同时到点也只有一个能真正入队。若改成 False，
+N 个副本会同时回收同一批任务 —— 那正是回收要防的"多个执行者"，只是搬到了
+回收器自己身上。`test_workers_carry_the_sweep_cron_and_it_is_unique` 守这条。
 
 ---
 

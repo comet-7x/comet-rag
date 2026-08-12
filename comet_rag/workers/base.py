@@ -42,6 +42,7 @@ from comet_rag.config.settings import get_config
 from comet_rag.core.bootstrap import build_context
 from comet_rag.core.logging import logger, setup_logging
 from comet_rag.tasks.executor_arq import LANE_QUEUES, run_task
+from comet_rag.workers.maintenance import DEFAULT_LEASE, sweep_cron
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +56,9 @@ class WorkerProfile:
     #: 人读的扩容说明，启动时打进日志 —— 运维改副本数时最需要看到的就是它
     scaling: str
     job_timeout: float = 1800.0
+    #: 是否挂租约回收定时器。默认挂 —— arq 的 cron 是 unique 的，多副本下
+    #: 每个时刻只有一个真的执行，不必为它单开一个进程。见 maintenance.py。
+    sweep: bool = True
 
     @property
     def queue(self) -> str:
@@ -116,6 +120,9 @@ def build_settings(
 
     class WorkerSettings:
         functions = [run_task]  # noqa: RUF012 —— arq 要求的就是普通类属性
+        # 单进程模式（InProcessExecutor）永远走不到这里 —— 它根本不加载
+        # workers/，所以"单进程不得启用回收"是结构上保证的，不靠开关。
+        cron_jobs = [sweep_cron()] if profile.sweep else []  # noqa: RUF012
         queue_name = profile.queue
         redis_settings = RedisSettings.from_dsn(settings.url)
         max_jobs = profile.max_jobs
@@ -131,6 +138,7 @@ def build_settings(
             "profile": profile,
             "config": config,
             "build_kwargs": build_kwargs,
+            "lease": DEFAULT_LEASE,
         }
         on_startup = staticmethod(on_startup)
         on_shutdown = staticmethod(on_shutdown)

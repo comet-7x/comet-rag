@@ -59,7 +59,7 @@ class Handoff:
     message: str = "已移交"
 
 
-Outcome = Done | Handoff
+type Outcome = Done | Handoff
 
 
 class TaskCancelled(Exception):
@@ -199,7 +199,7 @@ def registered_kinds() -> list[str]:
 
 
 # 多阶段流水线
-StageFn = Callable[[TaskContext], Awaitable[Outcome | None]]
+type StageFn = Callable[[TaskContext], Awaitable[Outcome | None]]
 
 
 @dataclass(slots=True)
@@ -230,6 +230,21 @@ class StagePipeline:
             return fn
 
         return deco
+
+    def lane_of(self, stage: str | None) -> str | None:
+        """某个阶段属于哪条道。不认识的阶段返回 None。
+
+        给**投递方**用：崩溃回收把任务退回 PENDING 后要重新入队，直接照
+        `resume_stage` 投到对的那条道，比投错再靠移交自愈少一次往返 ——
+        更要紧的是，投错的那条道要是整个挂了（回收往往正是因为它挂了），
+        任务就搁在那儿没人管了。
+        """
+        if stage is None:
+            return None
+        for name, _, lane in self.stages:
+            if name == stage:
+                return lane
+        return None
 
     async def __call__(self, ctx: TaskContext) -> Outcome:
         names = [n for n, _, _ in self.stages]
