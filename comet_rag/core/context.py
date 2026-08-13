@@ -116,9 +116,7 @@ def wire_runners(context: Context, *, ingest_config: Any = None) -> None:
     policy = context.source_policy
     loader = AutoLoader(
         max_download_bytes=getattr(policy, "max_download_bytes", None),
-        redirect_validator=(
-            policy.check_redirect if policy is not None else None
-        ),
+        redirect_validator=(policy.check_redirect if policy is not None else None),
     )
     context._extra_closers.append(loader)
     register_ingest_runner(

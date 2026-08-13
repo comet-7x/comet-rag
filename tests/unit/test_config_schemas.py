@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from comet_rag.config.schemas import IngestPolicyConfig, SqlDatabaseConfig
+from comet_rag.config.schemas import (
+    IngestPolicyConfig,
+    ModelConfig,
+    RedisConfig,
+    SqlDatabaseConfig,
+    VectorDatabaseConfig,
+)
 
 # ── DSN 编码（PR 评审 #7）──────────────────────────────────────────────────
 
@@ -76,3 +82,30 @@ def test_dsn_encodes_username_and_database_too() -> None:
 def test_download_limit_must_be_positive() -> None:
     with pytest.raises(ValueError):
         IngestPolicyConfig(max_download_bytes=0)
+
+
+def test_secrets_are_masked_but_explicitly_unwrapped_for_connection_urls() -> None:
+    secret = "do-not-leak-this-value"  # noqa: S105 — test sentinel
+    database = SqlDatabaseConfig(
+        host="db.internal",
+        port=5432,
+        username="user",
+        password=secret,
+        database="comet",
+    )
+    redis = RedisConfig(host="redis.internal", port=6379, password=secret)
+    model = ModelConfig(
+        base_url="https://model.invalid", model_name="model", api_key=secret
+    )
+    vector = VectorDatabaseConfig(
+        endpoint="https://vector.invalid",
+        api_key=secret,
+        collection_name="chunks",
+    )
+
+    for config in (database, redis, model, vector):
+        assert secret not in repr(config)
+        assert secret not in str(config.model_dump(mode="json"))
+
+    assert secret in database.dsn
+    assert secret in redis.url

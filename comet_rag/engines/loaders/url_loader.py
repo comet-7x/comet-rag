@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from comet_rag.engines.loaders.base_loader import BaseLoader
@@ -37,6 +38,15 @@ class DownloadRequestConfig(BaseModel):
 
 class DownloadTooLarge(ValueError):
     """远端响应超过应用层下载上限。"""
+
+
+class ContentTypeMismatch(ValueError):
+    """URL 后缀与下载内容的实际格式冲突。"""
+
+
+_GENERIC_TEXT_EXTENSIONS = frozenset(
+    {"txt", "md", "py", "ts", "js", "java", "c", "cpp", "go", "php", "r", "rust"}
+)
 
 
 class URLLoader(BaseLoader):
@@ -96,9 +106,7 @@ class URLLoader(BaseLoader):
     def _shared_client(self) -> httpx.Client:
         """懒创建：只用异步路径的调用方不必平白多一个同步连接池。"""
         if self._client is None:
-            self._client = httpx.Client(
-                timeout=self._timeout, follow_redirects=False
-            )
+            self._client = httpx.Client(timeout=self._timeout, follow_redirects=False)
         return self._client
 
     def _shared_async_client(self) -> httpx.AsyncClient:
@@ -265,11 +273,40 @@ class URLLoader(BaseLoader):
 
     def _finalize_temp(self, path: str, response_url: httpx.URL) -> str:
         source_ext = Path(urlparse(str(response_url)).path).suffix.lstrip(".").lower()
-        label = (
-            source_ext
-            if source_ext in AllowExt._value2member_map_
-            else detect_content_type_from_path(path)
-        )
+        source_allowed = source_ext in AllowExt._value2member_map_
+        try:
+            detected = detect_content_type_from_path(path).lower().lstrip(".")
+        except Exception as exc:  # 探测器不可用时才允许退回 URL 后缀
+            if not source_allowed:
+                raise ValueError(
+                    f"Unable to determine downloaded content type for {response_url}"
+                ) from exc
+            logger.warning(f"内容探测失败，回退到 URL 后缀 {source_ext!r}: {exc!r}")
+            label = source_ext
+        else:
+            detected_allowed = detected in AllowExt._value2member_map_
+            if not detected_allowed:
+                if not source_allowed:
+                    raise ValueError(
+                        f"Unsupported downloaded content type {detected!r}"
+                    )
+                logger.warning(
+                    f"内容探测结果 {detected!r} 不受支持，回退到 URL 后缀 "
+                    f"{source_ext!r}"
+                )
+                label = source_ext
+            elif source_allowed and source_ext != detected:
+                # Magika 对源码/Markdown 常给出泛化的 txt；这不是冲突，仍保留
+                # URL 上更具体的文本语义。其余冲突（尤其 .docx → html）立即拒绝。
+                if detected == "txt" and source_ext in _GENERIC_TEXT_EXTENSIONS:
+                    label = source_ext
+                else:
+                    raise ContentTypeMismatch(
+                        f"URL extension {source_ext!r} does not match downloaded "
+                        f"content type {detected!r}"
+                    )
+            else:
+                label = detected
         target = str(Path(path).with_suffix(f".{label}"))
         Path(path).replace(target)
         self._temp_files[self._temp_files.index(path)] = target
@@ -376,6 +413,7 @@ class URLLoader(BaseLoader):
         max_concurrency: int = 10,
         **kwargs,
     ) -> list[LoaderContent]:
+        self._validate_max_concurrency(max_concurrency)
         config = download_config or DownloadRequestConfig()
         # 持锁跑完整批：期间 `cleanup()` 会等，而不是把连接池抽掉。
         # 用锁而不是引用计数，是因为这里要的语义就是"用完再关"，
@@ -412,6 +450,7 @@ class URLLoader(BaseLoader):
         max_concurrency: int = 10,
         **kwargs,
     ) -> list[LoaderContent]:
+        self._validate_max_concurrency(max_concurrency)
         config = download_config or DownloadRequestConfig()
         semaphore = asyncio.Semaphore(max_concurrency)
         client = self._shared_async_client()
