@@ -381,6 +381,68 @@ def test_a_huge_gridspan_in_a_tiny_grid_is_refused(
     assert any(b["type"] == "caption" for b in blocks), "该留占位"
 
 
+def test_a_vmerge_chain_inheriting_a_huge_span_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**第四个可控维度：`vMerge` 续格继承的 span。**
+
+    `vMerge="continue"` 的续格会继承**上方根单元格**的 `gridSpan`，而它自己的
+    `tc` 往往省略 `gridSpan` —— 本地值就是 1。实测：
+
+        r0: XML 里 grid_span=[5]   row.cells 实际长度 = 5   (vMerge restart)
+        r1: XML 里 grid_span=[1]   row.cells 实际长度 = 5   (vMerge continue)
+
+    于是"逐行累加本地 span"会严重低估：根行 `gridSpan=S` 加 R 个续行，本地和
+    约 `S + R`，实际展开却是 `S × (R+1)`。本用例的 S=5000 / R=500 下，
+    旧投影约 5,500（远低于上限，会放行），实际约 250 万（PR #34 评审）。
+    """
+    import copy  # noqa: PLC0415
+
+    from docx import Document as _Document  # noqa: PLC0415
+    from docx.oxml.ns import qn  # noqa: PLC0415
+    from docx.table import _Row  # noqa: PLC0415
+
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    span, rows = 5000, 500
+    doc = _Document()
+    table = doc.add_table(rows=1, cols=1)
+    grid = table._tbl.find(qn("w:tblGrid"))  # noqa: SLF001
+    assert grid is not None
+    for _ in range(span - 1):
+        grid.append(grid.makeelement(qn("w:gridCol"), {}))
+
+    template = table._tbl.tr_lst[0]  # noqa: SLF001
+    tc_pr = template.tc_lst[0].get_or_add_tcPr()
+    tc_pr.get_or_add_gridSpan().val = span
+    tc_pr.append(tc_pr.makeelement(qn("w:vMerge"), {qn("w:val"): "restart"}))
+    for _ in range(rows):
+        tr = copy.deepcopy(template)
+        pr = tr.tc_lst[0].get_or_add_tcPr()
+        span_el, merge_el = pr.find(qn("w:gridSpan")), pr.find(qn("w:vMerge"))
+        assert span_el is not None and merge_el is not None
+        pr.remove(span_el)  # 续格省略 gridSpan ⇒ 本地值是 1
+        merge_el.set(qn("w:val"), "continue")
+        table._tbl.append(tr)  # noqa: SLF001
+    path = tmp_path / "vmerge.docx"
+    doc.save(str(path))
+
+    def _explode(self: object) -> None:
+        raise AssertionError("准入检查摸了 row.cells —— 拦晚了")
+
+    monkeypatch.setattr(_Row, "cells", property(_explode))
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        blocks = _parse(path)["blocks"]
+    finally:
+        logger.remove(sink)
+
+    assert not any(b["type"] == "table" for b in blocks), "超预算的表不该被展开"
+    assert any("已跳过并留占位" in r for r in records), f"没有留痕：{records}"
+
+
 def test_an_oversized_table_leaves_a_searchable_placeholder(tmp_path: Path) -> None:
     """跳过之后**在原位留一条能被检索到的说明**。
 

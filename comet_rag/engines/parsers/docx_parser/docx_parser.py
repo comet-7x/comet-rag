@@ -596,8 +596,8 @@ class DocxParser:
             max(int(getattr(row, "grid_cols_after", 0) or 0), 0),
         )
 
-    def _projected_width(self, row: Any, grid_width: int) -> int:
-        """这一行展开后会占多少列 —— **全程不碰 `row.cells`**。
+    def _row_extent(self, row: Any, grid_width: int) -> tuple[int, int]:
+        """`(两端缺列数之和, 本行 tc 自己声明的 span 之和)` —— **不碰 `row.cells`**。
 
         为什么不能碰：`row.cells` 是按网格列展开的，长度由文档里的 `gridSpan`
         决定。一份 2 列的表里塞一个 `gridSpan=10000000`，python-docx 就会建出
@@ -614,7 +614,44 @@ class DocxParser:
         """
         before, after = self._raw_gaps(row)
         spans = sum(max(tc.grid_span, 1) for tc in row._tr.tc_lst)  # noqa: SLF001
-        return min(before, grid_width) + spans + min(after, grid_width)
+        return min(before, grid_width) + min(after, grid_width), spans
+
+    def _projected_cells(self, table: Any, grid_width: int) -> int:
+        """整表展开后的单元格数**上界**，全程不碰 `row.cells`。
+
+        ## 为什么不能只看本行自己声明的 span
+
+        `vMerge="continue"` 的续格会继承**上方根单元格**的 `gridSpan`，而它
+        自己的 `tc` 往往省略 `gridSpan`（本地值就是 1）。实测：
+
+            r0: XML 里 grid_span=[5]   row.cells 实际长度 = 5   (vMerge restart)
+            r1: XML 里 grid_span=[1]   row.cells 实际长度 = 5   (vMerge continue)
+
+        于是"逐行累加本地 span"会严重低估：根行声明 `gridSpan=S`、后面跟 R 个
+        续行，本地和约 `S + R`，实际展开却是 `S × (R+1)`。取 S=999000、R=999
+        就能把投影压在默认上限之下，而真实展开接近十亿格（PR #34 评审）。
+
+        ## 用"历史最大行宽"作上界，而不是逐个回溯根单元格
+
+        续格继承的 span 一定来自**某个更早的行**里的根单元格，所以
+
+            第 i 行的实际宽度  ≤  第 i 行两端缺列 + max(前 i 行各自的 span 之和)
+
+        这个界对合法表格是**紧的**（每行 span 之和都等于网格宽度，取 max 还是
+        它），对上面那种载荷则足够大到能拒掉。
+
+        比"为每个续格追溯根 `tc`"简单得多，也回避了追溯本身的风险 —— 攻击者
+        同样可以用很长的 vMerge 链把追溯变成新的资源问题。
+        """
+        projected = 0
+        widest_spans = 0
+        for row in table.rows:
+            gaps, spans = self._row_extent(row, grid_width)
+            widest_spans = max(widest_spans, spans)
+            projected += gaps + widest_spans
+            if projected > self._max_table_cells:
+                break  # 已经超了，没必要把剩下的行也数一遍
+        return projected
 
     def _row_to_cells(self, row: Any, before: int, after: int) -> list[str]:
         """一行的单元格文本，横向合并（gridSpan）的续格留空。
@@ -742,7 +779,10 @@ class DocxParser:
         #
         # 所以判据必须**逐个 `tc` 从 XML 上数**，而且要在碰 `row.cells` 之前
         # 算完 —— 后者的长度正是由 gridSpan 决定的，等它建好就晚了。
-        projected = sum(self._projected_width(row, grid_width) for row in table.rows)
+        #
+        # 还有第四个维度：`vMerge` 的续格会继承上方根单元格的 span，见
+        # `_projected_cells()`。
+        projected = self._projected_cells(table, grid_width)
         if projected > self._max_table_cells:
             self._skip_oversized_table(len(table.rows), projected)
             return
