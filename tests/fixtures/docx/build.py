@@ -86,6 +86,43 @@ def build_table(path: Path) -> Path:
     return path
 
 
+def build_merged_table(path: Path) -> Path:
+    """表格：横向合并、纵向合并、**相邻重复值**、相邻空格（#18）。
+
+    每一行都对着一种此前会出错的形态：
+
+        r0  [合并表头 →  ←] [备注]     横向合并（gridSpan）
+        r1  [Q1] [Q1] [同上]           相邻重复值 —— 旧实现会折叠成 2 列
+        r2  [  ] [  ] [尾]             相邻空格 —— 同样会被折叠
+        r3  [纵向] [X] [X]             纵向合并（vMerge）+ 又一组重复值
+        r4  [ ↑  ] [Y] [Y]
+    """
+    doc = Document()
+    doc.add_heading("合并单元格样本", level=1)
+
+    table = doc.add_table(rows=5, cols=3)
+
+    # 先合并再写文本：反过来会把两格的段落拼到一起。
+    table.cell(0, 0).merge(table.cell(0, 1))
+    table.cell(0, 0).text = "合并表头"
+    table.cell(0, 2).text = "备注"
+
+    for col, text in enumerate(["Q1", "Q1", "同上"]):
+        table.cell(1, col).text = text
+    for col, text in enumerate(["", "", "尾"]):
+        table.cell(2, col).text = text
+
+    table.cell(3, 0).merge(table.cell(4, 0))
+    table.cell(3, 0).text = "纵向"
+    for col, text in enumerate(["X", "X"], start=1):
+        table.cell(3, col).text = text
+    for col, text in enumerate(["Y", "Y"], start=1):
+        table.cell(4, col).text = text
+
+    doc.save(str(path))
+    return path
+
+
 def build_image(path: Path) -> Path:
     doc = Document()
     doc.add_heading("图片样本", level=1)
@@ -139,6 +176,7 @@ def build_header_footer(path: Path) -> Path:
 BUILDERS = {
     "basic": build_basic,
     "table": build_table,
+    "merged_table": build_merged_table,
     "image": build_image,
     "equations": build_equations,
     "header_footer": build_header_footer,
