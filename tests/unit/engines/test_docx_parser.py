@@ -334,6 +334,53 @@ def test_a_wide_grid_times_many_rows_is_refused_not_expanded(tmp_path: Path) -> 
     assert any("已跳过并留占位" in r for r in records), f"没有留痕：{records}"
 
 
+def test_a_huge_gridspan_in_a_tiny_grid_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**第三个可控维度：`gridSpan`。**
+
+    前两道防线（缺列数封到网格宽度、整表按 行数×网格宽度 定预算）都挡不住
+    这一种：一份只有 2 列的表，某格声明 `gridSpan=10000000`，python-docx 的
+    `row.cells` 就会返回一千万个 `_Cell` —— 光是建它就 75 MB，而且发生在解析
+    循环**之前**，循环里再设防也来不及（PR #34 评审）。
+
+    所以投影必须从 XML 层逐个 `tc` 数 span，绝不能先摸 `row.cells`。
+
+    ⚠️ 断言"被拒绝了"是**不够的** —— 用 `len(row.cells)` 去算投影同样会拒绝，
+    只是先白白建了一千万个 `_Cell`。所以这里把 `_Row.cells` 换成一个会炸的
+    属性：准入检查一旦碰它，用例立刻红。
+    """
+    from docx import Document as _Document  # noqa: PLC0415
+    from docx.table import _Row  # noqa: PLC0415
+
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    doc = _Document()
+    table = doc.add_table(rows=1, cols=2)
+    tc = table.rows[0]._tr.tc_lst[0]  # noqa: SLF001
+    tc.get_or_add_tcPr().get_or_add_gridSpan().val = 10_000_000
+    path = tmp_path / "bigspan.docx"
+    doc.save(str(path))
+
+    def _explode(self: object) -> None:
+        raise AssertionError(
+            "准入检查摸了 row.cells —— 一千万个 _Cell 已经建出来了，拦晚了"
+        )
+
+    monkeypatch.setattr(_Row, "cells", property(_explode))
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        blocks = _parse(path)["blocks"]
+    finally:
+        logger.remove(sink)
+
+    assert not any(b["type"] == "table" for b in blocks), "超预算的表不该被展开"
+    assert any("已跳过并留占位" in r for r in records), f"没有留痕：{records}"
+    assert any(b["type"] == "caption" for b in blocks), "该留占位"
+
+
 def test_an_oversized_table_leaves_a_searchable_placeholder(tmp_path: Path) -> None:
     """跳过之后**在原位留一条能被检索到的说明**。
 

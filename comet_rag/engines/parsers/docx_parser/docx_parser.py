@@ -596,6 +596,26 @@ class DocxParser:
             max(int(getattr(row, "grid_cols_after", 0) or 0), 0),
         )
 
+    def _projected_width(self, row: Any, grid_width: int) -> int:
+        """这一行展开后会占多少列 —— **全程不碰 `row.cells`**。
+
+        为什么不能碰：`row.cells` 是按网格列展开的，长度由文档里的 `gridSpan`
+        决定。一份 2 列的表里塞一个 `gridSpan=10000000`，python-docx 就会建出
+        一千万个 `_Cell`（实测 75 MB）—— 而这发生在解析循环**之前**，循环里
+        再怎么设防都拦不住（PR #34 评审）。
+
+        所以只能从 XML 层数：`tc` 的个数与各自的 span 都是逐个元素声明的，
+        规模等于文件规模，攻击者拿不到杠杆。
+
+        这里走 `row._tr` / `tc.grid_span` 这条内部路径是**刻意的**，与
+        `_row_to_cells()` 里坚持用公开 `cell.grid_span` 不矛盾：那边是在读
+        已经安全展开的数据，这边是在决定要不要展开 —— 而公开 API 恰恰正是
+        那个无界的东西，用它做准入检查等于先中招再判断。
+        """
+        before, after = self._raw_gaps(row)
+        spans = sum(max(tc.grid_span, 1) for tc in row._tr.tc_lst)  # noqa: SLF001
+        return min(before, grid_width) + spans + min(after, grid_width)
+
     def _row_to_cells(self, row: Any, before: int, after: int) -> list[str]:
         """一行的单元格文本，横向合并（gridSpan）的续格留空。
 
@@ -708,22 +728,23 @@ class DocxParser:
 
         # ── 先定界，再碰任何一行 ───────────────────────────────────────────
         #
-        # 缺列数封顶到网格宽度还**不足以**让内存有界（PR #34 评审）：攻击者
-        # 可以声明 N 个 `<w:gridCol/>`，再加 R 个各只含**一个** `<w:tc>` 的行、
-        # 每行都写 gridBefore=N —— XML 是 O(N+R)，展开却是 O(N×R)。
-        # 实测 N=R=3000：约 9,000 个 XML 元素、38 KB 的 docx，展开后是 900 万
-        # 个单元格、峰值 87 MB；而这两个维度都还能继续放大。
+        # 展开后的规模由**三个**文档可控的量决定，任何一个不设防都能放大：
         #
-        # 判据只用 `tblGrid` 的列数与 `tr` 的行数 —— 两者都是**逐个元素**声明
-        # 的，规模等于文件规模，攻击者拿不到杠杆。这也正是最终输出的大小：
-        # 各行下面会被补齐成矩形，所以成品就是 行数 × 网格宽度。
+        #   gridBefore / gridAfter   一行头尾声明缺几列
+        #   gridSpan                 一格横跨几列
+        #   行数 × 网格宽度           整表的矩形大小
         #
-        # 特别地**不能**用 `len(row.cells)` 来算：那会让 python-docx 把整行的
-        # `_Cell` 对象逐列建出来 —— 一个"只想算个数"的动作，代价与真的展开
-        # 一样大。（第一版就栽在这里：预算判对了，内存照样飙到 2.3 GB。）
-        row_count = len(table.rows)
-        if row_count * grid_width > self._max_table_cells:
-            self._skip_oversized_table(row_count, row_count * grid_width)
+        # 实测（均为 PR #34 评审）：
+        #   · N=R=3000 的"宽网格 + 短行"：约 9,000 个 XML 元素、38 KB 的 docx，
+        #     展开成 900 万个单元格、峰值 87 MB
+        #   · 2 列的表里塞一个 gridSpan=10000000：`row.cells` 直接返回一千万个
+        #     `_Cell`，光是建它就 75 MB
+        #
+        # 所以判据必须**逐个 `tc` 从 XML 上数**，而且要在碰 `row.cells` 之前
+        # 算完 —— 后者的长度正是由 gridSpan 决定的，等它建好就晚了。
+        projected = sum(self._projected_width(row, grid_width) for row in table.rows)
+        if projected > self._max_table_cells:
+            self._skip_oversized_table(len(table.rows), projected)
             return
 
         # ── 到这里，规模已经有界，可以逐行展开 ─────────────────────────────
