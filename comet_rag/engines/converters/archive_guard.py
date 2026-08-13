@@ -134,9 +134,13 @@ def _validate_xml_members(
                                 f"Archive XML contains more than "
                                 f"{limits.max_xml_elements:,} elements"
                             )
-                        if len(element.text or "") > limits.max_xml_text_chars:
+                        text_chars = max(
+                            len(element.text or ""),
+                            len(element.tail or ""),
+                        )
+                        if text_chars > limits.max_xml_text_chars:
                             raise ArchiveResourceLimitExceeded(
-                                f"XML text node in {member.filename!r} exceeds "
+                                f"XML text/tail node in {member.filename!r} exceeds "
                                 f"{limits.max_xml_text_chars:,} characters"
                             )
                         # `clear` 加删除已处理兄弟，避免父节点继续持有数百万个

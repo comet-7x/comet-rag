@@ -109,3 +109,5 @@ def test_secrets_are_masked_but_explicitly_unwrapped_for_connection_urls() -> No
 
     assert secret in database.dsn
     assert secret in redis.url
+    assert model.api_key_value == secret
+    assert vector.api_key_value == secret

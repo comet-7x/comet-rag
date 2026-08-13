@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -14,6 +16,7 @@ from comet_rag.engines.cleaners.docx_cleaner import DocxCleaner
 from comet_rag.engines.converters.archive_guard import (
     ArchiveLimits,
     ArchiveResourceLimitExceeded,
+    validate_zip_archive,
 )
 from comet_rag.engines.converters.text_converter import DocxConverter
 from comet_rag.engines.converters.types import DocxDocument
@@ -149,6 +152,41 @@ async def test_docx_parser_implements_async_base_contract() -> None:
     assert parsed.text == "hello"
 
 
+async def test_docx_parser_serializes_concurrent_aparse_calls(monkeypatch) -> None:
+    first = Document()
+    first.add_paragraph("first document")
+    second = Document()
+    second.add_paragraph("second document")
+    parser = DocxParser()
+    original_walk = parser._walk
+    state_lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def monitored_walk(container) -> None:
+        nonlocal active, max_active
+        with state_lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            # 没有解析锁时，两次 to_thread 会在此窗口稳定重叠。
+            time.sleep(0.05)
+            original_walk(container)
+        finally:
+            with state_lock:
+                active -= 1
+
+    monkeypatch.setattr(parser, "_walk", monitored_walk)
+    results = await asyncio.gather(
+        parser.aparse(DocxDocument(elements=first, metadata={"id": "first"})),
+        parser.aparse(DocxDocument(elements=second, metadata={"id": "second"})),
+    )
+
+    assert max_active == 1
+    assert [result.metadata["id"] for result in results] == ["first", "second"]
+    assert [result.text for result in results] == ["first document", "second document"]
+
+
 @pytest.mark.parametrize("method", ["batch_load", "abatch_load"])
 async def test_url_batch_rejects_non_positive_concurrency(
     tmp_path: Path, method: str
@@ -222,3 +260,19 @@ def test_docx_archive_bounds_xml_element_count(tmp_path: Path) -> None:
 
     with pytest.raises(ArchiveResourceLimitExceeded, match="XML.*elements"):
         converter.to_docx()
+
+
+def test_docx_archive_bounds_xml_tail_text(tmp_path: Path) -> None:
+    path = tmp_path / "long-tail.docx"
+    xml = b"<root><cell/>" + b"x" * 64 + b"</root>"
+    with ZipFile(path, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", xml)
+
+    with pytest.raises(ArchiveResourceLimitExceeded, match="text/tail"):
+        validate_zip_archive(
+            path,
+            ArchiveLimits(
+                max_compression_ratio=1_000.0,
+                max_xml_text_chars=16,
+            ),
+        )

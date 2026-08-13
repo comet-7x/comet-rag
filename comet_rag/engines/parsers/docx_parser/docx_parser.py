@@ -25,6 +25,7 @@ OMML → LaTeX conversion is handled by the built-in ``_omml`` module
 import asyncio
 import base64
 import re
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -238,6 +239,9 @@ class DocxParser(BaseParser[DocxDocument, DocxParsedContent]):
         heading_numbers: bool = False,
         max_table_cells: int = _MAX_TABLE_CELLS,
     ) -> None:
+        # 解析状态目前保存在实例上；同步 parse 与 aparse(to_thread) 必须共用
+        # 这一把锁，否则同一实例的两个文档会互相重置 `_blocks` / 编号状态。
+        self._parse_lock = threading.Lock()
         self._max_table_cells = max_table_cells
         self._doc: DocumentObject | None = None
         self._doc_part: Any = None
@@ -256,6 +260,10 @@ class DocxParser(BaseParser[DocxDocument, DocxParsedContent]):
         self._footnotes: dict[int, str] | None = None
 
     def parse(self, document: DocxDocument) -> DocxParsedContent:
+        with self._parse_lock:
+            return self._parse_unlocked(document)
+
+    def _parse_unlocked(self, document: DocxDocument) -> DocxParsedContent:
         self._doc = document.elements
         self._doc_part = self._doc.part
         self._blocks = []
