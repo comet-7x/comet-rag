@@ -25,6 +25,16 @@ class EmbeddingData(BaseModel):
     )
 
 
+def _normalize_embedding_data(data: EmbeddingData | str) -> EmbeddingData:
+    """统一基础 embedding 契约与多模态适配器的输入。
+
+    services 层按 ``BaseEmbeddingModel`` 的文本契约传 ``str``；Qwen 适配器还
+    支持图片，所以内部使用 ``EmbeddingData``。文本是后者的一个合法子集，
+    在适配器边界提升即可，不能要求每个通用调用方认识 Qwen 私有类型。
+    """
+    return EmbeddingData(text=data) if isinstance(data, str) else data
+
+
 class EncodingFormat(StrEnum):
     BASE64 = "base64"
     FLOAT = "float"
@@ -179,7 +189,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
 
     def embed(
         self,
-        embedding_data: EmbeddingData,
+        embedding_data: EmbeddingData | str,
         system_prompt: (
             Qwen3VLEmbeddingModelSystemPrompt | str
         ) = Qwen3VLEmbeddingModelSystemPrompt.COMMON,
@@ -204,6 +214,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             list[float]: 向量表示
         """
         try:
+            embedding_data = _normalize_embedding_data(embedding_data)
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,
@@ -233,7 +244,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
 
     async def _aembed(
         self,
-        embedding_data: EmbeddingData,
+        embedding_data: EmbeddingData | str,
         system_prompt: (
             Qwen3VLEmbeddingModelSystemPrompt | str
         ) = Qwen3VLEmbeddingModelSystemPrompt.COMMON,
@@ -258,6 +269,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             list[float]: 向量表示
         """
         try:
+            embedding_data = _normalize_embedding_data(embedding_data)
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,

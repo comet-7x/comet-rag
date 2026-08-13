@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.exc import IntegrityError
 
 from comet_rag.infrastructure.database.models import TaskEventRow, TaskRow
 from comet_rag.infrastructure.database.session import Database, affected_rows
@@ -89,9 +90,25 @@ class PostgresTaskStore(TaskStore):
 
     # ── 存取原语 ───────────────────────────────────────────────────────────
 
-    async def _insert(self, task: Task) -> None:
-        async with self._db.transaction() as session:
-            session.add(TaskRow(task_id=task.task_id, version=0, **_to_columns(task)))
+    async def _insert(self, task: Task) -> tuple[Task, bool]:
+        try:
+            async with self._db.transaction() as session:
+                session.add(
+                    TaskRow(task_id=task.task_id, version=0, **_to_columns(task))
+                )
+        except IntegrityError:
+            # 唯一约束是最终裁判：两个请求即便同时预读到“不存在”，也只有
+            # 一个能插入。事务回滚后读取赢家，返回与顺序重复提交相同的结果。
+            if task.idempotency_key:
+                existing = await self._query(
+                    kind=task.kind,
+                    idempotency_key=task.idempotency_key,
+                    limit=1,
+                )
+                if existing:
+                    return existing[0], False
+            raise
+        return task, True
 
     async def _load(self, task_id: str) -> Task | None:
         async with self._db.session() as session:

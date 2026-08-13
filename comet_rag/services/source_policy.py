@@ -81,6 +81,8 @@ class SourcePolicy:
     allow_private_network: bool = False
     #: URL 主机白名单。为空 = 不限（私网仍然被上一条挡着）。
     allowed_url_hosts: Sequence[str] = ()
+    #: 单个远端响应的应用层硬上限；无 Content-Length 时仍按累计字节执行。
+    max_download_bytes: int = 100 * 1024 * 1024
     #: DNS 解析函数，可注入 —— 测试不必真的查 DNS。
     resolve: Callable[[str], list[str]] = field(default=lambda host: _resolve(host))
 
@@ -182,6 +184,7 @@ def build_source_policy(config: object) -> SourcePolicy:
         allow_url=getattr(config, "allow_url", True),
         allow_private_network=getattr(config, "allow_private_network", False),
         allowed_url_hosts=tuple(getattr(config, "allowed_url_hosts", ()) or ()),
+        max_download_bytes=getattr(config, "max_download_bytes", 100 * 1024 * 1024),
     )
     if policy.allow_local and not policy.local_roots:
         logger.warning(

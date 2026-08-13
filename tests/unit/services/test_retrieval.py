@@ -10,9 +10,14 @@ from typing import Any
 
 import pytest
 
+from comet_rag.infrastructure.knowledge_base import (
+    EmbeddingModelChanged,
+    InMemoryKnowledgeBaseRepository,
+)
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore, VectorRecord
+from comet_rag.services.knowledge_base import KnowledgeBaseService, KnowledgeBaseSpec
 from comet_rag.services.retrieval import RetrievalService, SearchQuery
 
 DIM = 3
@@ -161,6 +166,31 @@ async def test_empty_knowledge_base_returns_nothing(model, store) -> None:
 
     assert result.chunks == []
     assert result.fetched == 0
+
+
+async def test_search_rejects_same_dimension_from_different_model(model, store) -> None:
+    repo = InMemoryKnowledgeBaseRepository()
+    original = KnowledgeBaseService(
+        repository=repo,
+        vector_store=store,
+        embedding_model="original-model",
+        embedding_dim=DIM,
+    )
+    await original.create(KnowledgeBaseSpec(kb_id=KB))
+    reopened = KnowledgeBaseService(
+        repository=repo,
+        vector_store=store,
+        embedding_model="different-model",
+        embedding_dim=DIM,
+    )
+    guarded = RetrievalService(
+        embedding_model=model,
+        vector_store=store,
+        knowledge_base=reopened,
+    )
+
+    with pytest.raises(EmbeddingModelChanged):
+        await guarded.search(SearchQuery(kb_id=KB, query="苹果"))
 
 
 async def test_results_carry_metadata(model, store) -> None:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from comet_rag.config.schemas import SqlDatabaseConfig
+from comet_rag.config.schemas import IngestPolicyConfig, SqlDatabaseConfig
 
 # ── DSN 编码（PR 评审 #7）──────────────────────────────────────────────────
 
@@ -71,3 +71,8 @@ def test_dsn_encodes_username_and_database_too() -> None:
     assert parsed.hostname == "h"
     assert unquote(parsed.username or "") == "user@corp"
     assert unquote(parsed.path) == "/db name"
+
+
+def test_download_limit_must_be_positive() -> None:
+    with pytest.raises(ValueError):
+        IngestPolicyConfig(max_download_bytes=0)

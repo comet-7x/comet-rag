@@ -75,6 +75,8 @@ class StubLoader(BaseLoader):
         self._path = path
         self.file_type = file_type
         self.loads = 0
+        self.fail_times = 0
+        self.failure: Exception | None = None
 
     def load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         self.loads += 1
@@ -90,6 +92,10 @@ class StubLoader(BaseLoader):
     async def aload(
         self, source: SourceContent | str, *args, **kwargs
     ) -> LoaderContent:
+        if self.fail_times > 0:
+            self.loads += 1
+            self.fail_times -= 1
+            raise self.failure or RuntimeError("注入的下载失败")
         return self.load(source)
 
     def cleanup(self) -> None:
@@ -306,6 +312,20 @@ async def test_network_error_is_retriable(
     assert done.attempts == 2, "可重试错误应当用满重试次数"
     assert done.error is not None
     assert done.error.retriable is True
+
+
+async def test_download_network_error_retries_extracting_stage(
+    svc: TaskService, loader: StubLoader
+) -> None:
+    loader.fail_times = 1
+    loader.failure = httpx.ConnectTimeout("下载超时")
+
+    task = await svc.submit(INGEST_KIND, request(), max_attempts=3)
+    done = await wait_for_terminal(svc.store, task.task_id)
+
+    assert done.status is TaskStatus.SUCCEEDED
+    assert done.attempts == 2
+    assert loader.loads == 2
 
 
 async def test_server_5xx_is_retriable(

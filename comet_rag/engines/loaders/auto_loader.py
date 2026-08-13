@@ -1,3 +1,6 @@
+import asyncio
+import inspect
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -18,16 +21,29 @@ class AutoLoader(BaseLoader):
         self,
         loaders: dict[SourceType, BaseLoader] | None = None,
         download_dir: str | Path | None = None,
+        max_download_bytes: int | None = None,
+        redirect_validator: Callable[[str], None] | None = None,
     ) -> None:
         if loaders is not None:
             self._loaders = loaders
         else:
             from comet_rag.engines.loaders.local_loader import LocalLoader
-            from comet_rag.engines.loaders.url_loader import URLLoader
+            from comet_rag.engines.loaders.url_loader import (
+                DEFAULT_MAX_DOWNLOAD_BYTES,
+                URLLoader,
+            )
 
             self._loaders: dict[SourceType, BaseLoader] = {
                 SourceType.LOCAL: LocalLoader(),
-                SourceType.URL: URLLoader(download_dir=download_dir),
+                SourceType.URL: URLLoader(
+                    download_dir=download_dir,
+                    max_download_bytes=(
+                        max_download_bytes
+                        if max_download_bytes is not None
+                        else DEFAULT_MAX_DOWNLOAD_BYTES
+                    ),
+                    redirect_validator=redirect_validator,
+                ),
             }
 
     def _resolve(self, source: SourceContent) -> BaseLoader:
@@ -69,3 +85,13 @@ class AutoLoader(BaseLoader):
     def cleanup(self) -> None:
         for loader in self._loaders.values():
             loader.cleanup()
+
+    async def aclose(self) -> None:
+        for loader in self._loaders.values():
+            closer = getattr(loader, "aclose", None)
+            if callable(closer):
+                result = closer()
+                if inspect.isawaitable(result):
+                    await result
+            else:
+                await asyncio.to_thread(loader.cleanup)

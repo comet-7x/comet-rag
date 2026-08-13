@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from comet_rag.infrastructure.knowledge_base import (
@@ -80,6 +82,36 @@ async def test_create_is_idempotent(service: KnowledgeBaseService) -> None:
     assert again.kb_id == first.kb_id
     assert again.created_at == first.created_at
     assert again.name == "原名", "幂等创建不该悄悄改掉已有属性"
+
+
+async def test_concurrent_create_returns_the_winner(store: InMemoryVectorStore) -> None:
+    class RacingRepository(InMemoryKnowledgeBaseRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.ready = asyncio.Barrier(2)
+
+        async def aget(self, kb_id: str):
+            found = await super().aget(kb_id)
+            if found is None:
+                await self.ready.wait()
+            return found
+
+    repo = RacingRepository()
+    svc = KnowledgeBaseService(
+        repository=repo,
+        vector_store=store,
+        embedding_model=MODEL,
+        embedding_dim=DIM,
+    )
+
+    first, second = await asyncio.gather(
+        svc.create(KnowledgeBaseSpec(kb_id="kb-race", name="winner-a")),
+        svc.create(KnowledgeBaseSpec(kb_id="kb-race", name="winner-b")),
+    )
+
+    assert first.kb_id == second.kb_id == "kb-race"
+    assert first.created_at == second.created_at
+    assert first.name == second.name
 
 
 async def test_name_defaults_to_kb_id(service: KnowledgeBaseService) -> None:

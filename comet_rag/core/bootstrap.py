@@ -291,6 +291,7 @@ def build_context(
         retrieval=RetrievalService(
             embedding_model=embedding_model,
             vector_store=vector_store,
+            knowledge_base=knowledge_base,
             reranker=reranker,
             degradation=degradation,
         ),

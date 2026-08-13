@@ -57,7 +57,12 @@ class TaskStore(ABC):
 
     # 抽象方法
     @abstractmethod
-    async def _insert(self, task: Task) -> None: ...
+    async def _insert(self, task: Task) -> tuple[Task, bool]:
+        """原子插入，返回 ``(落库任务, 是否新建)``。
+
+        带幂等键的并发插入必须让一个写入者获胜，其余返回赢家；不能把唯一
+        约束冲突泄漏成 500。
+        """
 
     @abstractmethod
     async def _load(self, task_id: str) -> Task | None:
@@ -113,12 +118,6 @@ class TaskStore(ABC):
         **fields: Any,
     ) -> Task:
         """创建任务。带 idempotency_key 时重复提交返回既有任务，不新建。"""
-        if idempotency_key:
-            existing = await self._query(
-                kind=kind, idempotency_key=idempotency_key, limit=1
-            )
-            if existing:
-                return existing[0]
         task = Task(
             task_id=new_task_id(),
             kind=kind,
@@ -128,9 +127,12 @@ class TaskStore(ABC):
             max_attempts=max_attempts,
             **fields,
         )
-        await self._insert(task)
-        await self._append_event(task.task_id, "created", f"任务已创建（{kind}）")
-        return task
+        persisted, created = await self._insert(task)
+        if created:
+            await self._append_event(
+                persisted.task_id, "created", f"任务已创建（{kind}）"
+            )
+        return persisted
 
     async def get(self, task_id: str) -> Task | None:
         return await self._load(task_id)
@@ -409,9 +411,17 @@ class InMemoryTaskStore(TaskStore):
         self._events: dict[str, list[TaskEvent]] = {}
         self._lock = asyncio.Lock()
 
-    async def _insert(self, task: Task) -> None:
+    async def _insert(self, task: Task) -> tuple[Task, bool]:
         async with self._lock:
+            if task.idempotency_key:
+                for existing in self._tasks.values():
+                    if (
+                        existing.kind == task.kind
+                        and existing.idempotency_key == task.idempotency_key
+                    ):
+                        return _clone(existing), False
             self._tasks[task.task_id] = _clone(task)
+            return _clone(task), True
 
     async def _load(self, task_id: str) -> Task | None:
         async with self._lock:

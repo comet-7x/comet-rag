@@ -28,6 +28,7 @@ from comet_rag.core.logging import logger
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import BaseVectorStore, Filter
+from comet_rag.services.knowledge_base import KnowledgeBaseService
 
 
 class SearchQuery(BaseModel):
@@ -98,11 +99,13 @@ class RetrievalService:
         *,
         embedding_model: BaseEmbeddingModel,
         vector_store: BaseVectorStore,
+        knowledge_base: KnowledgeBaseService | None = None,
         reranker: BaseReranker | None = None,
         degradation: DegradationController | None = None,
     ) -> None:
         self._embedding_model = embedding_model
         self._vector_store = vector_store
+        self._knowledge_base = knowledge_base
         self._reranker = reranker
         #: 分级降级（S4-5）。None = 不降级（当库用、单测）。
         self._degradation = degradation
@@ -153,6 +156,10 @@ class RetrievalService:
         )
 
     async def _recall(self, query: SearchQuery) -> list[RetrievedChunk]:
+        # 与入库路径使用同一条 A12 模型守卫。同维度的不同模型不会触发向量库
+        # 报错，却会在不兼容的语义空间中比较向量，结果只会静默变差。
+        if self._knowledge_base is not None:
+            await self._knowledge_base.resolve_for_search(query.kb_id)
         embedding = await self._embedding_model.aembed(query.query)
         hits = await self._vector_store.asearch(
             query.kb_id,

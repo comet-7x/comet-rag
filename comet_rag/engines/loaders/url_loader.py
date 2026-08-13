@@ -1,18 +1,22 @@
 import asyncio
-import io
 import tempfile
 import threading
+from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.data_type import AllowExt, ParseConfig
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent, SourceType
-from comet_rag.engines.utils.file_detector import detect_content_type_from_stream
+from comet_rag.engines.utils.file_detector import detect_content_type_from_path
+
+DEFAULT_MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
+_STREAM_CHUNK_BYTES = 64 * 1024
 
 
 class DownloadRequestConfig(BaseModel):
@@ -24,6 +28,15 @@ class DownloadRequestConfig(BaseModel):
     params: dict[str, str] | None = None
     timeout: int = 30
     follow_redirects: bool = True
+    max_bytes: int | None = Field(
+        default=None,
+        gt=0,
+        description="本次下载的字节上限；只能收紧 URLLoader 的全局上限",
+    )
+
+
+class DownloadTooLarge(ValueError):
+    """远端响应超过应用层下载上限。"""
 
 
 class URLLoader(BaseLoader):
@@ -50,11 +63,21 @@ class URLLoader(BaseLoader):
         async_client: httpx.AsyncClient | None = None,
         timeout: int = 30,
         follow_redirects: bool = True,
+        max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES,
+        redirect_validator: Callable[[str], None] | None = None,
+        max_redirects: int = 20,
     ) -> None:
+        if max_download_bytes <= 0:
+            raise ValueError("max_download_bytes must be greater than zero")
+        if max_redirects < 0:
+            raise ValueError("max_redirects cannot be negative")
         self.download_dir = Path(download_dir) if download_dir else None
         self._temp_files: list[str] = []
         self._timeout = timeout
         self._follow_redirects = follow_redirects
+        self._max_download_bytes = max_download_bytes
+        self._redirect_validator = redirect_validator
+        self._max_redirects = max_redirects
         self._client = client
         self._async_client = async_client
         # 只关自己造的
@@ -74,14 +97,14 @@ class URLLoader(BaseLoader):
         """懒创建：只用异步路径的调用方不必平白多一个同步连接池。"""
         if self._client is None:
             self._client = httpx.Client(
-                timeout=self._timeout, follow_redirects=self._follow_redirects
+                timeout=self._timeout, follow_redirects=False
             )
         return self._client
 
     def _shared_async_client(self) -> httpx.AsyncClient:
         if self._async_client is None:
             self._async_client = httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=self._follow_redirects
+                timeout=self._timeout, follow_redirects=False
             )
         return self._async_client
 
@@ -116,9 +139,9 @@ class URLLoader(BaseLoader):
             "User-Agent": f"Mozilla/5.0 (compatible; comet-rag {type(self).__name__})"
         }
 
-        def _do_request(c: httpx.Client) -> bytes:
+        def _do_request(c: httpx.Client) -> str:
             method = "POST" if (config.content or config.data) else "GET"
-            response = c.request(
+            request = c.build_request(
                 method,
                 url,
                 headers=headers,
@@ -126,31 +149,34 @@ class URLLoader(BaseLoader):
                 data=config.data,
                 params=config.params,
                 timeout=config.timeout,
-                follow_redirects=config.follow_redirects,
             )
-            response.raise_for_status()
-            return response.content
+            redirects = 0
+            while True:
+                response = c.send(request, stream=True, follow_redirects=False)
+                if config.follow_redirects and response.is_redirect:
+                    next_request = response.next_request
+                    response.close()
+                    if next_request is None:
+                        raise httpx.RemoteProtocolError(
+                            "Redirect response is missing a usable Location header",
+                            request=request,
+                        )
+                    redirects += 1
+                    if redirects > self._max_redirects:
+                        raise httpx.TooManyRedirects(
+                            f"Exceeded {self._max_redirects} redirects", request=request
+                        )
+                    if self._redirect_validator is not None:
+                        self._redirect_validator(str(next_request.url))
+                    request = next_request
+                    continue
+                try:
+                    response.raise_for_status()
+                    return self._stream_response(response, config)
+                finally:
+                    response.close()
 
-        try:
-            raw = _do_request(client if client is not None else self._shared_client())
-        except Exception as e:
-            raise ValueError(f"Download failed from {url}: {e!s}") from e
-
-        if not raw:
-            raise ValueError(f"Downloaded empty content from {url}")
-
-        url_ext = Path(urlparse(url).path).suffix.lstrip(".").lower()
-        label = (
-            url_ext
-            if url_ext in AllowExt._value2member_map_
-            else detect_content_type_from_stream(io.BytesIO(raw))
-        )
-        with tempfile.NamedTemporaryFile(
-            suffix=f".{label}", delete=False, dir=self.download_dir
-        ) as tmp:
-            self._temp_files.append(tmp.name)
-            tmp.write(raw)
-            return tmp.name
+        return _do_request(client if client is not None else self._shared_client())
 
     async def _adownload(
         self,
@@ -162,9 +188,9 @@ class URLLoader(BaseLoader):
             "User-Agent": f"Mozilla/5.0 (compatible; comet-rag {type(self).__name__})"
         }
 
-        async def _do_request(c: httpx.AsyncClient) -> bytes:
+        async def _do_request(c: httpx.AsyncClient) -> str:
             method = "POST" if (config.content or config.data) else "GET"
-            response = await c.request(
+            request = c.build_request(
                 method,
                 url,
                 headers=headers,
@@ -172,39 +198,129 @@ class URLLoader(BaseLoader):
                 data=config.data,
                 params=config.params,
                 timeout=config.timeout,
-                follow_redirects=config.follow_redirects,
             )
-            response.raise_for_status()
-            return response.content
+            redirects = 0
+            while True:
+                response = await c.send(request, stream=True, follow_redirects=False)
+                if config.follow_redirects and response.is_redirect:
+                    next_request = response.next_request
+                    await response.aclose()
+                    if next_request is None:
+                        raise httpx.RemoteProtocolError(
+                            "Redirect response is missing a usable Location header",
+                            request=request,
+                        )
+                    redirects += 1
+                    if redirects > self._max_redirects:
+                        raise httpx.TooManyRedirects(
+                            f"Exceeded {self._max_redirects} redirects", request=request
+                        )
+                    if self._redirect_validator is not None:
+                        await asyncio.to_thread(
+                            self._redirect_validator, str(next_request.url)
+                        )
+                    request = next_request
+                    continue
+                try:
+                    response.raise_for_status()
+                    return await self._astream_response(response, config)
+                finally:
+                    await response.aclose()
 
+        return await _do_request(
+            client if client is not None else self._shared_async_client()
+        )
+
+    def _effective_max_bytes(self, config: DownloadRequestConfig) -> int:
+        if config.max_bytes is None:
+            return self._max_download_bytes
+        return min(config.max_bytes, self._max_download_bytes)
+
+    @staticmethod
+    def _check_content_length(response: httpx.Response, limit: int) -> None:
+        raw = response.headers.get("content-length")
+        if raw is None:
+            return
         try:
-            raw = await _do_request(
-                client if client is not None else self._shared_async_client()
-            )
-        except Exception as e:
-            raise ValueError(f"Async download failed from {url}: {e!s}") from e
-
-        if not raw:
-            raise ValueError(f"Downloaded empty content from {url}")
-
-        url_ext = Path(urlparse(url).path).suffix.lstrip(".").lower()
-        loop = asyncio.get_running_loop()
-        if url_ext in AllowExt._value2member_map_:
-            label = url_ext
-        else:
-            label = await loop.run_in_executor(
-                None, lambda: detect_content_type_from_stream(io.BytesIO(raw))
+            declared = int(raw)
+        except ValueError:
+            return  # 不可信的头不能放宽后面的累计字节检查
+        if declared > limit:
+            raise DownloadTooLarge(
+                f"Remote response declares {declared} bytes, limit is {limit}"
             )
 
-        def _save() -> str:
-            with tempfile.NamedTemporaryFile(
-                suffix=f".{label}", delete=False, dir=self.download_dir
-            ) as tmp:
-                self._temp_files.append(tmp.name)
-                tmp.write(raw)
-                return tmp.name
+    def _new_temp_file(self):
+        # 异步路径需要让文件跨多个 await 保持打开，不能使用词法 with 块。
+        tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
+            delete=False, dir=self.download_dir
+        )
+        self._temp_files.append(tmp.name)
+        return tmp
 
-        return await loop.run_in_executor(None, _save)
+    def _discard_temp(self, path: str) -> None:
+        Path(path).unlink(missing_ok=True)
+        with suppress(ValueError):
+            self._temp_files.remove(path)
+
+    def _finalize_temp(self, path: str, response_url: httpx.URL) -> str:
+        source_ext = Path(urlparse(str(response_url)).path).suffix.lstrip(".").lower()
+        label = (
+            source_ext
+            if source_ext in AllowExt._value2member_map_
+            else detect_content_type_from_path(path)
+        )
+        target = str(Path(path).with_suffix(f".{label}"))
+        Path(path).replace(target)
+        self._temp_files[self._temp_files.index(path)] = target
+        return target
+
+    def _stream_response(
+        self, response: httpx.Response, config: DownloadRequestConfig
+    ) -> str:
+        limit = self._effective_max_bytes(config)
+        self._check_content_length(response, limit)
+        tmp = self._new_temp_file()
+        total = 0
+        try:
+            with tmp:
+                for chunk in response.iter_bytes(chunk_size=_STREAM_CHUNK_BYTES):
+                    total += len(chunk)
+                    if total > limit:
+                        raise DownloadTooLarge(
+                            f"Remote response exceeded {limit} bytes while streaming"
+                        )
+                    tmp.write(chunk)
+            if total == 0:
+                raise ValueError(f"Downloaded empty content from {response.url}")
+            return self._finalize_temp(tmp.name, response.url)
+        except BaseException:
+            self._discard_temp(tmp.name)
+            raise
+
+    async def _astream_response(
+        self, response: httpx.Response, config: DownloadRequestConfig
+    ) -> str:
+        limit = self._effective_max_bytes(config)
+        self._check_content_length(response, limit)
+        tmp = self._new_temp_file()
+        total = 0
+        try:
+            async for chunk in response.aiter_bytes(chunk_size=_STREAM_CHUNK_BYTES):
+                total += len(chunk)
+                if total > limit:
+                    raise DownloadTooLarge(
+                        f"Remote response exceeded {limit} bytes while streaming"
+                    )
+                await asyncio.to_thread(tmp.write, chunk)
+            await asyncio.to_thread(tmp.close)
+            if total == 0:
+                raise ValueError(f"Downloaded empty content from {response.url}")
+            return await asyncio.to_thread(self._finalize_temp, tmp.name, response.url)
+        except BaseException:
+            await asyncio.to_thread(tmp.close)
+            await asyncio.to_thread(self._discard_temp, tmp.name)
+            raise
 
     def load(
         self,
@@ -218,7 +334,9 @@ class URLLoader(BaseLoader):
             source = SourceContent(source)
         if source.pre_source_type != SourceType.URL:
             raise ValueError(f"URLLoader only handles URLs, got: {source.source!r}")
-        config = download_config or DownloadRequestConfig()
+        config = download_config or DownloadRequestConfig(
+            timeout=self._timeout, follow_redirects=self._follow_redirects
+        )
         file_path = self._download(source.source, config, client)
         return LoaderContent(
             path=Path(file_path),
@@ -239,7 +357,9 @@ class URLLoader(BaseLoader):
             source = SourceContent(source)
         if source.pre_source_type != SourceType.URL:
             raise ValueError(f"URLLoader only handles URLs, got: {source.source!r}")
-        config = download_config or DownloadRequestConfig()
+        config = download_config or DownloadRequestConfig(
+            timeout=self._timeout, follow_redirects=self._follow_redirects
+        )
         file_path = await self._adownload(source.source, config, client)
         loop = asyncio.get_running_loop()
         metadata = await loop.run_in_executor(

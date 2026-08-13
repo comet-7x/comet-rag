@@ -55,7 +55,7 @@ from comet_rag.core.concurrency import Overloaded
 from comet_rag.core.logging import logger
 from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.loaders.base_loader import BaseLoader
-from comet_rag.engines.loaders.types import SourceContent
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
@@ -198,8 +198,11 @@ class IngestRunner:
         task = await ctx.snapshot()
         request = IngestRequest.model_validate(task.request)
 
-        loader_content = await self._loader.aload(SourceContent(request.source))
+        loader_content: LoaderContent | None = None
         try:
+            # 下载也属于 extracting 阶段，必须位于同一个异常分类边界内。
+            # 否则连接超时会绕过 _classify，第一次失败就把任务判死。
+            loader_content = await self._loader.aload(SourceContent(request.source))
             file_type = str(loader_content.metadata.get("file_type", "")).lower()
             extractor = PipelineHooks.get_extractor(file_type)
             text = await asyncio.to_thread(extractor, loader_content, self._config)
@@ -216,7 +219,8 @@ class IngestRunner:
             raise _classify(exc, "extracting") from exc
         finally:
             # 临时文件必须清掉，否则批量入库会把磁盘塞满
-            loader_content.cleanup()
+            if loader_content is not None:
+                loader_content.cleanup()
 
     async def _chunk(self, ctx: TaskContext) -> None:
         task = await ctx.snapshot()

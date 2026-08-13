@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from comet_rag.core.logging import logger
+from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.infrastructure.knowledge_base import KnowledgeBaseRepository
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
@@ -112,11 +113,20 @@ def wire_runners(context: Context, *, ingest_config: Any = None) -> None:
     但不需要 FastAPI），而 API 进程调它是为了让"提交后本进程也能执行"
     在单进程模式下成立。
     """
+    policy = context.source_policy
+    loader = AutoLoader(
+        max_download_bytes=getattr(policy, "max_download_bytes", None),
+        redirect_validator=(
+            policy.check_redirect if policy is not None else None
+        ),
+    )
+    context._extra_closers.append(loader)
     register_ingest_runner(
         IngestRunner(
             embedding_model=context.embedding_model,
             vector_store=context.vector_store,
             knowledge_base=context.knowledge_base,
+            loader=loader,
             config=ingest_config,
         )
     )

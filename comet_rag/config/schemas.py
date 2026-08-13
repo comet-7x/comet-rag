@@ -223,6 +223,11 @@ class IngestPolicyConfig(BaseModel):
         default_factory=list,
         description="URL 主机白名单。为空 = 不限（私网仍被上一条挡着）",
     )
+    max_download_bytes: int = Field(
+        default=100 * 1024 * 1024,
+        gt=0,
+        description="单个 URL 响应的最大字节数。Content-Length 与实际流量都会校验",
+    )
 
 
 class InfrastructureConfig(BaseModel):

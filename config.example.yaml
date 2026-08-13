@@ -98,3 +98,6 @@ ingest_policy:
   allow_private_network: false
   # URL 主机白名单。留空 = 不限（私网仍被上一条挡着）。
   allowed_url_hosts: []
+  # 单个 URL 响应的硬上限；即使服务端不发或伪造 Content-Length，流式读取时
+  # 仍会按实际累计字节中止。默认 100 MiB。
+  max_download_bytes: 104857600

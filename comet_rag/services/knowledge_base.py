@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from comet_rag.core.logging import logger
 from comet_rag.infrastructure.knowledge_base import (
     KnowledgeBase,
+    KnowledgeBaseExists,
     KnowledgeBaseRepository,
 )
 from comet_rag.infrastructure.vectorstore import BaseVectorStore
@@ -100,7 +101,17 @@ class KnowledgeBaseService:
         # 先建 collection 再写元数据：反过来的话，建表失败会留下一条
         # 指向不存在 collection 的元数据，之后每次入库都报 CollectionNotFound。
         await self._store.aensure_collection(kb.kb_id, dim=kb.embedding_dim)
-        created = await self._repo.acreate(kb)
+        try:
+            created = await self._repo.acreate(kb)
+        except KnowledgeBaseExists:
+            # 另一个并发请求赢得了主键竞争。读取赢家并执行与顺序重试完全
+            # 相同的兼容性检查；同模型则幂等返回，不同模型仍按 A12 拒绝。
+            created = await self._repo.arequire(kb.kb_id)
+            created.assert_model_matches(self._model)
+            await self._store.aensure_collection(
+                created.kb_id, dim=created.embedding_dim
+            )
+            return await self._view(created)
         logger.info(
             f"知识库已创建 kb={created.kb_id} model={created.embedding_model} "
             f"dim={created.embedding_dim}"
@@ -132,6 +143,12 @@ class KnowledgeBaseService:
         这是 A12 的执行点。维度不符会被向量库拦下，但**同维度的不同模型**
         谁也拦不住 —— 只有这里能。
         """
+        kb = await self._repo.arequire(kb_id)
+        kb.assert_model_matches(self._model)
+        return kb
+
+    async def resolve_for_search(self, kb_id: str) -> KnowledgeBase:
+        """检索前执行与入库相同的模型一致性守卫。"""
         kb = await self._repo.arequire(kb_id)
         kb.assert_model_matches(self._model)
         return kb

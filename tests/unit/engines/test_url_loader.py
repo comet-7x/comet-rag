@@ -15,7 +15,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from comet_rag.engines.loaders.url_loader import URLLoader
+from comet_rag.engines.loaders.url_loader import DownloadTooLarge, URLLoader
 
 URL = "https://example.invalid/doc.txt"
 BODY = b"hello from the network"
@@ -224,7 +224,7 @@ def test_batch_load_shares_one_client(tmp_path: Path) -> None:
 # ── 错误路径 ───────────────────────────────────────────────────────────────
 
 
-def test_http_error_is_wrapped(tmp_path: Path) -> None:
+def test_http_error_preserves_httpx_type_for_retry_classification(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404)
 
@@ -233,10 +233,72 @@ def test_http_error_is_wrapped(tmp_path: Path) -> None:
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
     try:
-        with pytest.raises(ValueError, match="Download failed"):
+        with pytest.raises(httpx.HTTPStatusError):
             ld.load(URL)
     finally:
         ld.cleanup()
+
+
+def test_content_length_over_limit_is_rejected_before_buffering(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"Content-Length": "1000"}, content=b"x")
+
+    ld = URLLoader(
+        download_dir=tmp_path,
+        max_download_bytes=10,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        with pytest.raises(DownloadTooLarge, match="declares 1000 bytes"):
+            ld.load(URL)
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        ld.cleanup()
+
+
+async def test_actual_stream_size_is_bounded_when_header_lies(tmp_path: Path) -> None:
+    body = b"x" * 32
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"Content-Length": "1"}, content=body)
+
+    ld = URLLoader(
+        download_dir=tmp_path,
+        max_download_bytes=16,
+        async_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        with pytest.raises(DownloadTooLarge, match="while streaming"):
+            await ld.aload(URL)
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        await ld.aclose()
+
+
+async def test_redirect_target_is_validated_before_second_request(tmp_path: Path) -> None:
+    requested: list[str] = []
+    validated: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(302, headers={"Location": "http://127.0.0.1/secret"})
+
+    def reject_private(url: str) -> None:
+        validated.append(url)
+        raise PermissionError("private redirect rejected")
+
+    ld = URLLoader(
+        download_dir=tmp_path,
+        redirect_validator=reject_private,
+        async_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        with pytest.raises(PermissionError, match="private redirect"):
+            await ld.aload(URL)
+        assert requested == [URL]
+        assert validated == ["http://127.0.0.1/secret"]
+    finally:
+        await ld.aclose()
 
 
 def test_empty_body_is_rejected(tmp_path: Path) -> None:

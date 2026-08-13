@@ -82,6 +82,18 @@ class TaskStoreContract:
         assert again.task_id == first.task_id
         assert len(await store.list_tasks(kind="demo")) == 1
 
+    async def test_concurrent_idempotent_creates_return_one_task(
+        self, store: TaskStore
+    ) -> None:
+        tasks = await asyncio.gather(
+            *(store.create("demo", idempotency_key="same") for _ in range(12))
+        )
+
+        assert len({task.task_id for task in tasks}) == 1
+        assert len(await store.list_tasks(kind="demo")) == 1
+        events = await store.events(tasks[0].task_id)
+        assert [event.type for event in events].count("created") == 1
+
     async def test_idempotency_key_is_scoped_by_kind(self, store: TaskStore) -> None:
         a = await store.create("demo", idempotency_key="k")
         b = await store.create("other", idempotency_key="k")
