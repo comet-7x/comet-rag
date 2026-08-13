@@ -605,12 +605,27 @@ class DocxParser:
         补齐是在**行尾**做的，所以出现在行中间的合并会把后面所有列都错位。
         留空则天然对齐，`col_count` 也才是真实的网格宽度。
 
+        ## 两端的"缺列"也要占位（gridBefore / gridAfter）
+
+        Word 允许一行**晚开始**或**早结束**：`w:gridBefore` / `w:gridAfter`
+        声明该行头尾各有几个网格列压根不存在（常见于缩进的子表格行、
+        跨页表格的续行）。python-docx 把它们暴露为 `grid_cols_before` /
+        `grid_cols_after`，且明确写着"these are not simply empty cells"。
+
+        不补的话，"晚开始"那行的所有单元格都会左移一格：
+
+            正确  [A, B, C] / ["", y, z]
+            错误  [A, B, C] / [y, z, ""]      ← y 落到了第 0 列
+
+        与漏掉合并续格是**同一类错位**，只是成因不同（#33）。
+
         ## 纵向合并（vMerge）不在此列
 
         它的 `grid_span` 是 1，文本会沿列重复出现 —— 本方法按行处理，碰不到
         它，行为与此前一致。对检索而言每行自带上下文反而是好事。
         """
-        cells: list[str] = []
+        # 行首的缺列：不是空单元格，是不存在的网格列
+        cells: list[str] = [""] * row.grid_cols_before
         continuations = 0
         for cell in row.cells:
             if continuations:
@@ -620,6 +635,7 @@ class DocxParser:
             cells.append(self._cell_to_text(cell))
             # 横跨 n 列 ⇒ 后面 n-1 个网格位置是同一个单元格的续格
             continuations = max(cell.grid_span - 1, 0)
+        cells.extend([""] * row.grid_cols_after)
         return cells
 
     def _handle_table(self, element: Any) -> None:
@@ -631,8 +647,19 @@ class DocxParser:
         if not any(any(r) for r in cleaned):
             return
 
-        # Pad all rows to the same width
-        max_cols = max(len(r) for r in cleaned)
+        # 两端的缺列补上之后（见 `_row_to_cells`），每行的宽度**本就应当**等于
+        # 表格的网格宽度 —— 实测 17 张真实表格无一例外。走到这里还需要补，
+        # 说明文档里的网格声明本身不自洽。
+        #
+        # 补是为了不让下游拿到参差的行，但必须留痕：这一步只会往**行尾**填，
+        # 而真正缺的列可能在中间；静默做等于把错位藏起来（#33）。
+        widths = {len(r) for r in cleaned}
+        max_cols = max(widths)
+        if len(widths) > 1:
+            logger.warning(
+                f"表格各行的网格宽度不一致 {sorted(widths)}，已按最宽的 {max_cols} 列"
+                f"在行尾补齐 —— 该表的列对应关系可能不准"
+            )
         for row in cleaned:
             row.extend("" for _ in range(max_cols - len(row)))
 

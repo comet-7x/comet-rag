@@ -189,6 +189,63 @@ def test_merge_position_within_the_row_does_not_shift_columns(
     assert positions["col_count"] == 6
 
 
+# ── 缺列：gridBefore / gridAfter（#33）─────────────────────────────────────
+
+
+def test_rows_that_start_late_or_end_early_keep_their_grid_position(
+    generated_docx: dict[str, Path],
+) -> None:
+    """Word 允许一行"晚开始"或"早结束"，那些位置是**不存在的网格列**。
+
+    不补占位的话，"晚开始"那行的所有单元格都会左移一格，而行尾补齐还会让它
+    看起来"宽度正常" —— 与漏掉合并续格是同一类错位，只是成因不同（#33）。
+    """
+    blocks = _parse(generated_docx["grid_gaps_table"])["blocks"]
+    table = next(b for b in blocks if b["type"] == "table")
+
+    assert table["rows"][0] == ["A", "B", "C"], "完整的行不受影响"
+    assert table["rows"][1] == ["", "y", "z"], "gridBefore=1：y 必须落在第 1 列"
+    assert table["rows"][2] == ["p", "q", ""], "gridAfter=1：缺的是尾列"
+    assert table["rows"][3] == ["", "m", ""], "两端都缺时中间那格不能跑到边上去"
+    assert table["col_count"] == 3
+
+
+def test_a_genuinely_ragged_table_is_padded_but_says_so(tmp_path: Path) -> None:
+    """两端补齐之后仍宽度不一致 ⇒ 文档的网格声明自不自洽。
+
+    仍然补（下游不该拿到参差的行），但**必须留痕**：补只往行尾填，而真正缺
+    的列可能在中间，静默做等于把错位藏起来。这条用例就是钉住"别静默"。
+
+    真实样本里 17 张表无一触发，所以这条告警不会变成噪声。
+    """
+    from docx import Document as _Document  # noqa: PLC0415
+
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    doc = _Document()
+    table = doc.add_table(rows=2, cols=3)
+    for col, text in enumerate(["A", "B", "C"]):
+        table.cell(0, col).text = text
+    for col, text in enumerate(["x", "y", "z"]):
+        table.cell(1, col).text = text
+    # 删掉一格却**不**声明 gridAfter —— 这就是"网格声明不自洽"
+    tr = table.rows[1]._tr  # noqa: SLF001
+    tr.remove(tr.tc_lst[-1])
+    path = tmp_path / "ragged.docx"
+    doc.save(str(path))
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        blocks = _parse(path)["blocks"]
+    finally:
+        logger.remove(sink)
+
+    table_block = next(b for b in blocks if b["type"] == "table")
+    assert table_block["rows"][1] == ["x", "y", ""], "仍然要补齐"
+    assert any("网格宽度不一致" in r for r in records), f"补齐没有留痕：{records}"
+
+
 def test_vertical_merge_repeats_down_the_column(
     generated_docx: dict[str, Path],
 ) -> None:

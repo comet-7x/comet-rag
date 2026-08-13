@@ -154,6 +154,65 @@ def build_merged_table(path: Path) -> Path:
     return path
 
 
+def _omit_grid_columns(row, *, before: int = 0, after: int = 0) -> None:
+    """让一行"晚开始"或"早结束"：删掉两端的 `tc`，改用 gridBefore/gridAfter。
+
+    python-docx 没有写入这两个值的公开 API（`_Row.grid_cols_before` 只读），
+    所以这里直接动 XML —— 但走的是 `get_or_add_gridBefore()`，它会把元素插到
+    schema 要求的位置上，比手工 append 稳。
+    """
+    tr = row._tr
+    for _ in range(before):
+        tr.remove(tr.tc_lst[0])
+    for _ in range(after):
+        tr.remove(tr.tc_lst[-1])
+
+    tr_pr = tr.get_or_add_trPr()
+    if before:
+        tr_pr.get_or_add_gridBefore().val = before
+    if after:
+        tr_pr.get_or_add_gridAfter().val = after
+
+
+def build_grid_gaps_table(path: Path) -> Path:
+    """表格：某些行"晚开始"或"早结束"（`w:gridBefore` / `w:gridAfter`，#33）。
+
+    这两个值声明该行头尾各有几个网格列**根本不存在** —— 不是空单元格。
+    python-docx 的文档专门强调了这一点："Note these are not simply 'empty'
+    cells. The renderer reads this value and skips forward to the table
+    layout-grid position of the first cell in this row."
+
+    常见于缩进的子表格行、跨页表格的续行。
+
+        r0  [A] [B] [C]        完整的三列
+        r1      [y] [z]        gridBefore=1，晚开始
+        r2  [p] [q]            gridAfter=1，早结束
+        r3      [m]            两端都缺，中间只剩一格
+
+    r3 是最刁钻的一行：不补两端的话它会缩到第 0 列去，而行尾补齐还会让它
+    看起来"宽度正常"，错得毫无痕迹。
+    """
+    doc = Document()
+    doc.add_heading("缺列样本", level=1)
+
+    table = doc.add_table(rows=4, cols=3)
+    for col, text in enumerate(["A", "B", "C"]):
+        table.cell(0, col).text = text
+    for col, text in enumerate(["x", "y", "z"]):
+        table.cell(1, col).text = text
+    for col, text in enumerate(["p", "q", "r"]):
+        table.cell(2, col).text = text
+    for col, text in enumerate(["l", "m", "n"]):
+        table.cell(3, col).text = text
+
+    _omit_grid_columns(table.rows[1], before=1)
+    _omit_grid_columns(table.rows[2], after=1)
+    _omit_grid_columns(table.rows[3], before=1, after=1)
+
+    doc.save(str(path))
+    return path
+
+
 def build_image(path: Path) -> Path:
     doc = Document()
     doc.add_heading("图片样本", level=1)
@@ -208,6 +267,7 @@ BUILDERS = {
     "basic": build_basic,
     "table": build_table,
     "merged_table": build_merged_table,
+    "grid_gaps_table": build_grid_gaps_table,
     "image": build_image,
     "equations": build_equations,
     "header_footer": build_header_footer,
