@@ -97,6 +97,15 @@ def build_merged_table(path: Path) -> Path:
         r3  [纵向] [X] [X]             纵向合并（vMerge）+ 又一组重复值
         r4  [ ↑  ] [Y] [Y]
         r5  [整行合并 →   ←   ←]       gridSpan=3，覆盖"续格不止一个"
+
+    第二张表专攻**合并出现在什么位置**（PR #32 评审建议）。上面那张表里的
+    合并都在行首，覆盖不到"行尾"与"同一行里有两个分开的合并"：
+
+        t2r0  [首合 ←] [单A] [中合 ←] [单B]    行首合并 + 中段合并（两个分离）
+        t2r1  [a] [b] [c] [d] [尾合  ←]        行尾合并
+
+    分成两张表而不是把第一张加宽：加宽会改动那边每一行的宽度与断言，
+    而那些断言各自盯着别的东西，不该被这次改动牵连。
     """
     doc = Document()
     doc.add_heading("合并单元格样本", level=1)
@@ -124,6 +133,22 @@ def build_merged_table(path: Path) -> Path:
     # 换成按 grid_span 计数后是一处显式算术，值得单独覆盖。
     table.cell(5, 0).merge(table.cell(5, 2))
     table.cell(5, 0).text = "整行合并"
+
+    # 中间必须隔一个段落：OOXML 里两张紧邻的表会被 Word 视作同一张。
+    doc.add_paragraph("下面这张表专攻合并出现的位置。")
+
+    positions = doc.add_table(rows=2, cols=6)
+    positions.cell(0, 0).merge(positions.cell(0, 1))
+    positions.cell(0, 0).text = "首合"
+    positions.cell(0, 2).text = "单A"
+    positions.cell(0, 3).merge(positions.cell(0, 4))
+    positions.cell(0, 3).text = "中合"
+    positions.cell(0, 5).text = "单B"
+
+    for col, text in enumerate(["a", "b", "c", "d"]):
+        positions.cell(1, col).text = text
+    positions.cell(1, 4).merge(positions.cell(1, 5))
+    positions.cell(1, 4).text = "尾合"
 
     doc.save(str(path))
     return path

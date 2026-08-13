@@ -170,6 +170,25 @@ def test_a_span_wider_than_two_leaves_every_continuation_blank(
     assert rows[5] == ["整行合并", "", ""]
 
 
+def test_merge_position_within_the_row_does_not_shift_columns(
+    generated_docx: dict[str, Path],
+) -> None:
+    """合并出现在**行首 / 行中 / 行尾**，以及同一行里有两个分开的合并。
+
+    上一条只覆盖了行首的合并 —— 而错位恰恰最容易发生在"合并后面还有列"
+    的时候：少留一个占位，它后面的所有列就整体左移一格，而行尾补齐
+    根本救不回来（PR #32 评审建议补的组合）。
+    """
+    blocks = _parse(generated_docx["merged_table"])["blocks"]
+    positions = [b for b in blocks if b["type"] == "table"][1]
+
+    # 行首合并 + 中段合并：两个合并之间与之后的单元格都不能移位
+    assert positions["rows"][0] == ["首合", "", "单A", "中合", "", "单B"]
+    # 行尾合并：占位落在行尾，不是把 "尾合" 挤到别处
+    assert positions["rows"][1] == ["a", "b", "c", "d", "尾合", ""]
+    assert positions["col_count"] == 6
+
+
 def test_vertical_merge_repeats_down_the_column(
     generated_docx: dict[str, Path],
 ) -> None:
