@@ -154,6 +154,96 @@ def build_merged_table(path: Path) -> Path:
     return path
 
 
+def _omit_grid_columns(
+    row,
+    *,
+    before: int = 0,
+    after: int = 0,
+    declare_before: int | None = None,
+    declare_after: int | None = None,
+) -> None:
+    """让一行"晚开始"或"早结束"：删掉两端的 `tc`，改用 gridBefore/gridAfter。
+
+    python-docx 没有写入这两个值的公开 API（`_Row.grid_cols_before` 只读），
+    所以这里直接动 XML —— 但走的是 `get_or_add_gridBefore()`，它会把元素插到
+    schema 要求的位置上，比手工 append 稳。
+
+    `declare_*` 可以让**声明的缺列数与实际删掉的格数不一致** —— 这正是构造
+    畸形/恶意文档所需要的：真实攻击载荷只删一格，却声明缺一千万列。
+    """
+    tr = row._tr
+    for _ in range(before):
+        tr.remove(tr.tc_lst[0])
+    for _ in range(after):
+        tr.remove(tr.tc_lst[-1])
+
+    declared_before = before if declare_before is None else declare_before
+    declared_after = after if declare_after is None else declare_after
+
+    tr_pr = tr.get_or_add_trPr()
+    if declared_before:
+        tr_pr.get_or_add_gridBefore().val = declared_before
+    if declared_after:
+        tr_pr.get_or_add_gridAfter().val = declared_after
+
+
+def build_grid_gaps_table(path: Path) -> Path:
+    """表格：某些行"晚开始"或"早结束"（`w:gridBefore` / `w:gridAfter`，#33）。
+
+    这两个值声明该行头尾各有几个网格列**根本不存在** —— 不是空单元格。
+    python-docx 的文档专门强调了这一点："Note these are not simply 'empty'
+    cells. The renderer reads this value and skips forward to the table
+    layout-grid position of the first cell in this row."
+
+    常见于缩进的子表格行、跨页表格的续行。
+
+        r0  [A] [B] [C]        完整的三列
+        r1      [y] [z]        gridBefore=1，晚开始
+        r2  [p] [q]            gridAfter=1，早结束
+        r3      [m]            两端都缺，中间只剩一格
+
+    r3 是最刁钻的一行：不补两端的话它会缩到第 0 列去，而行尾补齐还会让它
+    看起来"宽度正常"，错得毫无痕迹。
+
+    第二张表把**缺列与横向合并叠在同一行**上 —— 两个特性各自都对，不代表
+    组合起来也对：前缀占位、gridSpan 续格、后缀占位是三段接力，任何一段
+    起点算错，后面全歪。
+
+        t2r0  [A] [B] [C] [D]        完整的四列
+        t2r1      [合并 ←] [末]      gridBefore=1，且其后第一格横跨两列
+    """
+    doc = Document()
+    doc.add_heading("缺列样本", level=1)
+
+    table = doc.add_table(rows=4, cols=3)
+    for col, text in enumerate(["A", "B", "C"]):
+        table.cell(0, col).text = text
+    for col, text in enumerate(["x", "y", "z"]):
+        table.cell(1, col).text = text
+    for col, text in enumerate(["p", "q", "r"]):
+        table.cell(2, col).text = text
+    for col, text in enumerate(["l", "m", "n"]):
+        table.cell(3, col).text = text
+
+    _omit_grid_columns(table.rows[1], before=1)
+    _omit_grid_columns(table.rows[2], after=1)
+    _omit_grid_columns(table.rows[3], before=1, after=1)
+
+    # 中间必须隔一个段落：OOXML 里两张紧邻的表会被 Word 视作同一张。
+    doc.add_paragraph("下面这张表把缺列与横向合并叠在同一行上。")
+
+    combined = doc.add_table(rows=2, cols=4)
+    for col, text in enumerate(["A", "B", "C", "D"]):
+        combined.cell(0, col).text = text
+    combined.cell(1, 1).merge(combined.cell(1, 2))
+    combined.cell(1, 1).text = "合并"
+    combined.cell(1, 3).text = "末"
+    _omit_grid_columns(combined.rows[1], before=1)
+
+    doc.save(str(path))
+    return path
+
+
 def build_image(path: Path) -> Path:
     doc = Document()
     doc.add_heading("图片样本", level=1)
@@ -208,6 +298,7 @@ BUILDERS = {
     "basic": build_basic,
     "table": build_table,
     "merged_table": build_merged_table,
+    "grid_gaps_table": build_grid_gaps_table,
     "image": build_image,
     "equations": build_equations,
     "header_footer": build_header_footer,

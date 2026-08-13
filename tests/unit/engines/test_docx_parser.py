@@ -189,6 +189,433 @@ def test_merge_position_within_the_row_does_not_shift_columns(
     assert positions["col_count"] == 6
 
 
+# ── 缺列：gridBefore / gridAfter（#33）─────────────────────────────────────
+
+
+def test_rows_that_start_late_or_end_early_keep_their_grid_position(
+    generated_docx: dict[str, Path],
+) -> None:
+    """Word 允许一行"晚开始"或"早结束"，那些位置是**不存在的网格列**。
+
+    不补占位的话，"晚开始"那行的所有单元格都会左移一格，而行尾补齐还会让它
+    看起来"宽度正常" —— 与漏掉合并续格是同一类错位，只是成因不同（#33）。
+    """
+    blocks = _parse(generated_docx["grid_gaps_table"])["blocks"]
+    table = next(b for b in blocks if b["type"] == "table")
+
+    assert table["rows"][0] == ["A", "B", "C"], "完整的行不受影响"
+    assert table["rows"][1] == ["", "y", "z"], "gridBefore=1：y 必须落在第 1 列"
+    assert table["rows"][2] == ["p", "q", ""], "gridAfter=1：缺的是尾列"
+    assert table["rows"][3] == ["", "m", ""], "两端都缺时中间那格不能跑到边上去"
+    assert table["col_count"] == 3
+
+
+def test_a_missing_lead_column_and_a_merge_in_the_same_row(
+    generated_docx: dict[str, Path],
+) -> None:
+    """缺列与横向合并叠在同一行上。
+
+    两个特性各自都对，不代表组合起来也对：前缀占位、gridSpan 续格、后缀占位
+    是三段接力，任何一段起点算错，后面全歪 —— 而这种行在缩进的子表格里
+    并不罕见。
+    """
+    blocks = _parse(generated_docx["grid_gaps_table"])["blocks"]
+    combined = [b for b in blocks if b["type"] == "table"][1]
+
+    assert combined["rows"][0] == ["A", "B", "C", "D"]
+    # gridBefore=1 占掉第 0 列，"合并" 从第 1 列起横跨两列，"末" 落在第 3 列
+    assert combined["rows"][1] == ["", "合并", "", "末"]
+    assert combined["col_count"] == 4
+
+
+def test_a_hostile_grid_gap_cannot_blow_up_memory(tmp_path: Path) -> None:
+    """`gridBefore` / `gridAfter` 是**文档里的整数**，在"用户上传文件"这条路上
+    等于攻击者可控。直接 `[""] * n` 就是一个放大型 DoS。
+
+    实测同一份 36 KB 的 docx：`w:val="10000000"` 让解析峰值多占 80 MB，
+    封顶后 5 MB。每项 8 字节，而这个整数在 XML 里没有上限 —— 写成 2×10⁹
+    就是十几 GB，文件大小一个字节都不用变（PR #34 评审）。
+
+    封顶取**表格自己声明的网格宽度**而不是魔法常数：网格宽度由
+    `<w:gridCol/>` 逐个声明，想要大的值就得写大的文件，放大系数没了。
+    """
+    from docx import Document as _Document  # noqa: PLC0415
+
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+    from tests.fixtures.docx.build import _omit_grid_columns  # noqa: PLC0415
+
+    doc = _Document()
+    table = doc.add_table(rows=1, cols=2)
+    table.cell(0, 1).text = "仅此一格"
+    # 真实载荷：只删一格，却声明缺一千万列 —— 文件大小一个字节都不用变
+    _omit_grid_columns(table.rows[0], before=1, declare_before=10_000_000)
+    path = tmp_path / "hostile.docx"
+    doc.save(str(path))
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        blocks = _parse(path)["blocks"]
+    finally:
+        logger.remove(sink)
+
+    row = next(b for b in blocks if b["type"] == "table")["rows"][0]
+    assert len(row) < 100, f"缺列数没有被封顶，展开成了 {len(row)} 列"
+    # 封顶到该表声明的网格宽度（2），再加上那一格真实单元格
+    assert row == ["", "", "仅此一格"]
+    assert any("超出网格宽度" in r for r in records), f"截断没留痕：{records}"
+
+
+def _wide_short_row_table(
+    path: Path, *, cols: int, rows: int, declare: int | None = None
+) -> Path:
+    """N 个 `<w:gridCol/>` + R 个短行，每行都声明 gridBefore=N。
+
+    这是"表格宽度 × 行数"那种放大的最小载荷：XML 是 O(N+R)，展开是 O(N×R)。
+
+    ⚠️ 每行必须**只含一个** `<w:tc>`。用 `add_table(rows=R, cols=N)` 再删几格
+    是不行的 —— python-docx 会按 tblGrid 把每行建满，文档里真的就有 N×R 个
+    `tc`，那是一份"确实很大的文件"，不是放大。第一版就是这么写错的，量出来
+    的 2.3 GB 全花在 `Document()` 打开上，跟被测代码毫无关系。
+    """
+    import copy  # noqa: PLC0415
+
+    from docx import Document as _Document  # noqa: PLC0415
+    from docx.oxml.ns import qn  # noqa: PLC0415
+
+    from tests.fixtures.docx.build import _omit_grid_columns  # noqa: PLC0415
+
+    doc = _Document()
+    table = doc.add_table(rows=1, cols=1)
+    tbl = table._tbl  # noqa: SLF001
+    grid = tbl.find(qn("w:tblGrid"))
+    assert grid is not None, "python-docx 建的表居然没有 tblGrid"
+    for _ in range(cols - 1):
+        grid.append(grid.makeelement(qn("w:gridCol"), {}))
+
+    table.cell(0, 0).text = "x"
+    template = tbl.tr_lst[0]
+    for _ in range(rows - 1):
+        tbl.append(copy.deepcopy(template))
+    # before=0：一格都不删（每行本来就只有一个 tc），只声明缺列数。
+    # 走 helper 而不是自己动 XML —— `get_or_add_gridBefore` 是 python-docx
+    # 动态生成的，pyright 看不见，散在测试里就得撒 ignore。
+    for row in table.rows:
+        _omit_grid_columns(row, declare_before=declare or (cols - 1))
+
+    doc.save(str(path))
+    return path
+
+
+def test_a_wide_grid_times_many_rows_is_refused_not_expanded(tmp_path: Path) -> None:
+    """**单行封顶还不够。**
+
+    把缺列数封到网格宽度，挡住的只是"一个整数"的放大。攻击者还可以声明
+    N 个 `<w:gridCol/>`，再加 R 个各只含一个 `<w:tc>` 的行、每行都写
+    gridBefore=N —— XML 是 O(N+R)，展开却是 O(N×R)。
+
+    实测 N=R=3000：约 9,000 个 XML 元素、38 KB 的 docx，
+    无预算时展开成 900 万个单元格、峰值 87 MB；有预算时 11 MB（PR #34 评审）。
+
+    所以要在**展开之前**按投影大小拒掉。用例把上限调小以便快速触发。
+    """
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    path = _wide_short_row_table(tmp_path / "quad.docx", cols=200, rows=200)
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        blocks = _parse(path, max_table_cells=1000)["blocks"]
+    finally:
+        logger.remove(sink)
+
+    assert not any(b["type"] == "table" for b in blocks), "超预算的表不该被展开"
+    assert any("已跳过并留占位" in r for r in records), f"没有留痕：{records}"
+
+
+def test_a_huge_gridspan_in_a_tiny_grid_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**第三个可控维度：`gridSpan`。**
+
+    前两道防线（缺列数封到网格宽度、整表按 行数×网格宽度 定预算）都挡不住
+    这一种：一份只有 2 列的表，某格声明 `gridSpan=10000000`，python-docx 的
+    `row.cells` 就会返回一千万个 `_Cell` —— 光是建它就 75 MB，而且发生在解析
+    循环**之前**，循环里再设防也来不及（PR #34 评审）。
+
+    所以投影必须从 XML 层逐个 `tc` 数 span，绝不能先摸 `row.cells`。
+
+    ⚠️ 断言"被拒绝了"是**不够的** —— 用 `len(row.cells)` 去算投影同样会拒绝，
+    只是先白白建了一千万个 `_Cell`。所以这里把 `_Row.cells` 换成一个会炸的
+    属性：准入检查一旦碰它，用例立刻红。
+    """
+    from docx import Document as _Document  # noqa: PLC0415
+    from docx.table import _Row  # noqa: PLC0415
+
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    doc = _Document()
+    table = doc.add_table(rows=1, cols=2)
+    tc = table.rows[0]._tr.tc_lst[0]  # noqa: SLF001
+    tc.get_or_add_tcPr().get_or_add_gridSpan().val = 10_000_000
+    path = tmp_path / "bigspan.docx"
+    doc.save(str(path))
+
+    def _explode(self: object) -> None:
+        raise AssertionError(
+            "准入检查摸了 row.cells —— 一千万个 _Cell 已经建出来了，拦晚了"
+        )
+
+    monkeypatch.setattr(_Row, "cells", property(_explode))
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        blocks = _parse(path)["blocks"]
+    finally:
+        logger.remove(sink)
+
+    assert not any(b["type"] == "table" for b in blocks), "超预算的表不该被展开"
+    assert any("已跳过并留占位" in r for r in records), f"没有留痕：{records}"
+    assert any(b["type"] == "caption" for b in blocks), "该留占位"
+
+
+def test_a_vmerge_chain_inheriting_a_huge_span_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**第四个可控维度：`vMerge` 续格继承的 span。**
+
+    `vMerge="continue"` 的续格会继承**上方根单元格**的 `gridSpan`，而它自己的
+    `tc` 往往省略 `gridSpan` —— 本地值就是 1。实测：
+
+        r0: XML 里 grid_span=[5]   row.cells 实际长度 = 5   (vMerge restart)
+        r1: XML 里 grid_span=[1]   row.cells 实际长度 = 5   (vMerge continue)
+
+    于是"逐行累加本地 span"会严重低估：根行 `gridSpan=S` 加 R 个续行，本地和
+    约 `S + R`，实际展开却是 `S × (R+1)`。本用例的 S=5000 / R=500 下，
+    旧投影约 5,500（远低于上限，会放行），实际约 250 万（PR #34 评审）。
+    """
+    import copy  # noqa: PLC0415
+
+    from docx import Document as _Document  # noqa: PLC0415
+    from docx.oxml.ns import qn  # noqa: PLC0415
+    from docx.table import _Row  # noqa: PLC0415
+
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    span, rows = 5000, 500
+    doc = _Document()
+    table = doc.add_table(rows=1, cols=1)
+    grid = table._tbl.find(qn("w:tblGrid"))  # noqa: SLF001
+    assert grid is not None
+    for _ in range(span - 1):
+        grid.append(grid.makeelement(qn("w:gridCol"), {}))
+
+    template = table._tbl.tr_lst[0]  # noqa: SLF001
+    tc_pr = template.tc_lst[0].get_or_add_tcPr()
+    tc_pr.get_or_add_gridSpan().val = span
+    tc_pr.append(tc_pr.makeelement(qn("w:vMerge"), {qn("w:val"): "restart"}))
+    for _ in range(rows):
+        tr = copy.deepcopy(template)
+        pr = tr.tc_lst[0].get_or_add_tcPr()
+        span_el, merge_el = pr.find(qn("w:gridSpan")), pr.find(qn("w:vMerge"))
+        assert span_el is not None and merge_el is not None
+        pr.remove(span_el)  # 续格省略 gridSpan ⇒ 本地值是 1
+        merge_el.set(qn("w:val"), "continue")
+        table._tbl.append(tr)  # noqa: SLF001
+    path = tmp_path / "vmerge.docx"
+    doc.save(str(path))
+
+    def _explode(self: object) -> None:
+        raise AssertionError("准入检查摸了 row.cells —— 拦晚了")
+
+    monkeypatch.setattr(_Row, "cells", property(_explode))
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        blocks = _parse(path)["blocks"]
+    finally:
+        logger.remove(sink)
+
+    assert not any(b["type"] == "table" for b in blocks), "超预算的表不该被展开"
+    assert any("已跳过并留占位" in r for r in records), f"没有留痕：{records}"
+
+
+def test_a_row_that_both_inherits_and_declares_a_wide_span_is_bounded() -> None:
+    """**第五种形态：同一行既继承旧 span、又自己声明新 span。**
+
+    我先前用的界是"第 i 行宽度 ≤ 两端缺列 + max(前 i 行各自的 span 之和)"，
+    它**不是上界** —— 两个评审各自独立给出了同一个反例：
+
+        r0: 本地 span=[5]     row.cells 实际 = 5
+        r1: 本地 span=[1, 5]  row.cells 实际 = 10   ← 继承 5 + 新声明 5
+
+        按行取 max 的投影 = 11 < 实际 15
+
+    改成逐格取（续格按"见过的最大单格 span"、非续格按自己的真实值）之后，
+    投影才真的是上界。本用例直接比对投影与实际展开，不依赖预算 ——
+    预算多大都不影响"投影必须 ≥ 实际"这条性质（PR #34 评审）。
+    """
+    import copy  # noqa: PLC0415
+
+    from docx import Document as _Document  # noqa: PLC0415
+    from docx.oxml.ns import qn  # noqa: PLC0415
+
+    span = 5
+    doc = _Document()
+    table = doc.add_table(rows=1, cols=1)
+    grid = table._tbl.find(qn("w:tblGrid"))  # noqa: SLF001
+    assert grid is not None
+    for _ in range(2 * span - 1):
+        grid.append(grid.makeelement(qn("w:gridCol"), {}))
+
+    root_row = table._tbl.tr_lst[0]  # noqa: SLF001
+    root_pr = root_row.tc_lst[0].get_or_add_tcPr()
+    root_pr.get_or_add_gridSpan().val = span
+    root_pr.append(root_pr.makeelement(qn("w:vMerge"), {qn("w:val"): "restart"}))
+
+    # 第二行：[继承 r0 的 span] + [自己再声明一个同样宽的 span]
+    second = copy.deepcopy(root_row)
+    pr = second.tc_lst[0].get_or_add_tcPr()
+    span_el, merge_el = pr.find(qn("w:gridSpan")), pr.find(qn("w:vMerge"))
+    assert span_el is not None and merge_el is not None
+    pr.remove(span_el)
+    merge_el.set(qn("w:val"), "continue")
+    second.append(copy.deepcopy(root_row.tc_lst[0]))
+    table._tbl.append(second)  # noqa: SLF001
+
+    parser = DocxParser(max_table_cells=10**15)  # 调高上限，禁掉提前退出
+    projected = parser._projected_cells(table, len(table.columns))  # noqa: SLF001
+    actual = sum(len(row.cells) for row in table.rows)
+
+    assert projected >= actual, (
+        f"投影 {projected} 低于实际展开 {actual} —— 它就不是上界了，"
+        f"预算再小也拦不住"
+    )
+
+
+def test_an_oversized_table_leaves_a_searchable_placeholder(tmp_path: Path) -> None:
+    """跳过之后**在原位留一条能被检索到的说明**。
+
+    不截断成前 N 格：那会产出一张看起来完整、实则残缺的表，检索到它的人
+    无从判断后面还有内容 —— 正是 #18 / #33 的同一个失败模式。
+    也不干脆丢掉：那样知识库里完全看不出这里曾经有过东西。
+
+    占位必须进入 `.text`，否则切块与向量化会把它丢掉，也就搜不到了。
+    """
+    path = _wide_short_row_table(tmp_path / "quad2.docx", cols=200, rows=200)
+    parsed = _parse(path, max_table_cells=1000)
+
+    placeholder = next(b for b in parsed["blocks"] if b["type"] == "caption")
+    assert "表格未收录" in placeholder["content"]
+    assert "200 行" in placeholder["content"]
+    assert placeholder["content"] in parsed["text"], (
+        "占位块没有进入正文，切块与向量化都会把它丢掉"
+    )
+
+
+def test_the_truncation_warning_is_one_per_table_not_one_per_row(
+    tmp_path: Path,
+) -> None:
+    """截断告警按表汇总，不按行。
+
+    按行打的话，一份畸形文档能直接产出成千上万行日志 —— 把"文档内容"放大成
+    "日志写入量"，与内存放大是同一类问题（PR #34 评审）。实测 2000 行会打出
+    2000 条。
+    """
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    # declare 远大于网格宽度 ⇒ 每一行都会被截断
+    path = _wide_short_row_table(
+        tmp_path / "flood.docx", cols=3, rows=300, declare=10_000_000
+    )
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        _parse(path)
+    finally:
+        logger.remove(sink)
+
+    truncation = [r for r in records if "超出网格宽度" in r]
+    assert len(truncation) == 1, f"300 行打出了 {len(truncation)} 条截断告警"
+    assert "300 行" in truncation[0], f"汇总里没写清有多少行被截断：{truncation[0]}"
+
+
+def test_a_table_without_tblgrid_is_skipped_not_crashed(tmp_path: Path) -> None:
+    """`tblGrid` 是 schema 要求的必需元素，缺了 `len(table.columns)` 会抛
+    `InvalidXmlError` —— 那会让整份文档解析失败，而不只是这一张表。
+
+    缺它就无从确定网格宽度，也就无从给缺列数封顶，所以跳过整张表是对的；
+    但要留痕，且不能拖垮同一份文档里其余的内容。
+    """
+    from docx import Document as _Document  # noqa: PLC0415
+    from docx.oxml.ns import qn  # noqa: PLC0415
+
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    doc = _Document()
+    doc.add_paragraph("表格前的正文。")
+    table = doc.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "会被跳过"
+    grid = table._tbl.find(qn("w:tblGrid"))  # noqa: SLF001
+    assert grid is not None
+    table._tbl.remove(grid)  # noqa: SLF001
+    doc.add_paragraph("表格后的正文。")
+    path = tmp_path / "no_grid.docx"
+    doc.save(str(path))
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        parsed = _parse(path)
+    finally:
+        logger.remove(sink)
+
+    assert not any(b["type"] == "table" for b in parsed["blocks"])
+    assert any("tblGrid" in r for r in records), f"跳过没留痕：{records}"
+    assert "表格前的正文。" in parsed["text"], "其余内容不该受牵连"
+    assert "表格后的正文。" in parsed["text"], "其余内容不该受牵连"
+
+
+def test_a_genuinely_ragged_table_is_padded_but_says_so(tmp_path: Path) -> None:
+    """两端补齐之后仍宽度不一致 ⇒ 文档的网格声明自不自洽。
+
+    仍然补（下游不该拿到参差的行），但**必须留痕**：补只往行尾填，而真正缺
+    的列可能在中间，静默做等于把错位藏起来。这条用例就是钉住"别静默"。
+
+    真实样本里 17 张表无一触发，所以这条告警不会变成噪声。
+    """
+    from docx import Document as _Document  # noqa: PLC0415
+
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    doc = _Document()
+    table = doc.add_table(rows=2, cols=3)
+    for col, text in enumerate(["A", "B", "C"]):
+        table.cell(0, col).text = text
+    for col, text in enumerate(["x", "y", "z"]):
+        table.cell(1, col).text = text
+    # 删掉一格却**不**声明 gridAfter —— 这就是"网格声明不自洽"
+    tr = table.rows[1]._tr  # noqa: SLF001
+    tr.remove(tr.tc_lst[-1])
+    path = tmp_path / "ragged.docx"
+    doc.save(str(path))
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        blocks = _parse(path)["blocks"]
+    finally:
+        logger.remove(sink)
+
+    table_block = next(b for b in blocks if b["type"] == "table")
+    assert table_block["rows"][1] == ["x", "y", ""], "仍然要补齐"
+    assert any("网格宽度不一致" in r for r in records), f"补齐没有留痕：{records}"
+
+
 def test_vertical_merge_repeats_down_the_column(
     generated_docx: dict[str, Path],
 ) -> None:

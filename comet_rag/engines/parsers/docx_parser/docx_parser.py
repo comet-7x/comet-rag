@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from docx.document import Document as DocumentObject
+from docx.oxml.exceptions import InvalidXmlError
 from docx.oxml.ns import qn
 from docx.text.hyperlink import Hyperlink
 from docx.text.paragraph import Paragraph
@@ -49,6 +50,13 @@ _WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 _R_EMBED = f"{{{_R}}}embed"
 _XML_VAL = f"{{{_W}}}val"
 _EMU_PER_PX = 9525  # 914 400 EMU/inch ÷ 96 DPI
+
+#: 单张表允许展开的单元格数上限，超出即跳过并留占位（见 `_skip_oversized_table`）。
+#:
+#: 这里用常数是**恰当的**：它是资源预算，不是语义上界 —— 与"缺列数不得超过
+#: 表格网格宽度"那种从文档本身推出来的约束不是一回事。100 万格约合 8 MB 指针，
+#: 而现实里最大的表（几百列 × 几千行）也远够不着。
+_MAX_TABLE_CELLS = 1_000_000
 
 # Inline wrapper tags treated as transparent pass-throughs
 _TRANSPARENT_INLINE: frozenset[str] = frozenset(
@@ -222,7 +230,13 @@ def _get_run_fmt(run: Run) -> _Fmt:
 class DocxParser:
     """Parse a DocxDocument into a list of semantically typed blocks."""
 
-    def __init__(self, *, heading_numbers: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        heading_numbers: bool = False,
+        max_table_cells: int = _MAX_TABLE_CELLS,
+    ) -> None:
+        self._max_table_cells = max_table_cells
         self._doc: DocumentObject | None = None
         self._doc_part: Any = None
         self._blocks: list[Block] = []
@@ -569,7 +583,114 @@ class DocxParser:
                 parts.append(text)
         return "\n".join(parts)
 
-    def _row_to_cells(self, row: Any) -> list[str]:
+    @staticmethod
+    def _raw_gaps(row: Any) -> tuple[int, int]:
+        """一行两端声明的缺列数，未封顶。
+
+        这两个值直接来自文档 XML —— 在"用户上传文件"这条路上等于**攻击者
+        可控的整数**，所以取出来之后必须封顶（见 `_handle_table`），
+        不能直接拿去 `[""] * n`。
+        """
+        return (
+            max(int(getattr(row, "grid_cols_before", 0) or 0), 0),
+            max(int(getattr(row, "grid_cols_after", 0) or 0), 0),
+        )
+
+    @staticmethod
+    def _declared_spans(row: Any) -> list[tuple[int, bool]]:
+        """本行每个 `tc` 的 `(自己声明的 span, 是不是纵向合并的续格)`。
+
+        续格的判定：`w:vMerge` 存在且 `w:val` 不是 `restart`（OOXML 里省略
+        `val` 就等于 `continue`）。这类格子**自己的 `gridSpan` 不作数** ——
+        展开时用的是上方根单元格的，见 `_projected_cells()`。
+        """
+        out: list[tuple[int, bool]] = []
+        for tc in row._tr.tc_lst:  # noqa: SLF001
+            tc_pr = tc.tcPr
+            merge = None if tc_pr is None else tc_pr.vMerge
+            out.append((max(tc.grid_span, 1), merge is not None and merge != "restart"))
+        return out
+
+    def _row_extent(self, row: Any, grid_width: int) -> tuple[int, int]:
+        """`(两端缺列数之和, 本行 tc 自己声明的 span 之和)` —— **不碰 `row.cells`**。
+
+        为什么不能碰：`row.cells` 是按网格列展开的，长度由文档里的 `gridSpan`
+        决定。一份 2 列的表里塞一个 `gridSpan=10000000`，python-docx 就会建出
+        一千万个 `_Cell`（实测 75 MB）—— 而这发生在解析循环**之前**，循环里
+        再怎么设防都拦不住（PR #34 评审）。
+
+        所以只能从 XML 层数：`tc` 的个数与各自的 span 都是逐个元素声明的，
+        规模等于文件规模，攻击者拿不到杠杆。
+
+        这里走 `row._tr` / `tc.grid_span` 这条内部路径是**刻意的**，与
+        `_row_to_cells()` 里坚持用公开 `cell.grid_span` 不矛盾：那边是在读
+        已经安全展开的数据，这边是在决定要不要展开 —— 而公开 API 恰恰正是
+        那个无界的东西，用它做准入检查等于先中招再判断。
+        """
+        before, after = self._raw_gaps(row)
+        spans = sum(max(tc.grid_span, 1) for tc in row._tr.tc_lst)  # noqa: SLF001
+        return min(before, grid_width) + min(after, grid_width), spans
+
+    def _projected_cells(self, table: Any, grid_width: int) -> int:
+        """整表展开后的单元格数**上界**，全程不碰 `row.cells`。
+
+        ## 为什么不能只看本行自己声明的 span
+
+        `vMerge="continue"` 的续格会继承**上方根单元格**的 `gridSpan`，而它
+        自己的 `tc` 往往省略 `gridSpan`（本地值就是 1）。实测：
+
+            r0: XML 里 grid_span=[5]   row.cells 实际长度 = 5   (vMerge restart)
+            r1: XML 里 grid_span=[1]   row.cells 实际长度 = 5   (vMerge continue)
+
+        于是"逐行累加本地 span"会严重低估：根行声明 `gridSpan=S`、后面跟 R 个
+        续行，本地和约 `S + R`，实际展开却是 `S × (R+1)`。取 S=999000、R=999
+        就能把投影压在默认上限之下，而真实展开接近十亿格（PR #34 评审）。
+
+        ## 上界只能逐格取，不能按"历史最大行宽"取
+
+        我先前用的是"第 i 行宽度 ≤ 两端缺列 + max(前 i 行各自的 span 之和)"。
+        **那不是上界**：同一行可以既继承一个宽 span、又自己再声明一个宽 span。
+        实测（PR #34 评审给出的反例）：
+
+            r0: 本地 span=[5]     row.cells 实际 = 5
+            r1: 本地 span=[1, 5]  row.cells 实际 = 10   ← 继承 5 + 新声明 5
+
+            按行取 max 的投影 = 11 < 实际 15
+
+        改成**逐格**取：
+
+            续格   的有效 span ≤ 见过的最大单格 span（它继承的那个根，
+                                 一定是某处声明过的一个 gridSpan）
+            非续格 的有效 span  = 它自己声明的 gridSpan
+
+        这一条不依赖 python-docx 如何解析重叠布局，纯粹是"每格的展开宽度都
+        来自某个声明过的 gridSpan"，所以是硬上界。
+
+        非续格用真实值而不是一律取 max，是为了不误伤合法文档：一张 50 列的表
+        若某行是整行合并的表头，"全部按 50 算"会把正文行也放大 50 倍。实测
+        4 份真实文档 17 张表，最大投影 144（预算 100 万），没有误拒风险。
+
+        ## `widest_single` 刻意先更新再计分
+
+        于是本行**后面**才声明的宽格，也会被用来估本行前面的续格。严格说
+        续格只可能继承**更上方**的根，所以这是过估计 —— 但刻意保留（PR #34
+        评审也确认过安全性没问题）：它顺带兜住了"续格上方根本没有根"这类
+        畸形输入，而先计分再更新反倒会在首行给出 0。宁可松，不可漏。
+        """
+        projected = 0
+        widest_single = 0
+        for row in table.rows:
+            gaps, _ = self._row_extent(row, grid_width)
+            spans = self._declared_spans(row)
+            widest_single = max([widest_single, *(s for s, _ in spans)])
+            projected += gaps + sum(
+                widest_single if inherited else span for span, inherited in spans
+            )
+            if projected > self._max_table_cells:
+                break  # 已经超了，没必要把剩下的行也数一遍
+        return projected
+
+    def _row_to_cells(self, row: Any, before: int, after: int) -> list[str]:
         """一行的单元格文本，横向合并（gridSpan）的续格留空。
 
         ## 判据必须来自结构，不能是文本相等
@@ -605,12 +726,28 @@ class DocxParser:
         补齐是在**行尾**做的，所以出现在行中间的合并会把后面所有列都错位。
         留空则天然对齐，`col_count` 也才是真实的网格宽度。
 
+        ## 两端的"缺列"也要占位（gridBefore / gridAfter）
+
+        Word 允许一行**晚开始**或**早结束**：`w:gridBefore` / `w:gridAfter`
+        声明该行头尾各有几个网格列压根不存在（常见于缩进的子表格行、
+        跨页表格的续行）。python-docx 把它们暴露为 `grid_cols_before` /
+        `grid_cols_after`，且明确写着"these are not simply empty cells"。
+
+        不补的话，"晚开始"那行的所有单元格都会左移一格：
+
+            正确  [A, B, C] / ["", y, z]
+            错误  [A, B, C] / [y, z, ""]      ← y 落到了第 0 列
+
+        与漏掉合并续格是**同一类错位**，只是成因不同（#33）。
+
         ## 纵向合并（vMerge）不在此列
 
         它的 `grid_span` 是 1，文本会沿列重复出现 —— 本方法按行处理，碰不到
         它，行为与此前一致。对检索而言每行自带上下文反而是好事。
         """
-        cells: list[str] = []
+        # 行首的缺列：不是空单元格，是不存在的网格列。`before` / `after`
+        # 已由调用方按网格宽度封顶，这里不再重复校验。
+        cells: list[str] = [""] * before
         continuations = 0
         for cell in row.cells:
             if continuations:
@@ -620,19 +757,114 @@ class DocxParser:
             cells.append(self._cell_to_text(cell))
             # 横跨 n 列 ⇒ 后面 n-1 个网格位置是同一个单元格的续格
             continuations = max(cell.grid_span - 1, 0)
+        cells.extend([""] * after)
         return cells
+
+    def _skip_oversized_table(self, rows: int, cells: int) -> None:
+        """超预算的表：不展开，但**在原位留一条能被检索到的说明**。
+
+        为什么不截断成前 N 格：那会产出一张**看起来完整、实则残缺**的表。
+        检索到它的人无从判断后面还有内容，于是把半份数据当成全部 —— 这正是
+        #18（整列消失）与 #33（整行错位）的同一个失败模式，本不该在处理
+        它们的过程中再造一个。
+
+        为什么不干脆丢掉：那样知识库里完全看不出这里曾经有过东西，只有运维
+        翻日志才知道。留占位则让"缺失"本身可见、可检索。
+
+        用 `caption` 类型是因为它已经在 `DocxParsedContent.text` 的白名单里 ——
+        占位块必须能进入正文，否则切块与向量化都会把它丢掉，也就搜不到了。
+        """
+        logger.warning(
+            f"表格 {rows} 行、展开后约 {cells:,} 个单元格，超出上限 "
+            f"{self._max_table_cells:,}，已跳过并留占位 —— "
+            f"可用 DocxParser(max_table_cells=…) 调整"
+        )
+        self._blocks.append(
+            {
+                "type": "caption",
+                "content": f"[表格未收录：{rows} 行，约 {cells:,} 个单元格，"
+                f"超出解析上限 {self._max_table_cells:,}]",
+            }
+        )
 
     def _handle_table(self, element: Any) -> None:
         from docx.table import Table
 
         table = Table(element, self._doc)  # pyright: ignore[reportArgumentType]
-        cleaned = [self._row_to_cells(row) for row in table.rows]
+        try:
+            # 声明的网格宽度，用作单行缺列数的上界
+            grid_width = len(table.columns)
+        except InvalidXmlError:
+            # `tblGrid` 是 schema 要求的必需元素。缺了它就无从确定网格宽度 ——
+            # 这不是"某一行有问题"，是整张表不合法。
+            logger.warning("表格缺少 <w:tblGrid>，无从确定网格宽度，已跳过该表")
+            return
+
+        # ── 先定界，再碰任何一行 ───────────────────────────────────────────
+        #
+        # 展开后的规模由**三个**文档可控的量决定，任何一个不设防都能放大：
+        #
+        #   gridBefore / gridAfter   一行头尾声明缺几列
+        #   gridSpan                 一格横跨几列
+        #   行数 × 网格宽度           整表的矩形大小
+        #
+        # 实测（均为 PR #34 评审）：
+        #   · N=R=3000 的"宽网格 + 短行"：约 9,000 个 XML 元素、38 KB 的 docx，
+        #     展开成 900 万个单元格、峰值 87 MB
+        #   · 2 列的表里塞一个 gridSpan=10000000：`row.cells` 直接返回一千万个
+        #     `_Cell`，光是建它就 75 MB
+        #
+        # 所以判据必须**逐个 `tc` 从 XML 上数**，而且要在碰 `row.cells` 之前
+        # 算完 —— 后者的长度正是由 gridSpan 决定的，等它建好就晚了。
+        #
+        # 还有第四个维度：`vMerge` 的续格会继承上方根单元格的 span，见
+        # `_projected_cells()`。
+        projected = self._projected_cells(table, grid_width)
+        if projected > self._max_table_cells:
+            self._skip_oversized_table(len(table.rows), projected)
+            return
+
+        # ── 到这里，规模已经有界，可以逐行展开 ─────────────────────────────
+        cleaned: list[list[str]] = []
+        truncated_rows = 0
+        largest_gap = 0
+        for row in table.rows:
+            raw_before, raw_after = self._raw_gaps(row)
+            before, after = min(raw_before, grid_width), min(raw_after, grid_width)
+            if (before, after) != (raw_before, raw_after):
+                truncated_rows += 1
+                largest_gap = max(largest_gap, raw_before, raw_after)
+            cleaned.append(self._row_to_cells(row, before, after))
+
+        if truncated_rows:
+            # 每张表只报一条。按行报的话，一份畸形文档能直接产出成千上万行
+            # 日志 —— 把"文档内容"放大成"日志写入量"，与上面那个内存放大
+            # 是同一类问题（PR #34 评审）。
+            logger.warning(
+                f"表格有 {truncated_rows} 行声明的缺列数超出网格宽度 {grid_width}"
+                f"（最大 {largest_gap}），已截断 —— 文档很可能是畸形的"
+            )
 
         if not any(any(r) for r in cleaned):
             return
 
-        # Pad all rows to the same width
-        max_cols = max(len(r) for r in cleaned)
+        # 两端的缺列补上之后（见 `_row_to_cells`），每行的宽度**本就应当**等于
+        # 表格的网格宽度 —— 实测 17 张真实表格无一例外。走到这里还需要补，
+        # 说明文档里的网格声明本身不自洽。
+        #
+        # 补是为了不让下游拿到参差的行，但必须留痕：这一步只会往**行尾**填，
+        # 而真正缺的列可能在中间；静默做等于把错位藏起来（#33）。
+        widths = {len(r) for r in cleaned}
+        max_cols = max(widths)
+        if len(widths) > 1:
+            # 只报区间与种数，不列全集：这条日志由**文档内容**触发，
+            # 而不同宽度的数量上限是行数 —— 一份畸形文档能让它长到几万项，
+            # 把日志管道撑坏（PR #34 评审）。
+            logger.warning(
+                f"表格各行的网格宽度不一致（{len(widths)} 种，"
+                f"{min(widths)}–{max_cols} 列），已按最宽的 {max_cols} 列"
+                f"在行尾补齐 —— 该表的列对应关系可能不准"
+            )
         for row in cleaned:
             row.extend("" for _ in range(max_cols - len(row)))
 
