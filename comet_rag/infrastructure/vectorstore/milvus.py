@@ -29,7 +29,7 @@ import asyncio
 import hashlib
 import re
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 from pymilvus import AsyncMilvusClient, DataType, MilvusClient
 
@@ -160,7 +160,13 @@ class MilvusStore(BaseVectorStore):
         name = self._name(kb_id)
         if not await asyncio.to_thread(self._sync.has_collection, name):
             raise CollectionNotFound(kb_id)
-        desc = await asyncio.to_thread(self._sync.describe_collection, name)
+        # cast 的原因不在我们这边：pymilvus 的 `describe_collection` 没有返回
+        # 标注，pyright 顺着它的内部实现推成了协程类型。运行时它是同步的
+        # （否则这里早就炸了），所以在边界上把类型钉住。
+        desc = cast(
+            "dict[str, Any]",
+            await asyncio.to_thread(self._sync.describe_collection, name),
+        )
         for field in desc["fields"]:
             if field["name"] == _DENSE:
                 dim = int(field["params"]["dim"])

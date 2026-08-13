@@ -164,7 +164,10 @@ def _resolve(host: str) -> list[str]:
         infos = socket.getaddrinfo(host, None)
     except OSError:
         return []
-    return [info[4][0] for info in infos]
+    # sockaddr 的首元素在 AF_INET/AF_INET6 下是地址字符串，但类型上还可能是
+    # 别的族的整数。一律 str() 而不是过滤掉：无法解析的字符串在
+    # `_is_public_ip` 里判 False，也就是**拒绝** —— 这是安全的那个方向。
+    return [str(info[4][0]) for info in infos]
 
 
 def build_source_policy(config: object) -> SourcePolicy:

@@ -36,6 +36,7 @@ from tests.e2e.test_ingest_search import (
     STUB_TYPE,
     KeywordEmbedding,
     _use_stub_loader,
+    ctx_of,
 )
 
 pytestmark = pytest.mark.e2e
@@ -116,7 +117,7 @@ async def test_overload_is_refused_with_429_not_queued_forever(
 ) -> None:
     """投 10× 于处理能力，服务活着、拒绝清晰、积压始终有界。"""
     await client.post("/kb", json={"kb_id": KB})
-    ctx = client._transport.app.state.ctx  # noqa: SLF001 —— 只为读积压，不改状态
+    ctx = ctx_of(client)
 
     accepted = refused = 0
     peak_backlog = 0
@@ -151,7 +152,7 @@ async def test_refusal_does_not_create_orphan_task_records(
 ) -> None:
     """拒收发生在**建记录之前**。建完再拒等于白建一条，还会污染积压统计。"""
     await client.post("/kb", json={"kb_id": KB})
-    ctx = client._transport.app.state.ctx  # noqa: SLF001
+    ctx = ctx_of(client)
 
     for i in range(MAX_BACKLOG * 4):
         await client.post(

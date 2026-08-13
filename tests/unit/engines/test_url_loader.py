@@ -9,6 +9,7 @@ TLS 握手。批量入库大量 URL 时这是纯浪费，而且完全不体现�
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
@@ -30,7 +31,7 @@ def _transport(counter: dict[str, int] | None = None) -> httpx.MockTransport:
 
 
 @pytest.fixture
-def loader(tmp_path: Path) -> URLLoader:
+def loader(tmp_path: Path) -> Iterator[URLLoader]:
     ld = URLLoader(download_dir=tmp_path)
     yield ld
     ld.cleanup()

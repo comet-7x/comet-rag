@@ -1,3 +1,19 @@
+"""配置模型。
+
+## `Field()` 的写法有一条硬约定
+
+    必填：Field(..., description=…)          ← 位置参数写 Ellipsis
+    选填：Field(default=X, description=…)    ← **必须**用 default= 关键字
+
+不是风格洁癖：pyright 按 PEP 681 只认 `default=` / `default_factory=` 这两个
+关键字参数，位置参数它一概不解析。于是 `Field(30, …)` 在类型检查器眼里是
+**没有默认值的必填字段** —— `SqlDatabaseConfig(host=…, port=…)` 会被报成
+"缺少参数 connect_timeout"，而运行时明明好好的。
+
+反过来 `Field(default=...)`（Ellipsis 走关键字）更危险：pyright 会当成
+"默认值是 Ellipsis" 的选填字段，于是漏报真正缺参的调用，运行时才炸。
+"""
+
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -14,7 +30,7 @@ class Env(StrEnum):
 class ServerConfig(BaseModel):
     app_name: str = Field(default="Comet-RAG", description="应用名称")
     env: Env = Field(default=Env.TEST, description="项目运行环境")
-    host: str = Field(default=..., description="服务监听地址")
+    host: str = Field(..., description="服务监听地址")
     port: int = Field(..., description="服务监听端口")
 
 
@@ -26,10 +42,10 @@ class SqlDatabaseConfig(BaseModel):
     username: str = Field(..., description="用户名")
     password: str = Field(..., description="密码")  # 生产环境建议用 SecretStr
     database: str = Field(..., description="数据库名称")
-    connect_timeout: int = Field(30, description="连接超时时间(秒)")
-    pool_size: int = Field(10, gt=0, description="连接池常驻连接数")
-    max_overflow: int = Field(20, ge=0, description="峰值时允许超出的连接数")
-    echo: bool = Field(False, description="打印 SQL，仅调试用")
+    connect_timeout: int = Field(default=30, description="连接超时时间(秒)")
+    pool_size: int = Field(default=10, gt=0, description="连接池常驻连接数")
+    max_overflow: int = Field(default=20, ge=0, description="峰值时允许超出的连接数")
+    echo: bool = Field(default=False, description="打印 SQL，仅调试用")
 
     @property
     def dsn(self) -> str:
@@ -57,9 +73,9 @@ class RedisConfig(BaseModel):
 
     host: str = Field(..., description="主机地址")
     port: int = Field(..., description="端口号")
-    password: str | None = Field(None, description="密码")
-    db_index: int = Field(0, description="数据库索引编号")
-    timeout: int = Field(10, description="超时时间")
+    password: str | None = Field(default=None, description="密码")
+    db_index: int = Field(default=0, description="数据库索引编号")
+    timeout: int = Field(default=10, description="超时时间")
 
     @property
     def url(self) -> str:
@@ -75,7 +91,7 @@ class VectorDatabaseConfig(BaseModel):
     """向量数据库配置 (如 Milvus, Pinecone)"""
 
     endpoint: str = Field(..., description="服务接入点地址")
-    api_key: str | None = Field(None, description="API 访问密钥")
+    api_key: str | None = Field(default=None, description="API 访问密钥")
     collection_name: str = Field(..., description="集合/数据库名称")
 
 
@@ -84,7 +100,7 @@ class ModelConfig(BaseModel):
 
     base_url: str = Field(..., description="服务地址")
     model_name: str = Field(..., description="模型名称")
-    api_key: str | None = Field(None, description="API 访问密钥")
+    api_key: str | None = Field(default=None, description="API 访问密钥")
 
 
 class EmbeddingModelConfig(ModelConfig):

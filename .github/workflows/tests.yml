@@ -34,6 +34,30 @@ jobs:
           print(f'核心依赖下引擎可用 ✓（{len(chunks)} 块）')
           "
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # 独立成 job 而不是塞进 unit：类型错误与测试失败是两类信号，串在一条 job 里
+  # 前者会把后者挡在后面（反之亦然），一次 push 只能看到一半问题。
+  # 分开还能并行跑，反馈更快。
+  # ───────────────────────────────────────────────────────────────────────────
+  typecheck:
+    name: 类型检查（pyright）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # 必须装全 extras：少一个 extra，pyright 就会把对应的 import 报成
+      # "无法解析"，于是这个 job 变成检查依赖装没装全，而不是检查类型。
+      - name: 安装依赖
+        run: uv sync --all-groups --all-extras
+
+      # 范围与 exclude 都在 pyproject.toml 的 [tool.pyright] 里，
+      # 这里不传参数 —— 免得 CI 与本地 `make typecheck` 查的不是同一批文件。
+      - name: pyright
+        run: uv run pyright
+
   unit:
     name: 单元测试
     runs-on: ubuntu-latest

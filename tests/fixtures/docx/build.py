@@ -61,7 +61,7 @@ def build_basic(path: Path) -> Path:
     doc.add_paragraph("有序第一项", style="List Number")
     doc.add_paragraph("有序第二项", style="List Number")
 
-    doc.save(path)
+    doc.save(str(path))
     return path
 
 
@@ -82,7 +82,7 @@ def build_table(path: Path) -> Path:
     table.rows[2].cells[2].text = "值6"
 
     doc.add_paragraph("表格后的正文。")
-    doc.save(path)
+    doc.save(str(path))
     return path
 
 
@@ -92,7 +92,7 @@ def build_image(path: Path) -> Path:
     doc.add_paragraph("图片前的说明。")
     doc.add_picture(io.BytesIO(_PNG_1X1), width=Inches(1))
     doc.add_paragraph("图片后的说明。")
-    doc.save(path)
+    doc.save(str(path))
     return path
 
 
@@ -119,7 +119,7 @@ def build_equations(path: Path) -> Path:
         p = doc.add_paragraph(f"{label}：")
         _append_omml(p, omml)
 
-    doc.save(path)
+    doc.save(str(path))
     return path
 
 
@@ -131,7 +131,7 @@ def build_header_footer(path: Path) -> Path:
 
     doc.add_heading("页眉页脚样本", level=1)
     doc.add_paragraph("正文内容。")
-    doc.save(path)
+    doc.save(str(path))
     return path
 
 

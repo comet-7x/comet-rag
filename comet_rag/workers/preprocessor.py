@@ -23,7 +23,7 @@ extractor 是运行时注册进 `PipelineHooks` 的可调用对象，跨进程�
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from comet_rag.tasks import LANE_CPU
 from comet_rag.workers.base import WorkerProfile, build_settings
@@ -52,4 +52,8 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(name)
 
 
-__all__ = ["PROFILE", "WorkerSettings"]  # noqa: F822 —— WorkerSettings 由 __getattr__ 提供
+if TYPE_CHECKING:  # 只为静态检查器声明；运行时仍由上面的 __getattr__ 惰性构造
+    WorkerSettings: type
+
+
+__all__ = ["PROFILE", "WorkerSettings"]

@@ -22,6 +22,7 @@ httpx 连接池、向量库连接、任务执行器都是**应用级单例**：�
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -89,14 +90,16 @@ async def _maybe_close(resource: Any) -> None:
         method = getattr(resource, name, None)
         if callable(method):
             result = method()
-            if hasattr(result, "__await__"):
+            # `inspect.isawaitable` 而非 `hasattr(result, "__await__")`：
+            # 前者同时覆盖协程与 Future，且是类型检查器认得的收窄。
+            if inspect.isawaitable(result):
                 await result
             return
 
 
 async def _safe(awaitable: Any, label: str) -> None:
     try:
-        if awaitable is not None and hasattr(awaitable, "__await__"):
+        if inspect.isawaitable(awaitable):
             await awaitable
     except Exception as exc:  # noqa: BLE001 —— 关停期间任何失败都只记录
         logger.warning(f"关闭 {label} 时出错（已忽略，继续释放其余资源）：{exc!r}")

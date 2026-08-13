@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,7 @@ CONFIG = {
 
 
 @pytest.fixture
-def config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(CONFIG, allow_unicode=True), encoding="utf-8")
     monkeypatch.delenv(ENV_CONFIG_PATH, raising=False)

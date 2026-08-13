@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.pool import QueuePool
 
 from comet_rag.infrastructure.database import Database
 
@@ -83,7 +84,11 @@ async def test_engine_pools_connections(postgres_dsn: str) -> None:
         async with db.session() as s2:
             await s2.execute(text("SELECT 1"))
 
-        assert db.engine.pool.checkedin() >= 1, "连接用完应归还池中而非丢弃"
+        # `checkedin()` 只在 QueuePool 上有 —— 基类 `Pool` 没有这个概念。
+        # 断言前先确认拿到的确实是带池的那种，否则本用例等于什么都没测。
+        pool = db.engine.pool
+        assert isinstance(pool, QueuePool), f"没有用连接池：{type(pool).__name__}"
+        assert pool.checkedin() >= 1, "连接用完应归还池中而非丢弃"
     finally:
         await db.aclose()
 

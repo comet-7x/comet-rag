@@ -149,6 +149,17 @@ async def client(document: Path) -> AsyncIterator[httpx.AsyncClient]:
         yield http
 
 
+def ctx_of(client: httpx.AsyncClient) -> Any:
+    """从 client 摸回应用的 `Context`（只用来读积压、降级这些内部计数）。
+
+    httpx 的 `_transport` 是私有属性，而 `ASGITransport.app` 静态上只是
+    "一个 ASGI 可调用对象"，看不见 `.state`。这层穿透收在一个函数里，
+    好过在每个用例里各撒一份 `# noqa` 加类型忽略。
+    """
+    transport: Any = client._transport  # noqa: SLF001
+    return transport.app.state.ctx
+
+
 def _use_stub_loader(
     ctx: Any, document: Path, config: PipelineConfig | None = None
 ) -> None:
@@ -424,7 +435,7 @@ async def test_changing_embedding_model_returns_409(
     await client.post("/kb", json={"kb_id": KB})
 
     # 模拟运维改了 config.yaml 里的 embedding 模型后重启
-    ctx = client._transport.app.state.ctx  # type: ignore[attr-defined]
+    ctx = ctx_of(client)
     ctx.knowledge_base._model = "换成了别的模型"
 
     conflicted = await client.post("/kb", json={"kb_id": KB})

@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import pytest
 
 from comet_rag.infrastructure.vectorstore import (
@@ -49,7 +51,7 @@ class VectorStoreContract:
         raise NotImplementedError("实现方必须提供 store fixture")
 
     @pytest.fixture
-    async def kb(self, store: BaseVectorStore) -> str:
+    async def kb(self, store: BaseVectorStore) -> AsyncIterator[str]:
         await store.aensure_collection(KB, dim=DIM)
         yield KB
         await store.adrop_collection(KB)

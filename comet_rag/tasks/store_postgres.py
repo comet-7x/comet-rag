@@ -27,7 +27,7 @@ from typing import Any
 from sqlalchemy import delete, func, select, text, update
 
 from comet_rag.infrastructure.database.models import TaskEventRow, TaskRow
-from comet_rag.infrastructure.database.session import Database
+from comet_rag.infrastructure.database.session import Database, affected_rows
 from comet_rag.tasks.models import Task, TaskEvent, TaskStatus, Time
 from comet_rag.tasks.store import TaskNotFound, TaskStore, VersionConflict
 
@@ -116,7 +116,7 @@ class PostgresTaskStore(TaskStore):
                 )
                 .values(**values)
             )
-            if result.rowcount == 0:
+            if affected_rows(result) == 0:
                 # 没更新到：要么任务不存在，要么版本被别人改过。区分开来，
                 # 因为调用方对两者的处理完全不同（放弃 vs 重读后重试）。
                 current = await session.get(TaskRow, task.task_id)
@@ -134,7 +134,7 @@ class PostgresTaskStore(TaskStore):
             result = await session.execute(
                 delete(TaskRow).where(TaskRow.task_id == task_id)
             )
-            return bool(result.rowcount)
+            return bool(affected_rows(result))
 
     async def _query(
         self,

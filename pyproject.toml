@@ -64,7 +64,9 @@ packages = ["comet_rag"]
 [dependency-groups]
 dev = [
     "commitizen>=4.8.2",
+    "lxml-stubs>=0.5.1",
     "pre-commit>=4.2.0",
+    "pyright>=1.1.411",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.0.0",
     "pytest-cov>=6.0.0",
@@ -119,6 +121,22 @@ ignore = [
     "E261",  # Inline comment spacing — intentional alignment for readability
     "E262",  # Inline comment format — intentional alignment for readability
 ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 类型检查。ruff 管风格与显而易见的错误，pyright 管类型，两者不重叠。
+#
+# 范围**显式写死**：此前 ruff 只在本地扫 `comet_rag/ tests/`，`alembic/`
+# 从来没被检查过，直到 CI 上（它扫全仓库）才炸。检查范围一旦靠"记得带上
+# 哪几个目录"来维持，迟早会漏。
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.pyright]
+include = ["comet_rag", "tests", "alembic"]
+# poc/ 与 draft/ 是 .gitignore 掉的私人草稿，不进版本库，也不该拦住检查通过。
+exclude = ["**/__pycache__", "poc", "draft", "logs", ".venv"]
+pythonVersion = "3.12"
+# standard 而非 strict：strict 会要求给每个测试函数标返回类型注解，
+# 收益全在噪声里。standard 抓的是"真的会在运行时炸"的那一类。
+typeCheckingMode = "standard"
 
 [[tool.uv.index]]
 url = "https://mirrors.cernet.edu.cn/pypi/web/simple"

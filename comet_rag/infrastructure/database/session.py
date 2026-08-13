@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any, cast
 
+from sqlalchemy import CursorResult, Result
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -71,4 +73,14 @@ class Database:
         await self._engine.dispose()
 
 
-__all__ = ["Database"]
+def affected_rows(result: Result[Any]) -> int:
+    """UPDATE / DELETE 影响的行数。
+
+    `session.execute()` 静态上返回 `Result`，只有 DML 才真正拿到
+    `CursorResult` —— `rowcount` 挂在后者上。SQLAlchemy 没有在类型层面区分
+    这两种情况，所以这里收口成一个函数：cast 只写一次，理由也只解释一次。
+    """
+    return cast("CursorResult[Any]", result).rowcount
+
+
+__all__ = ["Database", "affected_rows"]

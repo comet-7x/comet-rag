@@ -225,9 +225,9 @@ async def deployment(
     await _clean(postgres_dsn)
     config = make_config(milvus_uri)
     # 用 config 里那份连接（db=15），不是 fixture 的 db=0 —— 否则清的是别人的队列
-    pool = await create_pool(
-        RedisSettings.from_dsn(config.infrastructure_config.redis.url)
-    )
+    redis_config = config.infrastructure_config.redis
+    assert redis_config is not None, "make_config 必须配好 redis，否则本用例无从跑起"
+    pool = await create_pool(RedisSettings.from_dsn(redis_config.url))
     await _drain_queues(pool)
 
     app = create_app(

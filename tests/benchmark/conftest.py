@@ -109,6 +109,11 @@ class Recorder:
         self.results.append(result)
 
 
+#: recorder 在 session 上的挂点。`pytest_sessionfinish` 不是 fixture，
+#: 拿不到 `bench_recorder`，只能经 session 传递。
+RECORDER_KEY = pytest.StashKey[Recorder]()
+
+
 class Bench:
     """一个用例一个。`measure` 跑 N 次取分位数，`record` 记单个标量。"""
 
@@ -191,7 +196,7 @@ def _git_revision() -> str:
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    recorder = getattr(session, "_comet_recorder", None)
+    recorder = session.stash.get(RECORDER_KEY, None)
     if recorder is None or not recorder.results:
         return
 
@@ -207,7 +212,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         },
         "results": [r.to_dict() for r in recorder.results],
     }
-    out = Path(session.config.getoption("--bench-out"))
+    out = Path(str(session.config.getoption("--bench-out")))
     out.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
 
     lines = ["", f"基准结果已写入 {out}", ""]
@@ -257,11 +262,11 @@ def _format_delta(results: list[dict[str, Any]], baseline_path: Path) -> list[st
     return lines
 
 
-def pytest_configure(config: pytest.Config) -> None:
-    config._comet_bench_out = config.getoption("--bench-out")  # type: ignore[attr-defined]
-
-
 @pytest.fixture(autouse=True, scope="session")
 def _attach_recorder(request: pytest.FixtureRequest, bench_recorder: Recorder) -> None:
-    """把 recorder 挂到 session 上，`pytest_sessionfinish` 才拿得到它。"""
-    request.session._comet_recorder = bench_recorder  # noqa: SLF001
+    """把 recorder 挂到 session 上，`pytest_sessionfinish` 才拿得到它。
+
+    走 pytest 的 `stash` 而不是直接给 session 塞属性：stash 是 pytest 为
+    "插件往对象上挂私有状态"提供的正式口子，带类型、不会与别的插件撞名。
+    """
+    request.session.stash[RECORDER_KEY] = bench_recorder

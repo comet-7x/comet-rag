@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from typing import Any
 
 import pytest
 
@@ -142,12 +143,13 @@ class TaskStoreContract:
 
         # 不含 task_id：它是 update() 的位置参数，作为字段传会撞成 TypeError，
         # 压根到不了 _check_fields。签名本身已经挡住了。
-        for field, value in (
-            ("kind", "别的"),
-            ("version", 99),
-            ("created_at", Time.now()),
-            ("status", TaskStatus.RUNNING),
-        ):
+        cases: dict[str, Any] = {
+            "kind": "别的",
+            "version": 99,
+            "created_at": Time.now(),
+            "status": TaskStatus.RUNNING,
+        }
+        for field, value in cases.items():
             with pytest.raises(ValueError):
                 await store.update(task.task_id, **{field: value})
 

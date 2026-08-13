@@ -131,8 +131,10 @@ class RetrievalService:
                 degraded=level,
             )
 
-        should_rerank = query.rerank and allow_rerank and self._reranker is not None
-        if not should_rerank:
+        # 写成"先取出再判 None"而不是布尔标志：标志变量会把"reranker 不是
+        # None"这个结论丢掉，到调用点就得再补一次断言。
+        reranker = self._reranker if (query.rerank and allow_rerank) else None
+        if reranker is None:
             return RetrievalResult(
                 chunks=candidates[:top_k],
                 reranked=False,
@@ -141,7 +143,7 @@ class RetrievalService:
                 degraded=level,
             )
 
-        chunks, did_rerank = await self._rerank(self._reranker, query.query, candidates)
+        chunks, did_rerank = await self._rerank(reranker, query.query, candidates)
         return RetrievalResult(
             chunks=chunks[:top_k],
             reranked=did_rerank,

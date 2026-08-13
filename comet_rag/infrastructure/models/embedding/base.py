@@ -51,8 +51,13 @@ class BaseEmbeddingModel(ABC):
             return await self._aembed(data, **kwargs)
 
     @abstractmethod
-    async def _aembed(self, data: Any, **kwargs: Any) -> Any:
-        """真正打网络的那一步。子类实现这个，闸门由基类负责。"""
+    async def _aembed(self, data: Any, /, **kwargs: Any) -> Any:
+        """真正打网络的那一步。子类实现这个，闸门由基类负责。
+
+        第一个参数声明成**仅位置**（`/`）：基类只会位置传参，而各实现给它起了
+        贴合自己领域的名字（`text` / `embedding_data`）。不加这个斜杠的话，
+        名字不一致就是一处 LSP 违背 —— 谁按基类签名写 `_aembed(data=…)` 就会炸。
+        """
 
     @abstractmethod
     def embed(self, *args: Any, **kwargs: Any) -> Any:

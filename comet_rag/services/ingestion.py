@@ -65,6 +65,7 @@ from comet_rag.tasks import (
     LANE_CPU,
     LANE_IO,
     Done,
+    Outcome,
     RetriableError,
     StagePipeline,
     TaskContext,
@@ -161,7 +162,10 @@ class IngestRunner:
         self._config = config or PipelineConfig()
         self._flow = self._build_flow()
 
-    async def __call__(self, ctx: TaskContext) -> Done:
+    async def __call__(self, ctx: TaskContext) -> Outcome:
+        """返回类型是 `Outcome` 而非 `Done`：本 runner 会在 chunking 与
+        indexing 之间**移交道次**，那一步返回的是 `Handoff`（见 `_build_flow`）。
+        标成 `Done` 是笔误 —— 它把这条流水线最关键的一个返回值排除在了签名之外。"""
         return await self._flow(ctx)
 
     # ── 阶段 ───────────────────────────────────────────────────────────────

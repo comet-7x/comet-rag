@@ -253,7 +253,9 @@ class DocxParser:
         self._styles_root = None
         self._footnotes = None
 
-        self._walk(self._doc.element.body)
+        # python-docx 的 `Document.element` 没有返回标注，静态上退化成
+        # `BaseOxmlElement`，看不见 `body`。运行时它是 `CT_Document`。
+        self._walk(self._doc.element.body)  # pyright: ignore[reportAttributeAccessIssue]
         self._add_headers_footers()
 
         return DocxParsedContent(blocks=self._blocks, metadata=document.metadata)
@@ -603,9 +605,16 @@ class DocxParser:
         )
 
     def _get_numId_ilvl(self, paragraph: Paragraph) -> tuple[int | None, int | None]:
-        numPr = paragraph._element.find(
-            ".//w:numPr", namespaces=paragraph._element.nsmap
-        )
+        # 必须剔掉 `None` 键（默认命名空间）：`find()` 走的是 ElementPath，
+        # 它不支持空前缀，喂进去会直接抛 ValueError。docx 里各命名空间通常
+        # 都带前缀，所以这一步平时看不出来 —— 直到遇上一份声明了默认
+        # 命名空间的文档，整份文件的列表编号识别当场崩掉。
+        nsmap = {
+            prefix: uri
+            for prefix, uri in paragraph._element.nsmap.items()
+            if prefix is not None
+        }
+        numPr = paragraph._element.find(".//w:numPr", namespaces=nsmap)
         if numPr is None:
             return None, None
 
@@ -618,8 +627,8 @@ class DocxParser:
                 return None
 
         return (
-            _int(numPr.find("w:numId", namespaces=paragraph._element.nsmap)),
-            _int(numPr.find("w:ilvl", namespaces=paragraph._element.nsmap)),
+            _int(numPr.find("w:numId", namespaces=nsmap)),
+            _int(numPr.find("w:ilvl", namespaces=nsmap)),
         )
 
     def _is_numbered_list(self, numId: int, ilvl: int) -> bool:

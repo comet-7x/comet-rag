@@ -33,6 +33,7 @@ from tests.e2e.test_ingest_search import (
     STUB_TYPE,
     KeywordEmbedding,
     _use_stub_loader,
+    ctx_of,
     poll_until_terminal,
 )
 
@@ -159,7 +160,7 @@ async def test_model_timeouts_degrade_rerank_but_search_still_answers(
     finally:
         logger.remove(sink_id)
 
-    ctx = client._transport.app.state.ctx  # noqa: SLF001
+    ctx = ctx_of(client)
     assert ctx.degradation.level() >= Level.NO_RERANK, (
         f"超时打了 10 轮却没降级：{ctx.degradation.stats}"
     )
@@ -212,7 +213,7 @@ async def test_degraded_top_k_is_surfaced_to_the_client(
 
     # 打到 L2（砍 top_k）：本用例配的第二档阈值是 90%，而窗口里还留着前面
     # 那些成功的调用 —— 灌 20 条只到 80%，够不着。灌满一窗口才稳。
-    ctx = client._transport.app.state.ctx  # noqa: SLF001
+    ctx = ctx_of(client)
     for _ in range(200):
         ctx.degradation.record(False)
 

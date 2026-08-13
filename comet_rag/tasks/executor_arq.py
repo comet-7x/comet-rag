@@ -158,7 +158,12 @@ class ArqExecutor(StoreDrivenExecutor):
         except UnknownKind:
             return None
         lane_of = getattr(runner, "lane_of", None)
-        return lane_of(task.resume_stage) if callable(lane_of) else None
+        if not callable(lane_of):
+            return None
+        # runner 来自外部注册（`Runner` 是 Protocol，没有 `lane_of`），
+        # 拿到什么全凭它自觉。返回值不是字符串就当"查不到"处理。
+        lane = lane_of(task.resume_stage)
+        return lane if isinstance(lane, str) else None
 
     def _queue_for(self, lane: str | None) -> str:
         return self._lanes.get(lane, self._queue) if lane else self._queue

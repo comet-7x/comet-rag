@@ -10,7 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from comet_rag.infrastructure.database.models import KnowledgeBaseRow
-from comet_rag.infrastructure.database.session import Database
+from comet_rag.infrastructure.database.session import Database, affected_rows
 from comet_rag.infrastructure.knowledge_base import (
     KnowledgeBase,
     KnowledgeBaseExists,
@@ -74,7 +74,7 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
             result = await session.execute(
                 delete(KnowledgeBaseRow).where(KnowledgeBaseRow.kb_id == kb_id)
             )
-            return bool(result.rowcount)
+            return bool(affected_rows(result))
 
 
 __all__ = ["PostgresKnowledgeBaseRepository"]
