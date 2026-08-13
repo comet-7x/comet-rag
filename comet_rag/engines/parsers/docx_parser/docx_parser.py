@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from docx.document import Document as DocumentObject
+from docx.oxml.exceptions import InvalidXmlError
 from docx.oxml.ns import qn
 from docx.text.hyperlink import Hyperlink
 from docx.text.paragraph import Paragraph
@@ -49,6 +50,13 @@ _WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 _R_EMBED = f"{{{_R}}}embed"
 _XML_VAL = f"{{{_W}}}val"
 _EMU_PER_PX = 9525  # 914 400 EMU/inch ÷ 96 DPI
+
+#: 单张表允许展开的单元格数上限，超出即跳过并留占位（见 `_skip_oversized_table`）。
+#:
+#: 这里用常数是**恰当的**：它是资源预算，不是语义上界 —— 与"缺列数不得超过
+#: 表格网格宽度"那种从文档本身推出来的约束不是一回事。100 万格约合 8 MB 指针，
+#: 而现实里最大的表（几百列 × 几千行）也远够不着。
+_MAX_TABLE_CELLS = 1_000_000
 
 # Inline wrapper tags treated as transparent pass-throughs
 _TRANSPARENT_INLINE: frozenset[str] = frozenset(
@@ -222,7 +230,13 @@ def _get_run_fmt(run: Run) -> _Fmt:
 class DocxParser:
     """Parse a DocxDocument into a list of semantically typed blocks."""
 
-    def __init__(self, *, heading_numbers: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        heading_numbers: bool = False,
+        max_table_cells: int = _MAX_TABLE_CELLS,
+    ) -> None:
+        self._max_table_cells = max_table_cells
         self._doc: DocumentObject | None = None
         self._doc_part: Any = None
         self._blocks: list[Block] = []
@@ -570,33 +584,19 @@ class DocxParser:
         return "\n".join(parts)
 
     @staticmethod
-    def _gap(row: Any, attr: str, grid_width: int) -> int:
-        """读取 `gridBefore` / `gridAfter`，并**用表格自己的网格宽度封顶**。
+    def _raw_gaps(row: Any) -> tuple[int, int]:
+        """一行两端声明的缺列数，未封顶。
 
-        这两个值来自文档 XML，也就是说在"用户上传文件"这条路上是**攻击者
-        可控的整数**。直接拿去 `[""] * n` 会构成一个放大型 DoS —— 实测同一份
-        36 KB 的 docx（PR #34 评审）：
-
-            w:val="10000000"   →  解析峰值多占 80 MB   （封顶后 5 MB）
-
-        每项 8 字节，而这个整数在 XML 里没有上限：写成 2×10⁹ 就是十几 GB，
-        文件大小却一个字节都不用变。这与 spec S4-1"资源必须有界"直接冲突。
-
-        封顶取**表格声明的网格宽度**而不是一个魔法常数，理由是它消除了
-        放大：网格宽度由 `<w:gridCol/>` 元素**逐个**声明，想要大的值就得写
-        大的文件，攻击者拿不到杠杆。它同时也是语义上的真上界 —— 缺列数
-        超过整张表的宽度，本身就说明这份文档不合法。
+        这两个值直接来自文档 XML —— 在"用户上传文件"这条路上等于**攻击者
+        可控的整数**，所以取出来之后必须封顶（见 `_handle_table`），
+        不能直接拿去 `[""] * n`。
         """
-        raw = int(getattr(row, attr, 0) or 0)
-        gap = min(max(raw, 0), max(grid_width, 0))
-        if gap != raw:
-            logger.warning(
-                f"表格行的 {attr}={raw} 超出该表声明的网格宽度 {grid_width}，"
-                f"已截断为 {gap} —— 文档很可能是畸形的"
-            )
-        return gap
+        return (
+            max(int(getattr(row, "grid_cols_before", 0) or 0), 0),
+            max(int(getattr(row, "grid_cols_after", 0) or 0), 0),
+        )
 
-    def _row_to_cells(self, row: Any, grid_width: int) -> list[str]:
+    def _row_to_cells(self, row: Any, before: int, after: int) -> list[str]:
         """一行的单元格文本，横向合并（gridSpan）的续格留空。
 
         ## 判据必须来自结构，不能是文本相等
@@ -651,8 +651,9 @@ class DocxParser:
         它的 `grid_span` 是 1，文本会沿列重复出现 —— 本方法按行处理，碰不到
         它，行为与此前一致。对检索而言每行自带上下文反而是好事。
         """
-        # 行首的缺列：不是空单元格，是不存在的网格列
-        cells: list[str] = [""] * self._gap(row, "grid_cols_before", grid_width)
+        # 行首的缺列：不是空单元格，是不存在的网格列。`before` / `after`
+        # 已由调用方按网格宽度封顶，这里不再重复校验。
+        cells: list[str] = [""] * before
         continuations = 0
         for cell in row.cells:
             if continuations:
@@ -662,16 +663,89 @@ class DocxParser:
             cells.append(self._cell_to_text(cell))
             # 横跨 n 列 ⇒ 后面 n-1 个网格位置是同一个单元格的续格
             continuations = max(cell.grid_span - 1, 0)
-        cells.extend([""] * self._gap(row, "grid_cols_after", grid_width))
+        cells.extend([""] * after)
         return cells
+
+    def _skip_oversized_table(self, rows: int, cells: int) -> None:
+        """超预算的表：不展开，但**在原位留一条能被检索到的说明**。
+
+        为什么不截断成前 N 格：那会产出一张**看起来完整、实则残缺**的表。
+        检索到它的人无从判断后面还有内容，于是把半份数据当成全部 —— 这正是
+        #18（整列消失）与 #33（整行错位）的同一个失败模式，本不该在处理
+        它们的过程中再造一个。
+
+        为什么不干脆丢掉：那样知识库里完全看不出这里曾经有过东西，只有运维
+        翻日志才知道。留占位则让"缺失"本身可见、可检索。
+
+        用 `caption` 类型是因为它已经在 `DocxParsedContent.text` 的白名单里 ——
+        占位块必须能进入正文，否则切块与向量化都会把它丢掉，也就搜不到了。
+        """
+        logger.warning(
+            f"表格 {rows} 行、展开后约 {cells:,} 个单元格，超出上限 "
+            f"{self._max_table_cells:,}，已跳过并留占位 —— "
+            f"可用 DocxParser(max_table_cells=…) 调整"
+        )
+        self._blocks.append(
+            {
+                "type": "caption",
+                "content": f"[表格未收录：{rows} 行，约 {cells:,} 个单元格，"
+                f"超出解析上限 {self._max_table_cells:,}]",
+            }
+        )
 
     def _handle_table(self, element: Any) -> None:
         from docx.table import Table
 
         table = Table(element, self._doc)  # pyright: ignore[reportArgumentType]
-        # 声明的网格宽度，用作缺列数的上界（见 `_gap`）
-        grid_width = len(table.columns)
-        cleaned = [self._row_to_cells(row, grid_width) for row in table.rows]
+        try:
+            # 声明的网格宽度，用作单行缺列数的上界
+            grid_width = len(table.columns)
+        except InvalidXmlError:
+            # `tblGrid` 是 schema 要求的必需元素。缺了它就无从确定网格宽度 ——
+            # 这不是"某一行有问题"，是整张表不合法。
+            logger.warning("表格缺少 <w:tblGrid>，无从确定网格宽度，已跳过该表")
+            return
+
+        # ── 先定界，再碰任何一行 ───────────────────────────────────────────
+        #
+        # 缺列数封顶到网格宽度还**不足以**让内存有界（PR #34 评审）：攻击者
+        # 可以声明 N 个 `<w:gridCol/>`，再加 R 个各只含**一个** `<w:tc>` 的行、
+        # 每行都写 gridBefore=N —— XML 是 O(N+R)，展开却是 O(N×R)。
+        # 实测 N=R=3000：约 9,000 个 XML 元素、38 KB 的 docx，展开后是 900 万
+        # 个单元格、峰值 87 MB；而这两个维度都还能继续放大。
+        #
+        # 判据只用 `tblGrid` 的列数与 `tr` 的行数 —— 两者都是**逐个元素**声明
+        # 的，规模等于文件规模，攻击者拿不到杠杆。这也正是最终输出的大小：
+        # 各行下面会被补齐成矩形，所以成品就是 行数 × 网格宽度。
+        #
+        # 特别地**不能**用 `len(row.cells)` 来算：那会让 python-docx 把整行的
+        # `_Cell` 对象逐列建出来 —— 一个"只想算个数"的动作，代价与真的展开
+        # 一样大。（第一版就栽在这里：预算判对了，内存照样飙到 2.3 GB。）
+        row_count = len(table.rows)
+        if row_count * grid_width > self._max_table_cells:
+            self._skip_oversized_table(row_count, row_count * grid_width)
+            return
+
+        # ── 到这里，规模已经有界，可以逐行展开 ─────────────────────────────
+        cleaned: list[list[str]] = []
+        truncated_rows = 0
+        largest_gap = 0
+        for row in table.rows:
+            raw_before, raw_after = self._raw_gaps(row)
+            before, after = min(raw_before, grid_width), min(raw_after, grid_width)
+            if (before, after) != (raw_before, raw_after):
+                truncated_rows += 1
+                largest_gap = max(largest_gap, raw_before, raw_after)
+            cleaned.append(self._row_to_cells(row, before, after))
+
+        if truncated_rows:
+            # 每张表只报一条。按行报的话，一份畸形文档能直接产出成千上万行
+            # 日志 —— 把"文档内容"放大成"日志写入量"，与上面那个内存放大
+            # 是同一类问题（PR #34 评审）。
+            logger.warning(
+                f"表格有 {truncated_rows} 行声明的缺列数超出网格宽度 {grid_width}"
+                f"（最大 {largest_gap}），已截断 —— 文档很可能是畸形的"
+            )
 
         if not any(any(r) for r in cleaned):
             return

@@ -263,7 +263,159 @@ def test_a_hostile_grid_gap_cannot_blow_up_memory(tmp_path: Path) -> None:
     assert len(row) < 100, f"缺列数没有被封顶，展开成了 {len(row)} 列"
     # 封顶到该表声明的网格宽度（2），再加上那一格真实单元格
     assert row == ["", "", "仅此一格"]
-    assert any("超出该表声明的网格宽度" in r for r in records), f"截断没留痕：{records}"
+    assert any("超出网格宽度" in r for r in records), f"截断没留痕：{records}"
+
+
+def _wide_short_row_table(
+    path: Path, *, cols: int, rows: int, declare: int | None = None
+) -> Path:
+    """N 个 `<w:gridCol/>` + R 个短行，每行都声明 gridBefore=N。
+
+    这是"表格宽度 × 行数"那种放大的最小载荷：XML 是 O(N+R)，展开是 O(N×R)。
+
+    ⚠️ 每行必须**只含一个** `<w:tc>`。用 `add_table(rows=R, cols=N)` 再删几格
+    是不行的 —— python-docx 会按 tblGrid 把每行建满，文档里真的就有 N×R 个
+    `tc`，那是一份"确实很大的文件"，不是放大。第一版就是这么写错的，量出来
+    的 2.3 GB 全花在 `Document()` 打开上，跟被测代码毫无关系。
+    """
+    import copy  # noqa: PLC0415
+
+    from docx import Document as _Document  # noqa: PLC0415
+    from docx.oxml.ns import qn  # noqa: PLC0415
+
+    from tests.fixtures.docx.build import _omit_grid_columns  # noqa: PLC0415
+
+    doc = _Document()
+    table = doc.add_table(rows=1, cols=1)
+    tbl = table._tbl  # noqa: SLF001
+    grid = tbl.find(qn("w:tblGrid"))
+    assert grid is not None, "python-docx 建的表居然没有 tblGrid"
+    for _ in range(cols - 1):
+        grid.append(grid.makeelement(qn("w:gridCol"), {}))
+
+    table.cell(0, 0).text = "x"
+    template = tbl.tr_lst[0]
+    for _ in range(rows - 1):
+        tbl.append(copy.deepcopy(template))
+    # before=0：一格都不删（每行本来就只有一个 tc），只声明缺列数。
+    # 走 helper 而不是自己动 XML —— `get_or_add_gridBefore` 是 python-docx
+    # 动态生成的，pyright 看不见，散在测试里就得撒 ignore。
+    for row in table.rows:
+        _omit_grid_columns(row, declare_before=declare or (cols - 1))
+
+    doc.save(str(path))
+    return path
+
+
+def test_a_wide_grid_times_many_rows_is_refused_not_expanded(tmp_path: Path) -> None:
+    """**单行封顶还不够。**
+
+    把缺列数封到网格宽度，挡住的只是"一个整数"的放大。攻击者还可以声明
+    N 个 `<w:gridCol/>`，再加 R 个各只含一个 `<w:tc>` 的行、每行都写
+    gridBefore=N —— XML 是 O(N+R)，展开却是 O(N×R)。
+
+    实测 N=R=3000：约 9,000 个 XML 元素、38 KB 的 docx，
+    无预算时展开成 900 万个单元格、峰值 87 MB；有预算时 11 MB（PR #34 评审）。
+
+    所以要在**展开之前**按投影大小拒掉。用例把上限调小以便快速触发。
+    """
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    path = _wide_short_row_table(tmp_path / "quad.docx", cols=200, rows=200)
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        blocks = _parse(path, max_table_cells=1000)["blocks"]
+    finally:
+        logger.remove(sink)
+
+    assert not any(b["type"] == "table" for b in blocks), "超预算的表不该被展开"
+    assert any("已跳过并留占位" in r for r in records), f"没有留痕：{records}"
+
+
+def test_an_oversized_table_leaves_a_searchable_placeholder(tmp_path: Path) -> None:
+    """跳过之后**在原位留一条能被检索到的说明**。
+
+    不截断成前 N 格：那会产出一张看起来完整、实则残缺的表，检索到它的人
+    无从判断后面还有内容 —— 正是 #18 / #33 的同一个失败模式。
+    也不干脆丢掉：那样知识库里完全看不出这里曾经有过东西。
+
+    占位必须进入 `.text`，否则切块与向量化会把它丢掉，也就搜不到了。
+    """
+    path = _wide_short_row_table(tmp_path / "quad2.docx", cols=200, rows=200)
+    parsed = _parse(path, max_table_cells=1000)
+
+    placeholder = next(b for b in parsed["blocks"] if b["type"] == "caption")
+    assert "表格未收录" in placeholder["content"]
+    assert "200 行" in placeholder["content"]
+    assert placeholder["content"] in parsed["text"], (
+        "占位块没有进入正文，切块与向量化都会把它丢掉"
+    )
+
+
+def test_the_truncation_warning_is_one_per_table_not_one_per_row(
+    tmp_path: Path,
+) -> None:
+    """截断告警按表汇总，不按行。
+
+    按行打的话，一份畸形文档能直接产出成千上万行日志 —— 把"文档内容"放大成
+    "日志写入量"，与内存放大是同一类问题（PR #34 评审）。实测 2000 行会打出
+    2000 条。
+    """
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    # declare 远大于网格宽度 ⇒ 每一行都会被截断
+    path = _wide_short_row_table(
+        tmp_path / "flood.docx", cols=3, rows=300, declare=10_000_000
+    )
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        _parse(path)
+    finally:
+        logger.remove(sink)
+
+    truncation = [r for r in records if "超出网格宽度" in r]
+    assert len(truncation) == 1, f"300 行打出了 {len(truncation)} 条截断告警"
+    assert "300 行" in truncation[0], f"汇总里没写清有多少行被截断：{truncation[0]}"
+
+
+def test_a_table_without_tblgrid_is_skipped_not_crashed(tmp_path: Path) -> None:
+    """`tblGrid` 是 schema 要求的必需元素，缺了 `len(table.columns)` 会抛
+    `InvalidXmlError` —— 那会让整份文档解析失败，而不只是这一张表。
+
+    缺它就无从确定网格宽度，也就无从给缺列数封顶，所以跳过整张表是对的；
+    但要留痕，且不能拖垮同一份文档里其余的内容。
+    """
+    from docx import Document as _Document  # noqa: PLC0415
+    from docx.oxml.ns import qn  # noqa: PLC0415
+
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+
+    doc = _Document()
+    doc.add_paragraph("表格前的正文。")
+    table = doc.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "会被跳过"
+    grid = table._tbl.find(qn("w:tblGrid"))  # noqa: SLF001
+    assert grid is not None
+    table._tbl.remove(grid)  # noqa: SLF001
+    doc.add_paragraph("表格后的正文。")
+    path = tmp_path / "no_grid.docx"
+    doc.save(str(path))
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        parsed = _parse(path)
+    finally:
+        logger.remove(sink)
+
+    assert not any(b["type"] == "table" for b in parsed["blocks"])
+    assert any("tblGrid" in r for r in records), f"跳过没留痕：{records}"
+    assert "表格前的正文。" in parsed["text"], "其余内容不该受牵连"
+    assert "表格后的正文。" in parsed["text"], "其余内容不该受牵连"
 
 
 def test_a_genuinely_ragged_table_is_padded_but_says_so(tmp_path: Path) -> None:
