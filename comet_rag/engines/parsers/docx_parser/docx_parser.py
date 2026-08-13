@@ -596,6 +596,21 @@ class DocxParser:
             max(int(getattr(row, "grid_cols_after", 0) or 0), 0),
         )
 
+    @staticmethod
+    def _declared_spans(row: Any) -> list[tuple[int, bool]]:
+        """本行每个 `tc` 的 `(自己声明的 span, 是不是纵向合并的续格)`。
+
+        续格的判定：`w:vMerge` 存在且 `w:val` 不是 `restart`（OOXML 里省略
+        `val` 就等于 `continue`）。这类格子**自己的 `gridSpan` 不作数** ——
+        展开时用的是上方根单元格的，见 `_projected_cells()`。
+        """
+        out: list[tuple[int, bool]] = []
+        for tc in row._tr.tc_lst:  # noqa: SLF001
+            tc_pr = tc.tcPr
+            merge = None if tc_pr is None else tc_pr.vMerge
+            out.append((max(tc.grid_span, 1), merge is not None and merge != "restart"))
+        return out
+
     def _row_extent(self, row: Any, grid_width: int) -> tuple[int, int]:
         """`(两端缺列数之和, 本行 tc 自己声明的 span 之和)` —— **不碰 `row.cells`**。
 
@@ -631,24 +646,39 @@ class DocxParser:
         续行，本地和约 `S + R`，实际展开却是 `S × (R+1)`。取 S=999000、R=999
         就能把投影压在默认上限之下，而真实展开接近十亿格（PR #34 评审）。
 
-        ## 用"历史最大行宽"作上界，而不是逐个回溯根单元格
+        ## 上界只能逐格取，不能按"历史最大行宽"取
 
-        续格继承的 span 一定来自**某个更早的行**里的根单元格，所以
+        我先前用的是"第 i 行宽度 ≤ 两端缺列 + max(前 i 行各自的 span 之和)"。
+        **那不是上界**：同一行可以既继承一个宽 span、又自己再声明一个宽 span。
+        实测（PR #34 评审给出的反例）：
 
-            第 i 行的实际宽度  ≤  第 i 行两端缺列 + max(前 i 行各自的 span 之和)
+            r0: 本地 span=[5]     row.cells 实际 = 5
+            r1: 本地 span=[1, 5]  row.cells 实际 = 10   ← 继承 5 + 新声明 5
 
-        这个界对合法表格是**紧的**（每行 span 之和都等于网格宽度，取 max 还是
-        它），对上面那种载荷则足够大到能拒掉。
+            按行取 max 的投影 = 11 < 实际 15
 
-        比"为每个续格追溯根 `tc`"简单得多，也回避了追溯本身的风险 —— 攻击者
-        同样可以用很长的 vMerge 链把追溯变成新的资源问题。
+        改成**逐格**取：
+
+            续格   的有效 span ≤ 到此为止见过的最大单格 span（它继承的那个根，
+                                 一定是某处声明过的一个 gridSpan）
+            非续格 的有效 span  = 它自己声明的 gridSpan
+
+        这一条不依赖 python-docx 如何解析重叠布局，纯粹是"每格的展开宽度都
+        来自某个声明过的 gridSpan"，所以是硬上界。
+
+        非续格用真实值而不是一律取 max，是为了不误伤合法文档：一张 50 列的表
+        若某行是整行合并的表头，"全部按 50 算"会把正文行也放大 50 倍。实测
+        4 份真实文档 17 张表，最大投影 144（预算 100 万），没有误拒风险。
         """
         projected = 0
-        widest_spans = 0
+        widest_single = 0
         for row in table.rows:
-            gaps, spans = self._row_extent(row, grid_width)
-            widest_spans = max(widest_spans, spans)
-            projected += gaps + widest_spans
+            gaps, _ = self._row_extent(row, grid_width)
+            spans = self._declared_spans(row)
+            widest_single = max([widest_single, *(s for s, _ in spans)])
+            projected += gaps + sum(
+                widest_single if inherited else span for span, inherited in spans
+            )
             if projected > self._max_table_cells:
                 break  # 已经超了，没必要把剩下的行也数一遍
         return projected

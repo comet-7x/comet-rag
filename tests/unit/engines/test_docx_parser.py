@@ -443,6 +443,59 @@ def test_a_vmerge_chain_inheriting_a_huge_span_is_refused(
     assert any("已跳过并留占位" in r for r in records), f"没有留痕：{records}"
 
 
+def test_a_row_that_both_inherits_and_declares_a_wide_span_is_bounded() -> None:
+    """**第五种形态：同一行既继承旧 span、又自己声明新 span。**
+
+    我先前用的界是"第 i 行宽度 ≤ 两端缺列 + max(前 i 行各自的 span 之和)"，
+    它**不是上界** —— 两个评审各自独立给出了同一个反例：
+
+        r0: 本地 span=[5]     row.cells 实际 = 5
+        r1: 本地 span=[1, 5]  row.cells 实际 = 10   ← 继承 5 + 新声明 5
+
+        按行取 max 的投影 = 11 < 实际 15
+
+    改成逐格取（续格按"见过的最大单格 span"、非续格按自己的真实值）之后，
+    投影才真的是上界。本用例直接比对投影与实际展开，不依赖预算 ——
+    预算多大都不影响"投影必须 ≥ 实际"这条性质（PR #34 评审）。
+    """
+    import copy  # noqa: PLC0415
+
+    from docx import Document as _Document  # noqa: PLC0415
+    from docx.oxml.ns import qn  # noqa: PLC0415
+
+    span = 5
+    doc = _Document()
+    table = doc.add_table(rows=1, cols=1)
+    grid = table._tbl.find(qn("w:tblGrid"))  # noqa: SLF001
+    assert grid is not None
+    for _ in range(2 * span - 1):
+        grid.append(grid.makeelement(qn("w:gridCol"), {}))
+
+    root_row = table._tbl.tr_lst[0]  # noqa: SLF001
+    root_pr = root_row.tc_lst[0].get_or_add_tcPr()
+    root_pr.get_or_add_gridSpan().val = span
+    root_pr.append(root_pr.makeelement(qn("w:vMerge"), {qn("w:val"): "restart"}))
+
+    # 第二行：[继承 r0 的 span] + [自己再声明一个同样宽的 span]
+    second = copy.deepcopy(root_row)
+    pr = second.tc_lst[0].get_or_add_tcPr()
+    span_el, merge_el = pr.find(qn("w:gridSpan")), pr.find(qn("w:vMerge"))
+    assert span_el is not None and merge_el is not None
+    pr.remove(span_el)
+    merge_el.set(qn("w:val"), "continue")
+    second.append(copy.deepcopy(root_row.tc_lst[0]))
+    table._tbl.append(second)  # noqa: SLF001
+
+    parser = DocxParser(max_table_cells=10**15)  # 调高上限，禁掉提前退出
+    projected = parser._projected_cells(table, len(table.columns))  # noqa: SLF001
+    actual = sum(len(row.cells) for row in table.rows)
+
+    assert projected >= actual, (
+        f"投影 {projected} 低于实际展开 {actual} —— 它就不是上界了，"
+        f"预算再小也拦不住"
+    )
+
+
 def test_an_oversized_table_leaves_a_searchable_placeholder(tmp_path: Path) -> None:
     """跳过之后**在原位留一条能被检索到的说明**。
 
