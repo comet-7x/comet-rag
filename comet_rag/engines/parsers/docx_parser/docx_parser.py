@@ -606,9 +606,13 @@ class DocxParser:
 
     def _get_numId_ilvl(self, paragraph: Paragraph) -> tuple[int | None, int | None]:
         # 必须剔掉 `None` 键（默认命名空间）：`find()` 走的是 ElementPath，
-        # 它不支持空前缀，喂进去会直接抛 ValueError。docx 里各命名空间通常
-        # 都带前缀，所以这一步平时看不出来 —— 直到遇上一份声明了默认
-        # 命名空间的文档，整份文件的列表编号识别当场崩掉。
+        # 它不支持空前缀，喂进去会直接抛 ValueError，整份文件的列表编号识别
+        # 当场崩掉。
+        #
+        # 手上的 docx 大多把命名空间都写成带前缀的，所以这个缺陷此前一直没有
+        # 暴露 —— 但那是**样本的性质，不是格式的保证**：默认命名空间在
+        # OOXML 里完全合法，只是不常见。拿"实际文件通常都带前缀"当不变式，
+        # 等于把正确性押在数据分布上。
         nsmap = {
             prefix: uri
             for prefix, uri in paragraph._element.nsmap.items()
