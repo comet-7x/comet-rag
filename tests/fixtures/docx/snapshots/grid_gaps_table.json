@@ -1,0 +1,64 @@
+{
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "**缺列样本**",
+      "is_numbered": false
+    },
+    {
+      "type": "table",
+      "content": "| A | B | C |\n| --- | --- | --- |\n|  | y | z |\n| p | q |  |\n|  | m |  |",
+      "rows": [
+        [
+          "A",
+          "B",
+          "C"
+        ],
+        [
+          "",
+          "y",
+          "z"
+        ],
+        [
+          "p",
+          "q",
+          ""
+        ],
+        [
+          "",
+          "m",
+          ""
+        ]
+      ],
+      "row_count": 4,
+      "col_count": 3
+    },
+    {
+      "type": "text",
+      "content": "下面这张表把缺列与横向合并叠在同一行上。",
+      "style": "Normal"
+    },
+    {
+      "type": "table",
+      "content": "| A | B | C | D |\n| --- | --- | --- | --- |\n|  | 合并 |  | 末 |",
+      "rows": [
+        [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        [
+          "",
+          "合并",
+          "",
+          "末"
+        ]
+      ],
+      "row_count": 2,
+      "col_count": 4
+    }
+  ],
+  "text": "**缺列样本**\n\n| A | B | C |\n| --- | --- | --- |\n|  | y | z |\n| p | q |  |\n|  | m |  |\n\n下面这张表把缺列与横向合并叠在同一行上。\n\n| A | B | C | D |\n| --- | --- | --- | --- |\n|  | 合并 |  | 末 |"
+}

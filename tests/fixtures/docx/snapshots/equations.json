@@ -1,0 +1,31 @@
+{
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "**公式样本**",
+      "is_numbered": false
+    },
+    {
+      "type": "text",
+      "content": "分式：$\\frac{a}{b}$",
+      "style": "Normal"
+    },
+    {
+      "type": "text",
+      "content": "上标：$x^{2}$",
+      "style": "Normal"
+    },
+    {
+      "type": "text",
+      "content": "根号：$\\sqrt{x}$",
+      "style": "Normal"
+    },
+    {
+      "type": "text",
+      "content": "求和：$\\sum_{i=1}^{n}i$",
+      "style": "Normal"
+    }
+  ],
+  "text": "**公式样本**\n\n分式：$\\frac{a}{b}$\n\n上标：$x^{2}$\n\n根号：$\\sqrt{x}$\n\n求和：$\\sum_{i=1}^{n}i$"
+}

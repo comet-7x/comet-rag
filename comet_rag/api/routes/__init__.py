@@ -1,5 +1,5 @@
 """API 路由"""
 
-from . import admin, search
+from . import admin, ingest, kb, search, tasks
 
-__all__ = ["admin", "search"]
+__all__ = ["admin", "ingest", "kb", "search", "tasks"]

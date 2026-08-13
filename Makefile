@@ -3,9 +3,11 @@ APP_NAME := comet_rag
 PYTHON := uv run
 PYTEST := uv run pytest
 RUFF := uvx ruff
-MYPY := uvx mypy
+# pyright 走 uv run 而非 uvx：它必须在**项目自己的 venv 里**跑，否则看不到
+# 已安装的依赖与类型存根（lxml-stubs 等），会把一切第三方 import 报成未解析。
+PYRIGHT := uv run pyright
 
-.PHONY: help install run dev test lint format pre-commit migrate db-up db-down clean
+.PHONY: help install run dev test lint typecheck format pre-commit migrate db-up db-down clean
 
 
 help: ## 显示此帮助信息
@@ -13,25 +15,33 @@ help: ## 显示此帮助信息
 
 
 install: ## 安装依赖并配置 pre-commit
-	uv sync
+	# --extra all（milvus + server）而非裸 uv sync：少了它们，pyright 会把
+	# fastapi / sqlalchemy / pymilvus 全报成"无法解析的导入"，make lint 直接红。
+	# 刻意不用 --all-extras —— 那会把 mineru 的数 GB 依赖一起拖下来（M2 才要）。
+	uv sync --extra all
 	uv run pre-commit install
 
-clean: ## 清理缓存文件 (__pycache__, .pytest_cache, .mypy_cache)
+clean: ## 清理缓存文件 (__pycache__, .pytest_cache, .ruff_cache)
 	find . -type d -name "__pycache__" -exec rm -rf {} +
-	rm -rf .pytest_cache .mypy_cache .ruff_cache
+	rm -rf .pytest_cache .ruff_cache
 	rm -rf build/ dist/ *.egg-info
 
 
+# 两个 target 都走 comet-rag serve —— 它是唯一会真正读 config.yaml 里
+# host/port 的入口，理由见 comet_rag/cli.py 顶部与 docs/deployment.md。
 run: ## 生产模式启动服务
-	$(PYTHON) python -m $(APP_NAME).api.main
+	$(PYTHON) comet-rag serve
 
 dev: ## 开发模式启动服务 (热重载)
-	$(PYTHON) fastapi dev $(APP_NAME)/api/main.py
+	$(PYTHON) comet-rag serve --reload
 
 
-lint: ## 执行静态检查 (ruff + mypy)
+lint: ## 执行静态检查 (ruff + pyright)
 	$(RUFF) check .
-	$(MYPY) .
+	$(PYRIGHT)
+
+typecheck: ## 只跑类型检查 (pyright)
+	$(PYRIGHT)
 
 format: ## 格式化代码 (ruff)
 	$(RUFF) format .

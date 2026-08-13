@@ -103,7 +103,17 @@ def setup_logging(
 
         logger.remove()
 
-        _patched_logger = logger.patch(_wrapping_patcher)  # pyright: ignore[reportArgumentType]
+        # `logger.configure(patcher=...)` 作用于**全局** logger，而
+        # `logger.patch(...)` 只作用于它返回的那个新实例。
+        #
+        # 这个区别是要命的：sink 的格式串引用了 `{extra[trace_id]}`，
+        # 而任何直接 `from loguru import logger` 的模块（engines 下的
+        # docx_parser / docx_cleaner / omml，services 与 core 也是）
+        # 产出的记录 extra 是空的 —— 格式化时 KeyError，
+        # **loguru 会静默丢弃该条日志**，包括错误日志。
+        # 用 configure 之后，无论从哪里取到 logger，trace_id 都会被填上。
+        logger.configure(patcher=_wrapping_patcher)  # pyright: ignore[reportArgumentType]
+        _patched_logger = logger
 
         log_path = Path(log_dir)
         log_path.mkdir(parents=True, exist_ok=True)

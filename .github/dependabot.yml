@@ -20,5 +20,3 @@ updates:
       python-dependencies:
         patterns:
           - "*"
-    reviewers:
-      - "anine09"

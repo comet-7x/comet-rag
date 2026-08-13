@@ -49,9 +49,12 @@ repos:
 
   - repo: local
     hooks:
+      # 走 uv 环境，否则用的是系统 PATH 上的 pytest（多半没装或装错环境）。
+      # 只跑 unit：pyproject 的 addopts 已排除 integration/e2e/benchmark，
+      # 提交前的钩子必须秒级完成，否则大家会用 --no-verify 绕过。
       - id: pytest
-        name: pytest
-        entry: bash -c "PYTHONPATH=. pytest tests"
+        name: pytest (unit)
+        entry: uv run pytest
         language: system
         pass_filenames: false
         always_run: true

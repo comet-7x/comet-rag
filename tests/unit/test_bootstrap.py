@@ -1,0 +1,283 @@
+"""组合根与应用上下文：装配、后端选择、逆序关停。
+
+关停顺序是最容易写对又最容易在重构中悄悄写坏的地方 —— 顺序错了不会立刻
+报错，只会在关停瞬间偶发"连接已关闭"，而那时进程正在退出、日志往往丢失。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from comet_rag.config.schemas import (
+    APPConfig,
+    Backend,
+    BackendsConfig,
+    EmbeddingModelConfig,
+    InfrastructureConfig,
+    ServerConfig,
+)
+from comet_rag.core.bootstrap import build_context
+from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+
+DIM = 3
+
+
+def make_config(**backend_overrides: Any) -> APPConfig:
+    return APPConfig(
+        server_config=ServerConfig(host="127.0.0.1", port=8000),
+        infrastructure_config=InfrastructureConfig(
+            embedding_model=EmbeddingModelConfig(
+                base_url="http://fake/v1", model_name="fake-embed", dim=DIM
+            )
+        ),
+        backends=BackendsConfig(**backend_overrides),
+    )
+
+
+class FakeEmbedding(BaseEmbeddingModel):
+    def __init__(self) -> None:
+        self.closed = False
+
+    def embed(self, data, **kwargs):  # pragma: no cover
+        return [0.0] * DIM
+
+    async def _aembed(self, data, **kwargs):
+        return [0.0] * DIM
+
+    async def close_client(self) -> None:
+        self.closed = True
+
+
+class FakeReranker(BaseReranker):
+    def __init__(self) -> None:
+        self.closed = False
+
+    def score(self, query, documents, **kwargs):  # pragma: no cover
+        return []
+
+    async def _ascore(self, query, documents, **kwargs):  # pragma: no cover
+        return []
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.fixture
+def embedding() -> FakeEmbedding:
+    return FakeEmbedding()
+
+
+@pytest.fixture
+def context(embedding: FakeEmbedding):
+    return build_context(
+        make_config(), embedding_model=embedding, vector_store=InMemoryVectorStore()
+    )
+
+
+# ── 装配 ───────────────────────────────────────────────────────────────────
+
+
+async def test_memory_backends_need_no_middleware(context) -> None:
+    """全内存装配必须零外部依赖 —— 这是 plan"先内存后真实"成立的前提。"""
+    assert isinstance(context.vector_store, InMemoryVectorStore)
+    assert context.task_service is not None
+    assert context.retrieval is not None
+    assert context.embedding_dim == DIM
+
+    await context.aclose()
+
+
+async def test_ingest_runner_is_registered(context) -> None:
+    from comet_rag.tasks import registered_kinds
+
+    assert "ingest" in registered_kinds()
+
+    await context.aclose()
+
+
+async def test_runner_registration_is_idempotent(embedding: FakeEmbedding) -> None:
+    """应用重启（或测试反复装配）不该因重复注册而崩。"""
+    first = build_context(make_config(), embedding_model=embedding)
+    second = build_context(make_config(), embedding_model=embedding)
+
+    await first.aclose()
+    await second.aclose()
+
+
+async def test_reranker_is_optional(context) -> None:
+    """没配 reranker 时检索仍可用，只是不重排。"""
+    assert context.reranker is None
+
+    await context.aclose()
+
+
+async def test_explicit_reranker_is_used(embedding: FakeEmbedding) -> None:
+    reranker = FakeReranker()
+
+    context = build_context(make_config(), embedding_model=embedding, reranker=reranker)
+
+    assert context.reranker is reranker
+    await context.aclose()
+
+
+def test_unknown_backend_is_rejected(embedding: FakeEmbedding) -> None:
+    """配错后端要在启动时就炸，而不是等第一个请求进来才发现。"""
+    config = make_config(vector_store=Backend.POSTGRES)
+
+    with pytest.raises(ValueError, match="不支持的 vector_store"):
+        build_context(config, embedding_model=embedding)
+
+
+def test_milvus_backend_requires_connection_settings(
+    embedding: FakeEmbedding,
+) -> None:
+    config = make_config(vector_store=Backend.MILVUS)
+
+    with pytest.raises((ValueError, ImportError, ModuleNotFoundError)):
+        build_context(config, embedding_model=embedding)
+
+
+# ── 关停 ───────────────────────────────────────────────────────────────────
+
+
+async def test_aclose_stops_executor_before_downstream(
+    embedding: FakeEmbedding,
+) -> None:
+    """**先停执行器，再拆它脚下的地板**。
+
+    反过来的话，在途任务会撞上"连接已关闭"——而且只在关停瞬间偶发。
+    """
+    order: list[str] = []
+
+    class RecordingStore(InMemoryVectorStore):
+        async def aclose(self) -> None:
+            order.append("vector_store")
+
+    context = build_context(
+        make_config(), embedding_model=embedding, vector_store=RecordingStore()
+    )
+    original_shutdown = context.task_executor.shutdown
+
+    async def recording_shutdown(**kwargs):
+        order.append("executor")
+        await original_shutdown(**kwargs)
+
+    context.task_executor.shutdown = recording_shutdown  # type: ignore[method-assign]
+
+    await context.aclose()
+
+    assert order == ["executor", "vector_store"]
+
+
+async def test_aclose_closes_models(embedding: FakeEmbedding) -> None:
+    reranker = FakeReranker()
+    context = build_context(make_config(), embedding_model=embedding, reranker=reranker)
+
+    await context.aclose()
+
+    assert embedding.closed is True
+    assert reranker.closed is True
+
+
+async def test_one_failing_resource_does_not_block_the_rest(
+    embedding: FakeEmbedding,
+) -> None:
+    """一个坏掉的连接不该让进程留下一堆泄漏资源。"""
+
+    class ExplodingStore(InMemoryVectorStore):
+        async def aclose(self) -> None:
+            raise RuntimeError("关闭时炸了")
+
+    context = build_context(
+        make_config(), embedding_model=embedding, vector_store=ExplodingStore()
+    )
+
+    await context.aclose()  # 不抛即通过
+
+    assert embedding.closed is True, "上游炸了，下游仍必须被释放"
+
+
+async def test_aclose_is_idempotent(context) -> None:
+    """关停路径可能被走两次（异常 + finally），不能第二次就炸。"""
+    await context.aclose()
+    await context.aclose()
+
+
+# ── 闸门必须由组合根挂上（spec S4-2）──────────────────────────────────────
+
+
+def test_build_context_binds_one_gate_to_both_models() -> None:
+    """闸门只在组合根这一处挂。**漏挂不会报错，只是限流悄悄失效** ——
+    所以必须有一条用例盯着这个动作本身。
+
+    这条是补写的：最初只测了 `Gate` 本身与模型层，把 bootstrap 里那行
+    `bind_gate` 删掉，全套测试照样全绿 —— 于是"不允许裸调"这条验收标准
+    实际上没有任何东西守着。
+    """
+    embedding, reranker = FakeEmbedding(), FakeReranker()
+    context = build_context(
+        make_config(),
+        embedding_model=embedding,
+        reranker=reranker,
+        vector_store=InMemoryVectorStore(),
+    )
+
+    gate = context.model_gate
+    assert gate is not None, "组合根没建闸门"
+    assert embedding._gate is gate, "embedding 模型没挂上闸门 —— 它会裸调模型服务"  # noqa: SLF001
+    assert reranker._gate is gate, "reranker 没挂上闸门"  # noqa: SLF001
+    assert gate.stats.limit == make_config().limits.model_concurrency
+
+
+def test_injected_test_doubles_get_the_gate_too() -> None:
+    """注入进来的替身同样要挂闸门。
+
+    否则测试跑的是"没有闸门"那条路、生产跑的是另一条 —— 两边行为不一致，
+    再多的测试也证明不了生产的限流是对的。
+    """
+    embedding = FakeEmbedding()
+    assert embedding._gate is None  # noqa: SLF001
+    build_context(
+        make_config(), embedding_model=embedding, vector_store=InMemoryVectorStore()
+    )
+    assert embedding._gate is not None  # noqa: SLF001
+
+
+def test_startup_fails_when_the_gate_does_not_stick() -> None:
+    """**闸门没挂上就拒绝启动**（PR 评审 #9/#12）。
+
+    静态守卫拦得住仓库内直接 new 模型的写法，但拦不住**注入进来的实现**：
+    某个子类把 `bind_gate` 覆写成空操作，AST 检查看不见。
+
+    闸门是"静默失效"型保护 —— 没挂上不报错、不打日志，只是限流不生效。
+    宁可起不来，也别带着一个失效的闸门上线。
+    """
+
+    class SilentlyUngated(FakeEmbedding):
+        def bind_gate(self, gate) -> None:  # 假装挂了，其实没有
+            return None
+
+    with pytest.raises(RuntimeError, match="没有正确挂上并发闸门"):
+        build_context(
+            make_config(),
+            embedding_model=SilentlyUngated(),
+            vector_store=InMemoryVectorStore(),
+        )
+
+
+def test_reranker_is_checked_too() -> None:
+    class SilentlyUngatedReranker(FakeReranker):
+        def bind_gate(self, gate) -> None:
+            return None
+
+    with pytest.raises(RuntimeError, match="没有正确挂上并发闸门"):
+        build_context(
+            make_config(),
+            embedding_model=FakeEmbedding(),
+            reranker=SilentlyUngatedReranker(),
+            vector_store=InMemoryVectorStore(),
+        )

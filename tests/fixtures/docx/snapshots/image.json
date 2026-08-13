@@ -1,0 +1,31 @@
+{
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "**图片样本**",
+      "is_numbered": false
+    },
+    {
+      "type": "text",
+      "content": "图片前的说明。",
+      "style": "Normal"
+    },
+    {
+      "type": "image",
+      "content": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+      "format": "png",
+      "name": "Picture 1",
+      "alt_text": "",
+      "id": "1",
+      "width_px": 96,
+      "height_px": 96
+    },
+    {
+      "type": "text",
+      "content": "图片后的说明。",
+      "style": "Normal"
+    }
+  ],
+  "text": "**图片样本**\n\n图片前的说明。\n\n![Picture 1]\n\n图片后的说明。"
+}
