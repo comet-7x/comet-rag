@@ -569,22 +569,52 @@ class DocxParser:
                 parts.append(text)
         return "\n".join(parts)
 
+    def _row_to_cells(self, row: Any) -> list[str]:
+        """一行的单元格文本，横向合并（gridSpan）的续格留空。
+
+        ## 判据必须是 `tc` 的对象同一性，不能是文本相等
+
+        python-docx 的 `row.cells` 按**网格列**返回：一个横跨两列的单元格会被
+        吐出两次，两次拿到的是**同一个 `<w:tc>` 元素**。所以"这一格是不是上
+        一格的续格"这件事，结构里写得明明白白。
+
+        此前用的是"相邻文本相等就折叠"。那等于拿数据去猜结构，而相邻两列取值
+        相同在真实表格里再常见不过：
+
+            文档里是 3 列  [季度, Q1, Q1] / [营收, 100, 100]
+            解析出的是     [季度, Q1]     / [营收, 100]
+
+        整整一列凭空消失，**不报错也不打日志**，一路进到向量库（#18）。
+        两个相邻的空单元格同样会被折叠成一个。
+
+        ## 续格留空，而不是删掉
+
+        Markdown 表格没有 colspan，续格只能空着。但删掉会让它后面的列整体左移：
+
+            正确  [合并单元格, "",  C]
+            错误  [合并单元格, C,  ""]      ← C 落到了第 1 列
+
+        补齐是在**行尾**做的，所以出现在行中间的合并会把后面所有列都错位。
+        留空则天然对齐，`col_count` 也才是真实的网格宽度。
+
+        ## 纵向合并（vMerge）不在此列
+
+        它在每一行里都是独立的 `tc`，文本会沿列重复出现 —— 本方法按行处理，
+        碰不到它，行为与此前一致。对检索而言每行自带上下文反而是好事。
+        """
+        cells: list[str] = []
+        previous: Any = None
+        for cell in row.cells:
+            tc = cell._tc
+            cells.append("" if tc is previous else self._cell_to_text(cell))
+            previous = tc
+        return cells
+
     def _handle_table(self, element: Any) -> None:
         from docx.table import Table
 
         table = Table(element, self._doc)  # pyright: ignore[reportArgumentType]
-        raw_rows = [
-            [self._cell_to_text(cell) for cell in row.cells] for row in table.rows
-        ]
-
-        # python-docx repeats merged-cell text; deduplicate adjacent duplicates
-        cleaned: list[list[str]] = []
-        for row in raw_rows:
-            deduped: list[str] = [row[0]] if row else []
-            for cell in row[1:]:
-                if cell != deduped[-1]:
-                    deduped.append(cell)
-            cleaned.append(deduped)
+        cleaned = [self._row_to_cells(row) for row in table.rows]
 
         if not any(any(r) for r in cleaned):
             return
