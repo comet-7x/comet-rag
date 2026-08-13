@@ -154,12 +154,22 @@ def build_merged_table(path: Path) -> Path:
     return path
 
 
-def _omit_grid_columns(row, *, before: int = 0, after: int = 0) -> None:
+def _omit_grid_columns(
+    row,
+    *,
+    before: int = 0,
+    after: int = 0,
+    declare_before: int | None = None,
+    declare_after: int | None = None,
+) -> None:
     """让一行"晚开始"或"早结束"：删掉两端的 `tc`，改用 gridBefore/gridAfter。
 
     python-docx 没有写入这两个值的公开 API（`_Row.grid_cols_before` 只读），
     所以这里直接动 XML —— 但走的是 `get_or_add_gridBefore()`，它会把元素插到
     schema 要求的位置上，比手工 append 稳。
+
+    `declare_*` 可以让**声明的缺列数与实际删掉的格数不一致** —— 这正是构造
+    畸形/恶意文档所需要的：真实攻击载荷只删一格，却声明缺一千万列。
     """
     tr = row._tr
     for _ in range(before):
@@ -167,11 +177,14 @@ def _omit_grid_columns(row, *, before: int = 0, after: int = 0) -> None:
     for _ in range(after):
         tr.remove(tr.tc_lst[-1])
 
+    declared_before = before if declare_before is None else declare_before
+    declared_after = after if declare_after is None else declare_after
+
     tr_pr = tr.get_or_add_trPr()
-    if before:
-        tr_pr.get_or_add_gridBefore().val = before
-    if after:
-        tr_pr.get_or_add_gridAfter().val = after
+    if declared_before:
+        tr_pr.get_or_add_gridBefore().val = declared_before
+    if declared_after:
+        tr_pr.get_or_add_gridAfter().val = declared_after
 
 
 def build_grid_gaps_table(path: Path) -> Path:

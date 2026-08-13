@@ -228,6 +228,44 @@ def test_a_missing_lead_column_and_a_merge_in_the_same_row(
     assert combined["col_count"] == 4
 
 
+def test_a_hostile_grid_gap_cannot_blow_up_memory(tmp_path: Path) -> None:
+    """`gridBefore` / `gridAfter` 是**文档里的整数**，在"用户上传文件"这条路上
+    等于攻击者可控。直接 `[""] * n` 就是一个放大型 DoS。
+
+    实测同一份 36 KB 的 docx：`w:val="10000000"` 让解析峰值多占 80 MB，
+    封顶后 5 MB。每项 8 字节，而这个整数在 XML 里没有上限 —— 写成 2×10⁹
+    就是十几 GB，文件大小一个字节都不用变（PR #34 评审）。
+
+    封顶取**表格自己声明的网格宽度**而不是魔法常数：网格宽度由
+    `<w:gridCol/>` 逐个声明，想要大的值就得写大的文件，放大系数没了。
+    """
+    from docx import Document as _Document  # noqa: PLC0415
+
+    from comet_rag.core.logging import logger  # noqa: PLC0415
+    from tests.fixtures.docx.build import _omit_grid_columns  # noqa: PLC0415
+
+    doc = _Document()
+    table = doc.add_table(rows=1, cols=2)
+    table.cell(0, 1).text = "仅此一格"
+    # 真实载荷：只删一格，却声明缺一千万列 —— 文件大小一个字节都不用变
+    _omit_grid_columns(table.rows[0], before=1, declare_before=10_000_000)
+    path = tmp_path / "hostile.docx"
+    doc.save(str(path))
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        blocks = _parse(path)["blocks"]
+    finally:
+        logger.remove(sink)
+
+    row = next(b for b in blocks if b["type"] == "table")["rows"][0]
+    assert len(row) < 100, f"缺列数没有被封顶，展开成了 {len(row)} 列"
+    # 封顶到该表声明的网格宽度（2），再加上那一格真实单元格
+    assert row == ["", "", "仅此一格"]
+    assert any("超出该表声明的网格宽度" in r for r in records), f"截断没留痕：{records}"
+
+
 def test_a_genuinely_ragged_table_is_padded_but_says_so(tmp_path: Path) -> None:
     """两端补齐之后仍宽度不一致 ⇒ 文档的网格声明自不自洽。
 

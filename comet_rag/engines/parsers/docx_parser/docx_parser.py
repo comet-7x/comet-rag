@@ -569,7 +569,34 @@ class DocxParser:
                 parts.append(text)
         return "\n".join(parts)
 
-    def _row_to_cells(self, row: Any) -> list[str]:
+    @staticmethod
+    def _gap(row: Any, attr: str, grid_width: int) -> int:
+        """读取 `gridBefore` / `gridAfter`，并**用表格自己的网格宽度封顶**。
+
+        这两个值来自文档 XML，也就是说在"用户上传文件"这条路上是**攻击者
+        可控的整数**。直接拿去 `[""] * n` 会构成一个放大型 DoS —— 实测同一份
+        36 KB 的 docx（PR #34 评审）：
+
+            w:val="10000000"   →  解析峰值多占 80 MB   （封顶后 5 MB）
+
+        每项 8 字节，而这个整数在 XML 里没有上限：写成 2×10⁹ 就是十几 GB，
+        文件大小却一个字节都不用变。这与 spec S4-1"资源必须有界"直接冲突。
+
+        封顶取**表格声明的网格宽度**而不是一个魔法常数，理由是它消除了
+        放大：网格宽度由 `<w:gridCol/>` 元素**逐个**声明，想要大的值就得写
+        大的文件，攻击者拿不到杠杆。它同时也是语义上的真上界 —— 缺列数
+        超过整张表的宽度，本身就说明这份文档不合法。
+        """
+        raw = int(getattr(row, attr, 0) or 0)
+        gap = min(max(raw, 0), max(grid_width, 0))
+        if gap != raw:
+            logger.warning(
+                f"表格行的 {attr}={raw} 超出该表声明的网格宽度 {grid_width}，"
+                f"已截断为 {gap} —— 文档很可能是畸形的"
+            )
+        return gap
+
+    def _row_to_cells(self, row: Any, grid_width: int) -> list[str]:
         """一行的单元格文本，横向合并（gridSpan）的续格留空。
 
         ## 判据必须来自结构，不能是文本相等
@@ -625,7 +652,7 @@ class DocxParser:
         它，行为与此前一致。对检索而言每行自带上下文反而是好事。
         """
         # 行首的缺列：不是空单元格，是不存在的网格列
-        cells: list[str] = [""] * row.grid_cols_before
+        cells: list[str] = [""] * self._gap(row, "grid_cols_before", grid_width)
         continuations = 0
         for cell in row.cells:
             if continuations:
@@ -635,14 +662,16 @@ class DocxParser:
             cells.append(self._cell_to_text(cell))
             # 横跨 n 列 ⇒ 后面 n-1 个网格位置是同一个单元格的续格
             continuations = max(cell.grid_span - 1, 0)
-        cells.extend([""] * row.grid_cols_after)
+        cells.extend([""] * self._gap(row, "grid_cols_after", grid_width))
         return cells
 
     def _handle_table(self, element: Any) -> None:
         from docx.table import Table
 
         table = Table(element, self._doc)  # pyright: ignore[reportArgumentType]
-        cleaned = [self._row_to_cells(row) for row in table.rows]
+        # 声明的网格宽度，用作缺列数的上界（见 `_gap`）
+        grid_width = len(table.columns)
+        cleaned = [self._row_to_cells(row, grid_width) for row in table.rows]
 
         if not any(any(r) for r in cleaned):
             return
@@ -656,8 +685,12 @@ class DocxParser:
         widths = {len(r) for r in cleaned}
         max_cols = max(widths)
         if len(widths) > 1:
+            # 只报区间与种数，不列全集：这条日志由**文档内容**触发，
+            # 而不同宽度的数量上限是行数 —— 一份畸形文档能让它长到几万项，
+            # 把日志管道撑坏（PR #34 评审）。
             logger.warning(
-                f"表格各行的网格宽度不一致 {sorted(widths)}，已按最宽的 {max_cols} 列"
+                f"表格各行的网格宽度不一致（{len(widths)} 种，"
+                f"{min(widths)}–{max_cols} 列），已按最宽的 {max_cols} 列"
                 f"在行尾补齐 —— 该表的列对应关系可能不准"
             )
         for row in cleaned:
