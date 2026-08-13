@@ -8,6 +8,40 @@ from comet_rag.engines.cleaners.base_cleaner import BaseCleaner
 from comet_rag.engines.cleaners.vision_model import VisionModel
 from comet_rag.engines.parsers.types import Block, DocxParsedContent
 
+_IMAGE_MIME_TYPES = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "gif": "image/gif",
+    "bmp": "image/bmp",
+    "webp": "image/webp",
+    "tif": "image/tiff",
+    "tiff": "image/tiff",
+}
+
+
+def _sanitize_path_part(value: object, *, field: str) -> str:
+    part = str(value)
+    if (
+        not part
+        or part in {".", ".."}
+        or "\x00" in part
+        or "/" in part
+        or "\\" in part
+        or Path(part).is_absolute()
+        or Path(part).name != part
+    ):
+        raise ValueError(f"非法的 {field} 路径片段：{part!r}")
+    return part
+
+
+def _image_format(value: object) -> tuple[str, str]:
+    extension = str(value or "png").lower().lstrip(".")
+    try:
+        return extension, _IMAGE_MIME_TYPES[extension]
+    except KeyError as exc:
+        raise ValueError(f"不支持的图片格式：{value!r}") from exc
+
 
 class DocxCleaner(BaseCleaner):
     def __init__(
@@ -146,8 +180,9 @@ class DocxCleaner(BaseCleaner):
         alt = block.get("alt_text") or block.get("name", "")
         if not content or self._vision_model is None:
             return f"[image: {alt}]" if alt else "[image]"
+        _, mime_type = _image_format(fmt)
         try:
-            return self._vision_model.describe(content, f"image/{fmt}")
+            return self._vision_model.describe(content, mime_type)
         except Exception as exc:
             logger.warning(f"Vision model failed for image '{alt}': {exc}")
             return f"[image: {alt}]" if alt else "[image]"
@@ -167,8 +202,9 @@ class DocxCleaner(BaseCleaner):
         alt = block.get("alt_text") or block.get("name", "")
         if not content or self._vision_model is None:
             return f"[image: {alt}]" if alt else "[image]"
+        _, mime_type = _image_format(fmt)
         try:
-            return await self._vision_model.adescribe(content, f"image/{fmt}")
+            return await self._vision_model.adescribe(content, mime_type)
         except Exception as exc:
             logger.warning(f"Vision model failed for image '{alt}': {exc}")
             return f"[image: {alt}]" if alt else "[image]"
@@ -196,8 +232,9 @@ class DocxCleaner(BaseCleaner):
 
         Creates the output directory if it does not exist and saves all image blocks to an images subdirectory.
         """
+        safe_filename = _sanitize_path_part(filename, field="filename")
         output_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / f"{filename}.md").write_text(result, encoding="utf-8")
+        (output_dir / f"{safe_filename}.md").write_text(result, encoding="utf-8")
         if image_blocks:
             images_dir = output_dir / "images"
             images_dir.mkdir(exist_ok=True)
@@ -249,8 +286,9 @@ class DocxCleaner(BaseCleaner):
             img_id = block.get("id", "")
             if not img_id:
                 return f"[image: {alt}]" if alt else "[image]"
-            fmt = block.get("format", "png")
-            path = f"images/{img_id}.{fmt}" if img_id else ""
+            safe_id = _sanitize_path_part(img_id, field="image id")
+            fmt, _ = _image_format(block.get("format", "png"))
+            path = f"images/{safe_id}.{fmt}"
             return f"![{alt}]({path})"
         return self._block_to_text(block)
 
@@ -265,8 +303,12 @@ class DocxCleaner(BaseCleaner):
         content = block.get("content", "")
         if not img_id or not content:
             return
+        safe_id = _sanitize_path_part(img_id, field="image id")
+        fmt, _ = _image_format(fmt)
         try:
-            (images_dir / f"{img_id}.{fmt}").write_bytes(base64.b64decode(content))
+            (images_dir / f"{safe_id}.{fmt}").write_bytes(
+                base64.b64decode(content, validate=True)
+            )
         except Exception as exc:
             logger.warning(f"Failed to save image '{img_id}.{fmt}': {exc}")
 

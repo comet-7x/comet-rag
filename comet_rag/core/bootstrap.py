@@ -10,12 +10,14 @@ worker 不需要 FastAPI，但同样需要 runner 与全套资源。
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.context import Context, wire_runners
 from comet_rag.core.degradation import DegradationController, DegradationSettings
 from comet_rag.core.logging import logger
-from comet_rag.engines.pipelines import PipelineConfig
+from comet_rag.engines.pipelines import DocxConfig, PipelineConfig
 from comet_rag.infrastructure.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
     KnowledgeBaseRepository,
@@ -57,7 +59,7 @@ def build_vector_store(config: APPConfig) -> BaseVectorStore:
             )
         return MilvusStore(
             endpoint=settings.endpoint,
-            api_key=settings.api_key,
+            api_key=settings.api_key_value,
         )
     raise ValueError(f"不支持的 vector_store 后端：{backend}")
 
@@ -188,11 +190,15 @@ def build_embedding_model(config: APPConfig) -> BaseEmbeddingModel:
     return Qwen3VLEmbeddingModel(
         base_url=settings.base_url,
         model_name=settings.model_name,
-        api_key=settings.api_key or "EMPTY",
+        api_key=settings.api_key_value or "EMPTY",
     )
 
 
-def build_reranker(config: APPConfig) -> BaseReranker | None:
+def build_reranker(
+    config: APPConfig,
+    *,
+    image_url_validator: Callable[[str], None] | None = None,
+) -> BaseReranker | None:
     settings = config.infrastructure_config.reranker
     if settings is None:
         logger.info("未配置 reranker，检索将跳过重排")
@@ -201,10 +207,14 @@ def build_reranker(config: APPConfig) -> BaseReranker | None:
         Qwen3VLReranker,
     )
 
+    if image_url_validator is None:
+        image_url_validator = build_source_policy(config.ingest_policy).check_redirect
+
     return Qwen3VLReranker(
         base_url=settings.base_url,
         model_name=settings.model_name,
-        api_key=settings.api_key or "EMPTY",
+        api_key=settings.api_key_value or "EMPTY",
+        image_url_validator=image_url_validator,
     )
 
 
@@ -254,7 +264,12 @@ def build_context(
     database = build_database(config) if needs_database else None
 
     embedding_model = embedding_model or build_embedding_model(config)
-    reranker = reranker if reranker is not None else build_reranker(config)
+    source_policy = build_source_policy(config.ingest_policy)
+    reranker = (
+        reranker
+        if reranker is not None
+        else build_reranker(config, image_url_validator=source_policy.check_redirect)
+    )
 
     # 闸门在这里挂上 —— 注入进来的替身同样要挂，否则测试跑的是"没有闸门"
     # 的那条路，而生产是另一条，两边行为不一致就白测了。
@@ -301,8 +316,24 @@ def build_context(
         database=database,
         model_gate=gate,
         degradation=degradation,
-        source_policy=build_source_policy(config.ingest_policy),
+        source_policy=source_policy,
     )
+    if pipeline_config is None:
+        limits = config.limits
+        pipeline_config = PipelineConfig(
+            docx=DocxConfig(
+                max_archive_members=limits.docx_max_archive_members,
+                max_archive_member_bytes=limits.docx_max_archive_member_bytes,
+                max_archive_uncompressed_bytes=(
+                    limits.docx_max_archive_uncompressed_bytes
+                ),
+                max_archive_compression_ratio=(
+                    limits.docx_max_archive_compression_ratio
+                ),
+                max_archive_xml_elements=limits.docx_max_archive_xml_elements,
+                max_archive_xml_text_chars=limits.docx_max_archive_xml_text_chars,
+            )
+        )
     wire_runners(context, ingest_config=pipeline_config)
 
     logger.info(

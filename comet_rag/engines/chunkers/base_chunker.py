@@ -100,6 +100,9 @@ class RecursiveCharacterTextSplitter:
                 f"{self.__class__.__name__} | 重叠字符数({chunk_overlap})不能大于等于chunk大小({chunk_size})"
             )
 
+        if separators is not None and not separators:
+            raise ValueError(f"{self.__class__.__name__} | separators 不能为空列表")
+
         self._chunk_size = chunk_size
         self._chunk_overlap = chunk_overlap
         self._keep_separator = keep_separator

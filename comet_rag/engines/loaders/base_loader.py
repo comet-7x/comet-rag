@@ -17,12 +17,18 @@ class BaseLoader(ABC):
     @abstractmethod
     def cleanup(self) -> None: ...
 
+    @staticmethod
+    def _validate_max_concurrency(max_concurrency: int) -> None:
+        if max_concurrency <= 0:
+            raise ValueError(f"max_concurrency 必须大于 0，收到 {max_concurrency}")
+
     def batch_load(
         self,
         sources: list[SourceContent] | list[str],
         **kwargs,
     ) -> list[LoaderContent]:
         max_concurrency = kwargs.pop("max_concurrency", 10)
+        self._validate_max_concurrency(max_concurrency)
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
             futures = [executor.submit(self.load, s, **kwargs) for s in sources]
             return [f.result() for f in futures]
@@ -33,6 +39,7 @@ class BaseLoader(ABC):
         **kwargs,
     ) -> list[LoaderContent]:
         max_concurrency = kwargs.pop("max_concurrency", 10)
+        self._validate_max_concurrency(max_concurrency)
         semaphore = asyncio.Semaphore(max_concurrency)
 
         async def _load(source: SourceContent | str) -> LoaderContent:

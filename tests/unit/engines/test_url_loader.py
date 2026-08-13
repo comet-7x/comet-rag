@@ -15,7 +15,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from comet_rag.engines.loaders.url_loader import DownloadTooLarge, URLLoader
+from comet_rag.engines.loaders.url_loader import (
+    ContentTypeMismatch,
+    DownloadTooLarge,
+    URLLoader,
+)
 
 URL = "https://example.invalid/doc.txt"
 BODY = b"hello from the network"
@@ -224,7 +228,9 @@ def test_batch_load_shares_one_client(tmp_path: Path) -> None:
 # ── 错误路径 ───────────────────────────────────────────────────────────────
 
 
-def test_http_error_preserves_httpx_type_for_retry_classification(tmp_path: Path) -> None:
+def test_http_error_preserves_httpx_type_for_retry_classification(
+    tmp_path: Path,
+) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404)
 
@@ -275,7 +281,9 @@ async def test_actual_stream_size_is_bounded_when_header_lies(tmp_path: Path) ->
         await ld.aclose()
 
 
-async def test_redirect_target_is_validated_before_second_request(tmp_path: Path) -> None:
+async def test_redirect_target_is_validated_before_second_request(
+    tmp_path: Path,
+) -> None:
     requested: list[str] = []
     validated: list[str] = []
 
@@ -314,5 +322,29 @@ def test_empty_body_is_rejected(tmp_path: Path) -> None:
     try:
         with pytest.raises(ValueError, match="empty"):
             ld.load(URL)
+    finally:
+        ld.cleanup()
+
+
+def test_content_probe_rejects_html_body_behind_docx_suffix(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """可信 URL 后缀也不能覆盖实际字节；否则登录页会下沉成解析器错误。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<html>login required</html>")
+
+    monkeypatch.setattr(
+        "comet_rag.engines.loaders.url_loader.detect_content_type_from_path",
+        lambda path: "html",
+    )
+    ld = URLLoader(
+        download_dir=tmp_path,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        with pytest.raises(ContentTypeMismatch, match="docx.*html"):
+            ld.load("https://example.invalid/report.docx")
+        assert list(tmp_path.iterdir()) == []
     finally:
         ld.cleanup()

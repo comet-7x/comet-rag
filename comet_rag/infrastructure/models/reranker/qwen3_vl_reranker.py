@@ -1,4 +1,5 @@
-from collections.abc import Sequence
+import asyncio
+from collections.abc import Callable, Sequence
 from enum import StrEnum
 from typing import Literal
 
@@ -124,6 +125,7 @@ class Qwen3VLReranker(BaseReranker):
         api_key: str,
         async_client: AsyncClient | None = None,
         sync_client: Client | None = None,
+        image_url_validator: Callable[[str], None] | None = None,
     ) -> None:
         """
         Qwen3VL 重排序模型
@@ -138,6 +140,7 @@ class Qwen3VLReranker(BaseReranker):
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
         self._api_key = api_key
+        self._image_url_validator = image_url_validator
 
         self._owns_async_client = async_client is None
         self._owns_sync_client = sync_client is None
@@ -168,10 +171,11 @@ class Qwen3VLReranker(BaseReranker):
 
             if isinstance(content, ChatCompletionContentPartImageParam):
                 image_url = content.image_url.url
-                if not image_url.startswith(url_prefixes) and not self._is_base64_image(
-                    image_url
-                ):
+                is_remote = image_url.startswith(url_prefixes)
+                if not is_remote and not self._is_base64_image(image_url):
                     raise CometRAGException(invalid_image_url_msg)
+                if is_remote and self._image_url_validator is not None:
+                    self._image_url_validator(image_url)
 
     def _validate_inputs(
         self,
@@ -252,7 +256,8 @@ class Qwen3VLReranker(BaseReranker):
         **kwargs,
     ) -> list[float]:
         try:
-            self._validate_inputs(query, documents)
+            # SourcePolicy 的 DNS 检查是同步 I/O；异步模型入口不能在事件循环上跑。
+            await asyncio.to_thread(self._validate_inputs, query, documents)
             rerank_request = self._build_rerank_request(query, documents, **kwargs)
             response_json = await self._post_async(rerank_request)
             return self._extract_scores(response_json)

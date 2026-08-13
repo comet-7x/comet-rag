@@ -78,7 +78,10 @@ class AutoLoader(BaseLoader):
     ) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
-        return await self._resolve(source).aload(
+        # `_resolve()` 首次读取 `SourceContent.is_local` 时会执行一次 `stat()`。
+        # 网络文件系统或大批量输入下不能把这次阻塞 I/O 放在事件循环上。
+        loader = await asyncio.to_thread(self._resolve, source)
+        return await loader.aload(
             source, download_config=download_config, client=client, **kwargs
         )
 
