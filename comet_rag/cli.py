@@ -3,15 +3,18 @@
 ## 为什么需要它（这是个真实的坑）
 
 `uvicorn comet_rag.api.main:app` 起出来的服务，监听的是 uvicorn 默认的
-`127.0.0.1:8000`，**而不是 config.yaml 里写的 host/port**。
-`python -m comet_rag.api.main` 才会用配置里的值。同一份配置、两条命令、
-两个结果 —— 排查起来非常费劲，因为"配置明明写了"。
+`127.0.0.1:8000`，**而不是 config.yaml 里写的 host/port**；而
+`comet-rag serve` 用的是配置里的值。同一份配置、两条命令、两个结果 ——
+排查起来非常费劲，因为"配置明明写了"。
 
 根因不是 bug，是职责划分：host/port 属于**服务器**，不属于 ASGI 应用。
 uvicorn 命令行直接拿走了 app，配置里的那两个值根本没有机会参与。
 
-所以这里把"读配置 → 起服务器"合成一条命令。`uvicorn` 那条路留给需要
-`--reload` 的开发场景，并在 `docs/deployment.md` 里写明它的行为差异。
+所以这里把"读配置 → 起服务器"合成一条命令，并且是**唯一**一条：
+`api/main.py` 里那个 `python -m` 启动块已经删掉了（它接不了 `--config`，
+只认 `./config.yaml`）。`uvicorn` 那条路只留给已经知道自己在做什么的人，
+行为差异写在 `docs/deployment.md` 里。开发时要热重载用
+`comet-rag serve --reload`，它会把配置路径经环境变量传给子进程。
 
 ## 子命令
 

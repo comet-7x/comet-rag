@@ -2,7 +2,7 @@
 
 盯的是一个真实踩过的坑：`uvicorn comet_rag.api.main:app` 监听的是 uvicorn
 默认的 `127.0.0.1:8000`，**而不是 config.yaml 里的 host/port**；
-`python -m comet_rag.api.main` 才用配置里的值。同一份配置两条命令两个结果，
+`comet-rag serve` 才用配置里的值。同一份配置两条命令两个结果，
 排查极费劲，因为"配置明明写了"。
 
 `comet-rag serve` 就是为消除这个歧义而加的 —— 所以必须有用例钉住

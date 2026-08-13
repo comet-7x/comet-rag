@@ -7,7 +7,6 @@
 
 from typing import Any
 
-import uvicorn
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
@@ -151,7 +150,11 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-if __name__ == "__main__":
-    app = create_app()
-    _config = get_config()
-    uvicorn.run(app, host=_config.server_config.host, port=_config.server_config.port)
+# 这里**刻意没有** `if __name__ == "__main__"` 的启动块。
+#
+# 它曾经存在，且行为是对的（会读配置里的 host/port）。删掉是因为它是第三个
+# 启动入口，而且是唯一一个接不了 `--config` 的：它只认 `./config.yaml`，
+# 换一份配置文件就没辙。多一条"看着能用、少一半能力"的路，只会让
+# "为什么我改的配置没生效"更难查。
+#
+# 唯一入口是 `comet-rag serve`（见 `comet_rag/cli.py`）。

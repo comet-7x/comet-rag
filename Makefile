@@ -27,11 +27,13 @@ clean: ## 清理缓存文件 (__pycache__, .pytest_cache, .ruff_cache)
 	rm -rf build/ dist/ *.egg-info
 
 
+# 两个 target 都走 comet-rag serve —— 它是唯一会真正读 config.yaml 里
+# host/port 的入口，理由见 comet_rag/cli.py 顶部与 docs/deployment.md。
 run: ## 生产模式启动服务
-	$(PYTHON) python -m $(APP_NAME).api.main
+	$(PYTHON) comet-rag serve
 
 dev: ## 开发模式启动服务 (热重载)
-	$(PYTHON) fastapi dev $(APP_NAME)/api/main.py
+	$(PYTHON) comet-rag serve --reload
 
 
 lint: ## 执行静态检查 (ruff + pyright)
