@@ -115,6 +115,96 @@ def test_table_becomes_markdown_and_keeps_rows(
     assert table["rows"][1] == ["值1", "值2", ""], "空单元格必须保留占位"
 
 
+# ── 合并单元格（#18）──────────────────────────────────────────────────────
+
+
+def test_repeated_cell_values_are_not_mistaken_for_merges(
+    generated_docx: dict[str, Path],
+) -> None:
+    """**这条就是 #18 的全部理由。**
+
+    旧实现把"相邻文本相等"当成合并单元格的判据，于是一张
+
+        [季度, Q1, Q1]
+
+    的表会被解析成 `[季度, Q1]` —— 整整一列凭空消失，不报错也不打日志，
+    一路进到向量库。相邻两列取值相同在真实表格里再常见不过。
+
+    判据必须来自结构（同一个 `<w:tc>`），不能来自数据。
+    """
+    blocks = _parse(generated_docx["merged_table"])["blocks"]
+    rows = next(b for b in blocks if b["type"] == "table")["rows"]
+
+    assert rows[1] == ["Q1", "Q1", "同上"], "相邻的重复值被当成合并副本删掉了"
+    assert rows[2] == ["", "", "尾"], "相邻的空单元格被折叠了"
+
+
+def test_merged_cells_keep_column_alignment(
+    generated_docx: dict[str, Path],
+) -> None:
+    """横向合并的续格**留空**，不能删掉。
+
+    Markdown 没有 colspan，续格只能空着；而删掉会让它后面的列整体左移 ——
+    行尾补齐救不回来，"备注"会落到第 1 列去。
+    """
+    blocks = _parse(generated_docx["merged_table"])["blocks"]
+    table = next(b for b in blocks if b["type"] == "table")
+
+    assert table["rows"][0] == ["合并表头", "", "备注"]
+    assert table["col_count"] == 3, "col_count 必须是真实的网格宽度"
+    assert all(len(r) == 3 for r in table["rows"]), "各行宽度必须一致"
+
+
+def test_a_span_wider_than_two_leaves_every_continuation_blank(
+    generated_docx: dict[str, Path],
+) -> None:
+    """`gridSpan=3` ⇒ 续格有**两个**。
+
+    判据从"跟上一格是不是同一个对象"换成"横跨几列"之后，这里是一处显式的
+    计数（`grid_span - 1`），差一格就会让整行错位 —— 值得单独钉住，
+    而不是指望 gridSpan=2 那条顺带覆盖。
+    """
+    blocks = _parse(generated_docx["merged_table"])["blocks"]
+    rows = next(b for b in blocks if b["type"] == "table")["rows"]
+
+    assert rows[5] == ["整行合并", "", ""]
+
+
+def test_merge_position_within_the_row_does_not_shift_columns(
+    generated_docx: dict[str, Path],
+) -> None:
+    """合并出现在**行首 / 行中 / 行尾**，以及同一行里有两个分开的合并。
+
+    上一条只覆盖了行首的合并 —— 而错位恰恰最容易发生在"合并后面还有列"
+    的时候：少留一个占位，它后面的所有列就整体左移一格，而行尾补齐
+    根本救不回来（PR #32 评审建议补的组合）。
+    """
+    blocks = _parse(generated_docx["merged_table"])["blocks"]
+    positions = [b for b in blocks if b["type"] == "table"][1]
+
+    # 行首合并 + 中段合并：两个合并之间与之后的单元格都不能移位
+    assert positions["rows"][0] == ["首合", "", "单A", "中合", "", "单B"]
+    # 行尾合并：占位落在行尾，不是把 "尾合" 挤到别处
+    assert positions["rows"][1] == ["a", "b", "c", "d", "尾合", ""]
+    assert positions["col_count"] == 6
+
+
+def test_vertical_merge_repeats_down_the_column(
+    generated_docx: dict[str, Path],
+) -> None:
+    """**当前行为**：纵向合并（vMerge）的文本沿列重复出现。
+
+    与横向合并不同，它在每一行里都是独立的 `<w:tc>`，按行处理碰不到它。
+    这里显式钉住，是为了让将来真要改成"只在首行出现"时，改动是**有意识**的
+    而不是顺手带出来的 —— 对检索来说每行自带上下文其实是好事。
+    """
+    blocks = _parse(generated_docx["merged_table"])["blocks"]
+    rows = next(b for b in blocks if b["type"] == "table")["rows"]
+
+    assert rows[3] == ["纵向", "X", "X"]
+    assert rows[4] == ["纵向", "Y", "Y"]
+
+
 def test_image_block_carries_data_and_format(
     generated_docx: dict[str, Path],
 ) -> None:
