@@ -1,42 +1,39 @@
-"""应用生命周期管理"""
+"""应用生命周期：启动时装配资源，关停时逆序释放。"""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 
-# from ..core.context import Context
+from ..config.schemas import APPConfig
+from ..core.bootstrap import build_context
 from ..core.logging import setup_logging
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    """应用生命周期"""
-    # 初始化日志
-    setup_logging(
-        module_files={
-            "api": "api",
-            "services": "services",
-            "engines": "engines",
-        }
-    )
+def make_lifespan(config: APPConfig, **build_kwargs: Any) -> Callable[[FastAPI], Any]:
+    """产出一个绑定了配置的 lifespan。
 
-    # 初始化资源（TODO: 替换为实际资源创建）
-    # from ..infrastructure.llm import ModelFactory
-    # from ..infrastructure.embedding import Qwen3VLEmbeddingModel
-    # from ..infrastructure.reranker import Qwen3VLReranker
-    # from ..infrastructure.vectorstore import MilvusStorage
-    #
-    # llm = ModelFactory.create(...)
-    # embedding = Qwen3VLEmbeddingModel(...)
-    # reranker = Qwen3VLReranker(...)
-    # vectorstore = MilvusStorage(...)
+    `build_kwargs` 直接透传给 `build_context`，端到端测试借此注入假模型与
+    内存后端 —— 于是测试走的是**真实装配路径**，而不是另抄一份接线代码。
+    """
 
-    # 临时空 Context，后续填充
-    # ctx = Context()
-    # app.state.ctx = ctx
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        setup_logging(
+            module_files={
+                "api": "api",
+                "services": "services",
+                "engines": "engines",
+            }
+        )
 
-    yield
+        context = build_context(config, **build_kwargs)
+        app.state.ctx = context
+        try:
+            yield
+        finally:
+            # 即便启动后发生异常也要走到这里，否则连接池会随进程一起泄漏
+            await context.aclose()
 
-    # 清理资源
-    # await vectorstore.close()
+    return lifespan

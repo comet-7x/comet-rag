@@ -231,7 +231,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             )
             raise CometRAGException(error_msg) from e
 
-    async def aembed(
+    async def _aembed(
         self,
         embedding_data: EmbeddingData,
         system_prompt: (

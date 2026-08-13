@@ -15,9 +15,9 @@ class BaseConverter:
     async def ato_bytes(self) -> ByteDocument:
         return await asyncio.to_thread(self.to_bytes)
 
-    def to_text(self) -> BaseDocument[str]:
-        text = self.loader_content.path.read_text()
+    def to_text(self, encoding: str = "utf-8") -> BaseDocument[str]:
+        text = self.loader_content.path.read_text(encoding=encoding)
         return BaseDocument[str](elements=text, metadata=self.loader_content.metadata)
 
-    async def ato_text(self) -> BaseDocument[str]:
+    async def ato_text(self, encoding: str = "utf-8") -> BaseDocument[str]:
         return await asyncio.to_thread(self.to_text)

@@ -1,0 +1,282 @@
+"""Runner 侧：执行上下文、结果类型、kind→runner 注册表、多阶段流水线。
+
+**断点续跑的关键取舍**（整个设计的分水岭）：
+阶段间的中间态一律写进 `task.context` 并落库，而不是留在协程的局部变量里。
+- 留局部变量更省事，但任务被绑死在进程的事件循环里，重启即丢，也无法跨机器接管；
+- 落库写法要求 `context` 必须可序列化，换来的是：进程可随意重启、
+  失败重试时由任何 worker 从 `resume_stage` 接手续跑，已完成的阶段不必重做。
+
+注意 `StagePipeline` 与 `engines.pipelines.Pipeline` 是两回事：
+前者编排**任务阶段**，后者编排**文档处理**。名字曾经撞过，故此处加 Stage 前缀。
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import timedelta
+from typing import Any, Protocol
+
+from .models import Task, TaskStatus, Time
+from .store import TaskStore
+
+# 负载分道
+#
+# 按**负载特征**给阶段分道，而不是按业务名词。这是通用概念，不含 RAG 语义：
+# CPU 密集的阶段靠**多进程**扩容（GIL 决定了加协程无用），IO 密集的阶段靠
+# **单进程高并发**扩容（加进程只会让下游连接数翻倍）。
+#
+# 两者混在同一批 worker 里，扩容就必然有一边是错的：按 CPU 扩会把模型服务
+# 的连接数乘上进程数，按 IO 扩则解析阶段抢不到 CPU。
+LANE_CPU = "cpu"
+LANE_IO = "io"
+
+
+# 结果类型
+@dataclass(slots=True)
+class Done:
+    """runner 正常结束。大产物请用 result_uri，别把二进制塞进 result。"""
+
+    result: Any = None
+    result_uri: str | None = None
+    message: str = "已完成"
+
+
+@dataclass(slots=True)
+class Handoff:
+    """本 worker 该做的阶段做完了，**剩下的交给另一条道上的 worker**。
+
+    既不是成功也不是失败：任务退回 PENDING、带上 `resume_stage`，由目标
+    队列上的 worker 接手续跑。**不消耗重试次数** —— 移交是正常流程，
+    把它算成一次尝试会让真正的故障少一次重试机会。
+
+    单进程部署下永远不会产生：`TaskContext.lane` 为 None 时不分道。
+    """
+
+    lane: str
+    resume_stage: str
+    message: str = "已移交"
+
+
+type Outcome = Done | Handoff
+
+
+class TaskCancelled(Exception):
+    """checkpoint 检测到取消请求时抛出，由执行器捕获并落成 CANCELLED。"""
+
+
+class RetriableError(Exception):
+    """runner 主动声明「这次失败可以重试」（网络抖动、上游限流等）。"""
+
+    def __init__(self, message: str, *, code: str = "retriable") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+# 执行上下文
+class TaskContext:
+    """runner 与任务状态之间的唯一通道。
+
+    runner 不直接碰 TaskStore：一来避免它乱改 status，二来将来换存储时
+    runner 代码一行不用动。
+    """
+
+    def __init__(
+        self,
+        store: TaskStore,
+        task_id: str,
+        *,
+        worker_id: str | None = None,
+        lane: str | None = None,
+        heartbeat_interval: timedelta = timedelta(seconds=10),
+    ) -> None:
+        self.store = store
+        self.task_id = task_id
+        self.worker_id = worker_id
+        #: 本 worker 服务哪条道。None = 全都做（单进程部署），此时不会有移交。
+        self.lane = lane
+        self._hb_interval = heartbeat_interval
+        self._last_beat = Time.now()
+
+    async def snapshot(self) -> Task:
+        """读当前任务快照（副本，改它不会影响库）。"""
+        return await self.store.require(self.task_id)
+
+    async def checkpoint(self) -> None:
+        """协作式取消检查点 + 续租。
+
+        `asyncio.Task.cancel()` 只在 await 点生效，跨进程更是完全无效，
+        所以取消**必然**是协作式的：runner 需要在每个阶段边界、每轮长循环里
+        调一次 checkpoint，看见 CANCELLING 就干净退出。
+        """
+        task = await self.snapshot()
+        if task.status is TaskStatus.CANCELLING:
+            raise TaskCancelled(self.task_id)
+        now = Time.now()
+        if now - self._last_beat >= self._hb_interval:
+            self._last_beat = now
+            await self.store.heartbeat(self.task_id)
+
+    async def enter_stage(
+        self, stage: str, *, progress: float | None = None, message: str = ""
+    ) -> None:
+        fields: dict[str, Any] = {}
+        if progress is not None:
+            fields["progress"] = progress
+        if message:
+            fields["message"] = message
+        await self.store.enter_stage(self.task_id, stage, **fields)
+
+    async def put(self, **values: Any) -> None:
+        """往 context 里写中间态（必须 JSON 友好）。续跑就靠它。"""
+        task = await self.snapshot()
+        await self.store.update(self.task_id, context={**task.context, **values})
+
+    async def report(
+        self, *, progress: float | None = None, message: str | None = None
+    ) -> None:
+        fields: dict[str, Any] = {}
+        if progress is not None:
+            fields["progress"] = max(0.0, min(1.0, progress))
+        if message is not None:
+            fields["message"] = message
+        if fields:
+            await self.store.update(self.task_id, **fields)
+
+
+class Runner(Protocol):
+    """业务侧只需实现这一个签名。用 Protocol 是因为它由**外部业务模块**实现——
+    不该逼着每个业务去 import 并继承一个基类。"""
+
+    async def __call__(self, ctx: TaskContext) -> Outcome: ...
+
+
+# 注册表
+_REGISTRY: dict[str, Runner] = {}
+
+
+class UnknownKind(KeyError):
+    pass
+
+
+def register(kind: str, *, replace: bool = False) -> Callable[[Runner], Runner]:
+    """把 kind 与 runner 绑定。
+
+    这是「submit(task_id) 而非 spawn(task, coro)」得以成立的关键：
+    执行器只要有 task_id，就能用 kind 查到函数、用 request/context 重建执行，
+    于是重跑、崩溃恢复、失败后断点续跑全都成立。
+
+    默认拒绝重复注册 —— 静默覆盖会让「明明注册了却跑的是别人的 runner」
+    极难排查。但**装配代码**需要幂等：runner 常是持有依赖的可调用对象
+    （见 `services/ingestion.py`），应用每次启动都要重新绑定一次，
+    此时用 `replace=True` 显式声明意图。
+    """
+
+    def deco(fn: Runner) -> Runner:
+        if kind in _REGISTRY and not replace:
+            raise ValueError(f"kind 重复注册：{kind}。装配代码请显式传 replace=True。")
+        _REGISTRY[kind] = fn
+        return fn
+
+    return deco
+
+
+def unregister(kind: str) -> None:
+    """解绑。主要给测试用，避免用例间互相污染全局注册表。"""
+    _REGISTRY.pop(kind, None)
+
+
+def get_runner(kind: str) -> Runner:
+    try:
+        return _REGISTRY[kind]
+    except KeyError:
+        raise UnknownKind(f"未注册的任务种类：{kind}") from None
+
+
+def registered_kinds() -> list[str]:
+    return sorted(_REGISTRY)
+
+
+# 多阶段流水线
+type StageFn = Callable[[TaskContext], Awaitable[Outcome | None]]
+
+
+@dataclass(slots=True)
+class StagePipeline:
+    """按顺序跑一串命名阶段；支持从 `task.resume_stage` 断点续跑。
+
+    阶段函数返回：
+      * `None`  → 继续下一阶段
+      * `Done`  → 提前结束整条流水线
+
+    续跑语义：`resume_stage` 由执行器在**可重试失败**时写入当前阶段名，
+    重试时本流水线跳过它之前的所有阶段，直接从失败处重来。被跳过阶段的
+    产出必须已经写进 `task.context`（用 `ctx.put()`），否则续跑会读不到。
+
+    分道语义：阶段可以声明 `lane`（见 `LANE_CPU` / `LANE_IO`）。当下一个
+    阶段的 lane 与本 worker 服务的 lane 不同时，流水线返回 `Handoff` ——
+    任务退回队列，由那条道上的 worker 接手。移交点复用的正是 `resume_stage`
+    这套已有机制：**移交与续跑在实现上是同一件事**，区别只在原因。
+    """
+
+    stages: list[tuple[str, StageFn, str | None]] = field(default_factory=list)
+
+    def stage(
+        self, name: str, *, lane: str | None = None
+    ) -> Callable[[StageFn], StageFn]:
+        def deco(fn: StageFn) -> StageFn:
+            self.stages.append((name, fn, lane))
+            return fn
+
+        return deco
+
+    def lane_of(self, stage: str | None) -> str | None:
+        """某个阶段属于哪条道。不认识的阶段返回 None。
+
+        给**投递方**用：崩溃回收把任务退回 PENDING 后要重新入队，直接照
+        `resume_stage` 投到对的那条道，比投错再靠移交自愈少一次往返 ——
+        更要紧的是，投错的那条道要是整个挂了（回收往往正是因为它挂了），
+        任务就搁在那儿没人管了。
+        """
+        if stage is None:
+            return None
+        for name, _, lane in self.stages:
+            if name == stage:
+                return lane
+        return None
+
+    async def __call__(self, ctx: TaskContext) -> Outcome:
+        names = [n for n, _, _ in self.stages]
+        task = await ctx.snapshot()
+        start = names.index(task.resume_stage) if task.resume_stage in names else 0
+        total = len(self.stages)
+
+        for i in range(start, total):
+            name, fn, lane = self.stages[i]
+            # 换道就地停下，把剩下的交出去。注意判断在 enter_stage **之前**：
+            # 否则会留下一条本 worker 根本没执行过的阶段记录。
+            if lane is not None and ctx.lane is not None and lane != ctx.lane:
+                return Handoff(lane=lane, resume_stage=name)
+            await ctx.checkpoint()
+            await ctx.enter_stage(name, progress=i / total)
+            outcome = await fn(ctx)
+            if isinstance(outcome, Done):
+                return outcome
+
+        task = await ctx.snapshot()
+        return Done(
+            result=task.context.get("result"), result_uri=task.context.get("result_uri")
+        )
+
+
+async def sleep_with_checkpoint(
+    ctx: TaskContext, seconds: float, *, step: float = 0.5
+) -> None:
+    """示例工具：把长等待切成小段，让取消能及时生效。"""
+    waited = 0.0
+    while waited < seconds:
+        await ctx.checkpoint()
+        chunk = min(step, seconds - waited)
+        await asyncio.sleep(chunk)
+        waited += chunk

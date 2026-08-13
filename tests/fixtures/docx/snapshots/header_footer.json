@@ -1,0 +1,24 @@
+{
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "content": "**页眉页脚样本**",
+      "is_numbered": false
+    },
+    {
+      "type": "text",
+      "content": "正文内容。",
+      "style": "Normal"
+    },
+    {
+      "type": "header",
+      "content": "这是页眉"
+    },
+    {
+      "type": "footer",
+      "content": "这是页脚"
+    }
+  ],
+  "text": "**页眉页脚样本**\n\n正文内容。\n\n这是页眉\n\n这是页脚"
+}

@@ -65,7 +65,7 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
                 f"{self.__class__.__name__} | embed | 方法操作发生非预期错误：{str(e)}"
             ) from e
 
-    async def aembed(self, text: str, **kwargs) -> list[float]:
+    async def _aembed(self, text: str, **kwargs) -> list[float]:
         """
         异步生成文本嵌入向量。
 

@@ -51,9 +51,7 @@ class OpenAIVisionModel:
                 "content": [
                     {
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{media_type};base64,{base64_data}"
-                        },
+                        "image_url": {"url": f"data:{media_type};base64,{base64_data}"},
                     }
                 ],
             },

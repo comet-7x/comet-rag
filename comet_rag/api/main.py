@@ -1,29 +1,160 @@
-import uvicorn
-from fastapi import Depends, FastAPI
+"""FastAPI 应用入口。
 
-from comet_rag.api.lifespan import lifespan
+**领域异常到 HTTP 状态码的映射集中在这里**，路由里不散落 `HTTPException`。
+理由：同一个 `TaskNotFound` 在三个路由里各写一次 404，迟早有一处漏掉或写错；
+而且 services 层不该为了 HTTP 语义去 import fastapi。
+"""
+
+from typing import Any
+
+from fastapi import Depends, FastAPI, Request, status
+from fastapi.responses import JSONResponse
+
+from comet_rag.api.lifespan import make_lifespan
 from comet_rag.api.middleware import TraceMiddleware, get_trace_id
-from comet_rag.api.routes import admin, search
+from comet_rag.api.routes import admin, ingest, kb, search, tasks
+from comet_rag.config.schemas import APPConfig
 from comet_rag.config.settings import get_config
-
-config = get_config()
-
-app = FastAPI(
-    title=config.server_config.app_name,
-    lifespan=lifespan,
-    dependencies=[Depends(get_trace_id)],
+from comet_rag.core.concurrency import Overloaded
+from comet_rag.infrastructure.knowledge_base import (
+    EmbeddingModelChanged,
+    KnowledgeBaseExists,
+    KnowledgeBaseNotFound,
 )
+from comet_rag.infrastructure.vectorstore import CollectionNotFound, DimensionMismatch
+from comet_rag.services.source_policy import SourceNotAllowed
+from comet_rag.tasks import TaskBusy, TaskNotFound, VersionConflict
+from comet_rag.tasks.service import Backlogged
 
 
-app.include_router(search.router)
-app.include_router(admin.router)
-app.add_middleware(TraceMiddleware)
+def _problem(request: Request, code: int, message: str) -> JSONResponse:
+    """带上 trace_id —— 用户报错时能直接对上日志，省掉一轮来回。"""
+    return JSONResponse(
+        status_code=code,
+        content={
+            "error": message,
+            "trace_id": getattr(request.state, "trace_id", None),
+        },
+    )
 
 
-@app.get("/")
-async def root():
-    return {"message": "Comet-RAG API"}
+def _install_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(TaskNotFound)
+    async def _task_not_found(request: Request, exc: TaskNotFound) -> JSONResponse:  # noqa: RUF029
+        return _problem(request, status.HTTP_404_NOT_FOUND, f"任务不存在：{exc!s}")
+
+    @app.exception_handler(CollectionNotFound)
+    async def _kb_not_found(request: Request, exc: CollectionNotFound) -> JSONResponse:  # noqa: RUF029
+        return _problem(request, status.HTTP_404_NOT_FOUND, str(exc))
+
+    @app.exception_handler(VersionConflict)
+    async def _conflict(request: Request, exc: VersionConflict) -> JSONResponse:  # noqa: RUF029
+        """409：期间有别人写过这条记录，客户端重读后重试即可。"""
+        return _problem(request, status.HTTP_409_CONFLICT, str(exc))
+
+    @app.exception_handler(DimensionMismatch)
+    async def _dim(request: Request, exc: DimensionMismatch) -> JSONResponse:  # noqa: RUF029
+        """409 而非 400：请求本身没错，是知识库已有的维度与当前模型对不上。"""
+        return _problem(request, status.HTTP_409_CONFLICT, str(exc))
+
+    @app.exception_handler(KnowledgeBaseNotFound)
+    async def _kb_missing(request: Request, exc: KnowledgeBaseNotFound) -> JSONResponse:  # noqa: RUF029
+        return _problem(request, status.HTTP_404_NOT_FOUND, str(exc))
+
+    @app.exception_handler(KnowledgeBaseExists)
+    async def _kb_exists(request: Request, exc: KnowledgeBaseExists) -> JSONResponse:  # noqa: RUF029
+        return _problem(request, status.HTTP_409_CONFLICT, str(exc))
+
+    @app.exception_handler(EmbeddingModelChanged)
+    async def _model_changed(
+        request: Request, exc: EmbeddingModelChanged
+    ) -> JSONResponse:  # noqa: RUF029
+        """409：请求没错，是这个知识库当初用的模型和现在配的不是一个。"""
+        return _problem(request, status.HTTP_409_CONFLICT, str(exc))
+
+    @app.exception_handler(TaskBusy)
+    async def _busy(request: Request, exc: TaskBusy) -> JSONResponse:  # noqa: RUF029
+        return _problem(request, status.HTTP_409_CONFLICT, str(exc))
+
+    @app.exception_handler(SourceNotAllowed)
+    async def _source_denied(request: Request, exc: SourceNotAllowed) -> JSONResponse:  # noqa: RUF029
+        """403 而非 400：请求格式没问题，是这个来源**不被允许**。
+
+        错误信息里刻意不回显解析出来的 IP 之类的细节 —— 那等于把内网探测
+        结果送给调用方，SSRF 防护会退化成一个好用的扫描器。
+        """
+        return _problem(request, status.HTTP_403_FORBIDDEN, str(exc))
+
+    @app.exception_handler(Overloaded)
+    async def _overloaded(request: Request, exc: Overloaded) -> JSONResponse:  # noqa: RUF029
+        """429 而非 503：这是**本服务**主动限流，且客户端退避重试就能成功。
+
+        静默排队或直接 500 都会让客户端继续加压，正好是过载时最不该发生的事
+        （spec S4-1）。
+        """
+        return _problem(request, status.HTTP_429_TOO_MANY_REQUESTS, str(exc))
+
+    @app.exception_handler(Backlogged)
+    async def _backlogged(request: Request, exc: Backlogged) -> JSONResponse:  # noqa: RUF029
+        """429：待执行任务已堆到上限，收下也只是让它排得更久。"""
+        return _problem(request, status.HTTP_429_TOO_MANY_REQUESTS, str(exc))
+
+    @app.exception_handler(ValueError)
+    async def _bad_request(request: Request, exc: ValueError) -> JSONResponse:  # noqa: RUF029
+        """兜底：services 层用 ValueError 表达"你请求得不对"（如只有 FAILED 可重试）。"""
+        return _problem(request, status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-if __name__ == "__main__":
-    uvicorn.run(app, host=config.server_config.host, port=config.server_config.port)
+def create_app(config: APPConfig | None = None, **lifespan_kwargs: Any) -> FastAPI:
+    """应用工厂。
+
+    做成工厂而非模块级单例：模块级 `get_config()` 会让"import 这个模块"
+    等价于"必须存在一份合法配置"，测试、CI、以及任何只想 import 一下的场景
+    都被绑架。工厂还让端到端测试能注入内存后端，从而测到**真实的装配路径**，
+    而不是在测试里另抄一份。
+    """
+    config = config or get_config()
+
+    app = FastAPI(
+        title=config.server_config.app_name,
+        lifespan=make_lifespan(config, **lifespan_kwargs),
+        dependencies=[Depends(get_trace_id)],
+    )
+
+    app.include_router(ingest.router)
+    app.include_router(tasks.router)
+    app.include_router(search.router)
+    app.include_router(kb.router)
+    app.include_router(admin.router)
+    app.add_middleware(TraceMiddleware)
+
+    _install_exception_handlers(app)
+
+    @app.get("/")
+    async def root() -> dict[str, str]:  # noqa: RUF029
+        return {"message": "Comet-RAG API"}
+
+    return app
+
+
+def __getattr__(name: str) -> Any:
+    """让 `comet_rag.api.main:app` 可用，但**只在真正取用时**才读配置。
+
+    写成模块级 `app = create_app()` 的话，"import 这个模块"就等价于
+    "必须存在一份合法配置" —— 文档守卫、静态检查、任何只想看一眼的工具
+    都会被一份缺字段的 config.yaml 拦住。PEP 562 的模块级 __getattr__
+    把这个代价推迟到 uvicorn 真正来取 `app` 的那一刻。
+    """
+    if name == "app":
+        return create_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# 这里**刻意没有** `if __name__ == "__main__"` 的启动块。
+#
+# 它曾经存在，且行为是对的（会读配置里的 host/port）。删掉是因为它是第三个
+# 启动入口，而且是唯一一个接不了 `--config` 的：它只认 `./config.yaml`，
+# 换一份配置文件就没辙。多一条"看着能用、少一半能力"的路，只会让
+# "为什么我改的配置没生效"更难查。
+#
+# 唯一入口是 `comet-rag serve`（见 `comet_rag/cli.py`）。

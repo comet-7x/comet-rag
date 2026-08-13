@@ -182,7 +182,7 @@ class Qwen3VLReranker(BaseReranker):
             self._validate_multimodal_content(query)
         if isinstance(documents, ScoreMultiModalParam):
             self._validate_multimodal_content(documents)
-        elif isinstance(documents, list):
+        elif isinstance(documents, Sequence) and not isinstance(documents, str):
             for doc in documents:
                 if isinstance(doc, ScoreMultiModalParam):
                     self._validate_multimodal_content(doc)
@@ -245,7 +245,7 @@ class Qwen3VLReranker(BaseReranker):
             )
             raise CometRAGException(error_msg) from e
 
-    async def ascore(
+    async def _ascore(
         self,
         query: str | ScoreMultiModalParam,
         documents: str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],

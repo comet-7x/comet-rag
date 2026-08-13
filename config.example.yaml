@@ -1,0 +1,100 @@
+# Comet-RAG 配置示例
+#
+# 复制为 config.yaml 后按实际环境修改。config.yaml 已被 .gitignore 忽略，
+# 不会误提交真实端点与密钥。
+
+server_config:
+  app_name: comet-rag
+  env: test          # test | dev | prod
+  host: 0.0.0.0
+  port: 8000
+
+infrastructure_config:
+  embedding_model:
+    base_url: http://your-embedding-service/v1
+    model_name: Qwen/Qwen3-VL-Embedding-8B
+    api_key: EMPTY
+    # ⚠️ 必须与模型实际输出维度一致。
+    #
+    # 配错不会立刻报错，而是在第一次入库时抛 DimensionMismatch；
+    # 更糟的是若某天换了模型却忘了改这里，新旧向量会混在同一个空间，
+    # 检索静默劣化且事后无法分辨该重算哪些（spec A12）。
+    #
+    # 确认方法：对模型发一次 embedding 请求，数一下返回向量的长度。
+    dim: 4096
+
+  # 可选。不配则跳过重排，检索仍可用，只是精度下降。
+  reranker:
+    base_url: http://your-reranker-service/v1
+    model_name: Qwen/Qwen3-VL-Reranker-8B
+    api_key: EMPTY
+
+  # 以下三段只在对应 backend 非 memory/inprocess 时必填。
+  # 默认值与 docker-compose.yml 一致，起完容器即可直接用。
+
+  # backends.vector_store = milvus 时必填
+  # vector_database:
+  #   endpoint: http://localhost:19530
+  #   api_key: null
+  #   collection_name: comet_rag
+
+  # backends.task_store = postgres 时必填
+  # database:
+  #   host: localhost
+  #   port: 5432
+  #   username: comet
+  #   password: comet
+  #   database: comet_rag
+  #   pool_size: 10
+  #   max_overflow: 20
+
+  # backends.task_executor = arq 时必填
+  # redis:
+  #   host: localhost
+  #   port: 6379
+  #   db_index: 0
+
+# 各资源用哪个实现。全 memory 时零外部依赖，适合本地开发与测试。
+backends:
+  vector_store: memory      # memory | milvus
+  task_store: memory        # memory | postgres
+  task_executor: inprocess  # inprocess | arq
+  max_concurrency: 8
+
+# 资源上限（spec S4-1、S4-2）。默认值按"一块消费级 GPU 上跑一个 vLLM"来定，
+# 请按模型服务的实际能力调整 —— 调大不会更快，只会让请求在服务端排队，
+# 反而拖长 p99。运行时可从 GET /admin/limits 看实时数字。
+limits:
+  # 本进程对模型服务的**总**并发上限。注意不是每个任务的，是整个进程的：
+  # 前者会随任务数翻倍（曾实测配 4 实际 128，见 core/concurrency.py）。
+  model_concurrency: 8
+  # 闸门外允许排队的请求数。排队者本身占内存，不设界就是把 OOM 往后推。
+  model_queue: 256
+  # 等闸门的最长时间。等太久算过载 —— 上游多半早就超时了。
+  model_wait_timeout: 30.0
+  # 待执行任务上限，超了直接返回 429。0 表示不限。
+  max_backlog: 1000
+
+  # 分级降级（spec S4-5）：先关 rerank → 再降 top_k → 最后拒绝新任务。
+  # 三个数分别对应这三级的触发阈值。
+  degrade_failure_rate: [0.2, 0.5, 0.8]   # 最近窗口内的失败/超时率
+  degrade_saturation: [2.0, 5.0, 10.0]    # 闸门等待者数 ÷ 并发上限
+  degrade_min_samples: 20                 # 样本不足时一律判正常
+  degrade_recover_after: 30.0             # 指标回落后要稳定这么久才恢复一级
+
+# 入库来源准入（安全边界，PR 评审 #4）。
+# POST /ingest 的 source 是调用方给的字符串，会被交给 loader 去读文件或发请求 ——
+# 不加约束的话，服务能读到的文件、能连到的网络，调用方都能拿到。
+ingest_policy:
+  # 是否允许从**服务器本地路径**入库。默认 false：开了等于给调用方一个
+  # 任意文件读取通道（读到的内容会切块入库，再从 /search 读出来）。
+  allow_local: false
+  # allow_local 为 true 时限定的根目录。展开符号链接与 .. 之后再做包含性检查。
+  # 留空 = 整个文件系统，生产环境务必配置。
+  local_roots: []
+  allow_url: true
+  # 是否允许访问私网/环回/链路本地地址。默认 false —— 这是挡 SSRF 的主力，
+  # 云上元数据服务（169.254.169.254，含临时凭据）正是靠它挡住的。
+  allow_private_network: false
+  # URL 主机白名单。留空 = 不限（私网仍被上一条挡着）。
+  allowed_url_hosts: []
