@@ -191,6 +191,13 @@ def build_grid_gaps_table(path: Path) -> Path:
 
     r3 是最刁钻的一行：不补两端的话它会缩到第 0 列去，而行尾补齐还会让它
     看起来"宽度正常"，错得毫无痕迹。
+
+    第二张表把**缺列与横向合并叠在同一行**上 —— 两个特性各自都对，不代表
+    组合起来也对：前缀占位、gridSpan 续格、后缀占位是三段接力，任何一段
+    起点算错，后面全歪。
+
+        t2r0  [A] [B] [C] [D]        完整的四列
+        t2r1      [合并 ←] [末]      gridBefore=1，且其后第一格横跨两列
     """
     doc = Document()
     doc.add_heading("缺列样本", level=1)
@@ -208,6 +215,17 @@ def build_grid_gaps_table(path: Path) -> Path:
     _omit_grid_columns(table.rows[1], before=1)
     _omit_grid_columns(table.rows[2], after=1)
     _omit_grid_columns(table.rows[3], before=1, after=1)
+
+    # 中间必须隔一个段落：OOXML 里两张紧邻的表会被 Word 视作同一张。
+    doc.add_paragraph("下面这张表把缺列与横向合并叠在同一行上。")
+
+    combined = doc.add_table(rows=2, cols=4)
+    for col, text in enumerate(["A", "B", "C", "D"]):
+        combined.cell(0, col).text = text
+    combined.cell(1, 1).merge(combined.cell(1, 2))
+    combined.cell(1, 1).text = "合并"
+    combined.cell(1, 3).text = "末"
+    _omit_grid_columns(combined.rows[1], before=1)
 
     doc.save(str(path))
     return path

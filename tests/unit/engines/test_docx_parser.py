@@ -210,6 +210,24 @@ def test_rows_that_start_late_or_end_early_keep_their_grid_position(
     assert table["col_count"] == 3
 
 
+def test_a_missing_lead_column_and_a_merge_in_the_same_row(
+    generated_docx: dict[str, Path],
+) -> None:
+    """缺列与横向合并叠在同一行上。
+
+    两个特性各自都对，不代表组合起来也对：前缀占位、gridSpan 续格、后缀占位
+    是三段接力，任何一段起点算错，后面全歪 —— 而这种行在缩进的子表格里
+    并不罕见。
+    """
+    blocks = _parse(generated_docx["grid_gaps_table"])["blocks"]
+    combined = [b for b in blocks if b["type"] == "table"][1]
+
+    assert combined["rows"][0] == ["A", "B", "C", "D"]
+    # gridBefore=1 占掉第 0 列，"合并" 从第 1 列起横跨两列，"末" 落在第 3 列
+    assert combined["rows"][1] == ["", "合并", "", "末"]
+    assert combined["col_count"] == 4
+
+
 def test_a_genuinely_ragged_table_is_padded_but_says_so(tmp_path: Path) -> None:
     """两端补齐之后仍宽度不一致 ⇒ 文档的网格声明自不自洽。
 
