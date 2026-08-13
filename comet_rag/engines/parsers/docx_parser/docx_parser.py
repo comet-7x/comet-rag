@@ -572,11 +572,11 @@ class DocxParser:
     def _row_to_cells(self, row: Any) -> list[str]:
         """一行的单元格文本，横向合并（gridSpan）的续格留空。
 
-        ## 判据必须是 `tc` 的对象同一性，不能是文本相等
+        ## 判据必须来自结构，不能是文本相等
 
         python-docx 的 `row.cells` 按**网格列**返回：一个横跨两列的单元格会被
-        吐出两次，两次拿到的是**同一个 `<w:tc>` 元素**。所以"这一格是不是上
-        一格的续格"这件事，结构里写得明明白白。
+        吐出两次。`grid_span` 直接告诉我们它横跨几列 —— "这一格后面还有几个
+        位置是它的续格"这件事，结构里写得明明白白。
 
         此前用的是"相邻文本相等就折叠"。那等于拿数据去猜结构，而相邻两列取值
         相同在真实表格里再常见不过：
@@ -586,6 +586,14 @@ class DocxParser:
 
         整整一列凭空消失，**不报错也不打日志**，一路进到向量库（#18）。
         两个相邻的空单元格同样会被折叠成一个。
+
+        ## 用 `grid_span` 而不是比较底层的 `tc` 对象
+
+        两者都能识别出续格（同一个单元格会被吐出多次，`_tc` 自然相同），
+        但 `_tc` 是 python-docx 的**私有属性**，而 `grid_span` 是公开且有
+        文档的 API。依赖内部实现的代价不是抽象的：`python-docx>=1.2.0` 没有
+        上限，哪次升级把它改掉，这里要么当场 AttributeError，要么更糟 ——
+        识别不出合并却继续静默出错（PR #32 评审）。
 
         ## 续格留空，而不是删掉
 
@@ -599,15 +607,19 @@ class DocxParser:
 
         ## 纵向合并（vMerge）不在此列
 
-        它在每一行里都是独立的 `tc`，文本会沿列重复出现 —— 本方法按行处理，
-        碰不到它，行为与此前一致。对检索而言每行自带上下文反而是好事。
+        它的 `grid_span` 是 1，文本会沿列重复出现 —— 本方法按行处理，碰不到
+        它，行为与此前一致。对检索而言每行自带上下文反而是好事。
         """
         cells: list[str] = []
-        previous: Any = None
+        continuations = 0
         for cell in row.cells:
-            tc = cell._tc
-            cells.append("" if tc is previous else self._cell_to_text(cell))
-            previous = tc
+            if continuations:
+                cells.append("")
+                continuations -= 1
+                continue
+            cells.append(self._cell_to_text(cell))
+            # 横跨 n 列 ⇒ 后面 n-1 个网格位置是同一个单元格的续格
+            continuations = max(cell.grid_span - 1, 0)
         return cells
 
     def _handle_table(self, element: Any) -> None:

@@ -91,16 +91,17 @@ def build_merged_table(path: Path) -> Path:
 
     每一行都对着一种此前会出错的形态：
 
-        r0  [合并表头 →  ←] [备注]     横向合并（gridSpan）
+        r0  [合并表头 →  ←] [备注]     横向合并（gridSpan=2）
         r1  [Q1] [Q1] [同上]           相邻重复值 —— 旧实现会折叠成 2 列
         r2  [  ] [  ] [尾]             相邻空格 —— 同样会被折叠
         r3  [纵向] [X] [X]             纵向合并（vMerge）+ 又一组重复值
         r4  [ ↑  ] [Y] [Y]
+        r5  [整行合并 →   ←   ←]       gridSpan=3，覆盖"续格不止一个"
     """
     doc = Document()
     doc.add_heading("合并单元格样本", level=1)
 
-    table = doc.add_table(rows=5, cols=3)
+    table = doc.add_table(rows=6, cols=3)
 
     # 先合并再写文本：反过来会把两格的段落拼到一起。
     table.cell(0, 0).merge(table.cell(0, 1))
@@ -118,6 +119,11 @@ def build_merged_table(path: Path) -> Path:
         table.cell(3, col).text = text
     for col, text in enumerate(["Y", "Y"], start=1):
         table.cell(4, col).text = text
+
+    # gridSpan=3：续格有两个。按对象同一性判断时这是隐式成立的，
+    # 换成按 grid_span 计数后是一处显式算术，值得单独覆盖。
+    table.cell(5, 0).merge(table.cell(5, 2))
+    table.cell(5, 0).text = "整行合并"
 
     doc.save(str(path))
     return path

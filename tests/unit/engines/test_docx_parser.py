@@ -155,6 +155,21 @@ def test_merged_cells_keep_column_alignment(
     assert all(len(r) == 3 for r in table["rows"]), "各行宽度必须一致"
 
 
+def test_a_span_wider_than_two_leaves_every_continuation_blank(
+    generated_docx: dict[str, Path],
+) -> None:
+    """`gridSpan=3` ⇒ 续格有**两个**。
+
+    判据从"跟上一格是不是同一个对象"换成"横跨几列"之后，这里是一处显式的
+    计数（`grid_span - 1`），差一格就会让整行错位 —— 值得单独钉住，
+    而不是指望 gridSpan=2 那条顺带覆盖。
+    """
+    blocks = _parse(generated_docx["merged_table"])["blocks"]
+    rows = next(b for b in blocks if b["type"] == "table")["rows"]
+
+    assert rows[5] == ["整行合并", "", ""]
+
+
 def test_vertical_merge_repeats_down_the_column(
     generated_docx: dict[str, Path],
 ) -> None:
