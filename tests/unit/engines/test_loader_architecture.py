@@ -3,6 +3,8 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
+import pytest
+
 from comet_rag.engines.loaders.auto_loader import AutoLoader, LoaderRoute
 from comet_rag.engines.loaders.base_loader import (
     DEFAULT_MAX_CONCURRENCY,
@@ -15,6 +17,7 @@ from comet_rag.engines.loaders.data_type import (
     MixedFormat,
     is_allowed_extension,
 )
+from comet_rag.engines.loaders.local_loader import LocalLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 
 
@@ -92,6 +95,17 @@ async def test_async_context_manager_uses_async_cleanup_contract() -> None:
 
     assert loader.async_cleanup_calls == 1
     assert loader.cleanup_calls == 0
+
+
+async def test_local_loader_rejects_unsupported_options(tmp_path: Path) -> None:
+    source = tmp_path / "document.txt"
+    source.write_text("content", encoding="utf-8")
+    loader = LocalLoader()
+
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        loader.load(source, unsupported=True)  # type: ignore[call-arg]
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        await loader.aload(source, unsupported=True)  # type: ignore[call-arg]
 
 
 def test_custom_minio_route_does_not_require_a_new_source_type() -> None:
