@@ -317,3 +317,55 @@ async def test_acleanup_waits_for_active_download(tmp_path: Path) -> None:
 
     assert not content.path.exists()
     assert loader.temp_files == []
+
+
+async def test_async_activity_waits_with_one_worker_dispatch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    loader = S3Loader(download_dir=tmp_path)
+    original_to_thread = asyncio.to_thread
+    begin_dispatches = 0
+
+    async def counting_to_thread(func, *args, **kwargs):
+        nonlocal begin_dispatches
+        if func == loader._begin_activity:
+            begin_dispatches += 1
+        return await original_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", counting_to_thread)
+    loader._begin_cleanup()
+    entered = asyncio.Event()
+
+    async def enter_activity() -> None:
+        async with loader._async_activity():
+            entered.set()
+
+    task = asyncio.create_task(enter_activity())
+    await asyncio.sleep(0.02)
+    assert not entered.is_set()
+
+    loader._end_cleanup()
+    await task
+
+    assert begin_dispatches == 1
+    assert loader._active_loads == 0
+
+
+async def test_cancelled_async_activity_waiter_does_not_leak_active_count(
+    tmp_path: Path,
+) -> None:
+    loader = S3Loader(download_dir=tmp_path)
+    loader._begin_cleanup()
+
+    async def enter_activity() -> None:
+        async with loader._async_activity():
+            pytest.fail("cancelled waiter must not enter the activity body")
+
+    task = asyncio.create_task(enter_activity())
+    await asyncio.sleep(0.02)
+    task.cancel()
+    loader._end_cleanup()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert loader._active_loads == 0

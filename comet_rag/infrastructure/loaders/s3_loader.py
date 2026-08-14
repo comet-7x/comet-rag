@@ -125,8 +125,6 @@ class S3Loader(BaseLoader):
         # A single counter spans sync and async work. This matters because a service
         # shutdown can call async cleanup while a sync batch is still in a worker.
         self._lifecycle = threading.Condition()
-        self._cleanup_finished = threading.Event()
-        self._cleanup_finished.set()
         self._active_loads = 0
         self._cleanup_in_progress = False
 
@@ -191,16 +189,25 @@ class S3Loader(BaseLoader):
 
     @asynccontextmanager
     async def _async_activity(self) -> AsyncIterator[None]:
-        while True:
-            await asyncio.to_thread(self._cleanup_finished.wait)
-            with self._lifecycle:
-                if not self._cleanup_in_progress:
-                    self._active_loads += 1
-                    break
+        await self._abegin_activity()
         try:
             yield
         finally:
             self._end_activity()
+
+    async def _abegin_activity(self) -> None:
+        """Wait for cleanup with one worker dispatch and cancellation safety."""
+
+        begin_task = asyncio.create_task(asyncio.to_thread(self._begin_activity))
+        try:
+            await asyncio.shield(begin_task)
+        except asyncio.CancelledError:
+            # `to_thread` cannot be cancelled after dispatch. Let it finish and
+            # undo its registration so a cancelled waiter cannot leak an active
+            # count and deadlock the next cleanup.
+            await begin_task
+            self._end_activity()
+            raise
 
     def _begin_activity(self) -> None:
         with self._lifecycle:
@@ -219,14 +226,12 @@ class S3Loader(BaseLoader):
             while self._cleanup_in_progress:
                 self._lifecycle.wait()
             self._cleanup_in_progress = True
-            self._cleanup_finished.clear()
             while self._active_loads:
                 self._lifecycle.wait()
 
     def _end_cleanup(self) -> None:
         with self._lifecycle:
             self._cleanup_in_progress = False
-            self._cleanup_finished.set()
             self._lifecycle.notify_all()
 
     def _check_size(self, value: Any, *, stage: str) -> None:
