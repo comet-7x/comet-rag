@@ -1,21 +1,49 @@
 import asyncio
+import inspect
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 
+DEFAULT_MAX_CONCURRENCY = 10
+
 
 class BaseLoader(ABC):
-    @abstractmethod
-    def load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent: ...
+    """Loader contract with conservative batch fallbacks.
+
+    The default batch methods are suitable for loaders whose synchronous work can
+    safely run in threads. Loaders with resource-specific requirements (connection
+    pooling, rate limits, process pools, and so on) should override them.
+
+    ``DEFAULT_MAX_CONCURRENCY`` is deliberately a safety cap rather than a claim
+    about optimal throughput. Callers should tune it for their resource budget.
+    """
 
     @abstractmethod
-    async def aload(
-        self, source: SourceContent | str, *args, **kwargs
-    ) -> LoaderContent: ...
+    def load(self, source: SourceContent | str) -> LoaderContent: ...
+
+    @abstractmethod
+    async def aload(self, source: SourceContent | str) -> LoaderContent: ...
 
     @abstractmethod
     def cleanup(self) -> None: ...
+
+    async def acleanup(self) -> None:
+        """Release resources without blocking the event loop.
+
+        Legacy custom loaders may still expose ``aclose()`` from the previous
+        duck-typed contract; honor it during the migration. Otherwise delegate
+        synchronous cleanup to a worker thread. Loaders that own native asynchronous
+        resources should override this method.
+        """
+
+        legacy_closer = getattr(self, "aclose", None)
+        if callable(legacy_closer):
+            result = legacy_closer()
+            if inspect.isawaitable(result):
+                await result
+            return
+        await asyncio.to_thread(self.cleanup)
 
     @staticmethod
     def _validate_max_concurrency(max_concurrency: int) -> None:
@@ -25,26 +53,30 @@ class BaseLoader(ABC):
     def batch_load(
         self,
         sources: list[SourceContent] | list[str],
-        **kwargs,
+        *,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     ) -> list[LoaderContent]:
-        max_concurrency = kwargs.pop("max_concurrency", 10)
+        """Load a batch with a bounded thread-pool fallback."""
+
         self._validate_max_concurrency(max_concurrency)
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-            futures = [executor.submit(self.load, s, **kwargs) for s in sources]
+            futures = [executor.submit(self.load, source) for source in sources]
             return [f.result() for f in futures]
 
     async def abatch_load(
         self,
         sources: list[SourceContent] | list[str],
-        **kwargs,
+        *,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     ) -> list[LoaderContent]:
-        max_concurrency = kwargs.pop("max_concurrency", 10)
+        """Load a batch through ``aload`` with bounded task concurrency."""
+
         self._validate_max_concurrency(max_concurrency)
         semaphore = asyncio.Semaphore(max_concurrency)
 
         async def _load(source: SourceContent | str) -> LoaderContent:
             async with semaphore:
-                return await self.aload(source, **kwargs)
+                return await self.aload(source)
 
         return await asyncio.gather(*[_load(s) for s in sources])
 
@@ -58,4 +90,4 @@ class BaseLoader(ABC):
         return self
 
     async def __aexit__(self, *_):
-        self.cleanup()
+        await self.acleanup()

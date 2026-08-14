@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from abc import ABC
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -39,6 +38,22 @@ class AllowExt(StrEnum):
     HTML = "html"
 
 
+def normalize_extension(extension: str) -> str:
+    """Return the canonical extension form used by the format registry."""
+
+    return extension.strip().lower().lstrip(".")
+
+
+def is_allowed_extension(extension: str) -> bool:
+    """Check extension support without relying on Enum implementation details."""
+
+    try:
+        AllowExt(normalize_extension(extension))
+    except ValueError:
+        return False
+    return True
+
+
 class ContentStructure(StrEnum):
     PROSE = "prose"
     TABULAR = "tabular"
@@ -66,32 +81,24 @@ class FormatMeta:
         return granularity in self.supported_granularities
 
 
-class BaseFileFormat(ABC):
-    """
-    所有文件格式的抽象基类。
-    子类只需声明 `extensions` 和 `format_meta`，即自动注册到全局 Registry。
+class BaseFileFormat:
+    """A declarative file-format family.
+
+    Registration is explicit in ``_FORMAT_TYPES`` below. This avoids import-time
+    mutation and makes the complete format table visible in one place.
     """
 
-    _registry: ClassVar[dict[str, type[BaseFileFormat]]] = {}
-
-    extensions: ClassVar[tuple[str, ...]]
+    extensions: ClassVar[tuple[AllowExt, ...]]
     format_meta: ClassVar[FormatMeta]
-
-    def __init_subclass__(cls, **kwargs: object) -> None:
-        super().__init_subclass__(**kwargs)
-        if ABC in cls.__bases__:
-            return
-        for ext in cls.extensions:
-            BaseFileFormat._registry[ext] = cls
 
     @classmethod
     def from_extension(cls, ext: str) -> type[BaseFileFormat]:
-        ext = ext.lower().lstrip(".")
+        normalized = normalize_extension(ext)
         try:
-            return cls._registry[ext]
+            return _FORMAT_BY_EXTENSION[normalized]
         except KeyError as e:
             raise ValueError(
-                f"未知扩展名：{ext!r}，已注册：{sorted(cls._registry)}"
+                f"未知扩展名：{normalized!r}，已注册：{sorted(_FORMAT_BY_EXTENSION)}"
             ) from e
 
     @classmethod
@@ -119,37 +126,76 @@ class BaseFileFormat(ABC):
     def all_by_structure(
         cls, *structures: ContentStructure
     ) -> list[type[BaseFileFormat]]:
-        seen: set[type[BaseFileFormat]] = set()
-        formats = []
-        for fmt in cls._registry.values():
-            if fmt not in seen and fmt.format_meta.structure in structures:
-                seen.add(fmt)
-                formats.append(fmt)
-        return formats
+        return [
+            fmt for fmt in _FORMAT_TYPES if fmt.format_meta.structure in structures
+        ]
 
     def __repr__(self) -> str:
         return f"<FileFormat {self.extensions}>"
 
 
-_GS = GranularityStrategy
+class ProseFormat(BaseFileFormat):
+    extensions = (AllowExt.TXT,)
+    format_meta = FormatMeta(
+        structure=ContentStructure.PROSE,
+        default_granularity=GranularityStrategy.WHOLE,
+        supported_granularities=(
+            GranularityStrategy.WHOLE,
+            GranularityStrategy.BY_PAGE,
+            GranularityStrategy.BY_CHUNK,
+        ),
+    )
 
-_GS_MAPS = {
-    ContentStructure.PROSE: (_GS.WHOLE, _GS.BY_PAGE, _GS.BY_CHUNK),
-    ContentStructure.MIXED: (_GS.WHOLE, _GS.BY_PAGE, _GS.BY_CHUNK),
-    ContentStructure.SLIDE: (_GS.WHOLE, _GS.BY_PAGE, _GS.BY_CHUNK),
-    ContentStructure.TABULAR: (_GS.BY_ROW,),
-    ContentStructure.STRUCTURED: (_GS.WHOLE, _GS.BY_NODE),
-    ContentStructure.CODE: (_GS.WHOLE, _GS.BY_CHUNK),
-}
+
+class MixedFormat(BaseFileFormat):
+    extensions = (AllowExt.DOC, AllowExt.DOCX, AllowExt.PDF, AllowExt.MD)
+    format_meta = FormatMeta(
+        structure=ContentStructure.MIXED,
+        default_granularity=GranularityStrategy.BY_CHUNK,
+        supported_granularities=(
+            GranularityStrategy.WHOLE,
+            GranularityStrategy.BY_PAGE,
+            GranularityStrategy.BY_CHUNK,
+        ),
+    )
 
 
-_EXTENSIONS_BY_STRUCTURE = {
-    ContentStructure.PROSE: (AllowExt.TXT,),
-    ContentStructure.MIXED: (AllowExt.DOC, AllowExt.DOCX, AllowExt.PDF, AllowExt.MD),
-    ContentStructure.SLIDE: (AllowExt.PPT, AllowExt.PPTX),
-    ContentStructure.TABULAR: (AllowExt.CSV, AllowExt.XLSX, AllowExt.XLS),
-    ContentStructure.STRUCTURED: (AllowExt.JSON, AllowExt.YAML, AllowExt.XML),
-    ContentStructure.CODE: (
+class SlideFormat(BaseFileFormat):
+    extensions = (AllowExt.PPT, AllowExt.PPTX)
+    format_meta = FormatMeta(
+        structure=ContentStructure.SLIDE,
+        default_granularity=GranularityStrategy.BY_PAGE,
+        supported_granularities=(
+            GranularityStrategy.WHOLE,
+            GranularityStrategy.BY_PAGE,
+            GranularityStrategy.BY_CHUNK,
+        ),
+    )
+
+
+class TabularFormat(BaseFileFormat):
+    extensions = (AllowExt.CSV, AllowExt.XLSX, AllowExt.XLS)
+    format_meta = FormatMeta(
+        structure=ContentStructure.TABULAR,
+        default_granularity=GranularityStrategy.BY_ROW,
+        supported_granularities=(GranularityStrategy.BY_ROW,),
+    )
+
+
+class StructuredFormat(BaseFileFormat):
+    extensions = (AllowExt.JSON, AllowExt.YAML, AllowExt.XML)
+    format_meta = FormatMeta(
+        structure=ContentStructure.STRUCTURED,
+        default_granularity=GranularityStrategy.BY_NODE,
+        supported_granularities=(
+            GranularityStrategy.WHOLE,
+            GranularityStrategy.BY_NODE,
+        ),
+    )
+
+
+class CodeFormat(BaseFileFormat):
+    extensions = (
         AllowExt.PY,
         AllowExt.TS,
         AllowExt.JS,
@@ -161,50 +207,39 @@ _EXTENSIONS_BY_STRUCTURE = {
         AllowExt.R,
         AllowExt.RUST,
         AllowExt.HTML,
-    ),
-}
-
-
-class ProseFormat(BaseFileFormat):
-    extensions = _EXTENSIONS_BY_STRUCTURE[ContentStructure.PROSE]
+    )
     format_meta = FormatMeta(
-        ContentStructure.PROSE, _GS.WHOLE, _GS_MAPS[ContentStructure.PROSE]
+        structure=ContentStructure.CODE,
+        default_granularity=GranularityStrategy.WHOLE,
+        supported_granularities=(
+            GranularityStrategy.WHOLE,
+            GranularityStrategy.BY_CHUNK,
+        ),
     )
 
 
-class MixedFormat(BaseFileFormat):
-    extensions = _EXTENSIONS_BY_STRUCTURE[ContentStructure.MIXED]
-    format_meta = FormatMeta(
-        ContentStructure.MIXED, _GS.BY_CHUNK, _GS_MAPS[ContentStructure.MIXED]
-    )
+_FORMAT_TYPES: tuple[type[BaseFileFormat], ...] = (
+    ProseFormat,
+    MixedFormat,
+    SlideFormat,
+    TabularFormat,
+    StructuredFormat,
+    CodeFormat,
+)
 
 
-class SlideFormat(BaseFileFormat):
-    extensions = _EXTENSIONS_BY_STRUCTURE[ContentStructure.SLIDE]
-    format_meta = FormatMeta(
-        ContentStructure.SLIDE, _GS.BY_PAGE, _GS_MAPS[ContentStructure.SLIDE]
-    )
+def _build_format_registry() -> dict[str, type[BaseFileFormat]]:
+    registry: dict[str, type[BaseFileFormat]] = {}
+    for format_type in _FORMAT_TYPES:
+        for extension in format_type.extensions:
+            key = extension.value
+            if key in registry:
+                raise RuntimeError(f"Duplicate file format extension: {key!r}")
+            registry[key] = format_type
+    return registry
 
 
-class TabularFormat(BaseFileFormat):
-    extensions = _EXTENSIONS_BY_STRUCTURE[ContentStructure.TABULAR]
-    format_meta = FormatMeta(
-        ContentStructure.TABULAR, _GS.BY_ROW, _GS_MAPS[ContentStructure.TABULAR]
-    )
-
-
-class StructuredFormat(BaseFileFormat):
-    extensions = _EXTENSIONS_BY_STRUCTURE[ContentStructure.STRUCTURED]
-    format_meta = FormatMeta(
-        ContentStructure.STRUCTURED, _GS.BY_NODE, _GS_MAPS[ContentStructure.STRUCTURED]
-    )
-
-
-class CodeFormat(BaseFileFormat):
-    extensions = _EXTENSIONS_BY_STRUCTURE[ContentStructure.CODE]
-    format_meta = FormatMeta(
-        ContentStructure.CODE, _GS.WHOLE, _GS_MAPS[ContentStructure.CODE]
-    )
+_FORMAT_BY_EXTENSION = _build_format_registry()
 
 
 FileFormat = BaseFileFormat

@@ -279,6 +279,34 @@ lc.cleanup()  # URL 下载的临时文件需手动清理（或用 with 语句）
 # with 语句自动 cleanup
 with AutoLoader() as loader:
     lc = loader.load("document.docx")
+    # 并发上限是显式参数；默认安全上限为 10，生产环境应按资源预算调整
+    items = loader.batch_load(["a.txt", "b.txt"], max_concurrency=4)
+```
+
+异步上下文会调用统一的 `acleanup()` 契约。`AutoLoader` 会按实际 loader
+对批量输入分组，因此 `URLLoader` 可以复用连接池，本地或自定义 loader 也能
+保留自己的并发策略。
+
+`AutoLoader` 只暴露所有 Loader 共有的 `source` 和 `max_concurrency` 参数。
+需要 `download_config`、自定义 HTTP client 等 URL 专用选项时，应直接使用
+`URLLoader`，避免把某个 Loader 的参数误传给混合批次中的其他 Loader。
+
+MinIO/S3 等可选对象存储不需要修改 `SourceType` 或让 engines 依赖 SDK；在
+基础设施层实现 `BaseLoader` 后注册一条路由即可：
+
+```python
+from comet_rag.engines.loaders import AutoLoader
+from your_project.loaders import MinioLoader
+
+async def load_from_object_storage():
+    async with AutoLoader() as loader:
+        loader.register_loader(
+            "minio",
+            MinioLoader(...),
+            lambda source: source.parsed_url.scheme in {"s3", "minio"},
+            prepend=True,
+        )
+        return await loader.aload("s3://documents/report.pdf")
 ```
 
 ### Converter + Parser + Cleaner

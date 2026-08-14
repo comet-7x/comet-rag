@@ -9,20 +9,36 @@ TLS 握手。批量入库大量 URL 时这是纯浪费，而且完全不体现�
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
 import pytest
 
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.loaders.url_loader import (
     ContentTypeMismatch,
+    DownloadRequestConfig,
     DownloadTooLarge,
     URLLoader,
 )
 
 URL = "https://example.invalid/doc.txt"
 BODY = b"hello from the network"
+
+
+def _wait_for_cleanup_start(loader: URLLoader) -> None:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        with loader._lifecycle:
+            if loader._cleanup_in_progress:
+                return
+        time.sleep(0.001)
+    raise TimeoutError("cleanup did not start")
 
 
 def _transport(counter: dict[str, int] | None = None) -> httpx.MockTransport:
@@ -70,6 +86,16 @@ async def test_async_download_writes_temp_file(tmp_path: Path) -> None:
 def test_non_url_source_is_rejected(loader: URLLoader) -> None:
     with pytest.raises(ValueError, match="only handles URLs"):
         loader.load("/some/local/path")
+
+
+def test_load_rejects_unsupported_options(loader: URLLoader) -> None:
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        loader.load(URL, unsupported=True)  # type: ignore[call-arg]
+
+
+async def test_aload_rejects_unsupported_options(loader: URLLoader) -> None:
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        await loader.aload(URL, unsupported=True)  # type: ignore[call-arg]
 
 
 # ── 连接复用 ───────────────────────────────────────────────────────────────
@@ -191,6 +217,16 @@ def test_cleanup_removes_temp_files(tmp_path: Path) -> None:
 # ── 批量 ───────────────────────────────────────────────────────────────────
 
 
+def test_batch_load_rejects_unsupported_options(loader: URLLoader) -> None:
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        loader.batch_load([], unsupported=True)  # type: ignore[call-arg]
+
+
+async def test_abatch_load_rejects_unsupported_options(loader: URLLoader) -> None:
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        await loader.abatch_load([], unsupported=True)  # type: ignore[call-arg]
+
+
 async def test_abatch_load_shares_one_client(tmp_path: Path) -> None:
     """批量下载不该每个 URL 建一个连接池。"""
     counter: dict[str, int] = {}
@@ -209,6 +245,126 @@ async def test_abatch_load_shares_one_client(tmp_path: Path) -> None:
         await ld.aclose()
 
 
+async def test_acleanup_waits_for_active_async_batch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    ld = URLLoader(download_dir=tmp_path)
+
+    async def delayed_aload_impl(
+        source: SourceContent | str,
+        *,
+        download_config: DownloadRequestConfig | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> LoaderContent:
+        assert client is not None
+        started.set()
+        await release.wait()
+        normalized = source if isinstance(source, SourceContent) else SourceContent(source)
+        return LoaderContent(path=tmp_path / "download.txt", source=normalized)
+
+    monkeypatch.setattr(ld, "_aload_impl", delayed_aload_impl)
+    batch_task = asyncio.create_task(ld.abatch_load([URL]))
+    await started.wait()
+    client = ld._async_client
+    assert client is not None
+
+    cleanup_task = asyncio.create_task(ld.acleanup())
+    await asyncio.sleep(0)
+    assert not cleanup_task.done()
+    assert not client.is_closed
+
+    release.set()
+    await batch_task
+    await cleanup_task
+
+    assert client.is_closed
+    assert ld._async_client is None
+
+
+async def test_cleanup_waits_for_active_async_load(tmp_path: Path, monkeypatch) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    ld = URLLoader(download_dir=tmp_path)
+    active_path = tmp_path / "active.txt"
+
+    async def delayed_aload_impl(
+        source: SourceContent | str,
+        *,
+        download_config: DownloadRequestConfig | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> LoaderContent:
+        active_path.write_bytes(BODY)
+        ld._temp_files.append(str(active_path))
+        started.set()
+        await release.wait()
+        assert active_path.exists()
+        normalized = source if isinstance(source, SourceContent) else SourceContent(source)
+        return LoaderContent(path=active_path, source=normalized, is_temp=True)
+
+    monkeypatch.setattr(ld, "_aload_impl", delayed_aload_impl)
+    load_task = asyncio.create_task(ld.aload(URL))
+    await started.wait()
+
+    cleanup_task = asyncio.create_task(asyncio.to_thread(ld.cleanup))
+    await asyncio.to_thread(_wait_for_cleanup_start, ld)
+    assert not cleanup_task.done()
+    assert active_path.exists()
+
+    release.set()
+    await load_task
+    await cleanup_task
+
+    assert not active_path.exists()
+    assert ld.temp_files == []
+
+
+@pytest.mark.parametrize("operation", ["load", "batch_load"])
+def test_cleanup_waits_for_active_sync_load(
+    operation: str, tmp_path: Path, monkeypatch
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    ld = URLLoader(download_dir=tmp_path)
+    active_path = tmp_path / "active.txt"
+
+    def delayed_load_impl(
+        source: SourceContent | str,
+        *,
+        download_config: DownloadRequestConfig | None = None,
+        client: httpx.Client | None = None,
+    ) -> LoaderContent:
+        active_path.write_bytes(BODY)
+        ld._temp_files.append(str(active_path))
+        started.set()
+        assert release.wait(timeout=2)
+        assert active_path.exists()
+        normalized = source if isinstance(source, SourceContent) else SourceContent(source)
+        return LoaderContent(path=active_path, source=normalized, is_temp=True)
+
+    monkeypatch.setattr(ld, "_load_impl", delayed_load_impl)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        if operation == "load":
+            load_future = executor.submit(ld.load, URL)
+        else:
+            load_future = executor.submit(ld.batch_load, [URL])
+        assert started.wait(timeout=2)
+
+        cleanup_future = executor.submit(ld.cleanup)
+        _wait_for_cleanup_start(ld)
+        assert not cleanup_future.done()
+        assert active_path.exists()
+
+        release.set()
+        load_future.result(timeout=2)
+        cleanup_future.result(timeout=2)
+
+    assert not active_path.exists()
+    assert ld.temp_files == []
+
+
 def test_batch_load_shares_one_client(tmp_path: Path) -> None:
     counter: dict[str, int] = {}
     ld = URLLoader(
@@ -223,6 +379,32 @@ def test_batch_load_shares_one_client(tmp_path: Path) -> None:
         assert ld._shared_client() is before
     finally:
         ld.cleanup()
+
+
+def test_batch_load_uses_loader_request_defaults(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = httpx.Client(transport=_transport())
+    ld = URLLoader(
+        download_dir=tmp_path,
+        client=client,
+        timeout=17,
+        follow_redirects=False,
+    )
+    captured: dict[str, DownloadRequestConfig] = {}
+
+    def capture(client, sources, config, max_concurrency, **kwargs):
+        captured["config"] = config
+        return []
+
+    monkeypatch.setattr(ld, "_batch_load_with", capture)
+    try:
+        assert ld.batch_load([]) == []
+        assert captured["config"].timeout == 17
+        assert captured["config"].follow_redirects is False
+    finally:
+        ld.cleanup()
+        client.close()
 
 
 # ── 错误路径 ───────────────────────────────────────────────────────────────

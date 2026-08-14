@@ -1,5 +1,5 @@
-from .auto_loader import AutoLoader
-from .base_loader import BaseLoader
+from .auto_loader import AutoLoader, LoaderRoute
+from .base_loader import DEFAULT_MAX_CONCURRENCY, BaseLoader
 from .data_type import (
     AllowExt,
     BaseFileFormat,
@@ -14,6 +14,8 @@ from .data_type import (
     SlideFormat,
     StructuredFormat,
     TabularFormat,
+    is_allowed_extension,
+    normalize_extension,
 )
 from .local_loader import LocalLoader
 from .types import LoaderContent, SourceContent, SourceType
@@ -23,6 +25,8 @@ Loader = AutoLoader
 
 __all__ = [
     "AllowExt",
+    "normalize_extension",
+    "is_allowed_extension",
     "ContentStructure",
     "GranularityStrategy",
     "FormatMeta",
@@ -40,8 +44,10 @@ __all__ = [
     "DownloadRequestConfig",
     "LoaderContent",
     "BaseLoader",
+    "DEFAULT_MAX_CONCURRENCY",
     "LocalLoader",
     "URLLoader",
     "AutoLoader",
+    "LoaderRoute",
     "Loader",
 ]
