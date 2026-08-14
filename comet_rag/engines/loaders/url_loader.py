@@ -99,8 +99,6 @@ class URLLoader(BaseLoader):
         #: 在途请求会撞上"client has been closed"。
         self._client_lock = threading.Lock()
         self._lifecycle = threading.Condition()
-        self._cleanup_finished = threading.Event()
-        self._cleanup_finished.set()
         self._active_loads = 0
         self._cleanup_in_progress = False
 
@@ -135,16 +133,25 @@ class URLLoader(BaseLoader):
     async def _async_activity(self) -> AsyncIterator[None]:
         """Register async work without blocking its event loop during cleanup."""
 
-        while True:
-            await asyncio.to_thread(self._cleanup_finished.wait)
-            with self._lifecycle:
-                if not self._cleanup_in_progress:
-                    self._active_loads += 1
-                    break
+        await self._abegin_activity()
         try:
             yield
         finally:
             self._end_activity()
+
+    async def _abegin_activity(self) -> None:
+        """Wait for cleanup with one worker dispatch and cancellation safety."""
+
+        begin_task = asyncio.create_task(asyncio.to_thread(self._begin_activity))
+        try:
+            await asyncio.shield(begin_task)
+        except asyncio.CancelledError:
+            # `to_thread` cannot be cancelled after dispatch. Let it finish and
+            # undo its registration so a cancelled waiter cannot leak an active
+            # count and deadlock the next cleanup.
+            await begin_task
+            self._end_activity()
+            raise
 
     def _begin_activity(self) -> None:
         with self._lifecycle:
@@ -163,14 +170,12 @@ class URLLoader(BaseLoader):
             while self._cleanup_in_progress:
                 self._lifecycle.wait()
             self._cleanup_in_progress = True
-            self._cleanup_finished.clear()
             while self._active_loads:
                 self._lifecycle.wait()
 
     def _end_cleanup(self) -> None:
         with self._lifecycle:
             self._cleanup_in_progress = False
-            self._cleanup_finished.set()
             self._lifecycle.notify_all()
 
     def _build_metadata(self, file_path: str, source: SourceContent) -> dict[str, Any]:

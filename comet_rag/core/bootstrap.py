@@ -318,21 +318,30 @@ def build_context(
         degradation=degradation,
         source_policy=source_policy,
     )
+    limits = config.limits
+    configured_docx = DocxConfig(
+        max_archive_members=limits.docx_max_archive_members,
+        max_archive_member_bytes=limits.docx_max_archive_member_bytes,
+        max_archive_uncompressed_bytes=limits.docx_max_archive_uncompressed_bytes,
+        max_archive_compression_ratio=limits.docx_max_archive_compression_ratio,
+        max_archive_xml_elements=limits.docx_max_archive_xml_elements,
+        max_archive_xml_text_chars=limits.docx_max_archive_xml_text_chars,
+    )
     if pipeline_config is None:
-        limits = config.limits
-        pipeline_config = PipelineConfig(
-            docx=DocxConfig(
-                max_archive_members=limits.docx_max_archive_members,
-                max_archive_member_bytes=limits.docx_max_archive_member_bytes,
-                max_archive_uncompressed_bytes=(
-                    limits.docx_max_archive_uncompressed_bytes
-                ),
-                max_archive_compression_ratio=(
-                    limits.docx_max_archive_compression_ratio
-                ),
-                max_archive_xml_elements=limits.docx_max_archive_xml_elements,
-                max_archive_xml_text_chars=limits.docx_max_archive_xml_text_chars,
-            )
+        pipeline_config = PipelineConfig(docx=configured_docx)
+    else:
+        # Deployment limits supply DOCX defaults even when callers inject a
+        # PipelineConfig only to tune unrelated fields. Explicit DocxConfig
+        # fields remain deliberate per-run overrides.
+        docx_values = configured_docx.model_dump()
+        docx_values.update(
+            {
+                field: getattr(pipeline_config.docx, field)
+                for field in pipeline_config.docx.model_fields_set
+            }
+        )
+        pipeline_config = pipeline_config.model_copy(
+            update={"docx": DocxConfig(**docx_values)}
         )
     wire_runners(context, ingest_config=pipeline_config)
 

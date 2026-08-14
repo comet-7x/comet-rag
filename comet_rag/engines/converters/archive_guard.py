@@ -55,8 +55,16 @@ def validate_zip_archive(
     try:
         with ZipFile(archive_path) as archive:
             members = archive.infolist()
+            _validate_zip_metadata(members, limits)
+            # Reuse this handle so the guard does not read the central directory
+            # twice before python-docx performs its separate semantic parse.
+            _validate_xml_members(archive, members, limits)
     except (BadZipFile, OSError) as exc:
         raise ValueError(f"Invalid ZIP-based document: {archive_path}") from exc
+
+
+def _validate_zip_metadata(members: list, limits: ArchiveLimits) -> None:
+    """Validate limits available from ZIP metadata without decompression."""
 
     if len(members) > limits.max_members:
         raise ArchiveResourceLimitExceeded(
@@ -103,11 +111,9 @@ def validate_zip_archive(
                 f"{limits.max_compression_ratio:.1f}x"
             )
 
-    _validate_xml_members(archive_path, members, limits)
-
 
 def _validate_xml_members(
-    archive_path: Path,
+    archive: ZipFile,
     members: list,
     limits: ArchiveLimits,
 ) -> None:
@@ -115,41 +121,40 @@ def _validate_xml_members(
 
     element_count = 0
     try:
-        with ZipFile(archive_path) as archive:
-            for member in members:
-                if not member.filename.lower().endswith((".xml", ".rels")):
-                    continue
-                with archive.open(member) as stream:
-                    context = etree.iterparse(
-                        stream,
-                        events=("end",),
-                        resolve_entities=False,
-                        no_network=True,
-                        huge_tree=False,
-                    )
-                    for _, element in context:
-                        element_count += 1
-                        if element_count > limits.max_xml_elements:
-                            raise ArchiveResourceLimitExceeded(
-                                f"Archive XML contains more than "
-                                f"{limits.max_xml_elements:,} elements"
-                            )
-                        text_chars = max(
-                            len(element.text or ""),
-                            len(element.tail or ""),
+        for member in members:
+            if not member.filename.lower().endswith((".xml", ".rels")):
+                continue
+            with archive.open(member) as stream:
+                context = etree.iterparse(
+                    stream,
+                    events=("end",),
+                    resolve_entities=False,
+                    no_network=True,
+                    huge_tree=False,
+                )
+                for _, element in context:
+                    element_count += 1
+                    if element_count > limits.max_xml_elements:
+                        raise ArchiveResourceLimitExceeded(
+                            f"Archive XML contains more than "
+                            f"{limits.max_xml_elements:,} elements"
                         )
-                        if text_chars > limits.max_xml_text_chars:
-                            raise ArchiveResourceLimitExceeded(
-                                f"XML text/tail node in {member.filename!r} exceeds "
-                                f"{limits.max_xml_text_chars:,} characters"
-                            )
-                        # `clear` 加删除已处理兄弟，避免父节点继续持有数百万个
-                        # 空壳元素；这是 iterparse 真正保持有界内存的关键。
-                        element.clear()
-                        parent = element.getparent()
-                        if parent is not None:
-                            while element.getprevious() is not None:
-                                del parent[0]
+                    text_chars = max(
+                        len(element.text or ""),
+                        len(element.tail or ""),
+                    )
+                    if text_chars > limits.max_xml_text_chars:
+                        raise ArchiveResourceLimitExceeded(
+                            f"XML text/tail node in {member.filename!r} exceeds "
+                            f"{limits.max_xml_text_chars:,} characters"
+                        )
+                    # `clear` 加删除已处理兄弟，避免父节点继续持有数百万个
+                    # 空壳元素；这是 iterparse 真正保持有界内存的关键。
+                    element.clear()
+                    parent = element.getparent()
+                    if parent is not None:
+                        while element.getprevious() is not None:
+                            del parent[0]
     except etree.XMLSyntaxError as exc:
         raise ValueError(f"Invalid XML member in document archive: {exc}") from exc
 

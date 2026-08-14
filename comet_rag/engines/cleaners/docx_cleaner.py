@@ -35,12 +35,19 @@ def _sanitize_path_part(value: object, *, field: str) -> str:
     return part
 
 
-def _image_format(value: object) -> tuple[str, str]:
+def _image_format(value: object) -> tuple[str, str] | None:
+    """Return a safe extension/MIME pair for a supported image format.
+
+    Office documents may contain formats that the vision and Markdown output
+    paths cannot consume (for example EMF/WMF).  Such images degrade to a
+    placeholder instead of aborting the entire ingestion.  Path-like values
+    remain invalid rather than being accepted as filename extensions.
+    """
+
     extension = str(value or "png").lower().lstrip(".")
-    try:
-        return extension, _IMAGE_MIME_TYPES[extension]
-    except KeyError as exc:
-        raise ValueError(f"不支持的图片格式：{value!r}") from exc
+    _sanitize_path_part(extension, field="image format")
+    mime_type = _IMAGE_MIME_TYPES.get(extension)
+    return (extension, mime_type) if mime_type is not None else None
 
 
 class DocxCleaner(BaseCleaner):
@@ -180,7 +187,11 @@ class DocxCleaner(BaseCleaner):
         alt = block.get("alt_text") or block.get("name", "")
         if not content or self._vision_model is None:
             return f"[image: {alt}]" if alt else "[image]"
-        _, mime_type = _image_format(fmt)
+        image_format = _image_format(fmt)
+        if image_format is None:
+            logger.warning(f"Unsupported image format {fmt!r}; using placeholder")
+            return f"[image: {alt}]" if alt else "[image]"
+        _, mime_type = image_format
         try:
             return self._vision_model.describe(content, mime_type)
         except Exception as exc:
@@ -202,7 +213,11 @@ class DocxCleaner(BaseCleaner):
         alt = block.get("alt_text") or block.get("name", "")
         if not content or self._vision_model is None:
             return f"[image: {alt}]" if alt else "[image]"
-        _, mime_type = _image_format(fmt)
+        image_format = _image_format(fmt)
+        if image_format is None:
+            logger.warning(f"Unsupported image format {fmt!r}; using placeholder")
+            return f"[image: {alt}]" if alt else "[image]"
+        _, mime_type = image_format
         try:
             return await self._vision_model.adescribe(content, mime_type)
         except Exception as exc:
@@ -287,7 +302,14 @@ class DocxCleaner(BaseCleaner):
             if not img_id:
                 return f"[image: {alt}]" if alt else "[image]"
             safe_id = _sanitize_path_part(img_id, field="image id")
-            fmt, _ = _image_format(block.get("format", "png"))
+            image_format = _image_format(block.get("format", "png"))
+            if image_format is None:
+                logger.warning(
+                    f"Unsupported image format {block.get('format')!r}; "
+                    "using placeholder"
+                )
+                return f"[image: {alt}]" if alt else "[image]"
+            fmt, _ = image_format
             path = f"images/{safe_id}.{fmt}"
             return f"![{alt}]({path})"
         return self._block_to_text(block)
@@ -304,7 +326,11 @@ class DocxCleaner(BaseCleaner):
         if not img_id or not content:
             return
         safe_id = _sanitize_path_part(img_id, field="image id")
-        fmt, _ = _image_format(fmt)
+        image_format = _image_format(fmt)
+        if image_format is None:
+            logger.warning(f"Unsupported image format {fmt!r}; image was not saved")
+            return
+        fmt, _ = image_format
         try:
             (images_dir / f"{safe_id}.{fmt}").write_bytes(
                 base64.b64decode(content, validate=True)

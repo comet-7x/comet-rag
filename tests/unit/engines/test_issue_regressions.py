@@ -29,7 +29,7 @@ from comet_rag.engines.parsers.docx_parser.docx_parser import DocxParser
 from comet_rag.engines.parsers.types import DocxParsedContent
 
 
-def test_heading_numbering_resets_when_num_id_changes(monkeypatch) -> None:
+def test_heading_numbering_tracks_each_num_id_independently(monkeypatch) -> None:
     parser = DocxParser(heading_numbers=True)
 
     def formats(num_id: int) -> tuple[list[str], list[int]]:
@@ -41,6 +41,7 @@ def test_heading_numbering_resets_when_num_id_changes(monkeypatch) -> None:
     assert parser._compute_heading_number(1, 1) == "1"
     assert parser._compute_heading_number(1, 1) == "2"
     assert parser._compute_heading_number(2, 1) == "1"
+    assert parser._compute_heading_number(1, 1) == "3"
 
 
 def test_empty_separators_are_rejected_at_construction() -> None:
@@ -119,6 +120,23 @@ def test_docx_cleaner_uses_canonical_jpeg_mime_type() -> None:
 
     assert result == "jpeg description"
     assert vision.mime_types == ["image/jpeg"]
+
+
+def test_docx_cleaner_degrades_unsupported_image_format_to_placeholder(
+    tmp_path: Path,
+) -> None:
+    vision = _VisionModel()
+    output_dir = tmp_path / "output"
+
+    result = DocxCleaner(vision_model=vision).clean_to_markdown(
+        _image_content(format="emf", alt_text="architecture"),
+        output_dir=output_dir,
+    )
+
+    assert result == "[image: architecture]"
+    assert vision.mime_types == []
+    assert (output_dir / "result.md").read_text(encoding="utf-8") == result
+    assert list((output_dir / "images").iterdir()) == []
 
 
 @pytest.mark.parametrize(

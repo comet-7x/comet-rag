@@ -19,6 +19,7 @@ from comet_rag.config.schemas import (
     ServerConfig,
 )
 from comet_rag.core.bootstrap import build_context
+from comet_rag.engines.pipelines import DocxConfig, PipelineConfig
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
@@ -97,6 +98,57 @@ async def test_ingest_runner_is_registered(context) -> None:
     assert "ingest" in registered_kinds()
 
     await context.aclose()
+
+
+def test_injected_pipeline_config_keeps_deployment_docx_limits(
+    embedding: FakeEmbedding, monkeypatch
+) -> None:
+    config = make_config()
+    config.limits.docx_max_archive_members = 17
+    config.limits.docx_max_archive_xml_elements = 19
+    captured: dict[str, PipelineConfig] = {}
+
+    def capture_runners(context, *, ingest_config):
+        captured["config"] = ingest_config
+
+    monkeypatch.setattr("comet_rag.core.bootstrap.wire_runners", capture_runners)
+    build_context(
+        config,
+        embedding_model=embedding,
+        vector_store=InMemoryVectorStore(),
+        pipeline_config=PipelineConfig(chunk_size=321),
+    )
+
+    effective = captured["config"]
+    assert effective.chunk_size == 321
+    assert effective.docx.max_archive_members == 17
+    assert effective.docx.max_archive_xml_elements == 19
+
+
+def test_explicit_docx_pipeline_fields_override_deployment_defaults(
+    embedding: FakeEmbedding, monkeypatch
+) -> None:
+    config = make_config()
+    config.limits.docx_max_archive_members = 17
+    config.limits.docx_max_archive_xml_elements = 19
+    captured: dict[str, PipelineConfig] = {}
+
+    def capture_runners(context, *, ingest_config):
+        captured["config"] = ingest_config
+
+    monkeypatch.setattr("comet_rag.core.bootstrap.wire_runners", capture_runners)
+    build_context(
+        config,
+        embedding_model=embedding,
+        vector_store=InMemoryVectorStore(),
+        pipeline_config=PipelineConfig(
+            docx=DocxConfig(max_archive_members=23),
+        ),
+    )
+
+    effective = captured["config"]
+    assert effective.docx.max_archive_members == 23
+    assert effective.docx.max_archive_xml_elements == 19
 
 
 async def test_runner_registration_is_idempotent(embedding: FakeEmbedding) -> None:
