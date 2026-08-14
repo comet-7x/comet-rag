@@ -17,6 +17,7 @@ from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.context import Context, wire_runners
 from comet_rag.core.degradation import DegradationController, DegradationSettings
 from comet_rag.core.logging import logger
+from comet_rag.engines.loaders import AutoLoader
 from comet_rag.engines.pipelines import DocxConfig, PipelineConfig
 from comet_rag.infrastructure.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
@@ -30,7 +31,7 @@ from comet_rag.infrastructure.vectorstore import (
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
-from comet_rag.services.source_policy import build_source_policy
+from comet_rag.services.source_policy import SourcePolicy, build_source_policy
 from comet_rag.tasks import (
     LANE_CPU,
     InMemoryTaskStore,
@@ -161,6 +162,42 @@ def build_degradation(config: APPConfig) -> DegradationController:
     )
 
 
+def build_ingest_loader(config: APPConfig, policy: SourcePolicy) -> AutoLoader:
+    """Assemble protocol-neutral routes with optional infrastructure loaders."""
+
+    loader = AutoLoader(
+        max_download_bytes=policy.max_download_bytes,
+        redirect_validator=policy.check_redirect,
+    )
+    settings = config.infrastructure_config.s3
+    if settings is None:
+        if policy.allow_s3:
+            raise ValueError(
+                "ingest_policy.allow_s3=true 但未配置 infrastructure_config.s3"
+            )
+        return loader
+
+    from comet_rag.infrastructure.loaders import S3Loader  # noqa: PLC0415
+
+    object_loader = S3Loader(
+        endpoint_url=settings.endpoint_url,
+        access_key_id=settings.access_key_id_value,
+        secret_access_key=settings.secret_access_key_value,
+        session_token=settings.session_token_value,
+        region_name=settings.region_name,
+        addressing_style=settings.addressing_style.value,
+        verify_ssl=settings.verify_ssl,
+        max_object_bytes=settings.max_object_bytes,
+    )
+    loader.register_loader(
+        "s3",
+        object_loader,
+        lambda source: source.parsed_url.scheme.lower() in {"s3", "minio"},
+        prepend=True,
+    )
+    return loader
+
+
 def build_model_gate(
     config: APPConfig, degradation: DegradationController | None = None
 ) -> Gate:
@@ -263,8 +300,9 @@ def build_context(
     )
     database = build_database(config) if needs_database else None
 
-    embedding_model = embedding_model or build_embedding_model(config)
     source_policy = build_source_policy(config.ingest_policy)
+    ingest_loader = build_ingest_loader(config, source_policy)
+    embedding_model = embedding_model or build_embedding_model(config)
     reranker = (
         reranker
         if reranker is not None
@@ -317,6 +355,8 @@ def build_context(
         model_gate=gate,
         degradation=degradation,
         source_policy=source_policy,
+        ingest_loader=ingest_loader,
+        _extra_closers=[ingest_loader],
     )
     limits = config.limits
     configured_docx = DocxConfig(

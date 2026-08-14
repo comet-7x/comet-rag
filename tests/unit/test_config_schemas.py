@@ -13,6 +13,7 @@ from comet_rag.config.schemas import (
     IngestPolicyConfig,
     ModelConfig,
     RedisConfig,
+    S3Config,
     SqlDatabaseConfig,
     VectorDatabaseConfig,
 )
@@ -82,6 +83,30 @@ def test_dsn_encodes_username_and_database_too() -> None:
 def test_download_limit_must_be_positive() -> None:
     with pytest.raises(ValueError):
         IngestPolicyConfig(max_download_bytes=0)
+
+
+def test_s3_object_limit_and_credentials_are_validated() -> None:
+    with pytest.raises(ValueError):
+        S3Config(max_object_bytes=0)
+    with pytest.raises(ValueError, match="configured together"):
+        S3Config(access_key_id="access-only")
+
+
+def test_s3_credentials_are_masked_and_explicitly_unwrapped() -> None:
+    config = S3Config(
+        endpoint_url="http://localhost:9010",
+        access_key_id="minio-access",
+        secret_access_key="minio-secret",  # noqa: S106 - test sentinel
+        session_token="temporary-token",  # noqa: S106 - test sentinel
+    )
+
+    rendered = str(config.model_dump(mode="json"))
+    assert "minio-access" not in rendered
+    assert "minio-secret" not in rendered
+    assert "temporary-token" not in rendered
+    assert config.access_key_id_value == "minio-access"
+    assert config.secret_access_key_value == "minio-secret"  # noqa: S105
+    assert config.session_token_value == "temporary-token"  # noqa: S105
 
 
 def test_secrets_are_masked_but_explicitly_unwrapped_for_connection_urls() -> None:

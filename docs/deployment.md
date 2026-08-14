@@ -141,6 +141,7 @@ comet-rag config --config /etc/comet-rag/prod.yaml   # 打印生效配置（密�
 | 服务器本地路径 | ❌ 拒绝 | 开了等于给调用方一个任意文件读取通道 |
 | http/https 公网 | ✅ 允许 | |
 | 私网 / 环回 / 链路本地 | ❌ 拒绝 | 挡 SSRF；`169.254.169.254` 上有云凭据 |
+| `s3://` / `minio://` | ❌ 拒绝 | 显式开启，并建议限定 bucket |
 | 其他协议（`file://` 等） | ❌ 拒绝 | 绕过本地检查的常见写法 |
 
 单机部署想用"把服务器上的文件入库"这个功能，显式打开并**圈定范围**：
@@ -156,6 +157,28 @@ ingest_policy:
 `local_roots` 的包含性检查在**展开符号链接与 `..` 之后**做，所以
 `/data/corpus/../../etc/passwd` 与指向外部的软链都会被挡下。
 重定向也逐跳校验 —— 只查入口 URL 挡不住"公网地址 302 到内网"。
+
+要从 MinIO 或 AWS S3 入库，连接配置与准入策略必须同时存在：
+
+```yaml
+infrastructure_config:
+  s3:
+    endpoint_url: "http://localhost:9010"  # AWS S3 可留空
+    access_key_id: minioadmin              # 也可留空，使用 SDK 默认凭据链
+    secret_access_key: minioadmin
+    region_name: us-east-1
+    addressing_style: path                 # MinIO 通常使用 path
+    max_object_bytes: 104857600             # 100 MiB
+
+ingest_policy:
+  allow_s3: true
+  allowed_s3_buckets: ["documents"]
+```
+
+调用时把来源写为 `s3://documents/report.docx` 或
+`minio://documents/report.docx`。Loader 会先用 `HEAD` 拒绝已知超限对象，
+下载时再按实际累计字节检查，避免伪造或过期的 `ContentLength` 绕过限制。
+临时文件与同步/异步 S3 client 由应用上下文统一清理。
 
 被拒返回 **403**，且错误信息里不回显解析出来的 IP：那等于把内网探测结果
 送给调用方，防护会退化成一个好用的扫描器。

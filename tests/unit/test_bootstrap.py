@@ -16,10 +16,14 @@ from comet_rag.config.schemas import (
     BackendsConfig,
     EmbeddingModelConfig,
     InfrastructureConfig,
+    IngestPolicyConfig,
+    S3Config,
     ServerConfig,
 )
 from comet_rag.core.bootstrap import build_context
+from comet_rag.engines.loaders.types import SourceContent
 from comet_rag.engines.pipelines import DocxConfig, PipelineConfig
+from comet_rag.infrastructure.loaders import S3Loader
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
@@ -149,6 +153,41 @@ def test_explicit_docx_pipeline_fields_override_deployment_defaults(
     effective = captured["config"]
     assert effective.docx.max_archive_members == 23
     assert effective.docx.max_archive_xml_elements == 19
+
+
+async def test_s3_loader_is_assembled_only_from_infrastructure_config(
+    embedding: FakeEmbedding,
+) -> None:
+    config = make_config()
+    config.infrastructure_config.s3 = S3Config(
+        endpoint_url="http://localhost:9010",
+        access_key_id="minioadmin",
+        secret_access_key="minioadmin",  # noqa: S106 - test credential
+        max_object_bytes=1234,
+    )
+    config.ingest_policy = IngestPolicyConfig(
+        allow_s3=True, allowed_s3_buckets=["documents"]
+    )
+
+    context = build_context(config, embedding_model=embedding)
+    assert context.ingest_loader is not None
+    object_loader = context.ingest_loader._resolve(  # noqa: SLF001
+        SourceContent("s3://documents/report.txt")
+    )
+    assert isinstance(object_loader, S3Loader)
+    assert object_loader._max_object_bytes == 1234  # noqa: SLF001
+
+    await context.aclose()
+
+
+def test_allowing_s3_without_connection_config_fails_at_startup(
+    embedding: FakeEmbedding,
+) -> None:
+    config = make_config()
+    config.ingest_policy = IngestPolicyConfig(allow_s3=True)
+
+    with pytest.raises(ValueError, match="infrastructure_config.s3"):
+        build_context(config, embedding_model=embedding)
 
 
 async def test_runner_registration_is_idempotent(embedding: FakeEmbedding) -> None:

@@ -27,6 +27,7 @@ POSTGRES_DSN = os.environ.get(
 )
 REDIS_URL = os.environ.get("COMET_TEST_REDIS_URL", "redis://localhost:6379/0")
 MILVUS_URI = os.environ.get("COMET_TEST_MILVUS_URI", "http://localhost:19530")
+MINIO_ENDPOINT = os.environ.get("COMET_TEST_MINIO_ENDPOINT", "http://localhost:9010")
 
 
 def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -59,6 +60,12 @@ def redis_url() -> str:
 def milvus_uri() -> str:
     _require("localhost", 19530, "Milvus")
     return MILVUS_URI
+
+
+@pytest.fixture(scope="session")
+def minio_endpoint() -> str:
+    _require("localhost", 9010, "MinIO")
+    return MINIO_ENDPOINT
 
 
 #: `TRUNCATE` 要 ACCESS EXCLUSIVE 锁。有别的连接还开着事务时，
