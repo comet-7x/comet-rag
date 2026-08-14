@@ -15,8 +15,11 @@ from comet_rag.engines.loaders.data_type import (
     BaseFileFormat,
     CodeFormat,
     ContentStructure,
+    ContentTypeMismatch,
     MixedFormat,
+    UnsupportedContentType,
     is_allowed_extension,
+    resolve_detected_extension,
 )
 from comet_rag.engines.loaders.local_loader import LocalLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
@@ -236,3 +239,12 @@ def test_file_format_registry_is_explicit_and_queryable() -> None:
     assert BaseFileFormat.all_by_structure(ContentStructure.CODE) == [CodeFormat]
     assert is_allowed_extension(".pdf") is True
     assert is_allowed_extension("exe") is False
+
+
+def test_detected_extension_policy_is_shared_and_allow_ext_backed() -> None:
+    assert resolve_detected_extension("py", "txt") == "py"
+    assert resolve_detected_extension("", "pdf") == "pdf"
+    with pytest.raises(ContentTypeMismatch, match="docx.*html"):
+        resolve_detected_extension("docx", "html")
+    with pytest.raises(UnsupportedContentType, match="zip"):
+        resolve_detected_extension("docx", "zip")

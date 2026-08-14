@@ -21,24 +21,25 @@ from urllib.parse import unquote, urlparse
 from loguru import logger
 
 from comet_rag.engines.loaders.base_loader import BaseLoader
-from comet_rag.engines.loaders.data_type import ParseConfig, is_allowed_extension
+from comet_rag.engines.loaders.data_type import (
+    ContentTypeMismatch,
+    ParseConfig,
+    is_allowed_extension,
+    resolve_detected_extension,
+)
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.utils.file_detector import detect_content_type_from_path
 
 DEFAULT_MAX_OBJECT_BYTES = 100 * 1024 * 1024
 _STREAM_CHUNK_BYTES = 64 * 1024
 _OBJECT_SCHEMES = frozenset({"s3", "minio"})
-_GENERIC_TEXT_EXTENSIONS = frozenset(
-    {"txt", "md", "py", "ts", "js", "java", "c", "cpp", "go", "php", "r", "rust"}
-)
 
 
 class ObjectTooLarge(ValueError):
     """The object exceeds the configured application-level size limit."""
 
 
-class ObjectContentTypeMismatch(ValueError):
-    """The key extension conflicts with the downloaded object content."""
+ObjectContentTypeMismatch = ContentTypeMismatch
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,19 +331,7 @@ class S3Loader(BaseLoader):
             logger.warning(f"对象内容探测失败，回退到 key 后缀 {source_ext!r}: {exc!r}")
             label = source_ext
         else:
-            detected_allowed = is_allowed_extension(detected)
-            if not detected_allowed:
-                raise ValueError(f"Unsupported object content type {detected!r}")
-            elif source_allowed and source_ext != detected:
-                if detected == "txt" and source_ext in _GENERIC_TEXT_EXTENSIONS:
-                    label = source_ext
-                else:
-                    raise ObjectContentTypeMismatch(
-                        f"Object key extension {source_ext!r} does not match "
-                        f"downloaded content type {detected!r}"
-                    )
-            else:
-                label = detected
+            label = resolve_detected_extension(source_ext, detected)
         target = str(Path(path).with_suffix(f".{label}"))
         Path(path).replace(target)
         with self._temp_files_lock:

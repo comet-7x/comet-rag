@@ -261,9 +261,7 @@ def test_unsupported_detected_type_is_rejected_even_with_allowed_suffix(
     )
     loader = S3Loader(download_dir=tmp_path, client=SyncClient())
 
-    with pytest.raises(
-        ValueError, match="Unsupported object content type 'executable'"
-    ):
+    with pytest.raises(ValueError, match="Unsupported content type 'executable'"):
         loader.load(URI)
 
     assert loader.temp_files == []

@@ -38,6 +38,32 @@ class AllowExt(StrEnum):
     HTML = "html"
 
 
+class UnsupportedContentType(ValueError):
+    """Detected content is outside the shared loader format registry."""
+
+
+class ContentTypeMismatch(ValueError):
+    """A supported declared extension conflicts with detected content."""
+
+
+_GENERIC_TEXT_DECLARATIONS = frozenset(
+    {
+        AllowExt.TXT,
+        AllowExt.MD,
+        AllowExt.PY,
+        AllowExt.TS,
+        AllowExt.JS,
+        AllowExt.JAVA,
+        AllowExt.C,
+        AllowExt.CPP,
+        AllowExt.GO,
+        AllowExt.PHP,
+        AllowExt.R,
+        AllowExt.RUST,
+    }
+)
+
+
 def normalize_extension(extension: str) -> str:
     """Return the canonical extension form used by the format registry."""
 
@@ -52,6 +78,42 @@ def is_allowed_extension(extension: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def resolve_detected_extension(
+    declared_extension: str,
+    detected_extension: str,
+) -> str:
+    """Resolve one supported extension from declared and detected content types.
+
+    The detector intentionally has final authority over unsupported bytes. The only
+    compatibility exception is text-like source formats that Magika commonly
+    generalizes to ``txt``; that policy lives here so every remote loader follows
+    the same rule and ``AllowExt`` remains the extension source of truth.
+    """
+
+    declared_value = normalize_extension(declared_extension)
+    detected_value = normalize_extension(detected_extension)
+    try:
+        detected = AllowExt(detected_value)
+    except ValueError:
+        raise UnsupportedContentType(
+            f"Unsupported content type {detected_value!r}"
+        ) from None
+
+    try:
+        declared = AllowExt(declared_value)
+    except ValueError:
+        declared = None
+
+    if declared is not None and declared is not detected:
+        if detected is AllowExt.TXT and declared in _GENERIC_TEXT_DECLARATIONS:
+            return declared.value
+        raise ContentTypeMismatch(
+            f"Declared extension {declared.value!r} does not match "
+            f"detected content type {detected.value!r}"
+        )
+    return detected.value
 
 
 class ContentStructure(StrEnum):
@@ -126,9 +188,7 @@ class BaseFileFormat:
     def all_by_structure(
         cls, *structures: ContentStructure
     ) -> list[type[BaseFileFormat]]:
-        return [
-            fmt for fmt in _FORMAT_TYPES if fmt.format_meta.structure in structures
-        ]
+        return [fmt for fmt in _FORMAT_TYPES if fmt.format_meta.structure in structures]
 
     def __repr__(self) -> str:
         return f"<FileFormat {self.extensions}>"
