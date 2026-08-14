@@ -1,8 +1,8 @@
 import asyncio
 import tempfile
 import threading
-from collections.abc import Callable
-from contextlib import suppress
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager, suppress
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -98,7 +98,11 @@ class URLLoader(BaseLoader):
         #: 另一处调 `cleanup()` 就可能把它脚下的连接池抽掉，
         #: 在途请求会撞上"client has been closed"。
         self._client_lock = threading.Lock()
-        self._async_client_lock = asyncio.Lock()
+        self._lifecycle = threading.Condition()
+        self._cleanup_finished = threading.Event()
+        self._cleanup_finished.set()
+        self._active_loads = 0
+        self._cleanup_in_progress = False
 
     @property
     def temp_files(self) -> list[str]:
@@ -116,6 +120,58 @@ class URLLoader(BaseLoader):
                 timeout=self._timeout, follow_redirects=False
             )
         return self._async_client
+
+    @contextmanager
+    def _sync_activity(self) -> Iterator[None]:
+        """Block cleanup while one synchronous load operation is active."""
+
+        self._begin_activity()
+        try:
+            yield
+        finally:
+            self._end_activity()
+
+    @asynccontextmanager
+    async def _async_activity(self) -> AsyncIterator[None]:
+        """Register async work without blocking its event loop during cleanup."""
+
+        while True:
+            await asyncio.to_thread(self._cleanup_finished.wait)
+            with self._lifecycle:
+                if not self._cleanup_in_progress:
+                    self._active_loads += 1
+                    break
+        try:
+            yield
+        finally:
+            self._end_activity()
+
+    def _begin_activity(self) -> None:
+        with self._lifecycle:
+            while self._cleanup_in_progress:
+                self._lifecycle.wait()
+            self._active_loads += 1
+
+    def _end_activity(self) -> None:
+        with self._lifecycle:
+            self._active_loads -= 1
+            if self._active_loads == 0:
+                self._lifecycle.notify_all()
+
+    def _begin_cleanup(self) -> None:
+        with self._lifecycle:
+            while self._cleanup_in_progress:
+                self._lifecycle.wait()
+            self._cleanup_in_progress = True
+            self._cleanup_finished.clear()
+            while self._active_loads:
+                self._lifecycle.wait()
+
+    def _end_cleanup(self) -> None:
+        with self._lifecycle:
+            self._cleanup_in_progress = False
+            self._cleanup_finished.set()
+            self._lifecycle.notify_all()
 
     def _build_metadata(self, file_path: str, source: SourceContent) -> dict[str, Any]:
         path = Path(file_path)
@@ -367,6 +423,18 @@ class URLLoader(BaseLoader):
         download_config: DownloadRequestConfig | None = None,
         client: httpx.Client | None = None,
     ) -> LoaderContent:
+        with self._sync_activity():
+            return self._load_impl(
+                source, download_config=download_config, client=client
+            )
+
+    def _load_impl(
+        self,
+        source: SourceContent | str,
+        *,
+        download_config: DownloadRequestConfig | None = None,
+        client: httpx.Client | None = None,
+    ) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
         if source.pre_source_type != SourceType.URL:
@@ -383,6 +451,18 @@ class URLLoader(BaseLoader):
         )
 
     async def aload(
+        self,
+        source: SourceContent | str,
+        *,
+        download_config: DownloadRequestConfig | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> LoaderContent:
+        async with self._async_activity():
+            return await self._aload_impl(
+                source, download_config=download_config, client=client
+            )
+
+    async def _aload_impl(
         self,
         source: SourceContent | str,
         *,
@@ -416,14 +496,11 @@ class URLLoader(BaseLoader):
         config = download_config or DownloadRequestConfig(
             timeout=self._timeout, follow_redirects=self._follow_redirects
         )
-        # 持锁跑完整批：期间 `cleanup()` 会等，而不是把连接池抽掉。
-        # 用锁而不是引用计数，是因为这里要的语义就是"用完再关"，
-        # 而 `batch_load` 本身是阻塞的，锁的持有区间是明确有界的。
-        with self._client_lock:
+        # 整批只登记一次活动操作；worker 直接调用实现方法，避免嵌套登记
+        # 在 cleanup 已等待时造成循环等待。
+        with self._sync_activity(), self._client_lock:
             client = self._shared_client()
-            return self._batch_load_with(
-                client, sources, config, max_concurrency
-            )
+            return self._batch_load_with(client, sources, config, max_concurrency)
 
     def _batch_load_with(
         self,
@@ -437,7 +514,7 @@ class URLLoader(BaseLoader):
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
             futures = [
                 executor.submit(
-                    self.load, s, download_config=config, client=client
+                    self._load_impl, s, download_config=config, client=client
                 )
                 for s in sources
             ]
@@ -456,27 +533,34 @@ class URLLoader(BaseLoader):
         )
         semaphore = asyncio.Semaphore(max_concurrency)
 
-        async def _load(source: SourceContent | str) -> LoaderContent:
-            async with semaphore:
-                return await self.aload(
-                    source, download_config=config, client=client
-                )
-
-        # 与 acleanup() 互斥：批处理完成前不能关闭共享 client 或删除临时文件。
-        async with self._async_client_lock:
+        # 整批只登记一次活动操作；worker 直接调用实现方法，避免嵌套登记。
+        async with self._async_activity():
             client = self._shared_async_client()
-            return await asyncio.gather(*[_load(s) for s in sources])
+
+            async def _load_one(source: SourceContent | str) -> LoaderContent:
+                async with semaphore:
+                    return await self._aload_impl(
+                        source, download_config=config, client=client
+                    )
+
+            return await asyncio.gather(*[_load_one(s) for s in sources])
 
     def cleanup(self) -> None:
         """删除临时文件并关闭**自建**的同步 client。
 
         注入进来的 client 一律不碰 —— 调用方其余代码可能还在用它。
-        异步 client 无法在同步上下文里正确关闭，请用 `aclose()`。
+        异步 client 无法在同步上下文里正确关闭，请用 `acleanup()`。
         """
+        self._begin_cleanup()
+        try:
+            self._cleanup_sync_resources()
+        finally:
+            self._end_cleanup()
+
+    def _cleanup_sync_resources(self) -> None:
         for path in self._temp_files:
             Path(path).unlink(missing_ok=True)
         self._temp_files.clear()
-        # 等 `batch_load` 用完再关（PR 评审 #11）。
         with self._client_lock:
             if self._owns_client and self._client is not None:
                 self._client.close()
@@ -484,11 +568,24 @@ class URLLoader(BaseLoader):
 
     async def acleanup(self) -> None:
         """异步收尾：临时文件 + 两个自建 client 都关掉。"""
-        async with self._async_client_lock:
-            await asyncio.to_thread(self.cleanup)
+        cleanup_task = asyncio.create_task(self._acleanup_impl())
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            # `to_thread` 无法停止已经开始的同步清理；等它完成再传播取消，
+            # 否则会提前放开生命周期边界，让新下载撞上仍在删除的资源。
+            await cleanup_task
+            raise
+
+    async def _acleanup_impl(self) -> None:
+        await asyncio.to_thread(self._begin_cleanup)
+        try:
+            await asyncio.to_thread(self._cleanup_sync_resources)
             if self._owns_async_client and self._async_client is not None:
                 await self._async_client.aclose()
                 self._async_client = None
+        finally:
+            self._end_cleanup()
 
     async def aclose(self) -> None:
         """Backward-compatible alias for ``acleanup``."""
