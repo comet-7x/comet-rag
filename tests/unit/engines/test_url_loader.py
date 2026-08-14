@@ -19,9 +19,12 @@ from pathlib import Path
 import httpx
 import pytest
 
+from comet_rag.engines.loaders.data_type import (
+    ContentTypeMismatch,
+    UnsupportedContentType,
+)
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.loaders.url_loader import (
-    ContentTypeMismatch,
     DownloadRequestConfig,
     DownloadTooLarge,
     URLLoader,
@@ -582,6 +585,31 @@ def test_content_probe_rejects_html_body_behind_docx_suffix(
     )
     try:
         with pytest.raises(ContentTypeMismatch, match="docx.*html"):
+            ld.load("https://example.invalid/report.docx")
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        ld.cleanup()
+
+
+@pytest.mark.parametrize("detected", ["zip", "tar"])
+def test_content_probe_rejects_archive_behind_allowed_suffix(
+    detected: str, tmp_path: Path, monkeypatch
+) -> None:
+    """Standalone archives are not admitted by borrowing a trusted suffix."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"archive payload")
+
+    monkeypatch.setattr(
+        "comet_rag.engines.loaders.url_loader.detect_content_type_from_path",
+        lambda path: detected,
+    )
+    ld = URLLoader(
+        download_dir=tmp_path,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        with pytest.raises(UnsupportedContentType, match=detected):
             ld.load("https://example.invalid/report.docx")
         assert list(tmp_path.iterdir()) == []
     finally:
