@@ -73,6 +73,16 @@ def test_non_url_source_is_rejected(loader: URLLoader) -> None:
         loader.load("/some/local/path")
 
 
+def test_load_rejects_unsupported_options(loader: URLLoader) -> None:
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        loader.load(URL, unsupported=True)  # type: ignore[call-arg]
+
+
+async def test_aload_rejects_unsupported_options(loader: URLLoader) -> None:
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        await loader.aload(URL, unsupported=True)  # type: ignore[call-arg]
+
+
 # ── 连接复用 ───────────────────────────────────────────────────────────────
 
 
@@ -190,6 +200,16 @@ def test_cleanup_removes_temp_files(tmp_path: Path) -> None:
 
 
 # ── 批量 ───────────────────────────────────────────────────────────────────
+
+
+def test_batch_load_rejects_unsupported_options(loader: URLLoader) -> None:
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        loader.batch_load([], unsupported=True)  # type: ignore[call-arg]
+
+
+async def test_abatch_load_rejects_unsupported_options(loader: URLLoader) -> None:
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        await loader.abatch_load([], unsupported=True)  # type: ignore[call-arg]
 
 
 async def test_abatch_load_shares_one_client(tmp_path: Path) -> None:

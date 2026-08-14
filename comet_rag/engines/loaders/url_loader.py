@@ -365,7 +365,6 @@ class URLLoader(BaseLoader):
         *,
         download_config: DownloadRequestConfig | None = None,
         client: httpx.Client | None = None,
-        **kwargs,
     ) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
@@ -388,7 +387,6 @@ class URLLoader(BaseLoader):
         *,
         download_config: DownloadRequestConfig | None = None,
         client: httpx.AsyncClient | None = None,
-        **kwargs,
     ) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
@@ -412,7 +410,6 @@ class URLLoader(BaseLoader):
         *,
         download_config: DownloadRequestConfig | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
-        **kwargs,
     ) -> list[LoaderContent]:
         self._validate_max_concurrency(max_concurrency)
         config = download_config or DownloadRequestConfig(
@@ -424,23 +421,22 @@ class URLLoader(BaseLoader):
         with self._client_lock:
             client = self._shared_client()
             return self._batch_load_with(
-                client, sources, config, max_concurrency, **kwargs
+                client, sources, config, max_concurrency
             )
 
     def _batch_load_with(
         self,
         client: httpx.Client,
-        sources,
-        config,
+        sources: list[SourceContent] | list[str],
+        config: DownloadRequestConfig,
         max_concurrency: int,
-        **kwargs,
     ) -> list[LoaderContent]:
         from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
             futures = [
                 executor.submit(
-                    self.load, s, download_config=config, client=client, **kwargs
+                    self.load, s, download_config=config, client=client
                 )
                 for s in sources
             ]
@@ -452,7 +448,6 @@ class URLLoader(BaseLoader):
         *,
         download_config: DownloadRequestConfig | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
-        **kwargs,
     ) -> list[LoaderContent]:
         self._validate_max_concurrency(max_concurrency)
         config = download_config or DownloadRequestConfig(
@@ -464,7 +459,7 @@ class URLLoader(BaseLoader):
         async def _load(source: SourceContent | str) -> LoaderContent:
             async with semaphore:
                 return await self.aload(
-                    source, download_config=config, client=client, **kwargs
+                    source, download_config=config, client=client
                 )
 
         return await asyncio.gather(*[_load(s) for s in sources])

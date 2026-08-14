@@ -19,12 +19,10 @@ class BaseLoader(ABC):
     """
 
     @abstractmethod
-    def load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent: ...
+    def load(self, source: SourceContent | str) -> LoaderContent: ...
 
     @abstractmethod
-    async def aload(
-        self, source: SourceContent | str, *args, **kwargs
-    ) -> LoaderContent: ...
+    async def aload(self, source: SourceContent | str) -> LoaderContent: ...
 
     @abstractmethod
     def cleanup(self) -> None: ...
@@ -48,13 +46,12 @@ class BaseLoader(ABC):
         sources: list[SourceContent] | list[str],
         *,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
-        **kwargs,
     ) -> list[LoaderContent]:
         """Load a batch with a bounded thread-pool fallback."""
 
         self._validate_max_concurrency(max_concurrency)
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-            futures = [executor.submit(self.load, s, **kwargs) for s in sources]
+            futures = [executor.submit(self.load, source) for source in sources]
             return [f.result() for f in futures]
 
     async def abatch_load(
@@ -62,7 +59,6 @@ class BaseLoader(ABC):
         sources: list[SourceContent] | list[str],
         *,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
-        **kwargs,
     ) -> list[LoaderContent]:
         """Load a batch through ``aload`` with bounded task concurrency."""
 
@@ -71,7 +67,7 @@ class BaseLoader(ABC):
 
         async def _load(source: SourceContent | str) -> LoaderContent:
             async with semaphore:
-                return await self.aload(source, **kwargs)
+                return await self.aload(source)
 
         return await asyncio.gather(*[_load(s) for s in sources])
 
