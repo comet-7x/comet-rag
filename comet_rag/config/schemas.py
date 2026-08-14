@@ -172,6 +172,8 @@ class S3Config(_SecretsModel):
         parsed = urlsplit(value)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("endpoint_url must be an http/https URL with a hostname")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("endpoint_url must not contain credentials")
         try:
             port = parsed.port
         except ValueError as exc:

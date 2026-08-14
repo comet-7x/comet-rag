@@ -94,6 +94,18 @@ def test_s3_object_limit_and_credentials_are_validated() -> None:
         S3Config(endpoint_url="http://minio:0")
 
 
+@pytest.mark.parametrize(
+    "endpoint_url",
+    [
+        "https://access:secret@minio.example.test",
+        "https://access@minio.example.test",
+    ],
+)
+def test_s3_endpoint_url_rejects_embedded_credentials(endpoint_url: str) -> None:
+    with pytest.raises(ValueError, match="must not contain credentials"):
+        S3Config(endpoint_url=endpoint_url)
+
+
 def test_s3_credentials_are_masked_and_explicitly_unwrapped() -> None:
     config = S3Config(
         endpoint_url="http://localhost:9010",
