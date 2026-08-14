@@ -173,6 +173,41 @@ def test_empty_source_is_rejected() -> None:
         policy().check("   ")
 
 
+# ── S3 / MinIO ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "source", ["s3://documents/report.txt", "minio://documents/report.txt"]
+)
+def test_object_storage_is_denied_by_default(source: str) -> None:
+    with pytest.raises(SourceNotAllowed, match="未开放"):
+        policy().check(source)
+
+
+def test_object_storage_requires_explicit_bucket_access() -> None:
+    p = policy(allow_s3=True, allowed_s3_buckets=["documents"])
+
+    p.check("s3://documents/report.txt")
+    p.check("minio://DOCUMENTS/report.txt")
+    with pytest.raises(SourceNotAllowed, match="bucket 不在允许列表"):
+        p.check("s3://secrets/report.txt")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "s3:///report.txt",
+        "s3://documents",
+        "s3://user:secret@documents/report.txt",
+        "s3://documents:9000/report.txt",
+        "s3://documents/report.txt?versionId=1",
+    ],
+)
+def test_malformed_object_storage_uris_are_rejected(source: str) -> None:
+    with pytest.raises(SourceNotAllowed):
+        policy(allow_s3=True).check(source)
+
+
 # ── 装配 ───────────────────────────────────────────────────────────────────
 
 
@@ -199,3 +234,19 @@ def test_defaults_are_locked_down() -> None:
     built = build_source_policy(IngestPolicyConfig())
     assert built.allow_local is False
     assert built.allow_private_network is False
+    assert built.allow_s3 is False
+
+
+def test_build_warns_when_object_storage_has_no_bucket_allowlist() -> None:
+    from comet_rag.config.schemas import IngestPolicyConfig
+    from comet_rag.core.logging import logger
+
+    records: list[str] = []
+    sink = logger.add(lambda m: records.append(m.record["message"]), level="WARNING")
+    try:
+        built = build_source_policy(IngestPolicyConfig(allow_s3=True))
+    finally:
+        logger.remove(sink)
+
+    assert built.allow_s3 is True
+    assert any("未限定 bucket" in record for record in records)

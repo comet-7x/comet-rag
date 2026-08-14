@@ -62,6 +62,8 @@ class Context:
     degradation: Any = None
     #: 入库来源准入策略。写路径在**建任务之前**问它。
     source_policy: Any = None
+    #: 组合根装配的来源路由器；包含可选的基础设施 Loader。
+    ingest_loader: AutoLoader | None = None
     #: 仅在 task_store/kb 用 postgres 时存在。关停时要 dispose 连接池。
     database: Any = None
     #: 需要在关停时释放、但不属于上面任何一类的资源（按注册顺序逆序关闭）
@@ -113,12 +115,15 @@ def wire_runners(context: Context, *, ingest_config: Any = None) -> None:
     但不需要 FastAPI），而 API 进程调它是为了让"提交后本进程也能执行"
     在单进程模式下成立。
     """
-    policy = context.source_policy
-    loader = AutoLoader(
-        max_download_bytes=getattr(policy, "max_download_bytes", None),
-        redirect_validator=(policy.check_redirect if policy is not None else None),
-    )
-    context._extra_closers.append(loader)
+    loader = context.ingest_loader
+    if loader is None:
+        policy = context.source_policy
+        loader = AutoLoader(
+            max_download_bytes=getattr(policy, "max_download_bytes", None),
+            redirect_validator=(policy.check_redirect if policy is not None else None),
+        )
+        context.ingest_loader = loader
+        context._extra_closers.append(loader)
     register_ingest_runner(
         IngestRunner(
             embedding_model=context.embedding_model,

@@ -13,6 +13,7 @@ import os
 import socket
 from collections.abc import AsyncIterator
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 from sqlalchemy import text
@@ -27,6 +28,7 @@ POSTGRES_DSN = os.environ.get(
 )
 REDIS_URL = os.environ.get("COMET_TEST_REDIS_URL", "redis://localhost:6379/0")
 MILVUS_URI = os.environ.get("COMET_TEST_MILVUS_URI", "http://localhost:19530")
+MINIO_ENDPOINT = os.environ.get("COMET_TEST_MINIO_ENDPOINT", "http://localhost:9010")
 
 
 def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -41,6 +43,30 @@ def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
 def _require(host: str, port: int, name: str) -> None:
     if not _port_open(host, port):
         pytest.skip(f"{name} 未运行（{host}:{port}）。先跑 `docker compose up -d`")
+
+
+def _endpoint_address(endpoint: str) -> tuple[str, int]:
+    """Return the socket address represented by an HTTP(S) service endpoint."""
+
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"endpoint 必须是包含主机名的 http/https URL：{endpoint!r}")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("endpoint 不得包含凭据")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"endpoint 端口无效：{endpoint!r}") from exc
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    if not 1 <= port <= 65535:
+        raise ValueError(f"endpoint 端口必须在 1..65535 范围内：{endpoint!r}")
+    return parsed.hostname, port
+
+
+def _require_endpoint(endpoint: str, name: str) -> None:
+    host, port = _endpoint_address(endpoint)
+    _require(host, port, name)
 
 
 @pytest.fixture(scope="session")
@@ -59,6 +85,15 @@ def redis_url() -> str:
 def milvus_uri() -> str:
     _require("localhost", 19530, "Milvus")
     return MILVUS_URI
+
+
+@pytest.fixture(scope="session")
+def minio_endpoint() -> str:
+    try:
+        _require_endpoint(MINIO_ENDPOINT, "MinIO")
+    except ValueError as exc:
+        pytest.fail(f"COMET_TEST_MINIO_ENDPOINT 配置无效：{exc}", pytrace=False)
+    return MINIO_ENDPOINT
 
 
 #: `TRUNCATE` 要 ACCESS EXCLUSIVE 锁。有别的连接还开着事务时，

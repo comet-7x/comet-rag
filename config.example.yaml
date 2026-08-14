@@ -54,6 +54,16 @@ infrastructure_config:
   #   port: 6379
   #   db_index: 0
 
+  # ingest_policy.allow_s3 = true 时必填。兼容 AWS S3 与 MinIO。
+  # s3:
+  #   endpoint_url: http://localhost:9010  # AWS S3 可留空
+  #   access_key_id: minioadmin            # 可留空以使用 SDK 默认凭据链
+  #   secret_access_key: minioadmin
+  #   region_name: us-east-1
+  #   addressing_style: path               # auto | path | virtual
+  #   verify_ssl: true
+  #   max_object_bytes: 104857600           # 100 MiB；HEAD 与实际流量双重校验
+
 # 各资源用哪个实现。全 memory 时零外部依赖，适合本地开发与测试。
 backends:
   vector_store: memory      # memory | milvus
@@ -101,3 +111,7 @@ ingest_policy:
   # 单个 URL 响应的硬上限；即使服务端不发或伪造 Content-Length，流式读取时
   # 仍会按实际累计字节中止。默认 100 MiB。
   max_download_bytes: 104857600
+  # S3/MinIO 默认关闭。开启后建议同时限定 bucket，避免调用方读取当前凭据
+  # 有权访问的全部对象。
+  allow_s3: false
+  allowed_s3_buckets: []

@@ -15,8 +15,16 @@
 """
 
 from enum import StrEnum
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 SecretValue = SecretStr | str
 
@@ -32,7 +40,15 @@ class _SecretsModel(BaseModel):
 
     model_config = ConfigDict(validate_assignment=True)
 
-    @field_validator("password", "api_key", mode="after", check_fields=False)
+    @field_validator(
+        "password",
+        "api_key",
+        "access_key_id",
+        "secret_access_key",
+        "session_token",
+        mode="after",
+        check_fields=False,
+    )
     @classmethod
     def _wrap_secret(cls, value: SecretValue | None) -> SecretStr | None:
         if value is None or isinstance(value, SecretStr):
@@ -107,6 +123,84 @@ class RedisConfig(_SecretsModel):
         password = _secret_value(self.password)
         auth = f":{quote(password, safe='')}@" if password else ""
         return f"redis://{auth}{self.host}:{self.port}/{self.db_index}"
+
+
+class S3AddressingStyle(StrEnum):
+    AUTO = "auto"
+    PATH = "path"
+    VIRTUAL = "virtual"
+
+
+class S3Config(_SecretsModel):
+    """AWS S3 or a compatible endpoint such as MinIO."""
+
+    endpoint_url: str | None = Field(
+        default=None,
+        description="S3 API endpoint；留空时使用 AWS SDK 默认端点",
+    )
+    access_key_id: SecretValue | None = Field(
+        default=None,
+        description="访问密钥 ID；留空时使用 SDK 默认凭据链",
+    )
+    secret_access_key: SecretValue | None = Field(
+        default=None,
+        description="访问密钥；必须与 access_key_id 同时配置",
+    )
+    session_token: SecretValue | None = Field(
+        default=None, description="可选的临时会话令牌"
+    )
+    region_name: str = Field(default="us-east-1", description="S3 region")
+    addressing_style: S3AddressingStyle = Field(
+        default=S3AddressingStyle.PATH,
+        description="auto | path | virtual；MinIO 通常使用 path",
+    )
+    verify_ssl: bool = Field(default=True, description="是否校验 S3 endpoint TLS 证书")
+    max_object_bytes: int = Field(
+        default=100 * 1024 * 1024,
+        gt=0,
+        description="单个对象允许下载的最大字节数，HEAD 与实际流量都会校验",
+    )
+
+    @field_validator("endpoint_url")
+    @classmethod
+    def _validate_endpoint_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        from urllib.parse import urlsplit  # noqa: PLC0415
+
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("endpoint_url must be an http/https URL with a hostname")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("endpoint_url must not contain credentials")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("endpoint_url contains an invalid port") from exc
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError("endpoint_url port must be between 1 and 65535")
+        return value
+
+    @model_validator(mode="after")
+    def _credentials_are_paired(self) -> Self:
+        if (self.access_key_id is None) != (self.secret_access_key is None):
+            raise ValueError(
+                "access_key_id and secret_access_key must be configured together"
+            )
+        return self
+
+    @property
+    def access_key_id_value(self) -> str | None:
+        return _secret_value(self.access_key_id)
+
+    @property
+    def secret_access_key_value(self) -> str | None:
+        return _secret_value(self.secret_access_key)
+
+    @property
+    def session_token_value(self) -> str | None:
+        return _secret_value(self.session_token)
 
 
 class VectorDatabaseConfig(_SecretsModel):
@@ -288,6 +382,14 @@ class IngestPolicyConfig(BaseModel):
         gt=0,
         description="单个 URL 响应的最大字节数。Content-Length 与实际流量都会校验",
     )
+    allow_s3: bool = Field(
+        default=False,
+        description="是否允许从 s3:// 或 minio:// 对象存储 URI 入库",
+    )
+    allowed_s3_buckets: list[str] = Field(
+        default_factory=list,
+        description="允许读取的对象存储 bucket。为空 = 凭据可访问的全部 bucket",
+    )
 
 
 class InfrastructureConfig(BaseModel):
@@ -302,6 +404,10 @@ class InfrastructureConfig(BaseModel):
     )
     redis: RedisConfig | None = Field(
         default=None, description="Redis 连接，backends.task_executor=arq 时必填"
+    )
+    s3: S3Config | None = Field(
+        default=None,
+        description="S3/MinIO 对象存储连接；开放 s3 来源时必填",
     )
 
 

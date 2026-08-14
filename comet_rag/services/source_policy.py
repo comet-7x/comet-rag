@@ -42,7 +42,7 @@ import socket
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 
 from comet_rag.core.logging import logger
 
@@ -83,6 +83,9 @@ class SourcePolicy:
     allowed_url_hosts: Sequence[str] = ()
     #: 单个远端响应的应用层硬上限；无 Content-Length 时仍按累计字节执行。
     max_download_bytes: int = 100 * 1024 * 1024
+    #: 对象存储 URI 默认关闭；开启后仍可按 bucket 收窄权限。
+    allow_s3: bool = False
+    allowed_s3_buckets: Sequence[str] = ()
     #: DNS 解析函数，可注入 —— 测试不必真的查 DNS。
     resolve: Callable[[str], list[str]] = field(default=lambda host: _resolve(host))
 
@@ -95,6 +98,9 @@ class SourcePolicy:
             raise SourceNotAllowed("来源不能为空")
 
         parsed = urlparse(raw)
+        if parsed.scheme.lower() in {"s3", "minio"}:
+            self._check_s3(raw, parsed)
+            return
         if parsed.scheme and parsed.netloc:
             self._check_url(raw, parsed.scheme, parsed.hostname)
             return
@@ -160,6 +166,29 @@ class SourcePolicy:
                 return
         raise SourceNotAllowed(f"路径不在允许的根目录内：{target}")
 
+    def _check_s3(self, raw: str, parsed: ParseResult) -> None:
+        if not self.allow_s3:
+            raise SourceNotAllowed("本服务未开放从 S3/MinIO 对象存储入库")
+        if parsed.username is not None or parsed.password is not None:
+            raise SourceNotAllowed("对象存储 URI 不得包含凭据")
+        try:
+            if parsed.port is not None:
+                raise SourceNotAllowed("对象存储 URI 不得包含端口")
+        except ValueError as exc:
+            raise SourceNotAllowed(
+                f"对象存储 bucket 格式无效：{parsed.netloc}"
+            ) from exc
+        bucket = parsed.hostname or ""
+        if not bucket:
+            raise SourceNotAllowed(f"对象存储 URI 缺少 bucket：{raw}")
+        if not parsed.path.lstrip("/"):
+            raise SourceNotAllowed(f"对象存储 URI 缺少 object key：{raw}")
+        if parsed.query or parsed.fragment:
+            raise SourceNotAllowed("对象存储 URI 不支持 query 或 fragment")
+        allowed = {item.lower() for item in self.allowed_s3_buckets}
+        if allowed and bucket.lower() not in allowed:
+            raise SourceNotAllowed(f"bucket 不在允许列表内：{bucket}")
+
 
 def _resolve(host: str) -> list[str]:
     try:
@@ -185,6 +214,8 @@ def build_source_policy(config: object) -> SourcePolicy:
         allow_private_network=getattr(config, "allow_private_network", False),
         allowed_url_hosts=tuple(getattr(config, "allowed_url_hosts", ()) or ()),
         max_download_bytes=getattr(config, "max_download_bytes", 100 * 1024 * 1024),
+        allow_s3=getattr(config, "allow_s3", False),
+        allowed_s3_buckets=tuple(getattr(config, "allowed_s3_buckets", ()) or ()),
     )
     if policy.allow_local and not policy.local_roots:
         logger.warning(
@@ -193,6 +224,11 @@ def build_source_policy(config: object) -> SourcePolicy:
         )
     if policy.allow_private_network:
         logger.warning("入库策略：已允许访问私网地址，SSRF 防护被关闭")
+    if policy.allow_s3 and not policy.allowed_s3_buckets:
+        logger.warning(
+            "入库策略：已允许读取对象存储且**未限定 bucket** —— "
+            "调用方可以读取当前凭据有权访问的任意 bucket。"
+        )
     return policy
 
 
