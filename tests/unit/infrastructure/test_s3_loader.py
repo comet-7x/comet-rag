@@ -342,36 +342,64 @@ async def test_acleanup_waits_for_active_download(tmp_path: Path) -> None:
     assert loader.temp_files == []
 
 
-async def test_async_activity_waits_with_one_worker_dispatch(
+async def test_async_activity_waiters_do_not_use_default_executor(
     tmp_path: Path, monkeypatch
 ) -> None:
     loader = S3Loader(download_dir=tmp_path)
     original_to_thread = asyncio.to_thread
-    begin_dispatches = 0
+    lifecycle_dispatches = 0
 
     async def counting_to_thread(func, *args, **kwargs):
-        nonlocal begin_dispatches
-        if func == loader._begin_activity:
-            begin_dispatches += 1
+        nonlocal lifecycle_dispatches
+        if func in {loader._begin_activity, loader._begin_cleanup}:
+            lifecycle_dispatches += 1
         return await original_to_thread(func, *args, **kwargs)
 
     monkeypatch.setattr(asyncio, "to_thread", counting_to_thread)
     loader._begin_cleanup()
-    entered = asyncio.Event()
+    entered = 0
 
     async def enter_activity() -> None:
+        nonlocal entered
         async with loader._async_activity():
-            entered.set()
+            entered += 1
 
-    task = asyncio.create_task(enter_activity())
+    tasks = [asyncio.create_task(enter_activity()) for _ in range(64)]
     await asyncio.sleep(0.02)
-    assert not entered.is_set()
+    assert entered == 0
 
     loader._end_cleanup()
-    await task
+    await asyncio.gather(*tasks)
 
-    assert begin_dispatches == 1
+    assert lifecycle_dispatches == 0
+    assert entered == len(tasks)
     assert loader._active_loads == 0
+
+
+async def test_acleanup_waits_without_dispatching_lifecycle_to_default_executor(
+    tmp_path: Path, monkeypatch
+) -> None:
+    loader = S3Loader(download_dir=tmp_path)
+    original_to_thread = asyncio.to_thread
+    dispatched: list[object] = []
+
+    async def recording_to_thread(func, *args, **kwargs):
+        dispatched.append(func)
+        return await original_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", recording_to_thread)
+    loader._begin_activity()
+
+    cleanup_task = asyncio.create_task(loader.acleanup())
+    while not loader._cleanup_in_progress:
+        await asyncio.sleep(0)
+    assert not cleanup_task.done()
+
+    loader._end_activity()
+    await cleanup_task
+
+    assert loader._begin_cleanup not in dispatched
+    assert loader._cleanup_sync_resources in dispatched
 
 
 async def test_cancelled_async_activity_waiter_does_not_leak_active_count(
@@ -392,3 +420,23 @@ async def test_cancelled_async_activity_waiter_does_not_leak_active_count(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert loader._active_loads == 0
+    assert loader._async_lifecycle_waiters == set()
+
+
+async def test_cancelled_async_cleanup_wait_releases_lifecycle_gate(
+    tmp_path: Path,
+) -> None:
+    loader = S3Loader(download_dir=tmp_path)
+    loader._begin_activity()
+
+    task = asyncio.create_task(loader._abegin_cleanup())
+    while not loader._cleanup_in_progress:
+        await asyncio.sleep(0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not loader._cleanup_in_progress
+    assert loader._async_lifecycle_waiters == set()
+    loader._end_activity()

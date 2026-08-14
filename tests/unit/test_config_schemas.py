@@ -90,6 +90,8 @@ def test_s3_object_limit_and_credentials_are_validated() -> None:
         S3Config(max_object_bytes=0)
     with pytest.raises(ValueError, match="configured together"):
         S3Config(access_key_id="access-only")
+    with pytest.raises(ValueError, match="between 1 and 65535"):
+        S3Config(endpoint_url="http://minio:0")
 
 
 def test_s3_credentials_are_masked_and_explicitly_unwrapped() -> None:

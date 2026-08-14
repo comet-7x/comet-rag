@@ -161,6 +161,25 @@ class S3Config(_SecretsModel):
         description="单个对象允许下载的最大字节数，HEAD 与实际流量都会校验",
     )
 
+    @field_validator("endpoint_url")
+    @classmethod
+    def _validate_endpoint_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        from urllib.parse import urlsplit  # noqa: PLC0415
+
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("endpoint_url must be an http/https URL with a hostname")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("endpoint_url contains an invalid port") from exc
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError("endpoint_url port must be between 1 and 65535")
+        return value
+
     @model_validator(mode="after")
     def _credentials_are_paired(self) -> Self:
         if (self.access_key_id is None) != (self.secret_access_key is None):

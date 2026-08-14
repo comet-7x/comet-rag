@@ -128,6 +128,7 @@ class S3Loader(BaseLoader):
         self._lifecycle = threading.Condition()
         self._active_loads = 0
         self._cleanup_in_progress = False
+        self._async_lifecycle_waiters: set[asyncio.Future[None]] = set()
 
     @property
     def temp_files(self) -> list[str]:
@@ -198,18 +199,42 @@ class S3Loader(BaseLoader):
             self._end_activity()
 
     async def _abegin_activity(self) -> None:
-        """Wait for cleanup with one worker dispatch and cancellation safety."""
+        """Register async activity without occupying a worker while cleanup runs."""
 
-        begin_task = asyncio.create_task(asyncio.to_thread(self._begin_activity))
+        while True:
+            with self._lifecycle:
+                if not self._cleanup_in_progress:
+                    self._active_loads += 1
+                    return
+                waiter = self._new_async_lifecycle_waiter_locked()
+            await self._await_async_lifecycle_change(waiter)
+
+    def _new_async_lifecycle_waiter_locked(self) -> asyncio.Future[None]:
+        waiter = asyncio.get_running_loop().create_future()
+        self._async_lifecycle_waiters.add(waiter)
+        return waiter
+
+    async def _await_async_lifecycle_change(self, waiter: asyncio.Future[None]) -> None:
         try:
-            await asyncio.shield(begin_task)
-        except asyncio.CancelledError:
-            # `to_thread` cannot be cancelled after dispatch. Let it finish and
-            # undo its registration so a cancelled waiter cannot leak an active
-            # count and deadlock the next cleanup.
-            await begin_task
-            self._end_activity()
-            raise
+            await waiter
+        finally:
+            with self._lifecycle:
+                self._async_lifecycle_waiters.discard(waiter)
+
+    @staticmethod
+    def _resolve_async_lifecycle_waiter(waiter: asyncio.Future[None]) -> None:
+        if not waiter.done():
+            waiter.set_result(None)
+
+    def _notify_async_lifecycle_waiters_locked(self) -> None:
+        waiters = tuple(self._async_lifecycle_waiters)
+        self._async_lifecycle_waiters.clear()
+        for waiter in waiters:
+            with suppress(RuntimeError):
+                waiter.get_loop().call_soon_threadsafe(
+                    self._resolve_async_lifecycle_waiter,
+                    waiter,
+                )
 
     def _begin_activity(self) -> None:
         with self._lifecycle:
@@ -222,6 +247,7 @@ class S3Loader(BaseLoader):
             self._active_loads -= 1
             if self._active_loads == 0:
                 self._lifecycle.notify_all()
+                self._notify_async_lifecycle_waiters_locked()
 
     def _begin_cleanup(self) -> None:
         with self._lifecycle:
@@ -235,6 +261,30 @@ class S3Loader(BaseLoader):
         with self._lifecycle:
             self._cleanup_in_progress = False
             self._lifecycle.notify_all()
+            self._notify_async_lifecycle_waiters_locked()
+
+    async def _abegin_cleanup(self) -> None:
+        owns_cleanup = False
+        try:
+            while not owns_cleanup:
+                with self._lifecycle:
+                    if not self._cleanup_in_progress:
+                        self._cleanup_in_progress = True
+                        owns_cleanup = True
+                        break
+                    waiter = self._new_async_lifecycle_waiter_locked()
+                await self._await_async_lifecycle_change(waiter)
+
+            while True:
+                with self._lifecycle:
+                    if self._active_loads == 0:
+                        return
+                    waiter = self._new_async_lifecycle_waiter_locked()
+                await self._await_async_lifecycle_change(waiter)
+        except BaseException:
+            if owns_cleanup:
+                self._end_cleanup()
+            raise
 
     def _check_size(self, value: Any, *, stage: str) -> None:
         if value is None:
@@ -455,7 +505,7 @@ class S3Loader(BaseLoader):
             raise
 
     async def _acleanup_impl(self) -> None:
-        await asyncio.to_thread(self._begin_cleanup)
+        await self._abegin_cleanup()
         try:
             await asyncio.to_thread(self._cleanup_sync_resources)
             async with self._async_client_lock:

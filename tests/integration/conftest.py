@@ -59,6 +59,8 @@ def _endpoint_address(endpoint: str) -> tuple[str, int]:
         raise ValueError(f"endpoint 端口无效：{endpoint!r}") from exc
     if port is None:
         port = 443 if parsed.scheme == "https" else 80
+    if not 1 <= port <= 65535:
+        raise ValueError(f"endpoint 端口必须在 1..65535 范围内：{endpoint!r}")
     return parsed.hostname, port
 
 

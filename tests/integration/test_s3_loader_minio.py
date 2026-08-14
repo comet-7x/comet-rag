@@ -46,6 +46,11 @@ def test_minio_endpoint_address_rejects_malformed_urls(endpoint: str) -> None:
         integration_fixtures._endpoint_address(endpoint)
 
 
+def test_minio_endpoint_address_rejects_port_zero() -> None:
+    with pytest.raises(ValueError, match=r"1\.\.65535"):
+        integration_fixtures._endpoint_address("http://minio.example.test:0")
+
+
 async def test_s3_loader_round_trip_against_minio(minio_endpoint: str) -> None:
     aioboto3 = pytest.importorskip("aioboto3", reason="需要 server extra")
     bucket = f"comet-rag-test-{uuid4().hex[:12]}"
