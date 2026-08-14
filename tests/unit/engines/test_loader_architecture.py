@@ -152,6 +152,12 @@ def test_custom_minio_route_uses_extensible_source_scheme() -> None:
     assert result.source.source_type == "s3"
 
 
+def test_scheme_route_leaves_source_validation_to_concrete_loader() -> None:
+    route = LoaderRoute.schemes("s3", RecordingLoader("s3"), {"s3", "minio"})
+
+    assert route.matcher(SourceContent("s3:///missing-bucket.txt")) is True
+
+
 def test_constructor_rejects_duplicate_route_names() -> None:
     first = RecordingLoader("first")
     second = RecordingLoader("second")

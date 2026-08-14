@@ -48,10 +48,7 @@ class LoaderRoute:
         return cls(
             name=name,
             loader=loader,
-            matcher=lambda source: (
-                source.parsed_url.scheme.lower() in normalized
-                and bool(source.parsed_url.netloc)
-            ),
+            matcher=lambda source: source.parsed_url.scheme.lower() in normalized,
         )
 
 
