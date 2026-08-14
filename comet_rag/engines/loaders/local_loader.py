@@ -48,6 +48,3 @@ class LocalLoader(BaseLoader):
 
     def cleanup(self) -> None:
         pass
-
-    async def acleanup(self) -> None:
-        await asyncio.to_thread(self.cleanup)

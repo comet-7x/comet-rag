@@ -17,6 +17,7 @@ import pytest
 
 from comet_rag.engines.loaders.url_loader import (
     ContentTypeMismatch,
+    DownloadRequestConfig,
     DownloadTooLarge,
     URLLoader,
 )
@@ -223,6 +224,32 @@ def test_batch_load_shares_one_client(tmp_path: Path) -> None:
         assert ld._shared_client() is before
     finally:
         ld.cleanup()
+
+
+def test_batch_load_uses_loader_request_defaults(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = httpx.Client(transport=_transport())
+    ld = URLLoader(
+        download_dir=tmp_path,
+        client=client,
+        timeout=17,
+        follow_redirects=False,
+    )
+    captured: dict[str, DownloadRequestConfig] = {}
+
+    def capture(client, sources, config, max_concurrency, **kwargs):
+        captured["config"] = config
+        return []
+
+    monkeypatch.setattr(ld, "_batch_load_with", capture)
+    try:
+        assert ld.batch_load([]) == []
+        assert captured["config"].timeout == 17
+        assert captured["config"].follow_redirects is False
+    finally:
+        ld.cleanup()
+        client.close()
 
 
 # ── 错误路径 ───────────────────────────────────────────────────────────────

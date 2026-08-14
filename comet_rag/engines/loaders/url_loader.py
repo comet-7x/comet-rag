@@ -11,8 +11,8 @@ import httpx
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from comet_rag.engines.loaders.base_loader import BaseLoader
-from comet_rag.engines.loaders.data_type import AllowExt, ParseConfig
+from comet_rag.engines.loaders.base_loader import DEFAULT_MAX_CONCURRENCY, BaseLoader
+from comet_rag.engines.loaders.data_type import ParseConfig, is_allowed_extension
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent, SourceType
 from comet_rag.engines.utils.file_detector import detect_content_type_from_path
 
@@ -273,7 +273,7 @@ class URLLoader(BaseLoader):
 
     def _finalize_temp(self, path: str, response_url: httpx.URL) -> str:
         source_ext = Path(urlparse(str(response_url)).path).suffix.lstrip(".").lower()
-        source_allowed = source_ext in AllowExt._value2member_map_
+        source_allowed = is_allowed_extension(source_ext)
         try:
             detected = detect_content_type_from_path(path).lower().lstrip(".")
         except Exception as exc:  # 探测器不可用时才允许退回 URL 后缀
@@ -284,7 +284,7 @@ class URLLoader(BaseLoader):
             logger.warning(f"内容探测失败，回退到 URL 后缀 {source_ext!r}: {exc!r}")
             label = source_ext
         else:
-            detected_allowed = detected in AllowExt._value2member_map_
+            detected_allowed = is_allowed_extension(detected)
             if not detected_allowed:
                 if not source_allowed:
                     raise ValueError(
@@ -409,12 +409,15 @@ class URLLoader(BaseLoader):
     def batch_load(
         self,
         sources: list[SourceContent] | list[str],
+        *,
         download_config: DownloadRequestConfig | None = None,
-        max_concurrency: int = 10,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
         **kwargs,
     ) -> list[LoaderContent]:
         self._validate_max_concurrency(max_concurrency)
-        config = download_config or DownloadRequestConfig()
+        config = download_config or DownloadRequestConfig(
+            timeout=self._timeout, follow_redirects=self._follow_redirects
+        )
         # 持锁跑完整批：期间 `cleanup()` 会等，而不是把连接池抽掉。
         # 用锁而不是引用计数，是因为这里要的语义就是"用完再关"，
         # 而 `batch_load` 本身是阻塞的，锁的持有区间是明确有界的。
@@ -446,12 +449,15 @@ class URLLoader(BaseLoader):
     async def abatch_load(
         self,
         sources: list[SourceContent] | list[str],
+        *,
         download_config: DownloadRequestConfig | None = None,
-        max_concurrency: int = 10,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
         **kwargs,
     ) -> list[LoaderContent]:
         self._validate_max_concurrency(max_concurrency)
-        config = download_config or DownloadRequestConfig()
+        config = download_config or DownloadRequestConfig(
+            timeout=self._timeout, follow_redirects=self._follow_redirects
+        )
         semaphore = asyncio.Semaphore(max_concurrency)
         client = self._shared_async_client()
 
@@ -479,14 +485,13 @@ class URLLoader(BaseLoader):
                 self._client = None
 
     async def acleanup(self) -> None:
-        await self.aclose()
-
-    async def aclose(self) -> None:
         """异步收尾：临时文件 + 两个自建 client 都关掉。"""
         await asyncio.to_thread(self.cleanup)
         if self._owns_async_client and self._async_client is not None:
             await self._async_client.aclose()
             self._async_client = None
 
-    async def __aexit__(self, *_):
-        await self.aclose()
+    async def aclose(self) -> None:
+        """Backward-compatible alias for ``acleanup``."""
+
+        await self.acleanup()
