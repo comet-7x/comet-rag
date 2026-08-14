@@ -1,4 +1,5 @@
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cached_property
@@ -69,7 +70,20 @@ class LoaderContent:
     source: SourceContent
     is_temp: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    _release: Callable[[], None] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def cleanup(self) -> None:
-        if self.is_temp:
-            self.path.unlink(missing_ok=True)
+        release, self._release = self._release, None
+        try:
+            if self.is_temp:
+                self.path.unlink(missing_ok=True)
+        finally:
+            # Owners may track temporary resources for shutdown cleanup. Notify
+            # them exactly once when the consumer releases the content so their
+            # bookkeeping does not grow for the lifetime of the process.
+            if release is not None:
+                release()

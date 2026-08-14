@@ -173,10 +173,15 @@ def test_sync_load_downloads_metadata_and_cleans_temp_file(tmp_path: Path) -> No
     }
     assert client.body is not None and client.body.closed
 
-    loader.cleanup()
+    content.cleanup()
 
     assert not content.path.exists()
+    assert loader.temp_files == []
     assert not client.closed, "injected clients remain caller-owned"
+
+    # Both consumer release and loader shutdown remain idempotent.
+    content.cleanup()
+    loader.cleanup()
 
 
 async def test_async_load_reuses_client_and_cleans_temp_files(tmp_path: Path) -> None:
@@ -241,6 +246,24 @@ def test_content_mismatch_is_rejected_and_temp_removed(
     loader = S3Loader(download_dir=tmp_path, client=SyncClient())
 
     with pytest.raises(ObjectContentTypeMismatch, match="txt.*html"):
+        loader.load(URI)
+
+    assert loader.temp_files == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_unsupported_detected_type_is_rejected_even_with_allowed_suffix(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "comet_rag.infrastructure.loaders.s3_loader.detect_content_type_from_path",
+        lambda path: "executable",
+    )
+    loader = S3Loader(download_dir=tmp_path, client=SyncClient())
+
+    with pytest.raises(
+        ValueError, match="Unsupported object content type 'executable'"
+    ):
         loader.load(URI)
 
     assert loader.temp_files == []

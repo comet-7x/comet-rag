@@ -7,8 +7,43 @@ from uuid import uuid4
 import pytest
 
 from comet_rag.infrastructure.loaders import S3Loader
+from tests.integration import conftest as integration_fixtures
 
 pytestmark = pytest.mark.integration
+
+
+def test_minio_fixture_probes_configured_endpoint(monkeypatch) -> None:
+    endpoint = "https://minio.example.test:9443"
+    calls: list[tuple[str, int, str]] = []
+    monkeypatch.setattr(integration_fixtures, "MINIO_ENDPOINT", endpoint)
+    monkeypatch.setattr(
+        integration_fixtures,
+        "_require",
+        lambda host, port, name: calls.append((host, port, name)),
+    )
+
+    integration_fixtures._require_endpoint(endpoint, "MinIO")
+
+    assert calls == [("minio.example.test", 9443, "MinIO")]
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected"),
+    [
+        ("http://minio.example.test", ("minio.example.test", 80)),
+        ("https://[2001:db8::1]", ("2001:db8::1", 443)),
+    ],
+)
+def test_minio_endpoint_address_uses_scheme_default_port(
+    endpoint: str, expected: tuple[str, int]
+) -> None:
+    assert integration_fixtures._endpoint_address(endpoint) == expected
+
+
+@pytest.mark.parametrize("endpoint", ["localhost:9010", "ftp://minio.example.test"])
+def test_minio_endpoint_address_rejects_malformed_urls(endpoint: str) -> None:
+    with pytest.raises(ValueError, match="http/https"):
+        integration_fixtures._endpoint_address(endpoint)
 
 
 async def test_s3_loader_round_trip_against_minio(minio_endpoint: str) -> None:

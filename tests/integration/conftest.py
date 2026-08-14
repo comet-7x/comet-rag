@@ -13,6 +13,7 @@ import os
 import socket
 from collections.abc import AsyncIterator
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 from sqlalchemy import text
@@ -44,6 +45,28 @@ def _require(host: str, port: int, name: str) -> None:
         pytest.skip(f"{name} 未运行（{host}:{port}）。先跑 `docker compose up -d`")
 
 
+def _endpoint_address(endpoint: str) -> tuple[str, int]:
+    """Return the socket address represented by an HTTP(S) service endpoint."""
+
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"endpoint 必须是包含主机名的 http/https URL：{endpoint!r}")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("endpoint 不得包含凭据")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"endpoint 端口无效：{endpoint!r}") from exc
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    return parsed.hostname, port
+
+
+def _require_endpoint(endpoint: str, name: str) -> None:
+    host, port = _endpoint_address(endpoint)
+    _require(host, port, name)
+
+
 @pytest.fixture(scope="session")
 def postgres_dsn() -> str:
     _require("localhost", 5432, "PostgreSQL")
@@ -64,7 +87,10 @@ def milvus_uri() -> str:
 
 @pytest.fixture(scope="session")
 def minio_endpoint() -> str:
-    _require("localhost", 9010, "MinIO")
+    try:
+        _require_endpoint(MINIO_ENDPOINT, "MinIO")
+    except ValueError as exc:
+        pytest.fail(f"COMET_TEST_MINIO_ENDPOINT 配置无效：{exc}", pytrace=False)
     return MINIO_ENDPOINT
 
 

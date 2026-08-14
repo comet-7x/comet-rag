@@ -120,6 +120,7 @@ class S3Loader(BaseLoader):
         self._async_client_context: Any = None
         self._sync_client_lock = threading.Lock()
         self._async_client_lock = asyncio.Lock()
+        self._temp_files_lock = threading.Lock()
         self._temp_files: list[str] = []
 
         # A single counter spans sync and async work. This matters because a service
@@ -130,7 +131,8 @@ class S3Loader(BaseLoader):
 
     @property
     def temp_files(self) -> list[str]:
-        return self._temp_files.copy()
+        with self._temp_files_lock:
+            return self._temp_files.copy()
 
     def _client_kwargs(self) -> dict[str, Any]:
         from botocore.config import Config  # noqa: PLC0415
@@ -253,13 +255,17 @@ class S3Loader(BaseLoader):
         tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
             delete=False, dir=self._download_dir
         )
-        self._temp_files.append(tmp.name)
+        with self._temp_files_lock:
+            self._temp_files.append(tmp.name)
         return tmp
+
+    def _release_temp(self, path: str) -> None:
+        with self._temp_files_lock, suppress(ValueError):
+            self._temp_files.remove(path)
 
     def _discard_temp(self, path: str) -> None:
         Path(path).unlink(missing_ok=True)
-        with suppress(ValueError):
-            self._temp_files.remove(path)
+        self._release_temp(path)
 
     def _finalize_temp(self, path: str, key: str) -> str:
         source_ext = PurePosixPath(key).suffix.lstrip(".").lower()
@@ -276,13 +282,7 @@ class S3Loader(BaseLoader):
         else:
             detected_allowed = is_allowed_extension(detected)
             if not detected_allowed:
-                if not source_allowed:
-                    raise ValueError(f"Unsupported object content type {detected!r}")
-                logger.warning(
-                    f"对象内容探测结果 {detected!r} 不受支持，回退到 key 后缀 "
-                    f"{source_ext!r}"
-                )
-                label = source_ext
+                raise ValueError(f"Unsupported object content type {detected!r}")
             elif source_allowed and source_ext != detected:
                 if detected == "txt" and source_ext in _GENERIC_TEXT_EXTENSIONS:
                     label = source_ext
@@ -295,7 +295,8 @@ class S3Loader(BaseLoader):
                 label = detected
         target = str(Path(path).with_suffix(f".{label}"))
         Path(path).replace(target)
-        self._temp_files[self._temp_files.index(path)] = target
+        with self._temp_files_lock:
+            self._temp_files[self._temp_files.index(path)] = target
         return target
 
     def _stream_object(self, response: dict[str, Any], key: str) -> str:
@@ -386,6 +387,7 @@ class S3Loader(BaseLoader):
             source=source,
             is_temp=True,
             metadata=metadata,
+            _release=lambda: self._release_temp(path),
         )
 
     def load(self, source: SourceContent | str) -> LoaderContent:
@@ -423,9 +425,11 @@ class S3Loader(BaseLoader):
                 raise
 
     def _cleanup_sync_resources(self) -> None:
-        for path in self._temp_files:
+        with self._temp_files_lock:
+            paths = self._temp_files.copy()
+            self._temp_files.clear()
+        for path in paths:
             Path(path).unlink(missing_ok=True)
-        self._temp_files.clear()
         with self._sync_client_lock:
             if self._owns_client and self._client is not None:
                 self._client.close()
