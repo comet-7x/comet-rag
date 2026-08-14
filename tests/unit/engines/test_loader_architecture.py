@@ -31,7 +31,9 @@ class RecordingLoader(BaseLoader):
         self.async_cleanup_calls = 0
 
     def _result(self, source: SourceContent | str) -> LoaderContent:
-        normalized = source if isinstance(source, SourceContent) else SourceContent(source)
+        normalized = (
+            source if isinstance(source, SourceContent) else SourceContent(source)
+        )
         return LoaderContent(
             path=Path(normalized.parsed_url.path.lstrip("/") or "object"),
             source=normalized,
@@ -79,7 +81,9 @@ class LegacyCloseLoader(BaseLoader):
         self.async_close_calls = 0
 
     def load(self, source: SourceContent | str) -> LoaderContent:
-        normalized = source if isinstance(source, SourceContent) else SourceContent(source)
+        normalized = (
+            source if isinstance(source, SourceContent) else SourceContent(source)
+        )
         return LoaderContent(path=Path("legacy"), source=normalized)
 
     async def aload(self, source: SourceContent | str) -> LoaderContent:
@@ -93,11 +97,7 @@ class LegacyCloseLoader(BaseLoader):
 
 
 def _scheme_route(scheme: str, loader: BaseLoader) -> LoaderRoute:
-    return LoaderRoute(
-        name=scheme,
-        matcher=lambda source: source.parsed_url.scheme == scheme,
-        loader=loader,
-    )
+    return LoaderRoute.schemes(scheme, loader, {scheme})
 
 
 def test_batch_concurrency_is_an_explicit_public_parameter() -> None:
@@ -138,19 +138,15 @@ async def test_local_loader_rejects_unsupported_options(tmp_path: Path) -> None:
         await loader.aload(source, unsupported=True)  # type: ignore[call-arg]
 
 
-def test_custom_minio_route_does_not_require_a_new_source_type() -> None:
+def test_custom_minio_route_uses_extensible_source_scheme() -> None:
     minio = RecordingLoader("minio")
-    loader = AutoLoader(routes=[])
-    loader.register_loader(
-        "minio",
-        minio,
-        lambda source: source.parsed_url.scheme in {"s3", "minio"},
-    )
+    loader = AutoLoader([LoaderRoute.schemes("minio", minio, {"s3", "minio"})])
 
     result = loader.load("s3://documents/report.pdf")
 
     assert result.metadata["loader"] == "minio"
     assert result.source.source == "s3://documents/report.pdf"
+    assert result.source.source_type == "s3"
 
 
 def test_constructor_rejects_duplicate_route_names() -> None:
@@ -177,9 +173,7 @@ async def test_auto_loader_rejects_loader_specific_options_at_router_boundary() 
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         untyped_loader.load("alpha://bucket/1", download_config=object())
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        await untyped_loader.aload(
-            "alpha://bucket/1", download_config=object()
-        )
+        await untyped_loader.aload("alpha://bucket/1", download_config=object())
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         untyped_loader.batch_load(
             ["alpha://bucket/1", "beta://bucket/2"],
@@ -218,7 +212,9 @@ def test_auto_loader_groups_mixed_batch_and_restores_input_order() -> None:
     assert beta.batch_limits == [4]
 
 
-async def test_auto_loader_uses_specialized_async_batch_and_cleans_shared_once() -> None:
+async def test_auto_loader_uses_specialized_async_batch_and_cleans_shared_once() -> (
+    None
+):
     shared = RecordingLoader("shared")
     loader = AutoLoader(
         routes=[_scheme_route("first", shared), _scheme_route("second", shared)]

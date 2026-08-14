@@ -20,9 +20,9 @@ from comet_rag.engines.converters.archive_guard import (
 )
 from comet_rag.engines.converters.text_converter import DocxConverter
 from comet_rag.engines.converters.types import DocxDocument
-from comet_rag.engines.loaders.auto_loader import AutoLoader
+from comet_rag.engines.loaders.auto_loader import AutoLoader, LoaderRoute
 from comet_rag.engines.loaders.base_loader import BaseLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent, SourceType
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.loaders.url_loader import URLLoader
 from comet_rag.engines.parsers.base_parser import BaseParser
 from comet_rag.engines.parsers.docx_parser.docx_parser import DocxParser
@@ -53,7 +53,7 @@ def test_directory_is_not_treated_as_local_file(tmp_path: Path) -> None:
     source = SourceContent(tmp_path)
 
     assert source.is_local is False
-    assert source.pre_source_type is SourceType.UNKNOWN
+    assert source.source_type == "unknown"
 
 
 class _RecordingLoader(BaseLoader):
@@ -81,7 +81,7 @@ async def test_auto_loader_resolves_local_source_off_event_loop(
         return func(*args)
 
     monkeypatch.setattr(asyncio, "to_thread", recording_to_thread)
-    loader = AutoLoader(loaders={SourceType.LOCAL: _RecordingLoader()})
+    loader = AutoLoader([LoaderRoute.local(_RecordingLoader())])
 
     result = await loader.aload(SourceContent(path))
 

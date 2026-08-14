@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -8,7 +10,7 @@ from comet_rag.engines.loaders.base_loader import (
     DEFAULT_MAX_CONCURRENCY,
     BaseLoader,
 )
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent, SourceType
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 
 LoaderMatcher = Callable[[SourceContent], bool]
 
@@ -17,57 +19,69 @@ LoaderMatcher = Callable[[SourceContent], bool]
 class LoaderRoute:
     """A named routing rule used by :class:`AutoLoader`.
 
-    Matchers make the router extensible without adding every storage scheme to the
-    closed ``SourceType`` enum. For example, an infrastructure-layer MinIO loader
-    can register a matcher for ``s3://`` sources without engines importing its SDK.
+    Matchers keep routing open to infrastructure adapters without teaching engines
+    about their SDKs or extending a closed source-type enum.
     """
 
     name: str
-    matcher: LoaderMatcher
     loader: BaseLoader
+    matcher: LoaderMatcher
 
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise ValueError("LoaderRoute.name must not be empty")
 
+    @classmethod
+    def local(cls, loader: BaseLoader, *, name: str = "local") -> LoaderRoute:
+        return cls(name=name, loader=loader, matcher=lambda source: source.is_local)
+
+    @classmethod
+    def schemes(
+        cls,
+        name: str,
+        loader: BaseLoader,
+        schemes: Iterable[str],
+    ) -> LoaderRoute:
+        normalized = frozenset(scheme.strip().lower() for scheme in schemes)
+        if not normalized or "" in normalized:
+            raise ValueError("LoaderRoute.schemes requires non-empty schemes")
+        return cls(
+            name=name,
+            loader=loader,
+            matcher=lambda source: (
+                source.parsed_url.scheme.lower() in normalized
+                and bool(source.parsed_url.netloc)
+            ),
+        )
+
 
 class AutoLoader(BaseLoader):
-    """Route sources to loaders while preserving each loader's batch semantics.
-
-    ``loaders`` keeps the original ``SourceType`` mapping API. ``routes`` is the
-    extensible form for custom schemes such as S3/MinIO. They are mutually exclusive
-    so route precedence remains explicit.
-    """
+    """Route sources through one explicit ``LoaderRoute`` collection."""
 
     def __init__(
         self,
-        loaders: Mapping[SourceType, BaseLoader] | None = None,
+        routes: Sequence[LoaderRoute],
+    ) -> None:
+        self._routes = list(routes)
+        self._validate_route_names(self._routes)
+
+    @staticmethod
+    def default_routes(
         download_dir: str | Path | None = None,
         max_download_bytes: int | None = None,
         redirect_validator: Callable[[str], None] | None = None,
-        *,
-        routes: Sequence[LoaderRoute] | None = None,
-    ) -> None:
-        if loaders is not None and routes is not None:
-            raise ValueError("loaders and routes cannot be provided together")
+    ) -> list[LoaderRoute]:
+        from comet_rag.engines.loaders.local_loader import LocalLoader  # noqa: PLC0415
+        from comet_rag.engines.loaders.url_loader import (  # noqa: PLC0415
+            DEFAULT_MAX_DOWNLOAD_BYTES,
+            URLLoader,
+        )
 
-        if routes is not None:
-            self._routes = list(routes)
-        elif loaders is not None:
-            self._routes = [
-                self._route_for_source_type(source_type, loader)
-                for source_type, loader in loaders.items()
-            ]
-        else:
-            from comet_rag.engines.loaders.local_loader import LocalLoader
-            from comet_rag.engines.loaders.url_loader import (
-                DEFAULT_MAX_DOWNLOAD_BYTES,
-                URLLoader,
-            )
-
-            defaults: dict[SourceType, BaseLoader] = {
-                SourceType.LOCAL: LocalLoader(),
-                SourceType.URL: URLLoader(
+        return [
+            LoaderRoute.local(LocalLoader()),
+            LoaderRoute.schemes(
+                "url",
+                URLLoader(
                     download_dir=download_dir,
                     max_download_bytes=(
                         max_download_bytes
@@ -76,52 +90,30 @@ class AutoLoader(BaseLoader):
                     ),
                     redirect_validator=redirect_validator,
                 ),
-            }
-            self._routes = [
-                self._route_for_source_type(source_type, loader)
-                for source_type, loader in defaults.items()
-            ]
-        self._validate_route_names(self._routes)
+                {"http", "https"},
+            ),
+        ]
+
+    @classmethod
+    def default(
+        cls,
+        download_dir: str | Path | None = None,
+        max_download_bytes: int | None = None,
+        redirect_validator: Callable[[str], None] | None = None,
+    ) -> AutoLoader:
+        return cls(
+            cls.default_routes(
+                download_dir=download_dir,
+                max_download_bytes=max_download_bytes,
+                redirect_validator=redirect_validator,
+            )
+        )
 
     @staticmethod
     def _validate_route_names(routes: Sequence[LoaderRoute]) -> None:
         names = [route.name for route in routes]
         if len(names) != len(set(names)):
             raise ValueError("Loader route names must be unique")
-
-    @staticmethod
-    def _route_for_source_type(
-        source_type: SourceType, loader: BaseLoader
-    ) -> LoaderRoute:
-        return LoaderRoute(
-            name=source_type.value,
-            matcher=lambda source, expected=source_type: (
-                source.pre_source_type is expected
-            ),
-            loader=loader,
-        )
-
-    def register_loader(
-        self,
-        name: str,
-        loader: BaseLoader,
-        matcher: LoaderMatcher,
-        *,
-        prepend: bool = False,
-    ) -> None:
-        """Register a custom route.
-
-        Set ``prepend=True`` when the custom matcher should override a built-in
-        route. Route names are unique to keep diagnostics and precedence clear.
-        """
-
-        if any(route.name == name for route in self._routes):
-            raise ValueError(f"Loader route {name!r} is already registered")
-        route = LoaderRoute(name=name, matcher=matcher, loader=loader)
-        if prepend:
-            self._routes.insert(0, route)
-        else:
-            self._routes.append(route)
 
     def _resolve_route(self, source: SourceContent) -> LoaderRoute:
         for route in self._routes:
@@ -163,7 +155,9 @@ class AutoLoader(BaseLoader):
     @staticmethod
     def _restore_order(
         size: int,
-        grouped_results: list[tuple[list[tuple[int, SourceContent]], list[LoaderContent]]],
+        grouped_results: list[
+            tuple[list[tuple[int, SourceContent]], list[LoaderContent]]
+        ],
     ) -> list[LoaderContent]:
         ordered: list[LoaderContent | None] = [None] * size
         for indexed_sources, results in grouped_results:
@@ -191,9 +185,7 @@ class AutoLoader(BaseLoader):
         grouped_results = []
         for loader, indexed_sources in self._group_sources(sources):
             group_sources = [source for _, source in indexed_sources]
-            results = loader.batch_load(
-                group_sources, max_concurrency=max_concurrency
-            )
+            results = loader.batch_load(group_sources, max_concurrency=max_concurrency)
             grouped_results.append((indexed_sources, results))
         return self._restore_order(len(sources), grouped_results)
 

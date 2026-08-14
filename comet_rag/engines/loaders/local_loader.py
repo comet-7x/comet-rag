@@ -4,7 +4,7 @@ from typing import Any
 
 from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.data_type import ParseConfig
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent, SourceType
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 
 
 class LocalLoader(BaseLoader):
@@ -17,7 +17,7 @@ class LocalLoader(BaseLoader):
                 f"File is empty and cannot be loaded. Path: {path.resolve()}, type: {file_type}"
             )
         metadata = {
-            "source_type": source.pre_source_type,
+            "source_type": source.source_type,
             "file_name": path.name,
             "file_type": file_type,
             "file_size": file_size,
@@ -32,7 +32,7 @@ class LocalLoader(BaseLoader):
     def load(self, source: SourceContent | str) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
-        if source.pre_source_type != SourceType.LOCAL:
+        if not source.is_local:
             raise ValueError(
                 f"LocalLoader only handles local paths, got: {source.source!r}"
             )

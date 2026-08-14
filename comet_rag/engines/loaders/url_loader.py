@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from comet_rag.engines.loaders.base_loader import DEFAULT_MAX_CONCURRENCY, BaseLoader
 from comet_rag.engines.loaders.data_type import ParseConfig, is_allowed_extension
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent, SourceType
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.utils.file_detector import detect_content_type_from_path
 
 DEFAULT_MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
@@ -187,7 +187,7 @@ class URLLoader(BaseLoader):
                 f"File is empty and cannot be loaded. Path: {path.resolve()}, type: {file_type}"
             )
         metadata = {
-            "source_type": source.pre_source_type,
+            "source_type": source.source_type,
             "file_name": path.name,
             "file_type": file_type,
             "file_size": file_size,
@@ -442,7 +442,7 @@ class URLLoader(BaseLoader):
     ) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
-        if source.pre_source_type != SourceType.URL:
+        if not source.is_url:
             raise ValueError(f"URLLoader only handles URLs, got: {source.source!r}")
         config = download_config or DownloadRequestConfig(
             timeout=self._timeout, follow_redirects=self._follow_redirects
@@ -476,7 +476,7 @@ class URLLoader(BaseLoader):
     ) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
-        if source.pre_source_type != SourceType.URL:
+        if not source.is_url:
             raise ValueError(f"URLLoader only handles URLs, got: {source.source!r}")
         config = download_config or DownloadRequestConfig(
             timeout=self._timeout, follow_redirects=self._follow_redirects

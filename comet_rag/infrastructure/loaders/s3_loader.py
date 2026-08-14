@@ -420,7 +420,7 @@ class S3Loader(BaseLoader):
         file_path = Path(path)
         file_type = file_path.suffix.lstrip(".").lower()
         metadata: dict[str, Any] = {
-            "source_type": location.scheme,
+            "source_type": source.source_type,
             "bucket": location.bucket,
             "object_key": location.key,
             "file_name": PurePosixPath(location.key).name,
