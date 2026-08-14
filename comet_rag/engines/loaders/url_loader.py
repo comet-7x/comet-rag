@@ -98,6 +98,7 @@ class URLLoader(BaseLoader):
         #: 另一处调 `cleanup()` 就可能把它脚下的连接池抽掉，
         #: 在途请求会撞上"client has been closed"。
         self._client_lock = threading.Lock()
+        self._async_client_lock = asyncio.Lock()
 
     @property
     def temp_files(self) -> list[str]:
@@ -454,7 +455,6 @@ class URLLoader(BaseLoader):
             timeout=self._timeout, follow_redirects=self._follow_redirects
         )
         semaphore = asyncio.Semaphore(max_concurrency)
-        client = self._shared_async_client()
 
         async def _load(source: SourceContent | str) -> LoaderContent:
             async with semaphore:
@@ -462,7 +462,10 @@ class URLLoader(BaseLoader):
                     source, download_config=config, client=client
                 )
 
-        return await asyncio.gather(*[_load(s) for s in sources])
+        # 与 acleanup() 互斥：批处理完成前不能关闭共享 client 或删除临时文件。
+        async with self._async_client_lock:
+            client = self._shared_async_client()
+            return await asyncio.gather(*[_load(s) for s in sources])
 
     def cleanup(self) -> None:
         """删除临时文件并关闭**自建**的同步 client。
@@ -481,10 +484,11 @@ class URLLoader(BaseLoader):
 
     async def acleanup(self) -> None:
         """异步收尾：临时文件 + 两个自建 client 都关掉。"""
-        await asyncio.to_thread(self.cleanup)
-        if self._owns_async_client and self._async_client is not None:
-            await self._async_client.aclose()
-            self._async_client = None
+        async with self._async_client_lock:
+            await asyncio.to_thread(self.cleanup)
+            if self._owns_async_client and self._async_client is not None:
+                await self._async_client.aclose()
+                self._async_client = None
 
     async def aclose(self) -> None:
         """Backward-compatible alias for ``acleanup``."""

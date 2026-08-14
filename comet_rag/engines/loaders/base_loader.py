@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 
@@ -30,10 +31,18 @@ class BaseLoader(ABC):
     async def acleanup(self) -> None:
         """Release resources without blocking the event loop.
 
-        The default delegates synchronous cleanup to a worker thread. Loaders that
-        own native asynchronous resources should override this method.
+        Legacy custom loaders may still expose ``aclose()`` from the previous
+        duck-typed contract; honor it during the migration. Otherwise delegate
+        synchronous cleanup to a worker thread. Loaders that own native asynchronous
+        resources should override this method.
         """
 
+        legacy_closer = getattr(self, "aclose", None)
+        if callable(legacy_closer):
+            result = legacy_closer()
+            if inspect.isawaitable(result):
+                await result
+            return
         await asyncio.to_thread(self.cleanup)
 
     @staticmethod

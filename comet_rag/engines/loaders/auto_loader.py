@@ -81,6 +81,13 @@ class AutoLoader(BaseLoader):
                 self._route_for_source_type(source_type, loader)
                 for source_type, loader in defaults.items()
             ]
+        self._validate_route_names(self._routes)
+
+    @staticmethod
+    def _validate_route_names(routes: Sequence[LoaderRoute]) -> None:
+        names = [route.name for route in routes]
+        if len(names) != len(set(names)):
+            raise ValueError("Loader route names must be unique")
 
     @staticmethod
     def _route_for_source_type(
@@ -131,20 +138,16 @@ class AutoLoader(BaseLoader):
     def _normalize_source(source: SourceContent | str) -> SourceContent:
         return source if isinstance(source, SourceContent) else SourceContent(source)
 
-    def load(
-        self, source: SourceContent | str, *args, **kwargs
-    ) -> LoaderContent:
+    def load(self, source: SourceContent | str) -> LoaderContent:
         normalized = self._normalize_source(source)
-        return self._resolve(normalized).load(normalized, *args, **kwargs)
+        return self._resolve(normalized).load(normalized)
 
-    async def aload(
-        self, source: SourceContent | str, *args, **kwargs
-    ) -> LoaderContent:
+    async def aload(self, source: SourceContent | str) -> LoaderContent:
         normalized = self._normalize_source(source)
         # Route matching may inspect the local filesystem. Keep that blocking stat
         # off the event loop for local paths and custom network filesystems.
         loader = await asyncio.to_thread(self._resolve, normalized)
-        return await loader.aload(normalized, *args, **kwargs)
+        return await loader.aload(normalized)
 
     def _group_sources(
         self, sources: list[SourceContent] | list[str]
@@ -177,7 +180,6 @@ class AutoLoader(BaseLoader):
         sources: list[SourceContent] | list[str],
         *,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
-        **kwargs,
     ) -> list[LoaderContent]:
         """Route a batch by loader and preserve input order.
 
@@ -190,7 +192,7 @@ class AutoLoader(BaseLoader):
         for loader, indexed_sources in self._group_sources(sources):
             group_sources = [source for _, source in indexed_sources]
             results = loader.batch_load(
-                group_sources, max_concurrency=max_concurrency, **kwargs
+                group_sources, max_concurrency=max_concurrency
             )
             grouped_results.append((indexed_sources, results))
         return self._restore_order(len(sources), grouped_results)
@@ -200,7 +202,6 @@ class AutoLoader(BaseLoader):
         sources: list[SourceContent] | list[str],
         *,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
-        **kwargs,
     ) -> list[LoaderContent]:
         self._validate_max_concurrency(max_concurrency)
         groups = await asyncio.to_thread(self._group_sources, sources)
@@ -208,7 +209,7 @@ class AutoLoader(BaseLoader):
         for loader, indexed_sources in groups:
             group_sources = [source for _, source in indexed_sources]
             results = await loader.abatch_load(
-                group_sources, max_concurrency=max_concurrency, **kwargs
+                group_sources, max_concurrency=max_concurrency
             )
             grouped_results.append((indexed_sources, results))
         return self._restore_order(len(sources), grouped_results)

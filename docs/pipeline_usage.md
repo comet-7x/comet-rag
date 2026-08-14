@@ -287,6 +287,10 @@ with AutoLoader() as loader:
 对批量输入分组，因此 `URLLoader` 可以复用连接池，本地或自定义 loader 也能
 保留自己的并发策略。
 
+`AutoLoader` 只暴露所有 Loader 共有的 `source` 和 `max_concurrency` 参数。
+需要 `download_config`、自定义 HTTP client 等 URL 专用选项时，应直接使用
+`URLLoader`，避免把某个 Loader 的参数误传给混合批次中的其他 Loader。
+
 MinIO/S3 等可选对象存储不需要修改 `SourceType` 或让 engines 依赖 SDK；在
 基础设施层实现 `BaseLoader` 后注册一条路由即可：
 
@@ -294,14 +298,15 @@ MinIO/S3 等可选对象存储不需要修改 `SourceType` 或让 engines 依赖
 from comet_rag.engines.loaders import AutoLoader
 from your_project.loaders import MinioLoader
 
-loader = AutoLoader()
-loader.register_loader(
-    "minio",
-    MinioLoader(...),
-    lambda source: source.parsed_url.scheme in {"s3", "minio"},
-    prepend=True,
-)
-result = await loader.aload("s3://documents/report.pdf")
+async def load_from_object_storage():
+    async with AutoLoader() as loader:
+        loader.register_loader(
+            "minio",
+            MinioLoader(...),
+            lambda source: source.parsed_url.scheme in {"s3", "minio"},
+            prepend=True,
+        )
+        return await loader.aload("s3://documents/report.pdf")
 ```
 
 ### Converter + Parser + Cleaner

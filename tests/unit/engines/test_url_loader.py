@@ -9,12 +9,14 @@ TLS 握手。批量入库大量 URL 时这是纯浪费，而且完全不体现�
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
 import pytest
 
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.loaders.url_loader import (
     ContentTypeMismatch,
     DownloadRequestConfig,
@@ -228,6 +230,44 @@ async def test_abatch_load_shares_one_client(tmp_path: Path) -> None:
         assert ld._shared_async_client() is before
     finally:
         await ld.aclose()
+
+
+async def test_acleanup_waits_for_active_async_batch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    ld = URLLoader(download_dir=tmp_path)
+
+    async def delayed_aload(
+        source: SourceContent | str,
+        *,
+        download_config: DownloadRequestConfig | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> LoaderContent:
+        assert client is not None
+        started.set()
+        await release.wait()
+        normalized = source if isinstance(source, SourceContent) else SourceContent(source)
+        return LoaderContent(path=tmp_path / "download.txt", source=normalized)
+
+    monkeypatch.setattr(ld, "aload", delayed_aload)
+    batch_task = asyncio.create_task(ld.abatch_load([URL]))
+    await started.wait()
+    client = ld._async_client
+    assert client is not None
+
+    cleanup_task = asyncio.create_task(ld.acleanup())
+    await asyncio.sleep(0)
+    assert not cleanup_task.done()
+    assert not client.is_closed
+
+    release.set()
+    await batch_task
+    await cleanup_task
+
+    assert client.is_closed
+    assert ld._async_client is None
 
 
 def test_batch_load_shares_one_client(tmp_path: Path) -> None:
