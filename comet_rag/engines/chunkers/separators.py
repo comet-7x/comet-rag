@@ -279,8 +279,8 @@ SEPARATORS_MDX = [
     "\n## ",    # H2 heading — major section
     "\n### ",   # H3 heading — subsection
     "\n#### ",  # H4 heading — sub-subsection
-    "\n\n",     # Blank line — paragraph boundary
     "\n```",    # Fenced code block boundary
+    "\n\n",     # Blank line — paragraph boundary
     "\n",       # Line break
     ". ",       # Sentence ending
     "! ",       # Exclamatory sentence ending

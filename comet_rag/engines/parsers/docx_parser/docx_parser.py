@@ -22,8 +22,10 @@ OMML → LaTeX conversion is handled by the built-in ``_omml`` module
 (no external dependencies beyond lxml and loguru).
 """
 
+import asyncio
 import base64
 import re
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -38,6 +40,7 @@ from loguru import logger
 from lxml import etree  # pyright: ignore[reportAttributeAccessIssue]
 
 from comet_rag.engines.converters.types import DocxDocument
+from comet_rag.engines.parsers.base_parser import BaseParser
 from comet_rag.engines.parsers.docx_parser.omml import oMath2Latex as _oMath2Latex
 from comet_rag.engines.parsers.types import Block, DocxParsedContent
 
@@ -227,7 +230,7 @@ def _get_run_fmt(run: Run) -> _Fmt:
     )
 
 
-class DocxParser:
+class DocxParser(BaseParser[DocxDocument, DocxParsedContent]):
     """Parse a DocxDocument into a list of semantically typed blocks."""
 
     def __init__(
@@ -236,6 +239,9 @@ class DocxParser:
         heading_numbers: bool = False,
         max_table_cells: int = _MAX_TABLE_CELLS,
     ) -> None:
+        # 解析状态目前保存在实例上；同步 parse 与 aparse(to_thread) 必须共用
+        # 这一把锁，否则同一实例的两个文档会互相重置 `_blocks` / 编号状态。
+        self._parse_lock = threading.Lock()
         self._max_table_cells = max_table_cells
         self._doc: DocumentObject | None = None
         self._doc_part: Any = None
@@ -246,24 +252,22 @@ class DocxParser:
         self._list_stack: list[Block] = []
         # Heading auto-number extraction
         self._heading_numbers = heading_numbers
-        self._h_counters: list[int] = [0] * 9
-        self._h_numId: int | None = None
-        self._h_fmts: list[str] = []
-        self._h_starts: list[int] = []
+        self._h_states: dict[int, tuple[list[str], list[int], list[int]]] = {}
         self._styles_root: Any = None
         self._footnotes: dict[int, str] | None = None
 
     def parse(self, document: DocxDocument) -> DocxParsedContent:
+        with self._parse_lock:
+            return self._parse_unlocked(document)
+
+    def _parse_unlocked(self, document: DocxDocument) -> DocxParsedContent:
         self._doc = document.elements
         self._doc_part = self._doc.part
         self._blocks = []
         self._pre_num_id = -1
         self._pre_ilevel = -1
         self._list_stack = []
-        self._h_counters = [0] * 9
-        self._h_numId = None
-        self._h_fmts = []
-        self._h_starts = []
+        self._h_states = {}
         self._styles_root = None
         self._footnotes = None
 
@@ -273,6 +277,10 @@ class DocxParser:
         self._add_headers_footers()
 
         return DocxParsedContent(blocks=self._blocks, metadata=document.metadata)
+
+    async def aparse(self, document: DocxDocument) -> DocxParsedContent:
+        """在线程中执行 python-docx/lxml 的同步解析，避免阻塞事件循环。"""
+        return await asyncio.to_thread(self.parse, document)
 
     def _walk(self, container: Any) -> None:
         for _, child in enumerate(container):
@@ -1157,25 +1165,29 @@ class DocxParser:
 
     def _compute_heading_number(self, num_id: int, h_level: int) -> str:
         """Return the auto-number string (e.g. '1.2.3') for a numbered heading."""
-        if self._h_numId is None:
-            self._h_fmts, self._h_starts = self._load_heading_formats(num_id)
-            self._h_numId = num_id
-            for i, s in enumerate(self._h_starts[:9]):
-                self._h_counters[i] = s - 1
+        state = self._h_states.get(num_id)
+        if state is None:
+            formats, starts = self._load_heading_formats(num_id)
+            counters = [0] * 9
+            for i, start in enumerate(starts[:9]):
+                counters[i] = start - 1
+            state = (formats, starts, counters)
+            self._h_states[num_id] = state
+        formats, starts, counters = state
 
         idx = h_level - 1
-        self._h_counters[idx] += 1
+        counters[idx] += 1
         for i in range(idx + 1, 9):
-            reset_to = self._h_starts[i] - 1 if i < len(self._h_starts) else 0
-            self._h_counters[i] = reset_to
+            reset_to = starts[i] - 1 if i < len(starts) else 0
+            counters[i] = reset_to
 
-        if idx < len(self._h_fmts):
-            fmt = self._h_fmts[idx]
+        if idx < len(formats):
+            fmt = formats[idx]
             for i in range(9, 0, -1):
-                fmt = fmt.replace(f"%{i}", str(self._h_counters[i - 1]))
+                fmt = fmt.replace(f"%{i}", str(counters[i - 1]))
             return fmt
 
-        return ".".join(str(self._h_counters[i]) for i in range(h_level))
+        return ".".join(str(counters[i]) for i in range(h_level))
 
     def _get_heading_level(self, paragraph: Paragraph) -> int | None:
         """

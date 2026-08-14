@@ -35,7 +35,7 @@ class SourceContent:
             return False
         try:
             p = Path(self.source)
-            return p.exists()
+            return p.is_file()
         except OSError:
             return False
 

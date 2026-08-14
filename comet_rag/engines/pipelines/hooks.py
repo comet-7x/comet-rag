@@ -117,10 +117,21 @@ class PipelineHooks:
 @PipelineHooks.extractor("docx", "doc")
 def _extract_docx(loader_content: LoaderContent, config: PipelineConfig) -> str:
     from comet_rag.engines.cleaners.docx_cleaner import DocxCleaner
+    from comet_rag.engines.converters.archive_guard import ArchiveLimits
     from comet_rag.engines.converters.text_converter import DocxConverter
     from comet_rag.engines.parsers.docx_parser.docx_parser import DocxParser
 
-    doc = DocxConverter(loader_content).to_docx()
+    doc = DocxConverter(
+        loader_content,
+        archive_limits=ArchiveLimits(
+            max_members=config.docx.max_archive_members,
+            max_member_uncompressed_bytes=config.docx.max_archive_member_bytes,
+            max_total_uncompressed_bytes=config.docx.max_archive_uncompressed_bytes,
+            max_compression_ratio=config.docx.max_archive_compression_ratio,
+            max_xml_elements=config.docx.max_archive_xml_elements,
+            max_xml_text_chars=config.docx.max_archive_xml_text_chars,
+        ),
+    ).to_docx()
     parsed = DocxParser(heading_numbers=config.docx.heading_numbers).parse(doc)
     return DocxCleaner(
         include_images=config.docx.include_images,

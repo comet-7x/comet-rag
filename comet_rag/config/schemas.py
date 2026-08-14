@@ -16,7 +16,28 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+
+SecretValue = SecretStr | str
+
+
+def _secret_value(value: SecretValue | None) -> str | None:
+    if value is None:
+        return None
+    return value.get_secret_value() if isinstance(value, SecretStr) else value
+
+
+class _SecretsModel(BaseModel):
+    """构造仍接受普通字符串，但验证/赋值后始终存成 SecretStr。"""
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    @field_validator("password", "api_key", mode="after", check_fields=False)
+    @classmethod
+    def _wrap_secret(cls, value: SecretValue | None) -> SecretStr | None:
+        if value is None or isinstance(value, SecretStr):
+            return value
+        return SecretStr(value)
 
 
 class Env(StrEnum):
@@ -34,13 +55,13 @@ class ServerConfig(BaseModel):
     port: int = Field(..., description="服务监听端口")
 
 
-class SqlDatabaseConfig(BaseModel):
+class SqlDatabaseConfig(_SecretsModel):
     """SQL 数据库配置 (如 MySQL, PostgreSQL)"""
 
     host: str = Field(..., description="数据库主机地址")
     port: int = Field(..., description="端口号")
     username: str = Field(..., description="用户名")
-    password: str = Field(..., description="密码")  # 生产环境建议用 SecretStr
+    password: SecretValue = Field(..., description="密码")
     database: str = Field(..., description="数据库名称")
     connect_timeout: int = Field(default=30, description="连接超时时间(秒)")
     pool_size: int = Field(default=10, gt=0, description="连接池常驻连接数")
@@ -61,19 +82,19 @@ class SqlDatabaseConfig(BaseModel):
         from urllib.parse import quote  # noqa: PLC0415
 
         user = quote(self.username, safe="")
-        password = quote(self.password, safe="")
+        password = quote(_secret_value(self.password) or "", safe="")
         database = quote(self.database, safe="")
         return (
             f"postgresql+asyncpg://{user}:{password}@{self.host}:{self.port}/{database}"
         )
 
 
-class RedisConfig(BaseModel):
+class RedisConfig(_SecretsModel):
     """Key-Value 数据库配置 (通常指 Redis)"""
 
     host: str = Field(..., description="主机地址")
     port: int = Field(..., description="端口号")
-    password: str | None = Field(default=None, description="密码")
+    password: SecretValue | None = Field(default=None, description="密码")
     db_index: int = Field(default=0, description="数据库索引编号")
     timeout: int = Field(default=10, description="超时时间")
 
@@ -83,24 +104,33 @@ class RedisConfig(BaseModel):
         密码要 URL 编码这种细节只该有一处。"""
         from urllib.parse import quote  # noqa: PLC0415
 
-        auth = f":{quote(self.password, safe='')}@" if self.password else ""
+        password = _secret_value(self.password)
+        auth = f":{quote(password, safe='')}@" if password else ""
         return f"redis://{auth}{self.host}:{self.port}/{self.db_index}"
 
 
-class VectorDatabaseConfig(BaseModel):
+class VectorDatabaseConfig(_SecretsModel):
     """向量数据库配置 (如 Milvus, Pinecone)"""
 
     endpoint: str = Field(..., description="服务接入点地址")
-    api_key: str | None = Field(default=None, description="API 访问密钥")
+    api_key: SecretValue | None = Field(default=None, description="API 访问密钥")
     collection_name: str = Field(..., description="集合/数据库名称")
 
+    @property
+    def api_key_value(self) -> str | None:
+        return _secret_value(self.api_key)
 
-class ModelConfig(BaseModel):
+
+class ModelConfig(_SecretsModel):
     """模型配置 (如 OpenAI, Cohere)"""
 
     base_url: str = Field(..., description="服务地址")
     model_name: str = Field(..., description="模型名称")
-    api_key: str | None = Field(default=None, description="API 访问密钥")
+    api_key: SecretValue | None = Field(default=None, description="API 访问密钥")
+
+    @property
+    def api_key_value(self) -> str | None:
+        return _secret_value(self.api_key)
 
 
 class EmbeddingModelConfig(ModelConfig):
@@ -173,6 +203,36 @@ class LimitsConfig(BaseModel):
         ge=0,
         description="待执行任务数上限，超了直接拒收（HTTP 429）。0 表示不限。"
         "没有它的话，投递量一大队列就无限堆积",
+    )
+    docx_max_archive_members: int = Field(
+        default=10_000,
+        gt=0,
+        description="DOCX ZIP 容器允许的最大成员数",
+    )
+    docx_max_archive_member_bytes: int = Field(
+        default=64 * 1024 * 1024,
+        gt=0,
+        description="DOCX 单个 ZIP 成员允许的最大解压后字节数",
+    )
+    docx_max_archive_uncompressed_bytes: int = Field(
+        default=256 * 1024 * 1024,
+        gt=0,
+        description="DOCX ZIP 容器允许的总解压后字节数",
+    )
+    docx_max_archive_compression_ratio: float = Field(
+        default=100.0,
+        gt=0,
+        description="DOCX 单成员及整体允许的最大压缩比",
+    )
+    docx_max_archive_xml_elements: int = Field(
+        default=2_000_000,
+        gt=0,
+        description="DOCX 所有 XML 成员允许的元素总数",
+    )
+    docx_max_archive_xml_text_chars: int = Field(
+        default=8 * 1024 * 1024,
+        gt=0,
+        description="DOCX 单个 XML 文本节点允许的最大字符数",
     )
     degrade_failure_rate: tuple[float, float, float] = Field(
         default=(0.2, 0.5, 0.8),

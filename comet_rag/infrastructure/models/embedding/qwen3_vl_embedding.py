@@ -143,6 +143,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         self,
         text: str | None = None,
         image_url: str | None = None,
+        continue_final_message: bool = True,
         system_prompt: (
             Qwen3VLEmbeddingModelSystemPrompt | str
         ) = Qwen3VLEmbeddingModelSystemPrompt.COMMON,
@@ -179,11 +180,12 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         }
         messages.append(user_message)
 
-        assistant_message: ChatCompletionMessageParam = {
-            "role": "assistant",
-            "content": [{"type": "text", "text": ""}],
-        }
-        messages.append(assistant_message)
+        if continue_final_message:
+            assistant_message: ChatCompletionMessageParam = {
+                "role": "assistant",
+                "content": [{"type": "text", "text": ""}],
+            }
+            messages.append(assistant_message)
 
         return messages
 
@@ -218,6 +220,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,
+                continue_final_message=continue_final_message,
                 system_prompt=system_prompt,
             )
             response = self.sync_client.post(
@@ -273,6 +276,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,
+                continue_final_message=continue_final_message,
                 system_prompt=system_prompt,
             )
             response = await self.async_client.post(
@@ -319,6 +323,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,
+                continue_final_message=continue_final_message,
                 system_prompt=Qwen3VLEmbeddingModelSystemPrompt.COMMON,
             )
             response = self.sync_client.post(
@@ -365,6 +370,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,
+                continue_final_message=continue_final_message,
                 system_prompt=Qwen3VLEmbeddingModelSystemPrompt.COMMON,
             )
             response = await self.async_client.post(

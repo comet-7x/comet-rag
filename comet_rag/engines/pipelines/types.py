@@ -38,6 +38,34 @@ class DocxConfig(BaseModel):
         default=None,
         description="Vision model for describing images (must implement VisionModel protocol)",
     )
+    max_archive_members: int = Field(
+        default=10_000, gt=0, description="DOCX ZIP 容器允许的最大成员数"
+    )
+    max_archive_member_bytes: int = Field(
+        default=64 * 1024 * 1024,
+        gt=0,
+        description="DOCX 单个 ZIP 成员允许的最大解压后字节数",
+    )
+    max_archive_uncompressed_bytes: int = Field(
+        default=256 * 1024 * 1024,
+        gt=0,
+        description="DOCX ZIP 容器允许的总解压后字节数",
+    )
+    max_archive_compression_ratio: float = Field(
+        default=100.0,
+        gt=0,
+        description="DOCX 单成员及整体允许的最大压缩比",
+    )
+    max_archive_xml_elements: int = Field(
+        default=2_000_000,
+        gt=0,
+        description="DOCX 所有 XML 成员允许的元素总数",
+    )
+    max_archive_xml_text_chars: int = Field(
+        default=8 * 1024 * 1024,
+        gt=0,
+        description="DOCX 单个 XML 文本节点允许的最大字符数",
+    )
 
 
 class PipelineConfig(BaseModel):
