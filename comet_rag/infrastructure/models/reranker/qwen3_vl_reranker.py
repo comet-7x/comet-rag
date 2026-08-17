@@ -7,9 +7,10 @@ from httpx import AsyncClient, Client
 from pydantic import BaseModel, Field
 
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.models._image_url import (
-    ImageURLValidator,
-    validate_image_reference,
+from comet_rag.infrastructure.models._image_reference import (
+    DEFAULT_MAX_LOCAL_IMAGE_BYTES,
+    ImageReferenceValidator,
+    prepare_image_reference,
 )
 
 from .base import BaseReranker
@@ -126,7 +127,9 @@ class Qwen3VLReranker(BaseReranker):
         api_key: str,
         async_client: AsyncClient | None = None,
         sync_client: Client | None = None,
-        image_url_validator: ImageURLValidator | None = None,
+        image_url_validator: ImageReferenceValidator | None = None,
+        local_image_validator: ImageReferenceValidator | None = None,
+        max_local_image_bytes: int = DEFAULT_MAX_LOCAL_IMAGE_BYTES,
     ) -> None:
         """创建 Qwen3-VL 重排服务适配器。
 
@@ -136,7 +139,9 @@ class Qwen3VLReranker(BaseReranker):
             api_key (str): 模型服务 api_key
             async_client (AsyncClient | None): 异步请求连接，默认为 None
             sync_client (Client | None): 同步请求连接，默认为 None
-            image_url_validator: 远程图片 URL 准入策略；服务端装配时必须注入
+            image_url_validator: 远程图片 URL 准入策略
+            local_image_validator: 本地图片路径准入策略
+            max_local_image_bytes: 本地图片读取上限；转换 Base64 前执行
 
         传入的客户端由调用方持有，本适配器只关闭自己创建的客户端。
         """
@@ -144,6 +149,8 @@ class Qwen3VLReranker(BaseReranker):
         self._model_name = model_name
         self._api_key = api_key
         self._image_url_validator = image_url_validator
+        self._local_image_validator = local_image_validator
+        self._max_local_image_bytes = max_local_image_bytes
 
         self._owns_async_client = async_client is None
         self._owns_sync_client = sync_client is None
@@ -154,36 +161,58 @@ class Qwen3VLReranker(BaseReranker):
             sync_client if sync_client is not None else Client(timeout=60.0)
         )
 
-    def _validate_multimodal_content(self, data: ScoreMultiModalParam) -> None:
+    def _prepare_multimodal_content(
+        self, data: ScoreMultiModalParam
+    ) -> ScoreMultiModalParam:
+        """校验多模态类型并把本地图片转换成 Data URL。"""
         allowed_content_types = (
             ChatCompletionContentPartTextParam,
             ChatCompletionContentPartImageParam,
         )
-        unsupported_type_msg = f"{self.__class__.__name__} | _validate_multimodal_content：暂不支持 ChatCompletionContentPartImageEmbedsParam / ChatCompletionContentPartVideoParam 类型"
+        unsupported_type_msg = f"{self.__class__.__name__} | _prepare_multimodal_content：暂不支持 ChatCompletionContentPartImageEmbedsParam / ChatCompletionContentPartVideoParam 类型"
 
+        prepared_content = []
         for content in data.content:
             if not isinstance(content, allowed_content_types):
                 raise CometRAGException(unsupported_type_msg)
 
             if isinstance(content, ChatCompletionContentPartImageParam):
-                validate_image_reference(
+                image_url = prepare_image_reference(
                     content.image_url.url,
-                    validator=self._image_url_validator,
+                    url_validator=self._image_url_validator,
+                    local_path_validator=self._local_image_validator,
+                    max_local_bytes=self._max_local_image_bytes,
                 )
+                content = content.model_copy(
+                    update={
+                        "image_url": content.image_url.model_copy(
+                            update={"url": image_url}
+                        )
+                    }
+                )
+            prepared_content.append(content)
+        return data.model_copy(update={"content": prepared_content})
 
-    def _validate_inputs(
+    def _prepare_inputs(
         self,
         query: str | ScoreMultiModalParam,
         documents: str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],
-    ) -> None:
+    ) -> tuple[
+        str | ScoreMultiModalParam,
+        str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],
+    ]:
         if isinstance(query, ScoreMultiModalParam):
-            self._validate_multimodal_content(query)
+            query = self._prepare_multimodal_content(query)
         if isinstance(documents, ScoreMultiModalParam):
-            self._validate_multimodal_content(documents)
+            documents = self._prepare_multimodal_content(documents)
         elif isinstance(documents, Sequence) and not isinstance(documents, str):
-            for doc in documents:
-                if isinstance(doc, ScoreMultiModalParam):
-                    self._validate_multimodal_content(doc)
+            documents = [
+                self._prepare_multimodal_content(doc)
+                if isinstance(doc, ScoreMultiModalParam)
+                else doc
+                for doc in documents
+            ]
+        return query, documents
 
     def _build_rerank_request(
         self,
@@ -256,7 +285,7 @@ class Qwen3VLReranker(BaseReranker):
         **kwargs: Any,
     ) -> list[float]:
         try:
-            self._validate_inputs(query, documents)
+            query, documents = self._prepare_inputs(query, documents)
             rerank_request = self._build_rerank_request(query, documents, **kwargs)
             response_json = self._post_sync(rerank_request)
             return self._extract_scores(
@@ -278,8 +307,10 @@ class Qwen3VLReranker(BaseReranker):
         **kwargs: Any,
     ) -> list[float]:
         try:
-            # SourcePolicy 的 DNS 检查是同步 I/O；异步模型入口不能在事件循环上跑。
-            await asyncio.to_thread(self._validate_inputs, query, documents)
+            # DNS 与本地文件读取都是同步 I/O，不能在事件循环上执行。
+            query, documents = await asyncio.to_thread(
+                self._prepare_inputs, query, documents
+            )
             rerank_request = self._build_rerank_request(query, documents, **kwargs)
             response_json = await self._post_async(rerank_request)
             return self._extract_scores(

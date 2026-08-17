@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -120,6 +121,88 @@ async def test_empty_embedding_response_is_reported_as_adapter_error() -> None:
             model.embed("text")
     finally:
         await model.aclose()
+        client.close()
+
+
+@pytest.mark.parametrize("operation", ["embed", "aembed", "tokenize", "atokenize"])
+async def test_local_image_is_sent_as_data_url(
+    operation: str,
+    tmp_path: Path,
+) -> None:
+    payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        if request.url.path.endswith("/tokenize"):
+            return httpx.Response(
+                200,
+                json={"count": 1, "max_model_len": 1024, "tokens": [1]},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "id": "embedding-1",
+                "object": "list",
+                "created": 0,
+                "model": "qwen",
+                "data": [{"index": 0, "object": "embedding", "embedding": [1.0]}],
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            },
+        )
+
+    image = tmp_path / "sample.png"
+    image.write_bytes(b"png-bytes")
+    transport = httpx.MockTransport(handler)
+    sync_client = httpx.Client(transport=transport)
+    async_client = httpx.AsyncClient(transport=transport)
+    model = Qwen3VLEmbeddingModel(
+        base_url="https://model.invalid/v1",
+        model_name="qwen",
+        api_key="test",
+        sync_client=sync_client,
+        async_client=async_client,
+    )
+    data = EmbeddingData(image_url=str(image))
+    try:
+        if operation == "embed":
+            model.embed(data)
+        elif operation == "aembed":
+            await model.aembed(data)
+        elif operation == "tokenize":
+            model.tokenize(data)
+        else:
+            await model.atokenize(data)
+
+        sent_url = payloads[0]["messages"][1]["content"][0]["image_url"]["url"]
+        assert sent_url == "data:image/png;base64,cG5nLWJ5dGVz"
+        assert data.image_url == str(image), "适配器不应修改调用方持有的输入模型"
+    finally:
+        sync_client.close()
+        await async_client.aclose()
+
+
+def test_local_image_size_limit_is_enforced(tmp_path: Path) -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(500)
+
+    image = tmp_path / "oversized.png"
+    image.write_bytes(b"1234")
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    model = Qwen3VLEmbeddingModel(
+        base_url="https://model.invalid/v1",
+        model_name="qwen",
+        api_key="test",
+        sync_client=client,
+        max_local_image_bytes=3,
+    )
+    try:
+        with pytest.raises(CometRAGException, match="图片大小超过上限 3 bytes"):
+            model.embed(EmbeddingData(image_url=str(image)))
+        assert requested == []
+    finally:
         client.close()
 
 

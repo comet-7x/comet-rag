@@ -7,9 +7,10 @@ from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field
 
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.models._image_url import (
-    ImageURLValidator,
-    validate_image_reference,
+from comet_rag.infrastructure.models._image_reference import (
+    DEFAULT_MAX_LOCAL_IMAGE_BYTES,
+    ImageReferenceValidator,
+    prepare_image_reference,
 )
 
 from .base import BaseEmbeddingModel
@@ -28,7 +29,7 @@ class EmbeddingData(BaseModel):
     text: str | None = Field(default=None, description="需要嵌入的文本内容")
     image_url: str | None = Field(
         default=None,
-        description="需要嵌入的图片 URL 或图片 Base64 编码数据（如 data:image/jpeg;base64,...）",
+        description="图片的本地路径、HTTP(S) URL 或 Base64 Data URL",
     )
 
 
@@ -106,7 +107,9 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         max_model_len: int | None = None,
         async_client: AsyncClient | None = None,
         sync_client: Client | None = None,
-        image_url_validator: ImageURLValidator | None = None,
+        image_url_validator: ImageReferenceValidator | None = None,
+        local_image_validator: ImageReferenceValidator | None = None,
+        max_local_image_bytes: int = DEFAULT_MAX_LOCAL_IMAGE_BYTES,
     ) -> None:
         """创建 Qwen3-VL OpenAI 兼容嵌入适配器。
 
@@ -118,7 +121,9 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             max_model_len (int | None): 模型允许的最大输入序列长度，默认为 `None`
             async_client (AsyncClient | None): 异步请求连接，默认为 `None`
             sync_client (Client | None): 同步请求连接，默认为 `None`
-            image_url_validator: 远程图片 URL 准入策略；服务端装配时必须注入
+            image_url_validator: 远程图片 URL 准入策略
+            local_image_validator: 本地图片路径准入策略
+            max_local_image_bytes: 本地图片读取上限；转换 Base64 前执行
 
         传入的客户端由调用方持有，本适配器只关闭自己创建的客户端。
         """
@@ -128,6 +133,8 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         self._output_dim = output_dim
         self._max_model_len = max_model_len
         self._image_url_validator = image_url_validator
+        self._local_image_validator = local_image_validator
+        self._max_local_image_bytes = max_local_image_bytes
 
         self._owns_async_client = async_client is None
         self._owns_sync_client = sync_client is None
@@ -145,12 +152,17 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             "Content-Type": "application/json",
         }
 
-    def _validate_embedding_data(self, embedding_data: EmbeddingData) -> None:
-        if embedding_data.image_url is not None:
-            validate_image_reference(
-                embedding_data.image_url,
-                validator=self._image_url_validator,
-            )
+    def _prepare_embedding_data(self, embedding_data: EmbeddingData) -> EmbeddingData:
+        """把本地路径转换为 Data URL，且不修改调用方传入的模型。"""
+        if embedding_data.image_url is None:
+            return embedding_data
+        image_url = prepare_image_reference(
+            embedding_data.image_url,
+            url_validator=self._image_url_validator,
+            local_path_validator=self._local_image_validator,
+            max_local_bytes=self._max_local_image_bytes,
+        )
+        return embedding_data.model_copy(update={"image_url": image_url})
 
     def _create_messages_params(
         self,
@@ -166,7 +178,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
 
         Args:
             text (str | None): 文本内容
-            image_url (str | None): 图片 URL 或者图片 base64 编码
+            image_url (str | None): 图片 URL 或 Base64 Data URL；本地路径会在此前转换
             system_prompt (Qwen3VLEmbeddingModelSystemPrompt): 系统提示，默认为 `Qwen3VLEmbeddingModelSystemPrompt.COMMON`
 
         Returns:
@@ -214,7 +226,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         **kwargs: Any,
     ) -> list[float] | str:
         """
-        编码文本、图片（图片的 base64 编码或者图片 URL） 对应的向量
+        编码文本或图片。本地图片会在当前进程读取并转换为 Base64 Data URL。
 
         Args:
             embedding_data (EmbeddingData): 嵌入数据
@@ -229,8 +241,9 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             list[float] | str: 浮点向量或 Base64 编码结果
         """
         try:
-            embedding_data = _normalize_embedding_data(embedding_data)
-            self._validate_embedding_data(embedding_data)
+            embedding_data = self._prepare_embedding_data(
+                _normalize_embedding_data(embedding_data)
+            )
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,
@@ -271,7 +284,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         **kwargs: Any,
     ) -> list[float] | str:
         """
-        异步编码文本、图片（图片的 base64 编码或者图片 URL） 对应的向量
+        异步编码文本或图片。本地文件读取在线程中执行，不阻塞事件循环。
 
         Args:
             embedding_data (EmbeddingData): 嵌入数据
@@ -286,9 +299,10 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             list[float] | str: 浮点向量或 Base64 编码结果
         """
         try:
-            embedding_data = _normalize_embedding_data(embedding_data)
-            # 部署侧策略可能执行 DNS 查询，不能阻塞事件循环。
-            await asyncio.to_thread(self._validate_embedding_data, embedding_data)
+            embedding_data = await asyncio.to_thread(
+                self._prepare_embedding_data,
+                _normalize_embedding_data(embedding_data),
+            )
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,
@@ -336,7 +350,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             TokenizeResponse: tokenize 响应
         """
         try:
-            self._validate_embedding_data(embedding_data)
+            embedding_data = self._prepare_embedding_data(embedding_data)
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,
@@ -384,7 +398,9 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             TokenizeResponse: tokenize 响应
         """
         try:
-            await asyncio.to_thread(self._validate_embedding_data, embedding_data)
+            embedding_data = await asyncio.to_thread(
+                self._prepare_embedding_data, embedding_data
+            )
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,

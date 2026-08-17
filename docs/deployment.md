@@ -69,6 +69,7 @@ backends:
 limits:
   model_concurrency: 8      # 本进程对模型服务的**总**并发
   model_queue: 256          # 闸门外的等待席位
+  model_image_max_bytes: 20971520  # 本地模型图片上限（20 MiB）
   max_backlog: 1000         # 待执行任务上限，超了返回 429
 ```
 

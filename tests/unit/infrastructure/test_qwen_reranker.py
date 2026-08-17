@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -156,3 +159,45 @@ async def test_non_contiguous_result_indexes_are_rejected() -> None:
     finally:
         await model.aclose()
         client.close()
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_local_image_is_sent_as_data_url(
+    async_mode: bool,
+    tmp_path: Path,
+) -> None:
+    payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"results": [{"index": 0, "relevance_score": 0.5}]}
+        )
+
+    image = tmp_path / "sample.jpeg"
+    image.write_bytes(b"jpeg-bytes")
+    transport = httpx.MockTransport(handler)
+    sync_client = httpx.Client(transport=transport)
+    async_client = httpx.AsyncClient(transport=transport)
+    model = Qwen3VLReranker(
+        base_url="https://model.invalid/v1",
+        model_name="qwen-rerank",
+        api_key="test",
+        sync_client=sync_client,
+        async_client=async_client,
+    )
+    query = _multimodal(str(image))
+    try:
+        if async_mode:
+            assert await model.ascore(query, ["doc"]) == [0.5]
+        else:
+            assert model.score(query, ["doc"]) == [0.5]
+
+        sent_url = payloads[0]["query"]["content"][0]["image_url"]["url"]
+        assert sent_url == "data:image/jpeg;base64,anBlZy1ieXRlcw=="
+        original_content = query.content[0]
+        assert isinstance(original_content, ChatCompletionContentPartImageParam)
+        assert original_content.image_url.url == str(image)
+    finally:
+        sync_client.close()
+        await async_client.aclose()

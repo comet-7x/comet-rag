@@ -292,6 +292,11 @@ class LimitsConfig(BaseModel):
         gt=0,
         description="等闸门的最长时间。等太久算过载 —— 上游多半早就超时了",
     )
+    model_image_max_bytes: int = Field(
+        default=20 * 1024 * 1024,
+        gt=0,
+        description="单张本地模型图片的读取上限；Base64 编码会额外膨胀约三分之一",
+    )
     max_backlog: int = Field(
         default=1000,
         ge=0,

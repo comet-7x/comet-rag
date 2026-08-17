@@ -220,19 +220,24 @@ def build_embedding_model(
     config: APPConfig,
     *,
     image_url_validator: Callable[[str], None] | None = None,
+    local_image_validator: Callable[[str], None] | None = None,
 ) -> BaseEmbeddingModel:
     from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import (  # noqa: PLC0415
         Qwen3VLEmbeddingModel,
     )
 
     settings = config.infrastructure_config.embedding_model
-    if image_url_validator is None:
-        image_url_validator = build_source_policy(config.ingest_policy).check_redirect
+    if image_url_validator is None or local_image_validator is None:
+        source_policy = build_source_policy(config.ingest_policy)
+        image_url_validator = image_url_validator or source_policy.check_redirect
+        local_image_validator = local_image_validator or source_policy.check
     return Qwen3VLEmbeddingModel(
         base_url=settings.base_url,
         model_name=settings.model_name,
         api_key=settings.api_key_value or "EMPTY",
         image_url_validator=image_url_validator,
+        local_image_validator=local_image_validator,
+        max_local_image_bytes=config.limits.model_image_max_bytes,
     )
 
 
@@ -240,6 +245,7 @@ def build_reranker(
     config: APPConfig,
     *,
     image_url_validator: Callable[[str], None] | None = None,
+    local_image_validator: Callable[[str], None] | None = None,
 ) -> BaseReranker | None:
     settings = config.infrastructure_config.reranker
     if settings is None:
@@ -249,14 +255,18 @@ def build_reranker(
         Qwen3VLReranker,
     )
 
-    if image_url_validator is None:
-        image_url_validator = build_source_policy(config.ingest_policy).check_redirect
+    if image_url_validator is None or local_image_validator is None:
+        source_policy = build_source_policy(config.ingest_policy)
+        image_url_validator = image_url_validator or source_policy.check_redirect
+        local_image_validator = local_image_validator or source_policy.check
 
     return Qwen3VLReranker(
         base_url=settings.base_url,
         model_name=settings.model_name,
         api_key=settings.api_key_value or "EMPTY",
         image_url_validator=image_url_validator,
+        local_image_validator=local_image_validator,
+        max_local_image_bytes=config.limits.model_image_max_bytes,
     )
 
 
@@ -308,12 +318,18 @@ def build_context(
     source_policy = build_source_policy(config.ingest_policy)
     ingest_loader = build_ingest_loader(config, source_policy)
     embedding_model = embedding_model or build_embedding_model(
-        config, image_url_validator=source_policy.check_redirect
+        config,
+        image_url_validator=source_policy.check_redirect,
+        local_image_validator=source_policy.check,
     )
     reranker = (
         reranker
         if reranker is not None
-        else build_reranker(config, image_url_validator=source_policy.check_redirect)
+        else build_reranker(
+            config,
+            image_url_validator=source_policy.check_redirect,
+            local_image_validator=source_policy.check,
+        )
     )
 
     # 闸门在这里挂上 —— 注入进来的替身同样要挂，否则测试跑的是"没有闸门"

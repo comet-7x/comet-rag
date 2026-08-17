@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -94,6 +95,19 @@ async def test_built_embedding_model_receives_source_policy() -> None:
     try:
         with pytest.raises(CometRAGException, match="非公网地址"):
             model.embed(EmbeddingData(image_url="http://127.0.0.1/metadata"))
+    finally:
+        await model.aclose()
+
+
+async def test_built_embedding_model_rejects_local_image_by_default(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "private.png"
+    image.write_bytes(b"png-bytes")
+    model = build_embedding_model(make_config())
+    try:
+        with pytest.raises(CometRAGException, match="未开放从服务器本地路径入库"):
+            model.embed(EmbeddingData(image_url=str(image)))
     finally:
         await model.aclose()
 
