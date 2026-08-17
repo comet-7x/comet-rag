@@ -12,7 +12,7 @@ from comet_rag.engines.loaders.base_loader import (
 )
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 
-LoaderMatcher = Callable[[SourceContent], bool]
+type LoaderMatcher = Callable[[SourceContent], bool]
 
 
 @dataclass(frozen=True, slots=True)

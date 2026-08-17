@@ -11,7 +11,7 @@ import asyncio
 import inspect
 import tempfile
 import threading
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -184,7 +184,7 @@ class S3Loader(BaseLoader):
             return self._async_client
 
     @contextmanager
-    def _sync_activity(self) -> Iterator[None]:
+    def _sync_activity(self) -> Generator[None, None, None]:
         self._begin_activity()
         try:
             yield
@@ -192,7 +192,7 @@ class S3Loader(BaseLoader):
             self._end_activity()
 
     @asynccontextmanager
-    async def _async_activity(self) -> AsyncIterator[None]:
+    async def _async_activity(self) -> AsyncGenerator[None, None]:
         await self._abegin_activity()
         try:
             yield
