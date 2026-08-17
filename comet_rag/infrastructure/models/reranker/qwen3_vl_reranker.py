@@ -198,11 +198,30 @@ class Qwen3VLReranker(BaseReranker):
             **kwargs,
         ).model_dump(exclude_none=True)
 
-    def _extract_scores(self, response_json: dict[str, Any]) -> list[float]:
+    @staticmethod
+    def _document_count(
+        documents: str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],
+    ) -> int:
+        if isinstance(documents, (str, ScoreMultiModalParam)):
+            return 1
+        return len(documents)
+
+    def _extract_scores(
+        self,
+        response_json: dict[str, Any],
+        *,
+        expected_count: int,
+    ) -> list[float]:
         response = RerankResponse.model_validate(response_json)
         indexes = [result.index for result in response.results]
         if len(indexes) != len(set(indexes)):
             raise ValueError("重排响应包含重复的候选索引，结果无法可靠对齐")
+        if len(indexes) != expected_count:
+            raise ValueError(
+                f"重排响应包含 {len(indexes)} 个结果，但请求包含 {expected_count} 个候选"
+            )
+        if sorted(indexes) != list(range(expected_count)):
+            raise ValueError("重排响应的候选索引不连续，结果无法可靠对齐")
         return [
             result.relevance_score
             for result in sorted(response.results, key=lambda result: result.index)
@@ -240,7 +259,10 @@ class Qwen3VLReranker(BaseReranker):
             self._validate_inputs(query, documents)
             rerank_request = self._build_rerank_request(query, documents, **kwargs)
             response_json = self._post_sync(rerank_request)
-            return self._extract_scores(response_json)
+            return self._extract_scores(
+                response_json,
+                expected_count=self._document_count(documents),
+            )
         except CometRAGException:
             raise
         except Exception as e:
@@ -260,7 +282,10 @@ class Qwen3VLReranker(BaseReranker):
             await asyncio.to_thread(self._validate_inputs, query, documents)
             rerank_request = self._build_rerank_request(query, documents, **kwargs)
             response_json = await self._post_async(rerank_request)
-            return self._extract_scores(response_json)
+            return self._extract_scores(
+                response_json,
+                expected_count=self._document_count(documents),
+            )
         except CometRAGException:
             raise
         except Exception as e:

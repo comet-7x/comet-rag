@@ -107,3 +107,52 @@ async def test_duplicate_result_indexes_are_rejected() -> None:
     finally:
         await model.aclose()
         client.close()
+
+
+async def test_missing_rerank_results_are_rejected() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"results": [{"index": 0, "relevance_score": 0.9}]},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    model = Qwen3VLReranker(
+        base_url="https://model.invalid/v1",
+        model_name="qwen-rerank",
+        api_key="test",
+        sync_client=client,
+    )
+    try:
+        with pytest.raises(CometRAGException, match="请求包含 2 个候选"):
+            model.score("query", ["first", "second"])
+    finally:
+        await model.aclose()
+        client.close()
+
+
+async def test_non_contiguous_result_indexes_are_rejected() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"index": 0, "relevance_score": 0.9},
+                    {"index": 2, "relevance_score": 0.1},
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    model = Qwen3VLReranker(
+        base_url="https://model.invalid/v1",
+        model_name="qwen-rerank",
+        api_key="test",
+        sync_client=client,
+    )
+    try:
+        with pytest.raises(CometRAGException, match="候选索引不连续"):
+            model.score("query", ["first", "second"])
+    finally:
+        await model.aclose()
+        client.close()
