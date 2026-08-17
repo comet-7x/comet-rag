@@ -233,10 +233,12 @@ class BaseEmbeddingModel(Protocol):
     仅当基类需要提供共享实现（如 TaskStore 的模板方法）时才用 ABC。
     """
 
-    async def aembed(self, text: str) -> list[float]: ...
-    async def abatch_embed(
-        self, texts: list[str], *, max_concurrency: int = 8
+    async def aembed_query(self, query: str, /) -> list[float]: ...
+    async def aembed_batch(
+        self, documents: Sequence[str], /
     ) -> list[list[float]]: ...
+    #: 一次请求最多装几篇；发几个请求、几个并发由调用方排程
+    batch_limit: int
 ```
 
 **约定**：
@@ -311,7 +313,7 @@ def fake_embedding_model() -> BaseEmbeddingModel:
 
 - 在 `engines/` 里 import Redis / Postgres / Milvus / S3 / ARQ / FastAPI
 - 提交密钥。配置走 YAML + 环境变量，`config.yaml` 进 `.gitignore`
-- 在循环里逐条调 embedding（必须用 `abatch_embed`）
+- 在循环里逐条调 embedding（必须走 `application/embedding_batch.py` 的批量排程）
 - 在函数内部 `httpx.AsyncClient()` 现建现销（必须复用应用级实例）
 - 无界队列 / 无上限并发
 - 让 Milvus 专有语法（表达式字符串、consistency level）穿透 `BaseVectorStore` 接口

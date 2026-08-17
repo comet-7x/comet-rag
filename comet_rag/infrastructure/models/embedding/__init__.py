@@ -1,12 +1,14 @@
 from .base import (
-    DEFAULT_MODEL_BATCH_CONCURRENCY,
     BaseEmbeddingModel,
     EmbeddingPort,
     EmbeddingTask,
     MultimodalEmbeddingMixin,
     MultimodalEmbeddingPort,
 )
-from .openai_embedding_model import OpenAIEmbeddingModel
+from .openai_embedding_model import (
+    DEFAULT_OPENAI_BATCH_LIMIT,
+    OpenAIEmbeddingModel,
+)
 from .qwen3_vl_embedding import (
     DetokenizeResponse,
     EmbeddingData,
@@ -19,11 +21,11 @@ from .qwen3_vl_embedding import (
 
 __all__ = [
     "BaseEmbeddingModel",
-    "DEFAULT_MODEL_BATCH_CONCURRENCY",
     "EmbeddingPort",
     "EmbeddingTask",
     "MultimodalEmbeddingMixin",
     "MultimodalEmbeddingPort",
+    "DEFAULT_OPENAI_BATCH_LIMIT",
     "OpenAIEmbeddingModel",
     "DetokenizeResponse",
     "EmbeddingData",

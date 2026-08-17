@@ -42,23 +42,32 @@ class EchoReranker(BaseReranker[str]):
         return [0.0] * len(list(documents))
 
 
-@pytest.mark.parametrize("max_concurrency", [0, -1])
-async def test_batch_embedding_rejects_non_positive_concurrency(
-    max_concurrency: int,
-) -> None:
+async def test_empty_batch_needs_no_round_trip() -> None:
     model = EchoEmbedding()
 
-    with pytest.raises(ValueError, match="max_concurrency 必须大于 0"):
-        model.batch_embed(["text"], max_concurrency=max_concurrency)
-    with pytest.raises(ValueError, match="max_concurrency 必须大于 0"):
-        await model.abatch_embed(["text"], max_concurrency=max_concurrency)
+    assert model.embed_batch([]) == []
+    assert await model.aembed_batch([]) == []
 
 
-async def test_empty_batch_returns_without_creating_workers() -> None:
-    model = EchoEmbedding()
+async def test_declaring_batch_limit_without_implementing_it_is_refused() -> None:
+    """**声明了批量能力却没实现，必须炸。**
 
-    assert model.batch_embed([]) == []
-    assert await model.abatch_embed([]) == []
+    默认的 `_embed_batch` 一次只发一篇。如果子类把 `batch_limit` 调大却忘了
+    覆写它，静默的后果是在**一个闸门名额里串行发 N 个请求** —— 限流数字还是
+    对的，吞吐掉到 1/N，而且没有任何迹象。这种"能跑但慢十倍"的缺陷比崩溃
+    难查得多，所以宁可拒绝。
+    """
+
+    class Liar(EchoEmbedding):
+        batch_limit = 8
+
+    model = Liar()
+    assert model.embed_batch(["one"]) == ["one"]  # 一篇仍然走得通
+
+    with pytest.raises(NotImplementedError, match="batch_limit=8"):
+        model.embed_batch(["a", "b"])
+    with pytest.raises(NotImplementedError, match="batch_limit=8"):
+        await model.aembed_batch(["a", "b"])
 
 
 async def test_resource_free_model_uses_noop_close() -> None:

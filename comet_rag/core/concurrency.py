@@ -2,10 +2,11 @@
 
 ## 为什么"每次调用建一个信号量"是错的
 
-`BaseEmbeddingModel.abatch_embed` 原本每次调用都 `asyncio.Semaphore(max_concurrency)`。
-那个信号量只约束**这一次调用内部**的扇出，任务之间毫无关系。实测：
+批量嵌入的排程（今在 `application/embedding_batch.py`）每次调用都新建一个
+`asyncio.Semaphore(max_concurrency)`。那个信号量只约束**这一次调用内部**的
+扇出，任务之间毫无关系。实测：
 
-    embedder worker 的 max_jobs=32，每个任务 abatch_embed(max_concurrency=4)
+    embedder worker 的 max_jobs=32，每个任务 max_concurrency=4
     → 对模型服务的并发峰值 **128**，而配置写的是 4
 
 配置说 4、实际 128，且监控上完全看不出来 —— 每个任务都觉得自己很守规矩。

@@ -79,11 +79,12 @@ class PipelineConfig(BaseModel):
         default=32,
         gt=0,
         description=(
-            "流式模式下每次并发处理多少个 chunk。"
+            "流式模式下每次并发处理多少个 chunk，即**产出粒度**。"
             "首个 chunk 在第一个窗口完成后即可产出，因此该值越小首字延迟越低、"
             "整体吞吐越差；越大则相反。非流式模式下它只用来限制同时在内存中的"
-            "待处理量。注意它**不是**单个 HTTP 请求携带的条数 —— "
-            "具体适配器可使用服务端原生批量，也可有界并发发送单条请求。"
+            "待处理量。一个窗口会被切成几次请求，由模型声明的 batch_limit 决定"
+            "（见 application/embedding_batch.py）；同时在飞几个请求由 "
+            "max_concurrency 决定。三者互不相同。"
         ),
     )
     docx: DocxConfig = Field(default_factory=DocxConfig)

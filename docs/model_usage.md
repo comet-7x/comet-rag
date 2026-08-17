@@ -6,6 +6,7 @@ DTO，也不需要手工把重排分数与原文重新对齐。
 ## 文本 Embedding
 
 ```python
+from comet_rag.application.embedding_batch import aembed_documents
 from comet_rag.infrastructure.models import Qwen3VLEmbeddingModel
 
 model = Qwen3VLEmbeddingModel(
@@ -15,7 +16,8 @@ model = Qwen3VLEmbeddingModel(
 )
 
 query_vector = await model.aembed_query("哪份文档讨论了并发控制？")
-document_vectors = await model.aembed_documents(
+document_vectors = await aembed_documents(
+    model,
     ["文档一", "文档二"],
     max_concurrency=8,
 )
@@ -23,11 +25,16 @@ document_vectors = await model.aembed_documents(
 await model.aclose()
 ```
 
-`aembed_query()` 与 `aembed_documents()` 不是别名。Qwen 会分别使用 query 和
-retrieval 指令；其他模型也可以选择不同编码器。同步代码使用对应的
-`embed_query()` 与 `embed_documents()`。
+`aembed_query()` 与文档嵌入不是别名。Qwen 会分别使用 query 和 retrieval
+指令；其他模型也可以选择不同编码器。同步代码使用对应的 `embed_query()`
+与 `embed_documents()`。
 
-OpenAI 兼容文本模型使用相同接口：
+### 批量为什么是个函数，而不是模型的方法
+
+`aembed_documents()` 收模型作为第一个参数，因为它做的是**排程**：把文档切成
+若干次请求，并控制同时在飞几个。这两件事只有调用方知道答案。
+
+模型这一侧只声明 `batch_limit` —— 一次请求最多能装几篇：
 
 ```python
 from comet_rag.infrastructure.models import OpenAIEmbeddingModel
@@ -36,11 +43,21 @@ model = OpenAIEmbeddingModel(
     base_url="https://api.openai.com/v1",
     model_name="text-embedding-3-small",
     api_key="...",
+    batch_limit=512,       # 默认 2048，按实际服务端能力调整
 )
-vectors = await model.aembed_documents(["文档一", "文档二"])
+vectors = await aembed_documents(model, docs, max_concurrency=4)
 ```
 
-该适配器会使用服务端原生批量能力，一批文档只发送一个请求。
+OpenAI 兼容适配器支持服务端原生批量（`batch_limit` 默认 2048），Qwen 多模态
+适配器一次只能发一篇（`batch_limit == 1`）。**同一段调用代码在两者上都正确**：
+前者把 512 篇装进一个请求、最多 4 个请求并发；后者发 N 个单条请求、同样最多
+4 个并发。
+
+`max_concurrency` 限的是这一次调用；进程对模型服务的总并发另由闸门控制
+（见 `core/concurrency.py`），两者叠加生效。
+
+需要直接控制单次请求时用 `model.aembed_batch(docs)` —— 它保证**恰好一次
+往返**，调用方需自行确保 `len(docs) <= model.batch_limit`。
 
 ## 本地图片与混合内容
 

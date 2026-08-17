@@ -6,7 +6,8 @@
 ## 适配器只需要填两个洞
 
 ``embed``（同步）与 ``_aembed``（异步）。其余全部由本类合成：查询/文档的
-语义区分、批量扇出、闸门。多模态适配器再覆写 ``embed_media``/``_aembed_media``。
+语义区分、闸门。多模态适配器再覆写 ``embed_media``/``_aembed_media``；
+支持服务端原生批量的适配器再抬高 ``batch_limit`` 并覆写 ``_embed_batch``。
 
 ## 模板方法：``aembed`` 是 ``final``，``_aembed`` 才是扩展点
 
@@ -14,22 +15,24 @@
 一覆写就把闸门覆写掉了 —— 而且不报错。拆成"final 的外壳 + abstract 的内核"，
 子类在类型层面就没有绕过闸门的写法。
 
-## 批量方法只管一次调用的扇出宽度
+## 这里不排程
 
-``max_concurrency`` 限的是单次 ``aembed_documents`` 内部同时在飞的请求数，
-闸门限的是整个进程。两者叠加：32 个 worker 各开 4 路，进程级仍然卡在闸门
-配置的上限，而不是 128。
+"发几个请求、几个并发"是调用方的事，代码在
+:mod:`comet_rag.application.embedding_batch`。本模块只回答两件事：
+**我一次最多能吃几篇**（``batch_limit``），以及**把这一块发出去**
+（``embed_batch``，恰好一次往返）。
+
+线程池、信号量、``max_concurrency`` 都不在这里 —— 模型不该替调用方决定
+要不要起线程。
 """
 
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from typing import Any, final
 
 from comet_rag.application.ports.embedding import (
-    DEFAULT_MODEL_BATCH_CONCURRENCY,
     EmbeddingPort,
     EmbeddingTask,
     MultimodalEmbeddingPort,
@@ -41,9 +44,10 @@ from comet_rag.models.content import ContentInput, MediaResource
 class BaseEmbeddingModel(GatedModel, ABC):
     """Embedding 适配器的共享实现。"""
 
-    #: 供应商是否支持"一个请求装多条文档"。为 False 时批量入口退化为
-    #: 扇出 N 个单条请求 —— 能用，但每条都要付一次往返。
-    _native_document_batch = False
+    #: 一次请求最多能装多少篇文档。默认 ``1`` = 服务端不支持批量。
+    #: 抬高它就必须同时覆写 ``_embed_batch``/``_aembed_batch``，否则
+    #: ``_require_native_batch`` 会拒绝。
+    batch_limit: int = 1
 
     # ── 适配器必须实现的两个扩展点 ─────────────────────────────────────────
 
@@ -107,114 +111,60 @@ class BaseEmbeddingModel(GatedModel, ABC):
             document, **self._options_for(EmbeddingTask.DOCUMENT, kwargs)
         )
 
-    # ── 批量 ───────────────────────────────────────────────────────────────
-
-    def _embed_documents_native(
-        self, documents: Sequence[str], /, **kwargs: Any
-    ) -> list[list[float]]:
-        raise NotImplementedError
-
-    async def _aembed_documents_native(
-        self, documents: Sequence[str], /, **kwargs: Any
-    ) -> list[list[float]]:
-        raise NotImplementedError
+    # ── 一次往返 ───────────────────────────────────────────────────────────
 
     @final
-    def embed_documents(
-        self,
-        documents: Sequence[str],
-        /,
-        *,
-        max_concurrency: int = DEFAULT_MODEL_BATCH_CONCURRENCY,
-        **kwargs: Any,
+    def embed_batch(
+        self, documents: Sequence[str], /, **kwargs: Any
     ) -> list[list[float]]:
-        """批量生成文档向量，结果顺序与输入一致。"""
-        self._validate_max_concurrency(max_concurrency)
+        """恰好一次往返，返回与输入等长、同序的向量。"""
         if not documents:
             return []
-        options = self._options_for(EmbeddingTask.DOCUMENT, kwargs)
-        if self._native_document_batch:
-            return self._embed_documents_native(documents, **options)
-        return self.batch_embed(
-            list(documents), max_concurrency=max_concurrency, **options
+        return self._embed_batch(
+            documents, **self._options_for(EmbeddingTask.DOCUMENT, kwargs)
         )
 
     @final
-    async def aembed_documents(
-        self,
-        documents: Sequence[str],
-        /,
-        *,
-        max_concurrency: int = DEFAULT_MODEL_BATCH_CONCURRENCY,
-        **kwargs: Any,
+    async def aembed_batch(
+        self, documents: Sequence[str], /, **kwargs: Any
     ) -> list[list[float]]:
-        """异步批量生成文档向量，结果顺序与输入一致。"""
-        self._validate_max_concurrency(max_concurrency)
-        if not documents:
-            return []
-        options = self._options_for(EmbeddingTask.DOCUMENT, kwargs)
-        if not self._native_document_batch:
-            return await self.abatch_embed(
-                list(documents), max_concurrency=max_concurrency, **options
-            )
-        # 原生批量是**一个**请求，所以整体占一个闸门名额；扇出那条路则由
-        # 每次 aembed 各自过闸，两边都不会把限流算漏。
-        return await self._through_gate(
-            lambda: self._aembed_documents_native(documents, **options)
-        )
+        """``embed_batch`` 的异步版本。
 
-    def batch_embed(
-        self,
-        texts: Sequence[str],
-        *,
-        max_concurrency: int = DEFAULT_MODEL_BATCH_CONCURRENCY,
-        **kwargs: Any,
-    ) -> list[list[float]]:
-        """同步批量入口。结果顺序与输入一致。"""
-        self._validate_max_concurrency(max_concurrency)
-        embedding_data_list = list(texts)
-        if not embedding_data_list:
-            return []
-
-        from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
-
-        max_workers = min(max_concurrency, len(embedding_data_list))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(self.embed, data, **kwargs)
-                for data in embedding_data_list
-            ]
-            return [future.result() for future in futures]
-
-    async def abatch_embed(
-        self,
-        texts: Sequence[str],
-        *,
-        max_concurrency: int = DEFAULT_MODEL_BATCH_CONCURRENCY,
-        **kwargs: Any,
-    ) -> list[list[float]]:
-        """异步批量入口；每条请求都通过 ``aembed`` 的全局闸门。
-
-        结果顺序与输入一致 —— ``asyncio.gather`` 保证这一点，调用方不必自己
-        按索引回填。
+        整块占**一个**闸门名额，因为它就是一个请求 —— 无论装了 1 篇还是 512 篇。
         """
-        self._validate_max_concurrency(max_concurrency)
-        embedding_data_list = list(texts)
-        if not embedding_data_list:
+        if not documents:
             return []
+        options = self._options_for(EmbeddingTask.DOCUMENT, kwargs)
+        return await self._through_gate(lambda: self._aembed_batch(documents, **options))
 
-        semaphore = asyncio.Semaphore(min(max_concurrency, len(embedding_data_list)))
+    def _embed_batch(
+        self, documents: Sequence[str], /, **kwargs: Any
+    ) -> list[list[float]]:
+        """默认实现只处理"批量大小为 1"，即 ``batch_limit`` 保持默认的情形。"""
+        self._require_native_batch(documents)
+        return [self.embed(documents[0], **kwargs)]
 
-        async def _limited(data: str) -> list[float]:
-            async with semaphore:
-                return await self.aembed(data, **kwargs)
+    async def _aembed_batch(
+        self, documents: Sequence[str], /, **kwargs: Any
+    ) -> list[list[float]]:
+        # 调未加闸的 `_aembed`：闸门已由 `aembed_batch` 持有，再走一次会自锁。
+        self._require_native_batch(documents)
+        return [await self._aembed(documents[0], **kwargs)]
 
-        return await asyncio.gather(*[_limited(data) for data in embedding_data_list])
+    def _require_native_batch(self, documents: Sequence[str]) -> None:
+        """把"声明了批量能力却没实现"变成一句说得清的错误。
 
-    @staticmethod
-    def _validate_max_concurrency(max_concurrency: int) -> None:
-        if max_concurrency <= 0:
-            raise ValueError(f"max_concurrency 必须大于 0，收到 {max_concurrency}")
+        默认实现一次只发一篇。如果子类把 ``batch_limit`` 调大却忘了覆写
+        ``_embed_batch``/``_aembed_batch``，静默的后果是**在一个闸门名额里
+        串行发 N 个请求** —— 限流数字还是对的，吞吐却掉到 1/N，而且没有任何
+        迹象。所以这里直接拒绝。
+        """
+        if len(documents) > 1:
+            raise NotImplementedError(
+                f"{type(self).__name__} 声明 batch_limit={self.batch_limit}，"
+                f"却没有实现 _embed_batch/_aembed_batch（收到 {len(documents)} 篇）。"
+                f"请覆写它们，或把 batch_limit 保持为 1。"
+            )
 
     async def aclose(self) -> None:
         """释放适配器资源；无资源实现沿用空操作。"""
@@ -265,7 +215,6 @@ class MultimodalEmbeddingMixin(GatedModel, ABC):
 __all__ = [
     "BaseEmbeddingModel",
     "MultimodalEmbeddingMixin",
-    "DEFAULT_MODEL_BATCH_CONCURRENCY",
     "EmbeddingPort",
     "EmbeddingTask",
     "MultimodalEmbeddingPort",

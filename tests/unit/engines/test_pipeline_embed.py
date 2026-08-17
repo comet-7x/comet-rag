@@ -2,10 +2,10 @@
 
 修复前 `astream_run` 是逐 chunk `await aembed()` —— **完全串行**，
 200 个 chunk 就是 200 次依次排队的网络往返，模型服务大部分时间在空转。
-而同一个类里 `_aembed_chunks` 走的是 `abatch_embed`（并发）。
+而同一个类里 `_aembed_chunks` 走的是批量排程（并发）。
 同一份工作两种写法，快慢差一个数量级。
 
-注意收益来自**并发**而非请求数：`BaseEmbeddingModel.abatch_embed` 是
+注意收益来自**并发**而非请求数：本用例里的替身 `batch_limit == 1`，排程是
 扇出 N 个单条请求并用信号量限流，不是把多条塞进一个请求。
 真正的请求级批量需要模型层支持，属后续优化。
 """

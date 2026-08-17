@@ -81,7 +81,7 @@ async def test_semantic_embedding_methods_choose_query_and_document_prompts() ->
     )
     try:
         await model.aembed_query("猫在哪里")
-        await model.aembed_documents(["猫在沙发上"])
+        await model.aembed_batch(["猫在沙发上"])
 
         assert payloads[0]["messages"][0]["content"][0]["text"] == (
             "Represent the query for retrieval."

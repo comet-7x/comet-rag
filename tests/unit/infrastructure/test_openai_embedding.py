@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, cast
 
+from comet_rag.application.embedding_batch import aembed_documents, embed_documents
 from comet_rag.core.concurrency import Gate
 from comet_rag.infrastructure.models.embedding import OpenAIEmbeddingModel
 
@@ -63,17 +64,18 @@ async def test_query_and_document_interfaces_are_immediately_usable() -> None:
 
     assert model.embed_query("query") == [0.0]
     assert await model.aembed_query("query") == [0.0]
-    assert model.embed_documents(["a", "b"]) == [[0.0], [1.0]]
-    assert await model.aembed_documents(["a", "b"]) == [[0.0], [1.0]]
+    assert embed_documents(model, ["a", "b"]) == [[0.0], [1.0]]
+    assert await aembed_documents(model, ["a", "b"]) == [[0.0], [1.0]]
 
     assert sync_client.embeddings.calls[-1]["input"] == ["a", "b"]
     assert async_client.embeddings.calls[-1]["input"] == ["a", "b"]
 
 
 async def test_native_async_batch_still_uses_process_gate() -> None:
+    """原生批量是一个请求，所以只占**一个**闸门名额 —— 装 1 篇还是 512 篇都一样。"""
     model, _, _ = _model()
     gate = Gate(limit=1)
     model.bind_gate(gate)
 
-    assert await model.aembed_documents(["a", "b"]) == [[0.0], [1.0]]
+    assert await model.aembed_batch(["a", "b"]) == [[0.0], [1.0]]
     assert gate.stats.admitted == 1

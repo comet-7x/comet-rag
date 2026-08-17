@@ -6,11 +6,15 @@ from openai import AsyncOpenAI, OpenAI
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 
+#: OpenAI 官方 ``/embeddings`` 单请求的输入条数上限。
+#:
+#: 兼容该协议的自建服务（vLLM、TEI 等）上限各不相同，所以它只是**默认值**，
+#: 不是协议保证 —— 指向别的服务时应按实际能力显式传 ``batch_limit``。
+DEFAULT_OPENAI_BATCH_LIMIT = 2048
+
 
 class OpenAIEmbeddingModel(BaseEmbeddingModel):
     """OpenAI ``/embeddings`` 兼容文本嵌入适配器。"""
-
-    _native_document_batch = True
 
     def __init__(
         self,
@@ -19,6 +23,7 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
         api_key: str,
         async_client: AsyncOpenAI | None = None,
         sync_client: OpenAI | None = None,
+        batch_limit: int = DEFAULT_OPENAI_BATCH_LIMIT,
     ) -> None:
         """
         Args:
@@ -27,10 +32,14 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             api_key: 服务 API Key
             async_client: 复用已有异步客户端；为 None 时内部创建
             sync_client: 复用已有同步客户端；为 None 时内部创建
+            batch_limit: 单请求最多携带几篇文档；由调度方据此切块
 
         传入的客户端由调用方持有，本适配器只关闭自己创建的客户端。
         """
+        if batch_limit <= 0:
+            raise ValueError(f"batch_limit 必须大于 0，收到 {batch_limit}")
         self._model_name = model_name
+        self.batch_limit = batch_limit
 
         self._owns_async_client = async_client is None
         self._owns_sync_client = sync_client is None
@@ -102,10 +111,10 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
                 f"{self.__class__.__name__} | aembed | 方法操作发生非预期错误：{str(e)}"
             ) from e
 
-    def _embed_documents_native(
+    def _embed_batch(
         self, documents: Sequence[str], /, **kwargs: Any
     ) -> list[list[float]]:
-        """用 OpenAI 原生批量请求生成文档向量。"""
+        """用 OpenAI 原生批量请求生成文档向量：一次请求，多篇文档。"""
         try:
             response = self.sync_client.embeddings.create(
                 **self._request_options(list(documents), **kwargs)
@@ -113,10 +122,10 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             return self._vectors(response, expected_count=len(documents))
         except Exception as e:
             raise CometRAGException(
-                f"{self.__class__.__name__} | embed_documents | 方法操作发生非预期错误：{str(e)}"
+                f"{self.__class__.__name__} | embed_batch | 方法操作发生非预期错误：{str(e)}"
             ) from e
 
-    async def _aembed_documents_native(
+    async def _aembed_batch(
         self, documents: Sequence[str], /, **kwargs: Any
     ) -> list[list[float]]:
         try:
@@ -126,7 +135,7 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             return self._vectors(response, expected_count=len(documents))
         except Exception as e:
             raise CometRAGException(
-                f"{self.__class__.__name__} | aembed_documents | 方法操作发生非预期错误：{str(e)}"
+                f"{self.__class__.__name__} | aembed_batch | 方法操作发生非预期错误：{str(e)}"
             ) from e
 
     async def aclose(self) -> None:

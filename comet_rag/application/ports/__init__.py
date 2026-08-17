@@ -6,7 +6,6 @@
 """
 
 from .embedding import (
-    DEFAULT_MODEL_BATCH_CONCURRENCY,
     EmbeddingPort,
     EmbeddingTask,
     MultimodalEmbeddingPort,
@@ -16,7 +15,6 @@ from .reranker import RerankerPort
 
 __all__ = [
     "AsyncGate",
-    "DEFAULT_MODEL_BATCH_CONCURRENCY",
     "EmbeddingPort",
     "EmbeddingTask",
     "MultimodalEmbeddingPort",

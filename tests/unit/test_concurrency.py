@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from comet_rag.application.embedding_batch import aembed_documents
 from comet_rag.core.concurrency import Gate, Overloaded
 from comet_rag.infrastructure.models.embedding.base import (
     BaseEmbeddingModel,
@@ -194,7 +195,7 @@ async def test_per_call_fanout_alone_does_not_cap_the_service() -> None:
     model = RecordingEmbedding()  # 不挂闸门 = 修复前的行为
 
     await asyncio.gather(
-        *(model.abatch_embed(["x"] * 8, max_concurrency=4) for _ in range(32))
+        *(aembed_documents(model, ["x"] * 8, max_concurrency=4) for _ in range(32))
     )
 
     assert model.peak > 4, (
@@ -208,7 +209,7 @@ async def test_process_gate_caps_the_service_no_matter_how_many_tasks() -> None:
     model.bind_gate(Gate(limit=4))
 
     await asyncio.gather(
-        *(model.abatch_embed(["x"] * 8, max_concurrency=4) for _ in range(32))
+        *(aembed_documents(model, ["x"] * 8, max_concurrency=4) for _ in range(32))
     )
 
     assert model.peak <= 4, f"并发峰值 {model.peak} 超过闸门上限 4"
@@ -225,7 +226,7 @@ async def test_embedding_and_reranker_share_one_gate() -> None:
     reranker.bind_gate(gate)
 
     await asyncio.gather(
-        model.abatch_embed(["x"] * 20, max_concurrency=20),
+        aembed_documents(model, ["x"] * 20, max_concurrency=20),
         *(reranker.ascore("q", ["d"]) for _ in range(20)),
     )
 

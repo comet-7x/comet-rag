@@ -8,10 +8,23 @@
 它们现在住在 :mod:`comet_rag.infrastructure.models.base` 及各自的
 ``base.py`` 里。
 
-分开之后契约小得能一眼看完，而这正是它该有的样子：`RetrievalService`
-只需要 ``aembed_query``，`IngestRunner` 和 pipeline 只需要
-``aembed_documents``/``embed_documents``。多出来的每一个方法都是在替
-使用者做他们没要求过的决定。
+分开之后契约小得能一眼看完，而这正是它该有的样子。多出来的每一个方法
+都是在替使用者做他们没要求过的决定。
+
+## 模型声明能力，调度方决定策略
+
+契约里没有 ``max_concurrency``：**发多少个请求、几个并发，是调用方的事**。
+模型只声明 ``batch_limit``（一次请求最多装几篇），由
+:mod:`comet_rag.application.embedding_batch` 据此排程。
+
+这条线原本是划错的。旧的 ``aembed_documents(docs, max_concurrency=4)`` 在两类
+适配器上根本不是同一个意思：不支持原生批量的模型会扇出 4 个并发单条请求，
+而支持的模型（OpenAI）把整批塞进**一个**请求 —— ``max_concurrency``
+被收下、被校验，然后**被无声丢弃**。调用方以为自己限住了什么，其实没有。
+
+症状在 ``PipelineConfig.embed_batch_size`` 的注释里早就写着了："它不是单个
+HTTP 请求携带的条数 —— 具体适配器可使用服务端原生批量，也可有界并发发送
+单条请求"。一个参数需要这样注释，说明它问的是错的那个问题。
 
 ## 为什么是 Protocol 而不是 ABC
 
@@ -41,10 +54,6 @@ from typing import Any, Protocol, runtime_checkable
 from comet_rag.application.ports.gate import AsyncGate
 from comet_rag.models.content import ContentInput, MediaResource
 
-#: 单次批量调用的默认扇出宽度。它约束的是**一次调用内**的并发，
-#: 进程级总量由闸门另行控制，两者是不同的旋钮。
-DEFAULT_MODEL_BATCH_CONCURRENCY = 16
-
 
 class EmbeddingTask(StrEnum):
     """文本向量的使用语义；适配器可据此选择编码器或提示词。
@@ -60,6 +69,12 @@ class EmbeddingTask(StrEnum):
 @runtime_checkable
 class EmbeddingPort(Protocol):
     """应用层可使用的 Embedding 契约。"""
+
+    #: 一次请求最多能装多少篇文档。``1`` 表示服务端不支持批量，只能一条一发。
+    #:
+    #: 这是模型**声明能力**，不是模型**决定策略**：它只回答"我一次最多能吃
+    #: 几个"，至于要不要装满、几个请求并发发出去，由调度方决定。
+    batch_limit: int
 
     def embed_query(self, query: str, /, **kwargs: Any) -> list[float]:
         """生成检索查询向量。"""
@@ -77,26 +92,19 @@ class EmbeddingPort(Protocol):
         """异步生成单篇待检索文档的向量。"""
         ...
 
-    def embed_documents(
-        self,
-        documents: Sequence[str],
-        /,
-        *,
-        max_concurrency: int = DEFAULT_MODEL_BATCH_CONCURRENCY,
-        **kwargs: Any,
+    def embed_batch(
+        self, documents: Sequence[str], /, **kwargs: Any
     ) -> list[list[float]]:
-        """批量生成文档向量，结果顺序与输入一致。"""
+        """**恰好一次往返**，返回与输入等长、同序的向量列表。
+
+        调用方必须保证 ``len(documents) <= batch_limit``。
+        """
         ...
 
-    async def aembed_documents(
-        self,
-        documents: Sequence[str],
-        /,
-        *,
-        max_concurrency: int = DEFAULT_MODEL_BATCH_CONCURRENCY,
-        **kwargs: Any,
+    async def aembed_batch(
+        self, documents: Sequence[str], /, **kwargs: Any
     ) -> list[list[float]]:
-        """异步批量生成文档向量，结果顺序与输入一致。"""
+        """``embed_batch`` 的异步版本；同样是恰好一次往返。"""
         ...
 
     def bind_gate(self, gate: AsyncGate | None) -> None:
@@ -137,7 +145,6 @@ class MultimodalEmbeddingPort(Protocol):
 
 
 __all__ = [
-    "DEFAULT_MODEL_BATCH_CONCURRENCY",
     "EmbeddingPort",
     "EmbeddingTask",
     "MultimodalEmbeddingPort",

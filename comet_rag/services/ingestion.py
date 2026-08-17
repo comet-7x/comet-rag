@@ -51,6 +51,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
+from comet_rag.application.embedding_batch import aembed_documents
 from comet_rag.application.ports import EmbeddingPort
 from comet_rag.core.concurrency import Overloaded
 from comet_rag.core.logging import logger
@@ -289,8 +290,10 @@ class IngestRunner:
             for start in range(0, len(chunks), window):
                 await ctx.checkpoint()
                 batch = chunks[start : start + window]
-                embeddings = await self._embedding_model.aembed_documents(
-                    batch, max_concurrency=self._config.max_concurrency
+                embeddings = await aembed_documents(
+                    self._embedding_model,
+                    batch,
+                    max_concurrency=self._config.max_concurrency,
                 )
                 records = [
                     VectorRecord(
