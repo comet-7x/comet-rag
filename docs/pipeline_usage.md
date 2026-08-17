@@ -271,13 +271,13 @@ def extract_docx_with_headers(
 from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.loaders.types import SourceContent
 
-loader = AutoLoader()
+loader = AutoLoader.default()
 lc = loader.load(SourceContent("document.docx"))
 print(lc.path, lc.metadata)
 lc.cleanup()  # URL 下载的临时文件需手动清理（或用 with 语句）
 
 # with 语句自动 cleanup
-with AutoLoader() as loader:
+with AutoLoader.default() as loader:
     lc = loader.load("document.docx")
     # 并发上限是显式参数；默认安全上限为 10，生产环境应按资源预算调整
     items = loader.batch_load(["a.txt", "b.txt"], max_concurrency=4)
@@ -291,21 +291,24 @@ with AutoLoader() as loader:
 需要 `download_config`、自定义 HTTP client 等 URL 专用选项时，应直接使用
 `URLLoader`，避免把某个 Loader 的参数误传给混合批次中的其他 Loader。
 
-MinIO/S3 等可选对象存储不需要修改 `SourceType` 或让 engines 依赖 SDK；在
-基础设施层实现 `BaseLoader` 后注册一条路由即可：
+MinIO/S3 等可选对象存储不需要修改 engines 中的闭合来源枚举或让 engines
+依赖 SDK；在基础设施层实现 `BaseLoader`，再通过 `LoaderRoute` 统一装配即可：
 
 ```python
-from comet_rag.engines.loaders import AutoLoader
+from comet_rag.engines.loaders import AutoLoader, LoaderRoute
 from your_project.loaders import MinioLoader
 
 async def load_from_object_storage():
-    async with AutoLoader() as loader:
-        loader.register_loader(
+    routes = AutoLoader.default_routes()
+    routes.insert(
+        0,
+        LoaderRoute.schemes(
             "minio",
             MinioLoader(...),
-            lambda source: source.parsed_url.scheme in {"s3", "minio"},
-            prepend=True,
-        )
+            {"s3", "minio"},
+        ),
+    )
+    async with AutoLoader(routes) as loader:
         return await loader.aload("s3://documents/report.pdf")
 ```
 

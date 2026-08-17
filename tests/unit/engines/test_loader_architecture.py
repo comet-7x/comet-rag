@@ -12,11 +12,15 @@ from comet_rag.engines.loaders.base_loader import (
     BaseLoader,
 )
 from comet_rag.engines.loaders.data_type import (
+    AllowExt,
     BaseFileFormat,
     CodeFormat,
     ContentStructure,
+    ContentTypeMismatch,
     MixedFormat,
+    UnsupportedContentType,
     is_allowed_extension,
+    resolve_detected_extension,
 )
 from comet_rag.engines.loaders.local_loader import LocalLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
@@ -31,7 +35,9 @@ class RecordingLoader(BaseLoader):
         self.async_cleanup_calls = 0
 
     def _result(self, source: SourceContent | str) -> LoaderContent:
-        normalized = source if isinstance(source, SourceContent) else SourceContent(source)
+        normalized = (
+            source if isinstance(source, SourceContent) else SourceContent(source)
+        )
         return LoaderContent(
             path=Path(normalized.parsed_url.path.lstrip("/") or "object"),
             source=normalized,
@@ -79,7 +85,9 @@ class LegacyCloseLoader(BaseLoader):
         self.async_close_calls = 0
 
     def load(self, source: SourceContent | str) -> LoaderContent:
-        normalized = source if isinstance(source, SourceContent) else SourceContent(source)
+        normalized = (
+            source if isinstance(source, SourceContent) else SourceContent(source)
+        )
         return LoaderContent(path=Path("legacy"), source=normalized)
 
     async def aload(self, source: SourceContent | str) -> LoaderContent:
@@ -93,11 +101,7 @@ class LegacyCloseLoader(BaseLoader):
 
 
 def _scheme_route(scheme: str, loader: BaseLoader) -> LoaderRoute:
-    return LoaderRoute(
-        name=scheme,
-        matcher=lambda source: source.parsed_url.scheme == scheme,
-        loader=loader,
-    )
+    return LoaderRoute.schemes(scheme, loader, {scheme})
 
 
 def test_batch_concurrency_is_an_explicit_public_parameter() -> None:
@@ -138,19 +142,40 @@ async def test_local_loader_rejects_unsupported_options(tmp_path: Path) -> None:
         await loader.aload(source, unsupported=True)  # type: ignore[call-arg]
 
 
-def test_custom_minio_route_does_not_require_a_new_source_type() -> None:
+def test_custom_minio_route_uses_extensible_source_scheme() -> None:
     minio = RecordingLoader("minio")
-    loader = AutoLoader(routes=[])
-    loader.register_loader(
-        "minio",
-        minio,
-        lambda source: source.parsed_url.scheme in {"s3", "minio"},
-    )
+    loader = AutoLoader([LoaderRoute.schemes("minio", minio, {"s3", "minio"})])
 
     result = loader.load("s3://documents/report.pdf")
 
     assert result.metadata["loader"] == "minio"
     assert result.source.source == "s3://documents/report.pdf"
+    assert result.source.source_type == "s3"
+
+
+def test_scheme_route_leaves_source_validation_to_concrete_loader() -> None:
+    route = LoaderRoute.schemes("s3", RecordingLoader("s3"), {"s3", "minio"})
+
+    assert route.matcher(SourceContent("s3:///missing-bucket.txt")) is True
+
+
+def test_scheme_route_accepts_one_string_without_splitting_characters() -> None:
+    route = LoaderRoute.schemes("secure-url", RecordingLoader("https"), "https")
+
+    assert route.matcher(SourceContent("https://example.invalid/document.txt")) is True
+    assert route.matcher(SourceContent("http://example.invalid/document.txt")) is False
+
+
+def test_loader_route_preserves_legacy_positional_field_order() -> None:
+    def matcher(source: SourceContent) -> bool:
+        return source.parsed_url.scheme == "custom"
+
+    loader = RecordingLoader("custom")
+
+    route = LoaderRoute("custom", matcher, loader)
+
+    assert route.matcher(SourceContent("custom://bucket/object.txt")) is True
+    assert route.loader is loader
 
 
 def test_constructor_rejects_duplicate_route_names() -> None:
@@ -177,9 +202,7 @@ async def test_auto_loader_rejects_loader_specific_options_at_router_boundary() 
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         untyped_loader.load("alpha://bucket/1", download_config=object())
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        await untyped_loader.aload(
-            "alpha://bucket/1", download_config=object()
-        )
+        await untyped_loader.aload("alpha://bucket/1", download_config=object())
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         untyped_loader.batch_load(
             ["alpha://bucket/1", "beta://bucket/2"],
@@ -218,7 +241,9 @@ def test_auto_loader_groups_mixed_batch_and_restores_input_order() -> None:
     assert beta.batch_limits == [4]
 
 
-async def test_auto_loader_uses_specialized_async_batch_and_cleans_shared_once() -> None:
+async def test_auto_loader_uses_specialized_async_batch_and_cleans_shared_once() -> (
+    None
+):
     shared = RecordingLoader("shared")
     loader = AutoLoader(
         routes=[_scheme_route("first", shared), _scheme_route("second", shared)]
@@ -237,6 +262,41 @@ async def test_auto_loader_uses_specialized_async_batch_and_cleans_shared_once()
 def test_file_format_registry_is_explicit_and_queryable() -> None:
     assert BaseFileFormat.from_extension(".DOCX") is MixedFormat
     assert BaseFileFormat.from_extension("py") is CodeFormat
+    assert BaseFileFormat.from_extension(".rs") is CodeFormat
     assert BaseFileFormat.all_by_structure(ContentStructure.CODE) == [CodeFormat]
     assert is_allowed_extension(".pdf") is True
+    assert is_allowed_extension(".rust") is False
     assert is_allowed_extension("exe") is False
+
+
+def test_code_format_uses_standard_source_file_extensions() -> None:
+    assert {extension.value for extension in CodeFormat.extensions} == {
+        "py",
+        "ts",
+        "js",
+        "java",
+        "c",
+        "cpp",
+        "go",
+        "php",
+        "r",
+        "rs",
+        "html",
+    }
+    assert AllowExt.RUST is AllowExt.RS
+
+
+@pytest.mark.parametrize("extension", list(AllowExt))
+def test_every_allowed_extension_has_a_registered_format(extension: AllowExt) -> None:
+    assert BaseFileFormat.from_extension(extension.value) is not None
+
+
+def test_detected_extension_policy_is_shared_and_allow_ext_backed() -> None:
+    assert resolve_detected_extension("py", "txt") == "py"
+    assert resolve_detected_extension("rs", "txt") == "rs"
+    assert resolve_detected_extension("html", "txt") == "html"
+    assert resolve_detected_extension("", "pdf") == "pdf"
+    with pytest.raises(ContentTypeMismatch, match="docx.*html"):
+        resolve_detected_extension("docx", "html")
+    with pytest.raises(UnsupportedContentType, match="zip"):
+        resolve_detected_extension("docx", "zip")

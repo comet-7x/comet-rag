@@ -34,8 +34,35 @@ class AllowExt(StrEnum):
     GO = "go"
     PHP = "php"
     R = "r"
-    RUST = "rust"
+    RS = "rs"
+    RUST = "rs"  # Backward-compatible member alias; Rust source files use .rs.
     HTML = "html"
+
+
+class UnsupportedContentType(ValueError):
+    """Detected content is outside the shared loader format registry."""
+
+
+class ContentTypeMismatch(ValueError):
+    """A supported declared extension conflicts with detected content."""
+
+
+_CODE_EXTENSIONS = (
+    AllowExt.PY,
+    AllowExt.TS,
+    AllowExt.JS,
+    AllowExt.JAVA,
+    AllowExt.C,
+    AllowExt.CPP,
+    AllowExt.GO,
+    AllowExt.PHP,
+    AllowExt.R,
+    AllowExt.RS,
+    AllowExt.HTML,
+)
+_GENERIC_TEXT_DECLARATIONS = frozenset(
+    (AllowExt.TXT, AllowExt.MD, *_CODE_EXTENSIONS)
+)
 
 
 def normalize_extension(extension: str) -> str:
@@ -52,6 +79,42 @@ def is_allowed_extension(extension: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def resolve_detected_extension(
+    declared_extension: str,
+    detected_extension: str,
+) -> str:
+    """Resolve one supported extension from declared and detected content types.
+
+    The detector intentionally has final authority over unsupported bytes. The only
+    compatibility exception is text-like source formats that Magika commonly
+    generalizes to ``txt``; that policy lives here so every remote loader follows
+    the same rule and ``AllowExt`` remains the extension source of truth.
+    """
+
+    declared_value = normalize_extension(declared_extension)
+    detected_value = normalize_extension(detected_extension)
+    try:
+        detected = AllowExt(detected_value)
+    except ValueError:
+        raise UnsupportedContentType(
+            f"Unsupported content type {detected_value!r}"
+        ) from None
+
+    try:
+        declared = AllowExt(declared_value)
+    except ValueError:
+        declared = None
+
+    if declared is not None and declared is not detected:
+        if detected is AllowExt.TXT and declared in _GENERIC_TEXT_DECLARATIONS:
+            return declared.value
+        raise ContentTypeMismatch(
+            f"Declared extension {declared.value!r} does not match "
+            f"detected content type {detected.value!r}"
+        )
+    return detected.value
 
 
 class ContentStructure(StrEnum):
@@ -126,9 +189,7 @@ class BaseFileFormat:
     def all_by_structure(
         cls, *structures: ContentStructure
     ) -> list[type[BaseFileFormat]]:
-        return [
-            fmt for fmt in _FORMAT_TYPES if fmt.format_meta.structure in structures
-        ]
+        return [fmt for fmt in _FORMAT_TYPES if fmt.format_meta.structure in structures]
 
     def __repr__(self) -> str:
         return f"<FileFormat {self.extensions}>"
@@ -195,19 +256,7 @@ class StructuredFormat(BaseFileFormat):
 
 
 class CodeFormat(BaseFileFormat):
-    extensions = (
-        AllowExt.PY,
-        AllowExt.TS,
-        AllowExt.JS,
-        AllowExt.JAVA,
-        AllowExt.C,
-        AllowExt.CPP,
-        AllowExt.GO,
-        AllowExt.PHP,
-        AllowExt.R,
-        AllowExt.RUST,
-        AllowExt.HTML,
-    )
+    extensions = _CODE_EXTENSIONS
     format_meta = FormatMeta(
         structure=ContentStructure.CODE,
         default_granularity=GranularityStrategy.WHOLE,
@@ -236,6 +285,9 @@ def _build_format_registry() -> dict[str, type[BaseFileFormat]]:
             if key in registry:
                 raise RuntimeError(f"Duplicate file format extension: {key!r}")
             registry[key] = format_type
+    missing = {extension.value for extension in AllowExt}.difference(registry)
+    if missing:
+        raise RuntimeError(f"Allowed extensions are not registered: {sorted(missing)}")
     return registry
 
 

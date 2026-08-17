@@ -12,12 +12,22 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from comet_rag.engines.loaders.base_loader import DEFAULT_MAX_CONCURRENCY, BaseLoader
-from comet_rag.engines.loaders.data_type import ParseConfig, is_allowed_extension
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent, SourceType
+from comet_rag.engines.loaders.data_type import (
+    ContentTypeMismatch as _ContentTypeMismatch,
+)
+from comet_rag.engines.loaders.data_type import (
+    ParseConfig,
+    is_allowed_extension,
+    resolve_detected_extension,
+)
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.utils.file_detector import detect_content_type_from_path
 
 DEFAULT_MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
 _STREAM_CHUNK_BYTES = 64 * 1024
+
+# Preserve the public import path used before the exception moved to data_type.py.
+ContentTypeMismatch = _ContentTypeMismatch
 
 
 class DownloadRequestConfig(BaseModel):
@@ -38,15 +48,6 @@ class DownloadRequestConfig(BaseModel):
 
 class DownloadTooLarge(ValueError):
     """远端响应超过应用层下载上限。"""
-
-
-class ContentTypeMismatch(ValueError):
-    """URL 后缀与下载内容的实际格式冲突。"""
-
-
-_GENERIC_TEXT_EXTENSIONS = frozenset(
-    {"txt", "md", "py", "ts", "js", "java", "c", "cpp", "go", "php", "r", "rust"}
-)
 
 
 class URLLoader(BaseLoader):
@@ -187,7 +188,7 @@ class URLLoader(BaseLoader):
                 f"File is empty and cannot be loaded. Path: {path.resolve()}, type: {file_type}"
             )
         metadata = {
-            "source_type": source.pre_source_type,
+            "source_type": source.source_type,
             "file_name": path.name,
             "file_type": file_type,
             "file_size": file_size,
@@ -346,29 +347,7 @@ class URLLoader(BaseLoader):
             logger.warning(f"内容探测失败，回退到 URL 后缀 {source_ext!r}: {exc!r}")
             label = source_ext
         else:
-            detected_allowed = is_allowed_extension(detected)
-            if not detected_allowed:
-                if not source_allowed:
-                    raise ValueError(
-                        f"Unsupported downloaded content type {detected!r}"
-                    )
-                logger.warning(
-                    f"内容探测结果 {detected!r} 不受支持，回退到 URL 后缀 "
-                    f"{source_ext!r}"
-                )
-                label = source_ext
-            elif source_allowed and source_ext != detected:
-                # Magika 对源码/Markdown 常给出泛化的 txt；这不是冲突，仍保留
-                # URL 上更具体的文本语义。其余冲突（尤其 .docx → html）立即拒绝。
-                if detected == "txt" and source_ext in _GENERIC_TEXT_EXTENSIONS:
-                    label = source_ext
-                else:
-                    raise ContentTypeMismatch(
-                        f"URL extension {source_ext!r} does not match downloaded "
-                        f"content type {detected!r}"
-                    )
-            else:
-                label = detected
+            label = resolve_detected_extension(source_ext, detected)
         target = str(Path(path).with_suffix(f".{label}"))
         Path(path).replace(target)
         self._temp_files[self._temp_files.index(path)] = target
@@ -442,7 +421,7 @@ class URLLoader(BaseLoader):
     ) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
-        if source.pre_source_type != SourceType.URL:
+        if not source.is_url:
             raise ValueError(f"URLLoader only handles URLs, got: {source.source!r}")
         config = download_config or DownloadRequestConfig(
             timeout=self._timeout, follow_redirects=self._follow_redirects
@@ -476,7 +455,7 @@ class URLLoader(BaseLoader):
     ) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
-        if source.pre_source_type != SourceType.URL:
+        if not source.is_url:
             raise ValueError(f"URLLoader only handles URLs, got: {source.source!r}")
         config = download_config or DownloadRequestConfig(
             timeout=self._timeout, follow_redirects=self._follow_redirects

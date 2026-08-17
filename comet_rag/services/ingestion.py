@@ -158,7 +158,7 @@ class IngestRunner:
         self._embedding_model = embedding_model
         self._vector_store = vector_store
         self._kb = knowledge_base
-        self._loader = loader or AutoLoader()
+        self._loader = loader or AutoLoader.default()
         self._config = config or PipelineConfig()
         self._flow = self._build_flow()
 

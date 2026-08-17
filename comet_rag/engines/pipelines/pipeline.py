@@ -24,7 +24,7 @@ class Pipeline:
         embedding_model: BaseEmbeddingModel | None = None,
     ):
         self._config = config or PipelineConfig()
-        self._loader = loader or AutoLoader()
+        self._loader = loader or AutoLoader.default()
         self._embedding_model = embedding_model
 
     def run(self, source: str | Path | SourceContent) -> PipelineResult:

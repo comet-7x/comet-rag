@@ -5,6 +5,7 @@ from .data_type import (
     BaseFileFormat,
     CodeFormat,
     ContentStructure,
+    ContentTypeMismatch,
     FileFormat,
     FormatMeta,
     GranularityStrategy,
@@ -14,11 +15,13 @@ from .data_type import (
     SlideFormat,
     StructuredFormat,
     TabularFormat,
+    UnsupportedContentType,
     is_allowed_extension,
     normalize_extension,
+    resolve_detected_extension,
 )
 from .local_loader import LocalLoader
-from .types import LoaderContent, SourceContent, SourceType
+from .types import LoaderContent, SourceContent
 from .url_loader import DownloadRequestConfig, URLLoader
 
 Loader = AutoLoader
@@ -27,6 +30,9 @@ __all__ = [
     "AllowExt",
     "normalize_extension",
     "is_allowed_extension",
+    "resolve_detected_extension",
+    "UnsupportedContentType",
+    "ContentTypeMismatch",
     "ContentStructure",
     "GranularityStrategy",
     "FormatMeta",
@@ -40,7 +46,6 @@ __all__ = [
     "CodeFormat",
     "ParseConfig",
     "SourceContent",
-    "SourceType",
     "DownloadRequestConfig",
     "LoaderContent",
     "BaseLoader",
