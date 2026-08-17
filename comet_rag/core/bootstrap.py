@@ -216,16 +216,23 @@ def build_model_gate(
     )
 
 
-def build_embedding_model(config: APPConfig) -> BaseEmbeddingModel:
+def build_embedding_model(
+    config: APPConfig,
+    *,
+    image_url_validator: Callable[[str], None] | None = None,
+) -> BaseEmbeddingModel:
     from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import (  # noqa: PLC0415
         Qwen3VLEmbeddingModel,
     )
 
     settings = config.infrastructure_config.embedding_model
+    if image_url_validator is None:
+        image_url_validator = build_source_policy(config.ingest_policy).check_redirect
     return Qwen3VLEmbeddingModel(
         base_url=settings.base_url,
         model_name=settings.model_name,
         api_key=settings.api_key_value or "EMPTY",
+        image_url_validator=image_url_validator,
     )
 
 
@@ -300,7 +307,9 @@ def build_context(
 
     source_policy = build_source_policy(config.ingest_policy)
     ingest_loader = build_ingest_loader(config, source_policy)
-    embedding_model = embedding_model or build_embedding_model(config)
+    embedding_model = embedding_model or build_embedding_model(
+        config, image_url_validator=source_policy.check_redirect
+    )
     reranker = (
         reranker
         if reranker is not None

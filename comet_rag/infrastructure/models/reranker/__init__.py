@@ -9,6 +9,8 @@ from .qwen3_vl_reranker import (
     ImageUrlParam,
     Qwen3VLReranker,
     RerankRequest,
+    RerankResponse,
+    RerankResult,
     ScoreMultiModalParam,
     ScoreQueriesDocumentsRequest,
 )
@@ -24,6 +26,8 @@ __all__ = [
     "ChatCompletionContentPartVideoParam",
     "ScoreMultiModalParam",
     "RerankRequest",
+    "RerankResponse",
+    "RerankResult",
     "ScoreQueriesDocumentsRequest",
     "Qwen3VLReranker",
 ]

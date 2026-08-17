@@ -20,11 +20,13 @@ from comet_rag.config.schemas import (
     S3Config,
     ServerConfig,
 )
-from comet_rag.core.bootstrap import build_context
+from comet_rag.core.bootstrap import build_context, build_embedding_model
 from comet_rag.engines.loaders.types import SourceContent
 from comet_rag.engines.pipelines import DocxConfig, PipelineConfig
+from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.loaders import S3Loader
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import EmbeddingData
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
 
@@ -84,6 +86,16 @@ def context(embedding: FakeEmbedding):
 
 
 # ── 装配 ───────────────────────────────────────────────────────────────────
+
+
+async def test_built_embedding_model_receives_source_policy() -> None:
+    """多模态 embedding 也会让模型服务抓取 URL，不能漏掉 SSRF 准入策略。"""
+    model = build_embedding_model(make_config())
+    try:
+        with pytest.raises(CometRAGException, match="非公网地址"):
+            model.embed(EmbeddingData(image_url="http://127.0.0.1/metadata"))
+    finally:
+        await model.aclose()
 
 
 async def test_memory_backends_need_no_middleware(context) -> None:

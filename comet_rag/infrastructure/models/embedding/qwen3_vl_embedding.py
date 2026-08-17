@@ -1,11 +1,16 @@
+import asyncio
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from httpx import AsyncClient, Client
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field
 
 from comet_rag.exceptions import CometRAGException
+from comet_rag.infrastructure.models._image_url import (
+    ImageURLValidator,
+    validate_image_reference,
+)
 
 from .base import BaseEmbeddingModel
 
@@ -18,6 +23,8 @@ class Qwen3VLEmbeddingModelSystemPrompt(StrEnum):
 
 
 class EmbeddingData(BaseModel):
+    """Qwen 多模态嵌入输入；文本与图片可以单独使用，也可以组合使用。"""
+
     text: str | None = Field(default=None, description="需要嵌入的文本内容")
     image_url: str | None = Field(
         default=None,
@@ -70,7 +77,9 @@ class EmbeddingResponse(BaseModel):
     object: str = Field(..., description="返回对象类型，通常为 'list'")
     created: int = Field(..., description="嵌入向量任务创建时间戳（Unix 时间戳）")
     model: str = Field(..., description="使用的模型名称")
-    data: list[EmbeddingParam] = Field(..., description="嵌入向量列表")
+    data: list[EmbeddingParam] = Field(
+        ..., min_length=1, description="嵌入向量列表，至少包含当前请求的一个结果"
+    )
     usage: Usage = Field(..., description="本次请求的 Token 消耗统计")
 
 
@@ -97,9 +106,9 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         max_model_len: int | None = None,
         async_client: AsyncClient | None = None,
         sync_client: Client | None = None,
+        image_url_validator: ImageURLValidator | None = None,
     ) -> None:
-        """
-        Qwen3VL 嵌入模型
+        """创建 Qwen3-VL OpenAI 兼容嵌入适配器。
 
         Args:
             base_url (str): 模型服务地址
@@ -109,12 +118,16 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             max_model_len (int | None): 模型允许的最大输入序列长度，默认为 `None`
             async_client (AsyncClient | None): 异步请求连接，默认为 `None`
             sync_client (Client | None): 同步请求连接，默认为 `None`
+            image_url_validator: 远程图片 URL 准入策略；服务端装配时必须注入
+
+        传入的客户端由调用方持有，本适配器只关闭自己创建的客户端。
         """
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
         self._api_key = api_key
         self._output_dim = output_dim
         self._max_model_len = max_model_len
+        self._image_url_validator = image_url_validator
 
         self._owns_async_client = async_client is None
         self._owns_sync_client = sync_client is None
@@ -125,19 +138,19 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             sync_client if sync_client is not None else Client(timeout=60.0)
         )
 
-    def _get_headers(self, **kwargs) -> dict:
-        """
-        获取请求头
-
-        Returns:
-            dict: 请求头
-        """
-        headers = {
+    def _get_headers(self) -> dict[str, str]:
+        """构造认证请求头；调用方不能通过任意参数覆盖凭据。"""
+        return {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
-            **kwargs,
         }
-        return headers
+
+    def _validate_embedding_data(self, embedding_data: EmbeddingData) -> None:
+        if embedding_data.image_url is not None:
+            validate_image_reference(
+                embedding_data.image_url,
+                validator=self._image_url_validator,
+            )
 
     def _create_messages_params(
         self,
@@ -198,7 +211,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         encoding_format: EncodingFormat = EncodingFormat.FLOAT,
         continue_final_message: bool = True,
         add_special_tokens: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> list[float] | str:
         """
         编码文本、图片（图片的 base64 编码或者图片 URL） 对应的向量
@@ -213,10 +226,11 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             add_special_tokens (bool): 是否添加特殊分隔标记，默认为 `True`
 
         Returns:
-            list[float]: 向量表示
+            list[float] | str: 浮点向量或 Base64 编码结果
         """
         try:
             embedding_data = _normalize_embedding_data(embedding_data)
+            self._validate_embedding_data(embedding_data)
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,
@@ -254,7 +268,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         encoding_format: EncodingFormat = EncodingFormat.FLOAT,
         continue_final_message: bool = True,
         add_special_tokens: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> list[float] | str:
         """
         异步编码文本、图片（图片的 base64 编码或者图片 URL） 对应的向量
@@ -269,10 +283,12 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             add_special_tokens (bool): 是否添加特殊分隔标记，默认为 `True`
 
         Returns:
-            list[float]: 向量表示
+            list[float] | str: 浮点向量或 Base64 编码结果
         """
         try:
             embedding_data = _normalize_embedding_data(embedding_data)
+            # 部署侧策略可能执行 DNS 查询，不能阻塞事件循环。
+            await asyncio.to_thread(self._validate_embedding_data, embedding_data)
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,
@@ -306,7 +322,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         embedding_data: EmbeddingData,
         continue_final_message: bool = False,
         return_token_strs: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> TokenizeResponse:
         """
         编码 tokens 对应的文本
@@ -320,6 +336,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             TokenizeResponse: tokenize 响应
         """
         try:
+            self._validate_embedding_data(embedding_data)
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,
@@ -353,7 +370,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         embedding_data: EmbeddingData,
         continue_final_message: bool = False,
         return_token_strs: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> TokenizeResponse:
         """
         异步编码 tokens 对应的文本
@@ -367,6 +384,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             TokenizeResponse: tokenize 响应
         """
         try:
+            await asyncio.to_thread(self._validate_embedding_data, embedding_data)
             messages = self._create_messages_params(
                 text=embedding_data.text,
                 image_url=embedding_data.image_url,
@@ -396,7 +414,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
     def detokenize(
         self,
         tokens: list[int],
-        **kwargs,
+        **kwargs: Any,
     ) -> DetokenizeResponse:
         try:
             response = self.sync_client.post(
@@ -420,7 +438,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
     async def adetokenize(
         self,
         tokens: list[int],
-        **kwargs,
+        **kwargs: Any,
     ) -> DetokenizeResponse:
         try:
             response = await self.async_client.post(
@@ -443,11 +461,12 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
 
     def get_output_dim(self) -> int:
         """获取并校验输出维度"""
-        actual_dim = len(
-            self.embed(
-                EmbeddingData(text="hello"), encoding_format=EncodingFormat.FLOAT
-            )
+        embedding = self.embed(
+            EmbeddingData(text="hello"), encoding_format=EncodingFormat.FLOAT
         )
+        if not isinstance(embedding, list):
+            raise ValueError("模型在 encoding_format=float 时返回了非浮点向量")
+        actual_dim = len(embedding)
 
         if self._output_dim is None:
             self._output_dim = actual_dim
@@ -459,6 +478,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         return self._output_dim
 
     def get_max_model_len(self) -> int:
+        """读取并校验模型允许的最大输入长度。"""
         response = self.tokenize(EmbeddingData(text="hello"))
         actual_len = response.max_model_len
 
@@ -466,14 +486,12 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             self._max_model_len = actual_len
         elif self._max_model_len != actual_len:
             raise ValueError(
-                f"{self.__class__.__name__} | get_max_model_len | 模型最大输出长度冲突: 配置为 {self._max_model_len}, 但模型实际输出为 {actual_len}"
+                f"{self.__class__.__name__} | get_max_model_len | 模型最大输入长度冲突: 配置为 {self._max_model_len}, 但模型实际返回为 {actual_len}"
             )
         return self._max_model_len
 
-    async def close_client(self) -> None:
-        """
-        关闭客户端
-        """
+    async def aclose(self) -> None:
+        """仅关闭由当前适配器创建的同步与异步客户端。"""
         if self._owns_async_client:
             await self.async_client.aclose()
         if self._owns_sync_client:

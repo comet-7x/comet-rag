@@ -58,7 +58,7 @@ async def test_remote_image_url_is_validated_before_model_request(
         await async_client.aclose()
 
 
-def test_base64_image_does_not_require_url_policy() -> None:
+async def test_base64_image_does_not_require_url_policy() -> None:
     validated: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -78,4 +78,32 @@ def test_base64_image_does_not_require_url_policy() -> None:
         assert model.score(_multimodal("data:image/png;base64,AAAA"), ["doc"]) == [0.5]
         assert validated == []
     finally:
+        await model.aclose()
+        client.close()
+
+
+async def test_duplicate_result_indexes_are_rejected() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"index": 0, "relevance_score": 0.9},
+                    {"index": 0, "relevance_score": 0.1},
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    model = Qwen3VLReranker(
+        base_url="https://model.invalid/v1",
+        model_name="qwen-rerank",
+        api_key="test",
+        sync_client=client,
+    )
+    try:
+        with pytest.raises(CometRAGException, match="重复的候选索引"):
+            model.score("query", ["first", "second"])
+    finally:
+        await model.aclose()
         client.close()
