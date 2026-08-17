@@ -3,8 +3,8 @@ from typing import Any
 
 from openai import AsyncOpenAI, OpenAI
 
-from comet_rag.application.ports.embedding import BaseEmbeddingModel
 from comet_rag.exceptions import CometRAGException
+from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 
 
 class OpenAIEmbeddingModel(BaseEmbeddingModel):

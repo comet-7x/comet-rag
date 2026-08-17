@@ -1,4 +1,4 @@
-from .base import BaseReranker, RerankerPort
+from .base import BaseReranker
 from .qwen3_vl_reranker import (
     ChatCompletionContentPartImageEmbedsParam,
     ChatCompletionContentPartImageParam,
@@ -17,7 +17,6 @@ from .qwen3_vl_reranker import (
 
 __all__ = [
     "BaseReranker",
-    "RerankerPort",
     "ImageDetail",
     "ImageUrlParam",
     "ImageEmbedsParam",

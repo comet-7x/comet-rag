@@ -3,6 +3,7 @@ from .base import (
     BaseEmbeddingModel,
     EmbeddingPort,
     EmbeddingTask,
+    MultimodalEmbeddingMixin,
     MultimodalEmbeddingPort,
 )
 from .openai_embedding_model import OpenAIEmbeddingModel
@@ -21,6 +22,7 @@ __all__ = [
     "DEFAULT_MODEL_BATCH_CONCURRENCY",
     "EmbeddingPort",
     "EmbeddingTask",
+    "MultimodalEmbeddingMixin",
     "MultimodalEmbeddingPort",
     "OpenAIEmbeddingModel",
     "DetokenizeResponse",

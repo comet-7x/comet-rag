@@ -9,16 +9,17 @@ from httpx import AsyncClient, Client
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field
 
-from comet_rag.application.ports.embedding import (
-    BaseEmbeddingModel,
-    EmbeddingTask,
-)
+from comet_rag.application.ports.embedding import EmbeddingTask
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.models._image_reference import (
     DEFAULT_MAX_LOCAL_IMAGE_BYTES,
     ImageReferenceValidator,
     prepare_image_reference,
     prepare_media_resource,
+)
+from comet_rag.infrastructure.models.embedding.base import (
+    BaseEmbeddingModel,
+    MultimodalEmbeddingMixin,
 )
 from comet_rag.models import ContentInput, ImageContent, MediaResource, TextContent
 
@@ -98,7 +99,7 @@ class DetokenizeResponse(BaseModel):
     prompt: str = Field(..., description="从 Token ID 序列还原出的原始文本内容")
 
 
-class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
+class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
     def __init__(
         self,
         base_url: str,

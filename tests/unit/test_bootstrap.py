@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from comet_rag.application.ports import MultimodalEmbeddingPort
 from comet_rag.config.schemas import (
     APPConfig,
     Backend,
@@ -90,9 +91,16 @@ def context(embedding: FakeEmbedding):
 
 
 async def test_built_embedding_model_receives_source_policy() -> None:
-    """多模态 embedding 也会让模型服务抓取 URL，不能漏掉 SSRF 准入策略。"""
+    """多模态 embedding 也会让模型服务抓取 URL，不能漏掉 SSRF 准入策略。
+
+    先 `isinstance` 再调用，不是为了让类型检查闭嘴：`build_embedding_model`
+    的返回类型是 `EmbeddingPort`，而多模态是**可选能力**。这行断言同时把
+    "当前配置装出来的模型确实支持图片"一并钉住 —— 哪天它退化成纯文本，
+    这条 SSRF 用例会立刻失败而不是静静地不再检查任何东西。
+    """
     model = build_embedding_model(make_config())
     try:
+        assert isinstance(model, MultimodalEmbeddingPort)
         with pytest.raises(CometRAGException, match="非公网地址"):
             model.embed_media(MediaResource(url="http://127.0.0.1/metadata"))
     finally:
@@ -106,6 +114,7 @@ async def test_built_embedding_model_rejects_local_image_by_default(
     image.write_bytes(b"png-bytes")
     model = build_embedding_model(make_config())
     try:
+        assert isinstance(model, MultimodalEmbeddingPort)
         with pytest.raises(CometRAGException, match="未开放从服务器本地路径入库"):
             model.embed_media(MediaResource(path=image, mimetype="image/png"))
     finally:

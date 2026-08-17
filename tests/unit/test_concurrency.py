@@ -13,12 +13,15 @@ from typing import Any
 import pytest
 
 from comet_rag.core.concurrency import Gate, Overloaded
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.models.embedding.base import (
+    BaseEmbeddingModel,
+    MultimodalEmbeddingMixin,
+)
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.models import MediaResource
 
 
-class RecordingEmbedding(BaseEmbeddingModel):
+class RecordingEmbedding(MultimodalEmbeddingMixin, BaseEmbeddingModel):
     """记录**真实并发峰值**的替身。峰值是 S4-2 唯一要看的那个数。"""
 
     def __init__(self, delay: float = 0.01) -> None:
@@ -38,6 +41,9 @@ class RecordingEmbedding(BaseEmbeddingModel):
             await asyncio.sleep(self.delay)
         finally:
             self.live -= 1
+        return [0.0]
+
+    def embed_media(self, data: Any, /, **kwargs: Any) -> list[float]:  # pragma: no cover
         return [0.0]
 
     async def _aembed_media(self, data: Any, /, **kwargs: Any) -> list[float]:

@@ -6,7 +6,6 @@ from typing import Any, Literal
 from httpx import AsyncClient, Client
 from pydantic import BaseModel, Field
 
-from comet_rag.application.ports.reranker import BaseReranker
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.models._image_reference import (
     DEFAULT_MAX_LOCAL_IMAGE_BYTES,
@@ -14,6 +13,7 @@ from comet_rag.infrastructure.models._image_reference import (
     prepare_image_reference,
     prepare_media_resource,
 )
+from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.models import ContentInput, ImageContent, TextContent
 
 
@@ -120,7 +120,7 @@ class RerankResponse(BaseModel):
     results: list[RerankResult] = Field(..., description="重排结果")
 
 
-class Qwen3VLReranker(BaseReranker):
+class Qwen3VLReranker(BaseReranker[str | ScoreMultiModalParam]):
     def __init__(
         self,
         base_url: str,
