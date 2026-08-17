@@ -7,6 +7,18 @@
 异步单条调用继续使用模板方法守住进程级闸门：子类实现 ``_aembed``，不能
 覆写 ``aembed``。批量方法只负责单次调用的扇出宽度，每一条真实请求仍会经过
 同一个进程级闸门。
+
+## 文本入口只收 ``str``
+
+底层扩展点 ``embed``/``_aembed`` 的入参**不是** ``Any``：契约存在的意义就是
+让调用方不必猜"这个字符串到底是文本、路径还是 base64"。多模态输入走
+``MultimodalEmbeddingPort``，用 ``MediaResource``/``ContentInput`` 明确表达。
+
+子类**可以放宽**入参（逆变，例如 Qwen 额外接受 ``MediaResource``），但不能
+收窄 —— 纯文本适配器（如 OpenAI）恰好与本签名一致。
+
+返回值统一是 ``list[float]``。供应商侧的 base64 之类的传输优化必须在适配器
+内部解码回浮点数组：那是线路格式，不该泄漏给调用方。
 """
 
 from __future__ import annotations
@@ -52,7 +64,7 @@ class EmbeddingPort(ABC):
         self._gate = gate
 
     @final
-    async def aembed(self, data: Any, **kwargs: Any) -> Any:
+    async def aembed(self, data: str, **kwargs: Any) -> list[float]:
         """兼容的异步底层入口；业务代码应调用带语义的方法。"""
         if self._gate is None:
             return await self._aembed(data, **kwargs)
@@ -60,12 +72,45 @@ class EmbeddingPort(ABC):
             return await self._aembed(data, **kwargs)
 
     @abstractmethod
-    async def _aembed(self, data: Any, /, **kwargs: Any) -> Any:
-        """适配器真正执行异步请求的扩展点。"""
+    async def _aembed(self, data: str, /, **kwargs: Any) -> list[float]:
+        """适配器真正执行异步请求的扩展点。
+
+        入参声明为 ``str``：子类可以放宽（逆变）以接受多模态输入，但纯文本
+        路径的契约必须是明确的。
+        """
 
     @abstractmethod
-    def embed(self, data: Any, /, **kwargs: Any) -> Any:
+    def embed(self, data: str, /, **kwargs: Any) -> list[float]:
         """兼容的同步底层入口；同步调用不经过 asyncio 闸门。"""
+
+    # ── 多模态入口 ─────────────────────────────────────────────────────────
+    #
+    # 与文本入口**分开**是刻意的：两者输入域不同，硬合成一个就只能标 `Any`，
+    # 于是"这个参数能传什么"重新变成运行时才知道的事 —— 那正是本次重构要
+    # 消除的东西。默认实现明确拒绝，纯文本适配器什么都不用做。
+
+    def embed_media(
+        self, data: MediaResource | ContentInput, /, **kwargs: Any
+    ) -> list[float]:
+        """同步多模态入口；同步路径不经过 asyncio 闸门。"""
+        raise TypeError(f"{type(self).__name__} 只支持文本输入")
+
+    @final
+    async def aembed_media(
+        self, data: MediaResource | ContentInput, /, **kwargs: Any
+    ) -> list[float]:
+        """异步多模态入口。与 `aembed` 一样受进程级闸门保护 —— 图片请求
+        通常比文本更重，绕开闸门等于把限流开了个后门。"""
+        if self._gate is None:
+            return await self._aembed_media(data, **kwargs)
+        async with self._gate:
+            return await self._aembed_media(data, **kwargs)
+
+    async def _aembed_media(
+        self, data: MediaResource | ContentInput, /, **kwargs: Any
+    ) -> list[float]:
+        """多模态适配器的扩展点；默认不支持。"""
+        raise TypeError(f"{type(self).__name__} 只支持文本输入")
 
     def _task_options(self, task: EmbeddingTask) -> Mapping[str, Any]:
         """将通用任务语义映射为供应商参数；普通模型无需覆写。"""
@@ -161,13 +206,14 @@ class EmbeddingPort(ABC):
 
     def batch_embed(
         self,
-        embedding_data_list: list[Any],
+        texts: Sequence[str],
         *,
         max_concurrency: int = DEFAULT_MODEL_BATCH_CONCURRENCY,
         **kwargs: Any,
-    ) -> list[Any]:
-        """兼容的同步批量入口。"""
+    ) -> list[list[float]]:
+        """兼容的同步批量入口。结果顺序与输入一致。"""
         self._validate_max_concurrency(max_concurrency)
+        embedding_data_list = list(texts)
         if not embedding_data_list:
             return []
 
@@ -183,19 +229,24 @@ class EmbeddingPort(ABC):
 
     async def abatch_embed(
         self,
-        embedding_data_list: list[Any],
+        texts: Sequence[str],
         *,
         max_concurrency: int = DEFAULT_MODEL_BATCH_CONCURRENCY,
         **kwargs: Any,
-    ) -> list[Any]:
-        """兼容的异步批量入口；每条请求都通过 ``aembed`` 的全局闸门。"""
+    ) -> list[list[float]]:
+        """兼容的异步批量入口；每条请求都通过 ``aembed`` 的全局闸门。
+
+        结果顺序与输入一致 —— `asyncio.gather` 保证这一点，调用方不必自己
+        按索引回填。
+        """
         self._validate_max_concurrency(max_concurrency)
+        embedding_data_list = list(texts)
         if not embedding_data_list:
             return []
 
         semaphore = asyncio.Semaphore(min(max_concurrency, len(embedding_data_list)))
 
-        async def _limited(data: Any) -> Any:
+        async def _limited(data: str) -> list[float]:
             async with semaphore:
                 return await self.aembed(data, **kwargs)
 

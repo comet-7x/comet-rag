@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import struct
 from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any, Literal
@@ -237,8 +239,24 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         }
 
     @staticmethod
-    def _parse_embedding_response(data: dict[str, Any]) -> list[float] | str:
-        return EmbeddingResponse.model_validate(data).data[0].embedding
+    def _parse_embedding_response(data: dict[str, Any]) -> list[float]:
+        """解析响应，**始终**还原成浮点数组。
+
+        `encoding_format=base64` 是 OpenAI 协议里的传输优化（小一半的报文），
+        不是调用方该看到的东西。就地解回来，否则 `embed_query` 声明返回
+        `list[float]`、实际给出 `str` —— 契约在说谎，而且只在配了 base64
+        的部署上炸。
+        """
+        embedding = EmbeddingResponse.model_validate(data).data[0].embedding
+        if not isinstance(embedding, str):
+            return embedding
+        raw = base64.b64decode(embedding)
+        if len(raw) % 4:
+            raise CometRAGException(
+                f"base64 向量长度 {len(raw)} 不是 4 的倍数，无法按 float32 解码"
+            )
+        # 显式小端 float32：OpenAI 协议如此规定，不能依赖本机字节序
+        return list(struct.unpack(f"<{len(raw) // 4}f", raw))
 
     def _create_messages_params(
         self,
@@ -305,7 +323,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         continue_final_message: bool = True,
         add_special_tokens: bool = True,
         **kwargs: Any,
-    ) -> list[float] | str:
+    ) -> list[float]:
         """
         编码文本或图片。本地图片会在当前进程读取并转换为 Base64 Data URL。
 
@@ -359,7 +377,7 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         continue_final_message: bool = True,
         add_special_tokens: bool = True,
         **kwargs: Any,
-    ) -> list[float] | str:
+    ) -> list[float]:
         """
         异步编码文本或图片。本地文件读取在线程中执行，不阻塞事件循环。
 
@@ -401,29 +419,41 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             )
             raise CometRAGException(error_msg) from e
 
+    def embed_media(
+        self, data: MediaResource | ContentInput, /, **kwargs: Any
+    ) -> list[float]:
+        """本适配器支持多模态，直接走内部编码路径。"""
+        return self.embed(data, **kwargs)
+
+    async def _aembed_media(
+        self, data: MediaResource | ContentInput, /, **kwargs: Any
+    ) -> list[float]:
+        # 闸门已由 `aembed_media` 持有，这里调未加闸的 `_aembed`
+        return await self._aembed(data, **kwargs)
+
     def embed_image(
         self, image: MediaResource, /, **kwargs: Any
-    ) -> list[float] | str:
+    ) -> list[float]:
         """生成单张图片的向量。"""
-        return self.embed(image, **kwargs)
+        return self.embed_media(image, **kwargs)
 
     async def aembed_image(
         self, image: MediaResource, /, **kwargs: Any
-    ) -> list[float] | str:
+    ) -> list[float]:
         """异步生成单张图片的向量。"""
-        return await self.aembed(image, **kwargs)
+        return await self.aembed_media(image, **kwargs)
 
     def embed_content(
         self, content: ContentInput, /, **kwargs: Any
-    ) -> list[float] | str:
+    ) -> list[float]:
         """生成文本、图片或二者组合内容的向量。"""
-        return self.embed(content, **kwargs)
+        return self.embed_media(content, **kwargs)
 
     async def aembed_content(
         self, content: ContentInput, /, **kwargs: Any
-    ) -> list[float] | str:
+    ) -> list[float]:
         """异步生成文本、图片或二者组合内容的向量。"""
-        return await self.aembed(content, **kwargs)
+        return await self.aembed_media(content, **kwargs)
 
     def tokenize(
         self,

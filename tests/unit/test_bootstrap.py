@@ -27,9 +27,9 @@ from comet_rag.engines.pipelines import DocxConfig, PipelineConfig
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.loaders import S3Loader
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import EmbeddingData
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.models import MediaResource
 
 DIM = 3
 
@@ -94,7 +94,7 @@ async def test_built_embedding_model_receives_source_policy() -> None:
     model = build_embedding_model(make_config())
     try:
         with pytest.raises(CometRAGException, match="非公网地址"):
-            model.embed(EmbeddingData(image_url="http://127.0.0.1/metadata"))
+            model.embed_media(MediaResource(url="http://127.0.0.1/metadata"))
     finally:
         await model.aclose()
 
@@ -107,7 +107,7 @@ async def test_built_embedding_model_rejects_local_image_by_default(
     model = build_embedding_model(make_config())
     try:
         with pytest.raises(CometRAGException, match="未开放从服务器本地路径入库"):
-            model.embed(EmbeddingData(image_url=str(image)))
+            model.embed_media(MediaResource(path=image, mimetype="image/png"))
     finally:
         await model.aclose()
 

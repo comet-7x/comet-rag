@@ -15,6 +15,7 @@ import pytest
 from comet_rag.core.concurrency import Gate, Overloaded
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.models import MediaResource
 
 
 class RecordingEmbedding(BaseEmbeddingModel):
@@ -38,6 +39,10 @@ class RecordingEmbedding(BaseEmbeddingModel):
         finally:
             self.live -= 1
         return [0.0]
+
+    async def _aembed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
+        """多模态走同一份计数 —— 用来验证它与文本共用同一个闸门。"""
+        return await self._aembed("<media>", **kwargs)
 
     async def close_client(self) -> None:
         return None
@@ -262,3 +267,25 @@ async def test_overload_propagates_instead_of_being_swallowed() -> None:
         len(rejected) + len([r for r in results if not isinstance(r, BaseException)])
         == 6
     )
+
+
+async def test_media_entry_is_gated_like_text() -> None:
+    """**图片入口也必须走闸门。**
+
+    图片请求通常比文本更重（一张图能顶几十倍 token），如果 `aembed_media`
+    绕开闸门，限流就等于开了个后门：配了 4 并发，实际可以有 4 + N 个在飞。
+
+    这条用例把文本与多模态混在一起打，只看**真实并发峰值**。
+    """
+    model = RecordingEmbedding(delay=0.02)
+    gate = Gate(limit=2, max_waiting=64)
+    model.bind_gate(gate)
+
+    media = MediaResource(url="https://example.invalid/a.png")
+    await asyncio.gather(
+        *[model.aembed(f"text-{i}") for i in range(6)],
+        *[model.aembed_media(media) for _ in range(6)],
+    )
+
+    assert model.calls == 12
+    assert model.peak <= 2, f"闸门限 2，实际峰值 {model.peak} —— 多模态绕过了闸门"

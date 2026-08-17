@@ -9,6 +9,7 @@ import pytest
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import (
     EmbeddingData,
+    EncodingFormat,
     Qwen3VLEmbeddingModel,
 )
 from comet_rag.models import ImageContent, MediaResource, TextContent
@@ -168,12 +169,15 @@ async def test_remote_image_url_is_validated_before_model_request(
         image_url_validator=reject_private,
     )
     data = EmbeddingData(image_url="http://127.0.0.1/metadata")
+    # 走公开的多模态入口而不是厂商 DTO：业务代码拿得到的就是 MediaResource，
+    # 准入策略必须在**那条路**上生效才算数。
+    media = MediaResource(url="http://127.0.0.1/metadata")
     try:
         with pytest.raises(CometRAGException, match="private image URL rejected"):
             if operation == "embed":
-                model.embed(data)
+                model.embed_media(media)
             elif operation == "aembed":
-                await model.aembed(data)
+                await model.aembed_media(media)
             elif operation == "tokenize":
                 model.tokenize(data)
             else:
@@ -254,11 +258,12 @@ async def test_local_image_is_sent_as_data_url(
         async_client=async_client,
     )
     data = EmbeddingData(image_url=str(image))
+    media = MediaResource(path=image, mimetype="image/png")
     try:
         if operation == "embed":
-            model.embed(data)
+            model.embed_media(media)
         elif operation == "aembed":
-            await model.aembed(data)
+            await model.aembed_media(media)
         elif operation == "tokenize":
             model.tokenize(data)
         else:
@@ -331,8 +336,8 @@ async def test_continue_final_message_controls_assistant_placeholder() -> None:
     )
     data = EmbeddingData(text="plain text")
     try:
-        model.embed(data, continue_final_message=False)
-        await model.aembed(data, continue_final_message=False)
+        model.embed("plain text", continue_final_message=False)
+        await model.aembed("plain text", continue_final_message=False)
         model.tokenize(data, continue_final_message=False)
         await model.atokenize(data, continue_final_message=False)
         model.embed(data, continue_final_message=True)
@@ -341,6 +346,50 @@ async def test_continue_final_message_controls_assistant_placeholder() -> None:
             payload["messages"][-1]["role"] == "user" for payload in payloads[:4]
         )
         assert payloads[4]["messages"][-1]["role"] == "assistant"
+    finally:
+        sync_client.close()
+        await async_client.aclose()
+
+
+async def test_base64_embeddings_are_decoded_to_floats() -> None:
+    """`encoding_format=base64` 是**传输优化**，不该泄漏给调用方。
+
+    服务端按 OpenAI 协议返回小端 float32 的 base64 串。若原样返回，
+    `embed_query` 声明 `list[float]` 却给出 `str` —— 契约在说谎，而且只在
+    配了 base64 的部署上才炸，本地怎么测都测不出来。
+    """
+    import base64 as _b64  # noqa: PLC0415
+    import struct as _struct  # noqa: PLC0415
+
+    vector = [0.25, -0.5, 1.5]
+    packed = _b64.b64encode(_struct.pack(f"<{len(vector)}f", *vector)).decode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "embedding-b64",
+                "object": "list",
+                "created": 0,
+                "model": "qwen",
+                "data": [{"index": 0, "object": "embedding", "embedding": packed}],
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    sync_client = httpx.Client(transport=transport)
+    async_client = httpx.AsyncClient(transport=transport)
+    model = Qwen3VLEmbeddingModel(
+        base_url="https://model.invalid/v1",
+        model_name="qwen",
+        api_key="test",
+        sync_client=sync_client,
+        async_client=async_client,
+    )
+    try:
+        assert model.embed("x", encoding_format=EncodingFormat.BASE64) == vector
+        assert await model.aembed("x", encoding_format=EncodingFormat.BASE64) == vector
     finally:
         sync_client.close()
         await async_client.aclose()
