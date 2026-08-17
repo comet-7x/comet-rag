@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -6,14 +7,18 @@ from httpx import AsyncClient, Client
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field
 
+from comet_rag.application.ports.embedding import (
+    BaseEmbeddingModel,
+    EmbeddingTask,
+)
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.models._image_reference import (
     DEFAULT_MAX_LOCAL_IMAGE_BYTES,
     ImageReferenceValidator,
     prepare_image_reference,
+    prepare_media_resource,
 )
-
-from .base import BaseEmbeddingModel
+from comet_rag.models import ContentInput, ImageContent, MediaResource, TextContent
 
 
 class Qwen3VLEmbeddingModelSystemPrompt(StrEnum):
@@ -24,23 +29,17 @@ class Qwen3VLEmbeddingModelSystemPrompt(StrEnum):
 
 
 class EmbeddingData(BaseModel):
-    """Qwen 多模态嵌入输入；文本与图片可以单独使用，也可以组合使用。"""
+    """Qwen 旧版请求对象。
+
+    新代码优先使用 ``MediaResource`` 与类型化内容块；保留该类型是为了兼容
+    已有调用者以及 tokenize/detokenize 等供应商专属能力。
+    """
 
     text: str | None = Field(default=None, description="需要嵌入的文本内容")
     image_url: str | None = Field(
         default=None,
         description="图片的本地路径、HTTP(S) URL 或 Base64 Data URL",
     )
-
-
-def _normalize_embedding_data(data: EmbeddingData | str) -> EmbeddingData:
-    """统一基础 embedding 契约与多模态适配器的输入。
-
-    services 层按 ``BaseEmbeddingModel`` 的文本契约传 ``str``；Qwen 适配器还
-    支持图片，所以内部使用 ``EmbeddingData``。文本是后者的一个合法子集，
-    在适配器边界提升即可，不能要求每个通用调用方认识 Qwen 私有类型。
-    """
-    return EmbeddingData(text=data) if isinstance(data, str) else data
 
 
 class EncodingFormat(StrEnum):
@@ -152,6 +151,53 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             "Content-Type": "application/json",
         }
 
+    def _task_options(self, task: EmbeddingTask) -> dict[str, Any]:
+        """把公共的 query/document 语义映射成 Qwen 指令。"""
+        prompt = (
+            Qwen3VLEmbeddingModelSystemPrompt.QUERY
+            if task is EmbeddingTask.QUERY
+            else Qwen3VLEmbeddingModelSystemPrompt.RETRIEVAL
+        )
+        return {"system_prompt": prompt}
+
+    def _resource_reference(self, resource: MediaResource) -> str:
+        return prepare_media_resource(
+            resource,
+            url_validator=self._image_url_validator,
+            local_path_validator=self._local_image_validator,
+            max_local_bytes=self._max_local_image_bytes,
+        )
+
+    def _normalize_content(self, content: ContentInput) -> EmbeddingData:
+        if isinstance(content, str):
+            return EmbeddingData(text=content)
+
+        text_parts: list[str] = []
+        image: MediaResource | None = None
+        for part in content:
+            if isinstance(part, TextContent):
+                text_parts.append(part.text)
+            elif isinstance(part, ImageContent):
+                if image is not None:
+                    raise ValueError("Qwen3-VL Embedding 单次输入当前只支持一张图片")
+                image = part.resource
+            else:
+                raise TypeError(f"不支持的多模态内容类型：{type(part).__name__}")
+        return EmbeddingData(
+            text="\n".join(text_parts) or None,
+            image_url=None if image is None else self._resource_reference(image),
+        )
+
+    def _normalize_input(
+        self,
+        data: EmbeddingData | str | MediaResource | Sequence[TextContent | ImageContent],
+    ) -> EmbeddingData:
+        if isinstance(data, EmbeddingData):
+            return self._prepare_embedding_data(data)
+        if isinstance(data, MediaResource):
+            return EmbeddingData(image_url=self._resource_reference(data))
+        return self._normalize_content(data)
+
     def _prepare_embedding_data(self, embedding_data: EmbeddingData) -> EmbeddingData:
         """把本地路径转换为 Data URL，且不修改调用方传入的模型。"""
         if embedding_data.image_url is None:
@@ -163,6 +209,36 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             max_local_bytes=self._max_local_image_bytes,
         )
         return embedding_data.model_copy(update={"image_url": image_url})
+
+    def _build_embedding_request(
+        self,
+        embedding_data: EmbeddingData,
+        *,
+        system_prompt: Qwen3VLEmbeddingModelSystemPrompt | str,
+        encoding_format: EncodingFormat,
+        continue_final_message: bool,
+        add_special_tokens: bool,
+        options: dict[str, Any],
+    ) -> dict[str, Any]:
+        """同步/异步请求共享唯一一份构造逻辑。"""
+        messages = self._create_messages_params(
+            text=embedding_data.text,
+            image_url=embedding_data.image_url,
+            continue_final_message=continue_final_message,
+            system_prompt=system_prompt,
+        )
+        return {
+            **options,
+            "messages": messages,
+            "model": self._model_name,
+            "encoding_format": encoding_format,
+            "continue_final_message": continue_final_message,
+            "add_special_tokens": add_special_tokens,
+        }
+
+    @staticmethod
+    def _parse_embedding_response(data: dict[str, Any]) -> list[float] | str:
+        return EmbeddingResponse.model_validate(data).data[0].embedding
 
     def _create_messages_params(
         self,
@@ -216,7 +292,12 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
 
     def embed(
         self,
-        embedding_data: EmbeddingData | str,
+        embedding_data: (
+            EmbeddingData
+            | str
+            | MediaResource
+            | Sequence[TextContent | ImageContent]
+        ),
         system_prompt: (
             Qwen3VLEmbeddingModelSystemPrompt | str
         ) = Qwen3VLEmbeddingModelSystemPrompt.COMMON,
@@ -241,31 +322,22 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
             list[float] | str: 浮点向量或 Base64 编码结果
         """
         try:
-            embedding_data = self._prepare_embedding_data(
-                _normalize_embedding_data(embedding_data)
-            )
-            messages = self._create_messages_params(
-                text=embedding_data.text,
-                image_url=embedding_data.image_url,
-                continue_final_message=continue_final_message,
+            embedding_data = self._normalize_input(embedding_data)
+            payload = self._build_embedding_request(
+                embedding_data,
                 system_prompt=system_prompt,
+                encoding_format=encoding_format,
+                continue_final_message=continue_final_message,
+                add_special_tokens=add_special_tokens,
+                options=kwargs,
             )
             response = self.sync_client.post(
                 url=f"{self._base_url}/embeddings",
                 headers=self._get_headers(),
-                json={
-                    "messages": messages,
-                    "model": self._model_name,
-                    "encoding_format": encoding_format,
-                    "continue_final_message": continue_final_message,
-                    "add_special_tokens": add_special_tokens,
-                    **kwargs,
-                },
+                json=payload,
             )
             response.raise_for_status()
-            embedding_response = EmbeddingResponse(**response.json())
-
-            return embedding_response.data[0].embedding
+            return self._parse_embedding_response(response.json())
         except Exception as e:
             error_msg = (
                 f"{self.__class__.__name__} | embed 方法操作发生非预期错误：{str(e)}"
@@ -274,7 +346,12 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
 
     async def _aembed(
         self,
-        embedding_data: EmbeddingData | str,
+        embedding_data: (
+            EmbeddingData
+            | str
+            | MediaResource
+            | Sequence[TextContent | ImageContent]
+        ),
         system_prompt: (
             Qwen3VLEmbeddingModelSystemPrompt | str
         ) = Qwen3VLEmbeddingModelSystemPrompt.COMMON,
@@ -300,36 +377,53 @@ class Qwen3VLEmbeddingModel(BaseEmbeddingModel):
         """
         try:
             embedding_data = await asyncio.to_thread(
-                self._prepare_embedding_data,
-                _normalize_embedding_data(embedding_data),
+                self._normalize_input,
+                embedding_data,
             )
-            messages = self._create_messages_params(
-                text=embedding_data.text,
-                image_url=embedding_data.image_url,
-                continue_final_message=continue_final_message,
+            payload = self._build_embedding_request(
+                embedding_data,
                 system_prompt=system_prompt,
+                encoding_format=encoding_format,
+                continue_final_message=continue_final_message,
+                add_special_tokens=add_special_tokens,
+                options=kwargs,
             )
             response = await self.async_client.post(
                 url=f"{self._base_url}/embeddings",
                 headers=self._get_headers(),
-                json={
-                    "messages": messages,
-                    "model": self._model_name,
-                    "encoding_format": encoding_format,
-                    "continue_final_message": continue_final_message,
-                    "add_special_tokens": add_special_tokens,
-                    **kwargs,
-                },
+                json=payload,
             )
             response.raise_for_status()
-            embedding_response = EmbeddingResponse(**response.json())
-
-            return embedding_response.data[0].embedding
+            return self._parse_embedding_response(response.json())
         except Exception as e:
             error_msg = (
                 f"{self.__class__.__name__} | aembed 方法操作发生非预期错误：{str(e)}"
             )
             raise CometRAGException(error_msg) from e
+
+    def embed_image(
+        self, image: MediaResource, /, **kwargs: Any
+    ) -> list[float] | str:
+        """生成单张图片的向量。"""
+        return self.embed(image, **kwargs)
+
+    async def aembed_image(
+        self, image: MediaResource, /, **kwargs: Any
+    ) -> list[float] | str:
+        """异步生成单张图片的向量。"""
+        return await self.aembed(image, **kwargs)
+
+    def embed_content(
+        self, content: ContentInput, /, **kwargs: Any
+    ) -> list[float] | str:
+        """生成文本、图片或二者组合内容的向量。"""
+        return self.embed(content, **kwargs)
+
+    async def aembed_content(
+        self, content: ContentInput, /, **kwargs: Any
+    ) -> list[float] | str:
+        """异步生成文本、图片或二者组合内容的向量。"""
+        return await self.aembed(content, **kwargs)
 
     def tokenize(
         self,

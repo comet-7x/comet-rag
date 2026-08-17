@@ -13,6 +13,7 @@ from comet_rag.infrastructure.models.reranker.qwen3_vl_reranker import (
     Qwen3VLReranker,
     ScoreMultiModalParam,
 )
+from comet_rag.models import ImageContent, MediaResource, RerankDocument, TextContent
 
 
 def _multimodal(url: str) -> ScoreMultiModalParam:
@@ -83,6 +84,81 @@ async def test_base64_image_does_not_require_url_policy() -> None:
     finally:
         await model.aclose()
         client.close()
+
+
+async def test_arank_returns_sorted_documents_with_ids() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"index": 0, "relevance_score": 0.2},
+                    {"index": 1, "relevance_score": 0.9},
+                ]
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    model = Qwen3VLReranker(
+        base_url="https://model.invalid/v1",
+        model_name="qwen-rerank",
+        api_key="test",
+        async_client=client,
+    )
+    try:
+        ranked = await model.arank(
+            "query",
+            [
+                RerankDocument(id="first", content="first text"),
+                RerankDocument(id="second", content="second text"),
+            ],
+        )
+
+        assert [item.document.id for item in ranked] == ["second", "first"]
+        assert [item.index for item in ranked] == [1, 0]
+        assert [item.score for item in ranked] == [0.9, 0.2]
+    finally:
+        await client.aclose()
+
+
+async def test_shared_multimodal_types_are_converted_at_adapter_boundary(
+    tmp_path: Path,
+) -> None:
+    payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"results": [{"index": 0, "relevance_score": 0.8}]},
+        )
+
+    image = tmp_path / "cat.png"
+    image.write_bytes(b"cat")
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    model = Qwen3VLReranker(
+        base_url="https://model.invalid/v1",
+        model_name="qwen-rerank",
+        api_key="test",
+        async_client=client,
+    )
+    try:
+        ranked = await model.arank(
+            [
+                TextContent("找猫"),
+                ImageContent(MediaResource(path=image, mimetype="image/png")),
+            ],
+            [RerankDocument(id="cat", content="一只猫")],
+        )
+
+        assert ranked[0].document.id == "cat"
+        query_content = payloads[0]["query"]["content"]
+        assert query_content[0]["text"] == "找猫"
+        assert query_content[1]["image_url"]["url"] == (
+            "data:image/png;base64,Y2F0"
+        )
+    finally:
+        await client.aclose()
 
 
 async def test_duplicate_result_indexes_are_rejected() -> None:

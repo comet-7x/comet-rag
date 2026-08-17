@@ -105,6 +105,7 @@ uv run ruff check && uv run ruff format
 |                                                          |                                      |
 | -------------------------------------------------------- | ------------------------------------ |
 | [architecture.md](docs/architecture.md)                   | 分层、核心抽象、两种部署形态         |
+| [model_usage.md](docs/model_usage.md)                     | Embedding、图片与 Reranker 用法      |
 | [deployment.md](docs/deployment.md)                       | 配置、扩容、运维、排查               |
 | [benchmark.md](docs/benchmark.md)                         | 性能基线与它**不能**回答的问题 |
 | [pipeline_usage.md](docs/pipeline_usage.md)               | 只当库用时看这个                     |

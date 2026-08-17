@@ -11,6 +11,7 @@ from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import (
     EmbeddingData,
     Qwen3VLEmbeddingModel,
 )
+from comet_rag.models import ImageContent, MediaResource, TextContent
 
 
 async def test_qwen_adapter_accepts_base_text_contract() -> None:
@@ -45,6 +46,96 @@ async def test_qwen_adapter_accepts_base_text_contract() -> None:
         assert payloads[0]["messages"][1]["content"][0]["text"] == (
             "plain service text"
         )
+    finally:
+        sync_client.close()
+        await async_client.aclose()
+
+
+async def test_semantic_embedding_methods_choose_query_and_document_prompts() -> None:
+    payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "embedding-1",
+                "object": "list",
+                "created": 0,
+                "model": "qwen",
+                "data": [{"index": 0, "object": "embedding", "embedding": [1.0]}],
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    sync_client = httpx.Client(transport=transport)
+    async_client = httpx.AsyncClient(transport=transport)
+    model = Qwen3VLEmbeddingModel(
+        base_url="https://model.invalid/v1",
+        model_name="qwen",
+        api_key="test",
+        sync_client=sync_client,
+        async_client=async_client,
+    )
+    try:
+        await model.aembed_query("猫在哪里")
+        await model.aembed_documents(["猫在沙发上"])
+
+        assert payloads[0]["messages"][0]["content"][0]["text"] == (
+            "Represent the query for retrieval."
+        )
+        assert payloads[1]["messages"][0]["content"][0]["text"] == (
+            "Represent the document for retrieval."
+        )
+    finally:
+        sync_client.close()
+        await async_client.aclose()
+
+
+async def test_public_multimodal_content_accepts_local_media_resource(
+    tmp_path: Path,
+) -> None:
+    payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "embedding-1",
+                "object": "list",
+                "created": 0,
+                "model": "qwen",
+                "data": [{"index": 0, "object": "embedding", "embedding": [1.0]}],
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            },
+        )
+
+    image = tmp_path / "cat.png"
+    image.write_bytes(b"cat")
+    transport = httpx.MockTransport(handler)
+    sync_client = httpx.Client(transport=transport)
+    async_client = httpx.AsyncClient(transport=transport)
+    model = Qwen3VLEmbeddingModel(
+        base_url="https://model.invalid/v1",
+        model_name="qwen",
+        api_key="test",
+        sync_client=sync_client,
+        async_client=async_client,
+    )
+    try:
+        result = await model.aembed_content(
+            [
+                TextContent("一只猫"),
+                ImageContent(MediaResource(path=image, mimetype="image/png")),
+            ]
+        )
+
+        assert result == [1.0]
+        content = payloads[0]["messages"][1]["content"]
+        assert content[0]["image_url"]["url"] == "data:image/png;base64,Y2F0"
+        assert content[1]["text"] == "一只猫"
     finally:
         sync_client.close()
         await async_client.aclose()

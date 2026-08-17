@@ -6,14 +6,15 @@ from typing import Any, Literal
 from httpx import AsyncClient, Client
 from pydantic import BaseModel, Field
 
+from comet_rag.application.ports.reranker import BaseReranker
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.models._image_reference import (
     DEFAULT_MAX_LOCAL_IMAGE_BYTES,
     ImageReferenceValidator,
     prepare_image_reference,
+    prepare_media_resource,
 )
-
-from .base import BaseReranker
+from comet_rag.models import ContentInput, ImageContent, TextContent
 
 
 class ImageDetail(StrEnum):
@@ -160,6 +161,44 @@ class Qwen3VLReranker(BaseReranker):
         self.sync_client = (
             sync_client if sync_client is not None else Client(timeout=60.0)
         )
+
+    def _to_provider_input(self, content: ContentInput) -> str | ScoreMultiModalParam:
+        """把公共内容块转换成 Qwen 私有请求 DTO。"""
+        if isinstance(content, str):
+            return content
+
+        parts: list[
+            ChatCompletionContentPartTextParam
+            | ChatCompletionContentPartImageParam
+        ] = []
+        for part in content:
+            if isinstance(part, TextContent):
+                parts.append(ChatCompletionContentPartTextParam(text=part.text))
+                continue
+            if isinstance(part, ImageContent):
+                resource = part.resource
+                if resource.path is not None:
+                    reference = str(resource.path)
+                elif resource.url is not None:
+                    reference = resource.url
+                else:
+                    reference = prepare_media_resource(
+                        resource,
+                        url_validator=self._image_url_validator,
+                        local_path_validator=self._local_image_validator,
+                        max_local_bytes=self._max_local_image_bytes,
+                    )
+                parts.append(
+                    ChatCompletionContentPartImageParam(
+                        image_url=ImageUrlParam(
+                            url=reference,
+                            detail=ImageDetail(part.detail),
+                        )
+                    )
+                )
+                continue
+            raise TypeError(f"不支持的多模态内容类型：{type(part).__name__}")
+        return ScoreMultiModalParam(content=parts)
 
     def _prepare_multimodal_content(
         self, data: ScoreMultiModalParam

@@ -26,11 +26,10 @@ import inspect
 from dataclasses import dataclass, field
 from typing import Any
 
+from comet_rag.application.ports import EmbeddingPort, RerankerPort
 from comet_rag.core.logging import logger
 from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.infrastructure.knowledge_base import KnowledgeBaseRepository
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import BaseVectorStore
 from comet_rag.services.ingestion import IngestRunner, register_ingest_runner
 from comet_rag.services.knowledge_base import KnowledgeBaseService
@@ -45,7 +44,7 @@ class Context:
     路由只从这里取依赖，绝不自己 new —— 否则连接池复用与优雅关停都无从谈起。
     """
 
-    embedding_model: BaseEmbeddingModel
+    embedding_model: EmbeddingPort
     vector_store: BaseVectorStore
     task_store: TaskStore
     task_executor: TaskExecutor
@@ -54,7 +53,7 @@ class Context:
     kb_repository: KnowledgeBaseRepository
     knowledge_base: KnowledgeBaseService
     embedding_dim: int
-    reranker: BaseReranker | None = None
+    reranker: RerankerPort | None = None
     #: 对模型服务的进程级并发闸门。放进 Context 是为了让 /admin/health
     #: 能读到它的实时统计 —— 过载时最先想看的就是这几个数。
     model_gate: Any = None

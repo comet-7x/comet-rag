@@ -99,6 +99,36 @@ def test_guard_actually_detects_violations() -> None:
     assert any(n.startswith(FORBIDDEN_INTERNAL) for n in _imported_full(tree))
 
 
+# ── 业务/引擎依赖模型 Port，而不是供应商适配器 ─────────────────────────────
+
+MODEL_ADAPTER_PACKAGE = "comet_rag.infrastructure.models"
+
+
+def _model_port_consumers() -> list[Path]:
+    root = PROJECT_ROOT / "comet_rag"
+    return sorted(
+        path
+        for package in ("services", "engines")
+        for path in (root / package).rglob("*.py")
+        if "__pycache__" not in path.parts
+    )
+
+
+@pytest.mark.parametrize("module", _model_port_consumers(), ids=lambda p: p.name)
+def test_business_code_depends_on_model_ports(module: Path) -> None:
+    """供应商模型只能在组合根选择，不能泄漏到业务和纯计算模块。"""
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    hits = {
+        name
+        for name in _imported_full(tree)
+        if name.startswith(MODEL_ADAPTER_PACKAGE)
+    }
+    assert not hits, (
+        f"{module.relative_to(PROJECT_ROOT)} 直接依赖了模型适配器：{sorted(hits)}。"
+        "请依赖 comet_rag.application.ports，并在 core/bootstrap.py 装配实现。"
+    )
+
+
 # ── 单进程模式不得挂上租约回收（T24）────────────────────────────────────────
 
 #: 除了 workers/ 自己，谁都不该 import 它。写成路径前缀，子模块一并覆盖。

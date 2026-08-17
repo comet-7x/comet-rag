@@ -1,6 +1,16 @@
-"""外部模型服务适配器。
+"""外部模型服务适配器的便捷入口。
 
-本包负责 HTTP/SDK 调用、供应商请求与响应格式、客户端生命周期等基础设施细节。
-业务服务应依赖各子模块的基础契约，不应了解 Qwen、OpenAI 等具体实现。
-服务运行时使用的具体实现由 ``core.bootstrap`` 构造并绑定进程级模型闸门。
+业务代码依赖 :mod:`comet_rag.application.ports`；直接把项目当库使用时，可以
+从这里导入具体适配器，从 :mod:`comet_rag.models` 导入供应商无关的输入类型。
 """
+
+from .embedding import OpenAIEmbeddingModel, Qwen3VLEmbeddingModel
+from .reranker import Qwen3VLReranker
+from .vision import OpenAIVisionModel
+
+__all__ = [
+    "OpenAIEmbeddingModel",
+    "OpenAIVisionModel",
+    "Qwen3VLEmbeddingModel",
+    "Qwen3VLReranker",
+]

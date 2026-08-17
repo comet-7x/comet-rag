@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from comet_rag.application.ports import EmbeddingPort, RerankerPort
 from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.context import Context, wire_runners
@@ -23,8 +24,6 @@ from comet_rag.infrastructure.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
     KnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import (
     BaseVectorStore,
     InMemoryVectorStore,
@@ -221,7 +220,7 @@ def build_embedding_model(
     *,
     image_url_validator: Callable[[str], None] | None = None,
     local_image_validator: Callable[[str], None] | None = None,
-) -> BaseEmbeddingModel:
+) -> EmbeddingPort:
     from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import (  # noqa: PLC0415
         Qwen3VLEmbeddingModel,
     )
@@ -246,7 +245,7 @@ def build_reranker(
     *,
     image_url_validator: Callable[[str], None] | None = None,
     local_image_validator: Callable[[str], None] | None = None,
-) -> BaseReranker | None:
+) -> RerankerPort | None:
     settings = config.infrastructure_config.reranker
     if settings is None:
         logger.info("未配置 reranker，检索将跳过重排")
@@ -295,8 +294,8 @@ def _assert_gated(gate: Gate, *models: object) -> None:
 def build_context(
     config: APPConfig,
     *,
-    embedding_model: BaseEmbeddingModel | None = None,
-    reranker: BaseReranker | None = None,
+    embedding_model: EmbeddingPort | None = None,
+    reranker: RerankerPort | None = None,
     vector_store: BaseVectorStore | None = None,
     task_store: TaskStore | None = None,
     task_executor: TaskExecutor | None = None,

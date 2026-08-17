@@ -83,7 +83,7 @@ class PipelineConfig(BaseModel):
             "首个 chunk 在第一个窗口完成后即可产出，因此该值越小首字延迟越低、"
             "整体吞吐越差；越大则相反。非流式模式下它只用来限制同时在内存中的"
             "待处理量。注意它**不是**单个 HTTP 请求携带的条数 —— "
-            "当前模型层是一条一个请求（见 BaseEmbeddingModel.abatch_embed）。"
+            "具体适配器可使用服务端原生批量，也可有界并发发送单条请求。"
         ),
     )
     docx: DocxConfig = Field(default_factory=DocxConfig)
