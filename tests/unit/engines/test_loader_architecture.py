@@ -12,6 +12,7 @@ from comet_rag.engines.loaders.base_loader import (
     BaseLoader,
 )
 from comet_rag.engines.loaders.data_type import (
+    AllowExt,
     BaseFileFormat,
     CodeFormat,
     ContentStructure,
@@ -261,13 +262,39 @@ async def test_auto_loader_uses_specialized_async_batch_and_cleans_shared_once()
 def test_file_format_registry_is_explicit_and_queryable() -> None:
     assert BaseFileFormat.from_extension(".DOCX") is MixedFormat
     assert BaseFileFormat.from_extension("py") is CodeFormat
+    assert BaseFileFormat.from_extension(".rs") is CodeFormat
     assert BaseFileFormat.all_by_structure(ContentStructure.CODE) == [CodeFormat]
     assert is_allowed_extension(".pdf") is True
+    assert is_allowed_extension(".rust") is False
     assert is_allowed_extension("exe") is False
+
+
+def test_code_format_uses_standard_source_file_extensions() -> None:
+    assert {extension.value for extension in CodeFormat.extensions} == {
+        "py",
+        "ts",
+        "js",
+        "java",
+        "c",
+        "cpp",
+        "go",
+        "php",
+        "r",
+        "rs",
+        "html",
+    }
+    assert AllowExt.RUST is AllowExt.RS
+
+
+@pytest.mark.parametrize("extension", list(AllowExt))
+def test_every_allowed_extension_has_a_registered_format(extension: AllowExt) -> None:
+    assert BaseFileFormat.from_extension(extension.value) is not None
 
 
 def test_detected_extension_policy_is_shared_and_allow_ext_backed() -> None:
     assert resolve_detected_extension("py", "txt") == "py"
+    assert resolve_detected_extension("rs", "txt") == "rs"
+    assert resolve_detected_extension("html", "txt") == "html"
     assert resolve_detected_extension("", "pdf") == "pdf"
     with pytest.raises(ContentTypeMismatch, match="docx.*html"):
         resolve_detected_extension("docx", "html")

@@ -34,7 +34,8 @@ class AllowExt(StrEnum):
     GO = "go"
     PHP = "php"
     R = "r"
-    RUST = "rust"
+    RS = "rs"
+    RUST = "rs"  # Backward-compatible member alias; Rust source files use .rs.
     HTML = "html"
 
 
@@ -46,21 +47,21 @@ class ContentTypeMismatch(ValueError):
     """A supported declared extension conflicts with detected content."""
 
 
+_CODE_EXTENSIONS = (
+    AllowExt.PY,
+    AllowExt.TS,
+    AllowExt.JS,
+    AllowExt.JAVA,
+    AllowExt.C,
+    AllowExt.CPP,
+    AllowExt.GO,
+    AllowExt.PHP,
+    AllowExt.R,
+    AllowExt.RS,
+    AllowExt.HTML,
+)
 _GENERIC_TEXT_DECLARATIONS = frozenset(
-    {
-        AllowExt.TXT,
-        AllowExt.MD,
-        AllowExt.PY,
-        AllowExt.TS,
-        AllowExt.JS,
-        AllowExt.JAVA,
-        AllowExt.C,
-        AllowExt.CPP,
-        AllowExt.GO,
-        AllowExt.PHP,
-        AllowExt.R,
-        AllowExt.RUST,
-    }
+    (AllowExt.TXT, AllowExt.MD, *_CODE_EXTENSIONS)
 )
 
 
@@ -255,19 +256,7 @@ class StructuredFormat(BaseFileFormat):
 
 
 class CodeFormat(BaseFileFormat):
-    extensions = (
-        AllowExt.PY,
-        AllowExt.TS,
-        AllowExt.JS,
-        AllowExt.JAVA,
-        AllowExt.C,
-        AllowExt.CPP,
-        AllowExt.GO,
-        AllowExt.PHP,
-        AllowExt.R,
-        AllowExt.RUST,
-        AllowExt.HTML,
-    )
+    extensions = _CODE_EXTENSIONS
     format_meta = FormatMeta(
         structure=ContentStructure.CODE,
         default_granularity=GranularityStrategy.WHOLE,
@@ -296,6 +285,9 @@ def _build_format_registry() -> dict[str, type[BaseFileFormat]]:
             if key in registry:
                 raise RuntimeError(f"Duplicate file format extension: {key!r}")
             registry[key] = format_type
+    missing = {extension.value for extension in AllowExt}.difference(registry)
+    if missing:
+        raise RuntimeError(f"Allowed extensions are not registered: {sorted(missing)}")
     return registry
 
 
