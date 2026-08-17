@@ -1,3 +1,5 @@
+from typing import Any
+
 from openai import AsyncOpenAI, OpenAI
 
 from comet_rag.exceptions import CometRAGException
@@ -6,10 +8,7 @@ from .base import BaseEmbeddingModel
 
 
 class OpenAIEmbeddingModel(BaseEmbeddingModel):
-    """
-    适用于任何兼容 OpenAI /embeddings 接口的文本嵌入模型。
-    （text-embedding-3-small/large、vLLM 标准格式文本模型等）
-    """
+    """OpenAI ``/embeddings`` 兼容文本嵌入适配器。"""
 
     def __init__(
         self,
@@ -26,6 +25,8 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             api_key: 服务 API Key
             async_client: 复用已有异步客户端；为 None 时内部创建
             sync_client: 复用已有同步客户端；为 None 时内部创建
+
+        传入的客户端由调用方持有，本适配器只关闭自己创建的客户端。
         """
         self._model_name = model_name
 
@@ -42,7 +43,7 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             else OpenAI(base_url=base_url, api_key=api_key)
         )
 
-    def embed(self, text: str, **kwargs) -> list[float]:
+    def embed(self, text: str, **kwargs: Any) -> list[float]:
         """
         同步生成文本嵌入向量。
 
@@ -65,7 +66,7 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
                 f"{self.__class__.__name__} | embed | 方法操作发生非预期错误：{str(e)}"
             ) from e
 
-    async def _aembed(self, text: str, **kwargs) -> list[float]:
+    async def _aembed(self, text: str, **kwargs: Any) -> list[float]:
         """
         异步生成文本嵌入向量。
 
@@ -88,8 +89,8 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
                 f"{self.__class__.__name__} | aembed | 方法操作发生非预期错误：{str(e)}"
             ) from e
 
-    async def close_client(self) -> None:
-        """关闭内部创建的客户端连接。"""
+    async def aclose(self) -> None:
+        """仅关闭由当前适配器创建的同步与异步客户端。"""
         if self._owns_async_client:
             await self.async_client.close()
         if self._owns_sync_client:

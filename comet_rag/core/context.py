@@ -87,8 +87,11 @@ class Context:
 
 
 async def _maybe_close(resource: Any) -> None:
-    """模型层的关闭方法名不统一（`close_client` / `aclose` / `close`），
-    这里统一吸收，免得 Context 为每种资源写一个分支。"""
+    """使用统一的 ``aclose``，并兼容旧资源的关闭方法名。
+
+    ``close_client`` 暂时排在前面：旧的自定义模型可能继承了基类新增的空
+    ``aclose``，但只覆写旧方法；先命中旧方法才能在迁移期正确释放资源。
+    """
     for name in ("close_client", "aclose", "close"):
         method = getattr(resource, name, None)
         if callable(method):

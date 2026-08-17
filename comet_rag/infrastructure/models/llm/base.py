@@ -1,3 +1,9 @@
+"""尚未接入组合根的 LLM 后端契约。
+
+当前生产链路只装配 embedding 与 reranker；这里是后续 LLM 功能的最小协议，
+``ModelFactory`` 仍是显式占位，调用会失败，不能把它当成已完成的装配入口。
+"""
+
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any
@@ -18,7 +24,7 @@ class BaseModelBackend(ABC):
 
 
 class ModelFactory:
-    """模型工厂"""
+    """LLM 工厂占位；供应商选择完成前不提供静默默认实现。"""
 
     @staticmethod
     def create(

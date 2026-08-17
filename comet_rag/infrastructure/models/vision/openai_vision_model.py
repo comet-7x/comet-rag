@@ -1,12 +1,16 @@
+from typing import Any
+
 from openai import AsyncOpenAI, OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 from comet_rag.exceptions import CometRAGException
 
 
 class OpenAIVisionModel:
-    """
-    适用于任何兼容 OpenAI chat/completions 接口的视觉模型。
-    满足 engines/cleaners/vision_model.py 中的 VisionModel Protocol。
+    """OpenAI ``/chat/completions`` 兼容视觉模型适配器。
+
+    该实现以结构化类型满足 ``engines.cleaners.VisionModel`` 协议，无需让
+    engines 层反向导入基础设施实现。
     """
 
     def __init__(
@@ -26,6 +30,8 @@ class OpenAIVisionModel:
             system_prompt: 系统提示，控制描述风格
             async_client: 复用已有异步客户端；为 None 时内部创建
             sync_client: 复用已有同步客户端；为 None 时内部创建
+
+        传入的客户端由调用方持有，本适配器只关闭自己创建的客户端。
         """
         self._model_name = model_name
         self._system_prompt = system_prompt
@@ -43,7 +49,9 @@ class OpenAIVisionModel:
             else OpenAI(base_url=base_url, api_key=api_key)
         )
 
-    def _build_messages(self, base64_data: str, media_type: str) -> list:
+    def _build_messages(
+        self, base64_data: str, media_type: str
+    ) -> list[ChatCompletionMessageParam]:
         return [
             {"role": "system", "content": self._system_prompt},
             {
@@ -57,7 +65,7 @@ class OpenAIVisionModel:
             },
         ]
 
-    def describe(self, base64_data: str, media_type: str, **kwargs) -> str:
+    def describe(self, base64_data: str, media_type: str, **kwargs: Any) -> str:
         """
         同步调用视觉模型描述图像。
 
@@ -81,7 +89,7 @@ class OpenAIVisionModel:
                 f"{self.__class__.__name__} | describe | 方法操作发生非预期错误：{str(e)}"
             ) from e
 
-    async def adescribe(self, base64_data: str, media_type: str, **kwargs) -> str:
+    async def adescribe(self, base64_data: str, media_type: str, **kwargs: Any) -> str:
         """
         异步调用视觉模型描述图像。
 
@@ -105,8 +113,8 @@ class OpenAIVisionModel:
                 f"{self.__class__.__name__} | adescribe | 方法操作发生非预期错误：{str(e)}"
             ) from e
 
-    async def close_client(self) -> None:
-        """关闭内部创建的客户端连接。"""
+    async def aclose(self) -> None:
+        """仅关闭由当前适配器创建的同步与异步客户端。"""
         if self._owns_async_client:
             await self.async_client.close()
         if self._owns_sync_client:
