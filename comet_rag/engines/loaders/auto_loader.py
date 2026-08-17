@@ -24,8 +24,8 @@ class LoaderRoute:
     """
 
     name: str
-    loader: BaseLoader
     matcher: LoaderMatcher
+    loader: BaseLoader
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -40,9 +40,10 @@ class LoaderRoute:
         cls,
         name: str,
         loader: BaseLoader,
-        schemes: Iterable[str],
+        schemes: str | Iterable[str],
     ) -> LoaderRoute:
-        normalized = frozenset(scheme.strip().lower() for scheme in schemes)
+        values = (schemes,) if isinstance(schemes, str) else schemes
+        normalized = frozenset(scheme.strip().lower() for scheme in values)
         if not normalized or "" in normalized:
             raise ValueError("LoaderRoute.schemes requires non-empty schemes")
         return cls(

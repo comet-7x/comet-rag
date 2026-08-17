@@ -184,6 +184,16 @@ def test_sync_load_downloads_metadata_and_cleans_temp_file(tmp_path: Path) -> No
     loader.cleanup()
 
 
+def test_sync_load_metadata_uses_validated_minio_scheme(tmp_path: Path) -> None:
+    loader = S3Loader(download_dir=tmp_path, client=SyncClient())
+
+    content = loader.load("minio://documents/reports/annual.txt")
+
+    assert content.metadata["source_type"] == "minio"
+    content.cleanup()
+    loader.cleanup()
+
+
 async def test_async_load_reuses_client_and_cleans_temp_files(tmp_path: Path) -> None:
     client = AsyncClient()
     loader = S3Loader(download_dir=tmp_path, async_client=client)

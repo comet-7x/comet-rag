@@ -19,6 +19,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from comet_rag.engines.loaders import url_loader
 from comet_rag.engines.loaders.data_type import (
     ContentTypeMismatch,
     UnsupportedContentType,
@@ -32,6 +33,10 @@ from comet_rag.engines.loaders.url_loader import (
 
 URL = "https://example.invalid/doc.txt"
 BODY = b"hello from the network"
+
+
+def test_content_type_mismatch_keeps_legacy_url_loader_import() -> None:
+    assert url_loader.ContentTypeMismatch is ContentTypeMismatch
 
 
 def _wait_for_cleanup_start(loader: URLLoader) -> None:

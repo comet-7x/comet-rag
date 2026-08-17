@@ -158,6 +158,25 @@ def test_scheme_route_leaves_source_validation_to_concrete_loader() -> None:
     assert route.matcher(SourceContent("s3:///missing-bucket.txt")) is True
 
 
+def test_scheme_route_accepts_one_string_without_splitting_characters() -> None:
+    route = LoaderRoute.schemes("secure-url", RecordingLoader("https"), "https")
+
+    assert route.matcher(SourceContent("https://example.invalid/document.txt")) is True
+    assert route.matcher(SourceContent("http://example.invalid/document.txt")) is False
+
+
+def test_loader_route_preserves_legacy_positional_field_order() -> None:
+    def matcher(source: SourceContent) -> bool:
+        return source.parsed_url.scheme == "custom"
+
+    loader = RecordingLoader("custom")
+
+    route = LoaderRoute("custom", matcher, loader)
+
+    assert route.matcher(SourceContent("custom://bucket/object.txt")) is True
+    assert route.loader is loader
+
+
 def test_constructor_rejects_duplicate_route_names() -> None:
     first = RecordingLoader("first")
     second = RecordingLoader("second")

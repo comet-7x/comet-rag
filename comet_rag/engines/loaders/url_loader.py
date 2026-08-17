@@ -13,6 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from comet_rag.engines.loaders.base_loader import DEFAULT_MAX_CONCURRENCY, BaseLoader
 from comet_rag.engines.loaders.data_type import (
+    ContentTypeMismatch as _ContentTypeMismatch,
+)
+from comet_rag.engines.loaders.data_type import (
     ParseConfig,
     is_allowed_extension,
     resolve_detected_extension,
@@ -22,6 +25,9 @@ from comet_rag.engines.utils.file_detector import detect_content_type_from_path
 
 DEFAULT_MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
 _STREAM_CHUNK_BYTES = 64 * 1024
+
+# Preserve the public import path used before the exception moved to data_type.py.
+ContentTypeMismatch = _ContentTypeMismatch
 
 
 class DownloadRequestConfig(BaseModel):
