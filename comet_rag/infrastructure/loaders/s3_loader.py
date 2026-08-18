@@ -429,7 +429,8 @@ class S3Loader(BaseLoader):
             _release=lambda: self._release_temp(path),
         )
 
-    def _load(self, source: SourceContent | str) -> LoaderContent:
+    def _load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
+        self._reject_unsupported(kwargs)
         normalized = (
             source if isinstance(source, SourceContent) else SourceContent(source)
         )
@@ -446,7 +447,10 @@ class S3Loader(BaseLoader):
                 self._discard_temp(path)
                 raise
 
-    async def _aload(self, source: SourceContent | str) -> LoaderContent:
+    async def _aload(
+        self, source: SourceContent | str, **kwargs: Any
+    ) -> LoaderContent:
+        self._reject_unsupported(kwargs)
         normalized = (
             source if isinstance(source, SourceContent) else SourceContent(source)
         )

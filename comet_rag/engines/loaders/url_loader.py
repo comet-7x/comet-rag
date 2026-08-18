@@ -406,7 +406,9 @@ class URLLoader(BaseLoader):
         *,
         download_config: DownloadRequestConfig | None = None,
         client: httpx.Client | None = None,
+        **unsupported: Any,
     ) -> LoaderContent:
+        self._reject_unsupported(unsupported)
         with self._sync_activity():
             return self._load_impl(
                 source, download_config=download_config, client=client
@@ -440,7 +442,9 @@ class URLLoader(BaseLoader):
         *,
         download_config: DownloadRequestConfig | None = None,
         client: httpx.AsyncClient | None = None,
+        **unsupported: Any,
     ) -> LoaderContent:
+        self._reject_unsupported(unsupported)
         async with self._async_activity():
             return await self._aload_impl(
                 source, download_config=download_config, client=client
@@ -495,13 +499,16 @@ class URLLoader(BaseLoader):
     ) -> list[LoaderContent]:
         from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
+        def _gated(source: SourceContent | str) -> LoaderContent:
+            # 批量 worker 刻意直接调 `_load_impl`（避免嵌套登记活动操作导致
+            # cleanup 循环等待），于是它绕开了 `load` 上的闸门 —— 评审指出。
+            # 闸门在这里单独补上：绕过的是登记，不是限流。
+            return self._through_gate_sync(
+                lambda: self._load_impl(source, download_config=config, client=client)
+            )
+
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-            futures = [
-                executor.submit(
-                    self._load_impl, s, download_config=config, client=client
-                )
-                for s in sources
-            ]
+            futures = [executor.submit(_gated, s) for s in sources]
             return [f.result() for f in futures]
 
     async def abatch_load(
@@ -522,9 +529,12 @@ class URLLoader(BaseLoader):
             client = self._shared_async_client()
 
             async def _load_one(source: SourceContent | str) -> LoaderContent:
-                async with semaphore:
-                    return await self._aload_impl(
-                        source, download_config=config, client=client
+                async with semaphore:  # 本次调用的宽度
+                    # 与同步批量同理：绕开的是活动登记，不是限流。
+                    return await self._through_gate(
+                        lambda: self._aload_impl(
+                            source, download_config=config, client=client
+                        )
                     )
 
             return await asyncio.gather(*[_load_one(s) for s in sources])

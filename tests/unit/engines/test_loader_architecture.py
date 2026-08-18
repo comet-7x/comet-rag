@@ -84,13 +84,13 @@ class LegacyCloseLoader(BaseLoader):
         self.sync_cleanup_calls = 0
         self.async_close_calls = 0
 
-    def _load(self, source: SourceContent | str) -> LoaderContent:
+    def _load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
         normalized = (
             source if isinstance(source, SourceContent) else SourceContent(source)
         )
         return LoaderContent(path=Path("legacy"), source=normalized)
 
-    async def _aload(self, source: SourceContent | str) -> LoaderContent:
+    async def _aload(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
         return self.load(source)
 
     def cleanup(self) -> None:

@@ -201,10 +201,22 @@ class MultimodalEmbeddingMixin(GatedModel, ABC):
         """多模态适配器真正执行异步请求的地方。"""
 
     @abstractmethod
+    def _embed_media(
+        self, data: MediaResource | ContentInput, /, **kwargs: Any
+    ) -> list[float]:
+        """多模态适配器真正执行同步请求的地方。"""
+
+    @final
     def embed_media(
         self, data: MediaResource | ContentInput, /, **kwargs: Any
     ) -> list[float]:
-        """同步多模态入口；同步路径不经过 asyncio 闸门。"""
+        """同步多模态入口。与 `aembed_media` 一样受闸门保护。
+
+        修 #44 之前这里是个可覆写的抽象方法，Qwen 的实现直接调未加闸的
+        `embed` —— 于是同步图片请求整条路绕开了预算，而图片恰恰比文本重得多
+        （评审指出）。
+        """
+        return self._through_gate_sync(lambda: self._embed_media(data, **kwargs))
 
     @final
     async def aembed_media(

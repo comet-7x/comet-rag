@@ -29,7 +29,8 @@ class LocalLoader(BaseLoader):
 
         return metadata
 
-    def _load(self, source: SourceContent | str) -> LoaderContent:
+    def _load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
+        self._reject_unsupported(kwargs)
         if isinstance(source, str):
             source = SourceContent(source)
         if not source.is_local:
@@ -43,7 +44,10 @@ class LocalLoader(BaseLoader):
             metadata=self._build_metadata(source),
         )
 
-    async def _aload(self, source: SourceContent | str) -> LoaderContent:
+    async def _aload(
+        self, source: SourceContent | str, **kwargs: Any
+    ) -> LoaderContent:
+        self._reject_unsupported(kwargs)
         return await asyncio.to_thread(self.load, source)
 
     def cleanup(self) -> None:

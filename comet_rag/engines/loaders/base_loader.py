@@ -2,7 +2,7 @@ import asyncio
 import inspect
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
-from typing import final
+from typing import Any, final
 
 from comet_rag.engines.defaults import DEFAULT_LOADER_CONCURRENCY
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
@@ -35,16 +35,22 @@ class BaseLoader(GatedResource, ABC):
     """
 
     @abstractmethod
-    def _load(self, source: SourceContent | str) -> LoaderContent:
+    def _load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
         """适配器真正执行同步加载的扩展点。"""
 
     @final
-    def load(self, source: SourceContent | str) -> LoaderContent:
-        """同步加载一个来源。与 `aload` 共用同一份闸门预算。"""
-        return self._through_gate_sync(lambda: self._load(source))
+    def load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
+        """同步加载一个来源。与 `aload` 共用同一份闸门预算。
+
+        `**kwargs` 原样转发给 `_load`：`URLLoader` 有 `download_config`、
+        `client` 这类专用选项，而 `docs/pipeline_usage.md` 明确教用户直接调
+        `URLLoader` 来传它们。模板方法若只收 `source`，那条文档就地失效
+        （评审指出，实测 TypeError）。
+        """
+        return self._through_gate_sync(lambda: self._load(source, **kwargs))
 
     @abstractmethod
-    async def _aload(self, source: SourceContent | str) -> LoaderContent:
+    async def _aload(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
         """适配器真正执行异步加载的扩展点。
 
         扩展点是 `_aload` 而不是 `aload`：闸门必须在**每一次真实抓取**外面，
@@ -53,9 +59,9 @@ class BaseLoader(GatedResource, ABC):
         """
 
     @final
-    async def aload(self, source: SourceContent | str) -> LoaderContent:
-        """异步加载一个来源。受进程级闸门保护，不可覆写。"""
-        return await self._through_gate(lambda: self._aload(source))
+    async def aload(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
+        """异步加载一个来源。受进程级闸门保护，不可覆写。`**kwargs` 同 `load`。"""
+        return await self._through_gate(lambda: self._aload(source, **kwargs))
 
     @abstractmethod
     def cleanup(self) -> None: ...
@@ -76,6 +82,20 @@ class BaseLoader(GatedResource, ABC):
                 await result
             return
         await asyncio.to_thread(self.cleanup)
+
+    def _reject_unsupported(self, options: dict[str, Any]) -> None:
+        """未知选项必须**报错**，不能悄悄忽略。
+
+        `load`/`aload` 转发任意 `**kwargs` 是为了让 `URLLoader` 这类适配器能
+        暴露自己的专用选项；代价是拼错的参数名会一路滑到实现里。所以每个实现
+        收下自己认识的那些之后，剩下的在这里当场拒绝 —— 静默忽略等于让调用方
+        以为自己设置了某个东西，而它从未生效。
+        """
+        if options:
+            name = next(iter(options))
+            raise TypeError(
+                f"{type(self).__name__} got an unexpected keyword argument {name!r}"
+            )
 
     @staticmethod
     def _validate_max_concurrency(max_concurrency: int) -> None:

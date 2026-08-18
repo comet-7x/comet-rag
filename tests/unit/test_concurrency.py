@@ -32,6 +32,8 @@ class RecordingEmbedding(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         self.live = 0
         self.peak = 0
         self.calls = 0
+        #: 同步侧在别的线程里跑，计数要自己护住
+        self._sync_lock = threading.Lock()
 
     def embed(self, data: Any, **kwargs: Any) -> list[float]:  # pragma: no cover
         return [0.0]
@@ -46,7 +48,14 @@ class RecordingEmbedding(MultimodalEmbeddingMixin, BaseEmbeddingModel):
             self.live -= 1
         return [0.0]
 
-    def embed_media(self, data: Any, /, **kwargs: Any) -> list[float]:  # pragma: no cover
+    def _embed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
+        """同步多模态：与文本共用同一份计数，用来验证它也过闸门。"""
+        with self._sync_lock:
+            self.live += 1
+            self.peak = max(self.peak, self.live)
+        time.sleep(self.delay)
+        with self._sync_lock:
+            self.live -= 1
         return [0.0]
 
     async def _aembed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
@@ -356,3 +365,21 @@ def test_sync_fanout_respects_the_process_gate() -> None:
     assert model.peak <= limit, (
         f"闸门 limit={limit}，同步路径实际并发峰值 {model.peak}"
     )
+
+
+async def test_sync_media_also_goes_through_the_gate() -> None:
+    """**同步多模态入口也不能绕过预算。**
+
+    修 #44 时只把文本入口接上了闸门，`embed_media` 仍是可覆写的抽象方法，
+    Qwen 的实现直接调未加闸的 `embed` —— 于是同步图片请求整条路绕开了预算，
+    而图片恰恰比文本重得多（评审指出）。
+    """
+    model = RecordingEmbedding(delay=0.02)
+    model.bind_gate(Gate(limit=2))
+    media = MediaResource(url="https://example.invalid/a.png")
+
+    await asyncio.gather(
+        *[asyncio.to_thread(model.embed_media, media) for _ in range(8)]
+    )
+
+    assert model.peak <= 2, f"同步多模态绕过了闸门：峰值 {model.peak}"

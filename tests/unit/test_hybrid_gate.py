@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from comet_rag.core.concurrency import Gate, Overloaded
+from comet_rag.core.concurrency import Gate, Overloaded, _AsyncWaiter
 
 
 def _available(gate: Gate) -> int:
@@ -362,3 +362,88 @@ async def test_mixed_load_never_leaks_a_permit() -> None:
     assert stats.admitted > 100, f"只准入了 {stats.admitted} 次，压力不够说明不了问题"
     assert stats.in_flight == 0, f"结束后仍有 {stats.in_flight} 个名额在外"
     assert stats.waiting == 0, f"结束后仍有 {stats.waiting} 个等待者"
+
+
+# ── 评审补的边界 ───────────────────────────────────────────────────────────
+
+
+def test_cancellation_is_not_counted_as_a_rejection() -> None:
+    """**用户取消不是过载。**
+
+    `/admin/limits` 的文档写着"`rejected` 在涨说明已经在丢请求"。把取消混进去，
+    运维会把"用户撤了几个任务"读成"服务在丢请求"；更糟的是计不计还取决于取消
+    有没有跟移交撞上 —— 一个随时序抖动的指标比没有这个指标更糟。
+
+    这与 `observer` 把 `CancelledError` 排除在失败率之外是同一条原则。
+    """
+
+    async def scenario() -> Gate:
+        gate = Gate(limit=1)
+        async with gate:
+            queued = [asyncio.create_task(_acquire_and_release(gate)) for _ in range(3)]
+            await asyncio.sleep(0.02)
+            for task in queued:
+                task.cancel()
+            await asyncio.gather(*queued, return_exceptions=True)
+        return gate
+
+    gate = asyncio.run(scenario())
+    assert gate.stats.rejected == 0, (
+        f"取消被计成了 {gate.stats.rejected} 次拒绝"
+    )
+
+
+async def test_timeout_is_still_counted_as_a_rejection() -> None:
+    """对照：超时确实是过载，必须计数 —— 否则上一条就是把指标关掉了。"""
+    gate = Gate(limit=1, acquire_timeout=0.02)
+
+    async with gate:
+        with pytest.raises(Overloaded):
+            async with gate:
+                pass
+
+    assert gate.stats.rejected == 1
+
+
+def test_a_waiter_on_a_closed_loop_does_not_swallow_the_permit() -> None:
+    """**唤醒失败不能吃掉名额。**
+
+    异步等待者记着自己的事件循环。那个循环若已关闭，`call_soon_threadsafe`
+    抛 `RuntimeError` —— 而此时名额已经从在途里减掉、又没交到任何人手上。
+    异常一冒出去，闸门就永久少一格。
+
+    醒不来的等待者跳过，名额让给下一个（这里是让回池子）。
+    """
+    gate = Gate(limit=1)
+    dead_loop = asyncio.new_event_loop()
+
+    async def occupy() -> None:
+        await gate.acquire()
+
+    live_loop = asyncio.new_event_loop()
+    try:
+        live_loop.run_until_complete(occupy())  # 名额被占满
+        # 手工塞一个"属于已关闭循环"的等待者，模拟 worker 循环先行退出
+        waiter = _AsyncWaiter(dead_loop)
+        with gate._lock:  # noqa: SLF001
+            gate._waiters.append(waiter)  # noqa: SLF001
+        dead_loop.close()
+
+        gate.release()  # 唤醒必然失败
+    finally:
+        live_loop.close()
+
+    stats = gate.stats
+    assert stats.in_flight == 0, f"名额被吞了：in_flight={stats.in_flight}"
+    assert stats.waiting == 0
+
+    # 还能正常用 —— 吞掉名额的话这里会挂住
+    async def reuse() -> None:
+        async with asyncio.timeout(2), gate:
+            pass
+
+    again = asyncio.new_event_loop()
+    try:
+        again.run_until_complete(reuse())
+    finally:
+        again.close()

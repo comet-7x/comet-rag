@@ -25,7 +25,7 @@ class EchoEmbedding(BaseEmbeddingModel):
 
 
 class EchoMultimodalEmbedding(MultimodalEmbeddingMixin, EchoEmbedding):
-    def embed_media(self, data: Any, /, **kwargs: Any) -> Any:
+    def _embed_media(self, data: Any, /, **kwargs: Any) -> Any:
         return data
 
     async def _aembed_media(self, data: Any, /, **kwargs: Any) -> Any:

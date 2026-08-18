@@ -410,10 +410,14 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
             )
             raise CometRAGException(error_msg) from e
 
-    def embed_media(
+    def _embed_media(
         self, data: MediaResource | ContentInput, /, **kwargs: Any
     ) -> list[float]:
-        """本适配器支持多模态，直接走内部编码路径。"""
+        """本适配器支持多模态，直接走内部编码路径。
+
+        调 `embed` 而不是 `embed_query` 之类：闸门已由外壳 `embed_media` 持有，
+        这里再走一层加闸入口会自锁。
+        """
         return self.embed(data, **kwargs)
 
     async def _aembed_media(

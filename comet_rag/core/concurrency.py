@@ -234,18 +234,26 @@ class Gate:
             self._peak_waiting = max(self._peak_waiting, len(self._waiters))
             return waiter
 
-    def _abandon(self, waiter: _Waiter) -> bool:
+    def _abandon(self, waiter: _Waiter, *, rejected: bool) -> bool:
         """放弃等待。返回"是否已经被授予名额"。
 
         两种结局，靠"还在不在队列里"区分，而这个判断在锁内做，所以与
         `release()` 的移交是互斥的 —— 不会出现两边都以为自己持有名额。
+
+        `rejected` 只在**超时**时为真。取消不算过载：那是调用方主动放弃，
+        与下游是否扛不住无关。混进去会让 `/admin/limits` 上的 `rejected`
+        （文档写着"在涨说明已经在丢请求"）把用户取消的任务报成丢弃的请求，
+        而且计不计还取决于取消有没有跟移交撞上 —— 一个随时序抖动的指标比
+        没有这个指标更糟（评审指出）。这与 `_report()` 把 CancelledError
+        排除在失败率之外是同一条原则。
         """
         with self._lock:
             try:
                 self._waiters.remove(waiter)
             except ValueError:
                 return True  # 已被移交：名额在我们手上，调用方要负责还回去
-            self._rejected += 1
+            if rejected:
+                self._rejected += 1
             return False
 
     # ── 获取与释放 ─────────────────────────────────────────────────────────
@@ -261,19 +269,19 @@ class Gate:
             else:
                 await asyncio.wait_for(waiter.future, self._timeout)
         except TimeoutError:
-            self._give_back(waiter)
+            self._give_back(waiter, rejected=True)
             raise self._overloaded_timeout() from None
         except asyncio.CancelledError:
             # **取消也必须清理。** 漏掉这一步，闸门会随取消次数越收越紧：
             # 每取消一个正在排队的调用，就永久少掉一个名额，最终全线阻塞。
             # 取消原样抛出去，不翻译成 Overloaded —— 那是调用方自己的决定，
             # 不是过载。
-            self._give_back(waiter)
+            self._give_back(waiter, rejected=False)
             raise
 
-    def _give_back(self, waiter: _Waiter) -> None:
+    def _give_back(self, waiter: _Waiter, *, rejected: bool) -> None:
         """放弃等待后的收尾：名额若已移交到手上，必须还回去。"""
-        if self._abandon(waiter):
+        if self._abandon(waiter, rejected=rejected):
             self.release()
 
     def acquire_sync(self) -> None:
@@ -282,20 +290,29 @@ class Gate:
             return
         if waiter.event.wait(self._timeout):
             return
-        if self._abandon(waiter):
+        if self._abandon(waiter, rejected=True):
             # 超时之后才被移交：名额确实在手上，但调用方已经不要了，还回去。
             self.release()
         raise self._overloaded_timeout()
 
     def release(self) -> None:
-        """归还一个名额：优先**直接移交**给排在最前面的等待者。"""
+        """归还一个名额：优先**直接移交**给排在最前面的等待者。
+
+        唤醒可能失败：异步等待者记着自己的事件循环，那个循环若已关闭，
+        `call_soon_threadsafe` 会抛 `RuntimeError`。此时不能让异常冒出去 ——
+        名额已经从在途里减掉、又没交到任何人手上，就这么丢了一格
+        （评审指出）。醒不来的等待者直接跳过，名额让给下一个。
+        """
         with self._lock:
             self._in_flight -= 1
-            if self._waiters:
+            while self._waiters:
                 waiter = self._waiters.popleft()
+                try:
+                    waiter.wake()
+                except RuntimeError:
+                    continue  # 循环已关闭，这个等待者永远醒不来
                 waiter.granted = True
                 self._enter_locked()
-                waiter.wake()
                 return
             self._available += 1
 
