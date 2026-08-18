@@ -350,6 +350,37 @@ class TaskStoreContract:
         new = (await store.require(task.task_id)).heartbeat_at
         assert old is not None and new is not None and new > old
 
+    async def test_loaded_task_is_isolated_from_the_store(
+        self, store: TaskStore
+    ) -> None:
+        """**读出来的任务必须是独立副本，改它不能改到库里。**
+
+        乐观锁守的是 `_save`。如果 `get()` 返回的对象与库里共享同一个 dict，
+        那么 `task.request["x"] = 1` 压根不经过 `_save` —— version 不涨、
+        不留事件、其他持有者手上的快照当场与库不一致，而 CAS 一无所知。
+
+        `request` / `result` 声明成 `Any`，实际装的几乎总是 dict，是最容易被
+        顺手改一下的两个字段；`context` 的嵌套值同理（浅拷贝挡不住）。
+        """
+        task = await store.create(
+            "demo",
+            request={"kb_id": "demo", "nested": {"deep": 1}},
+            context={"chunks": ["a", "b"]},
+            result={"written": 0},
+        )
+
+        borrowed = await store.require(task.task_id)
+        borrowed.request["kb_id"] = "篡改"
+        borrowed.request["nested"]["deep"] = 999
+        borrowed.context["chunks"].append("偷加的")
+        borrowed.result["written"] = 999
+
+        fresh = await store.require(task.task_id)
+        assert fresh.request == {"kb_id": "demo", "nested": {"deep": 1}}
+        assert fresh.context == {"chunks": ["a", "b"]}
+        assert fresh.result == {"written": 0}
+        assert fresh.version == task.version, "库根本不该发生写入"
+
     async def test_sweep_requeues_zombie_with_attempts_left(
         self, store: TaskStore
     ) -> None:
@@ -379,6 +410,57 @@ class TaskStoreContract:
         await store.sweep_stale(lease=timedelta(seconds=30))
 
         assert (await store.require(task.task_id)).status is TaskStatus.FAILED
+
+    async def test_one_racing_task_does_not_abort_the_whole_sweep(
+        self, store: TaskStore
+    ) -> None:
+        """**一个碰巧完成的任务，不能让同批僵尸任务全都收不回来。**
+
+        回收是协作式的：先查出心跳超时的候选，再逐个改状态。这中间存在真实
+        窗口 —— worker 可能正好在这一刻把任务做完。此时对它做
+        `running → pending` 是非法迁移。
+
+        如果这个异常抛出去，同一批里排在后面的僵尸任务**一个都不会被处理**，
+        而扫描正是它们唯一的指望；下一轮很可能再撞上同样的竞态。所以竞态
+        必须按"跳过这一个"处理，而不是"中断这一轮"。
+        """
+        zombies = []
+        for i in range(3):
+            task = await store.create(f"z{i}", max_attempts=2)
+            await store.transition(task.task_id, TaskStatus.RUNNING, worker_id="dead")
+            await store.update(
+                task.task_id, heartbeat_at=Time.now() - timedelta(minutes=5)
+            )
+            zombies.append(task.task_id)
+
+        # 模拟竞态：候选选出来之后、回收动手之前，其中一个自己跑完了。
+        # 不假设候选顺序（`_query` 按 created_at 倒序），记下真正抢先的那个。
+        original = store._stale_candidates  # noqa: SLF001
+        raced: list[str] = []
+
+        async def racing(lease: timedelta, now: Any) -> list[Task]:
+            candidates = await original(lease, now)
+            await store.transition(candidates[0].task_id, TaskStatus.SUCCEEDED)
+            raced.append(candidates[0].task_id)
+            return candidates
+
+        store._stale_candidates = racing  # type: ignore[method-assign]  # noqa: SLF001
+        try:
+            revived = await store.sweep_stale(lease=timedelta(seconds=30))
+        finally:
+            store._stale_candidates = original  # type: ignore[method-assign]  # noqa: SLF001
+
+        assert len(raced) == 1
+        assert (await store.require(raced[0])).status is TaskStatus.SUCCEEDED, (
+            "抢先完成的那个不该被回收改写"
+        )
+        assert raced[0] not in revived
+
+        others = [task_id for task_id in zombies if task_id != raced[0]]
+        assert len(others) == 2
+        for task_id in others:
+            assert task_id in revived, "同批里的其余僵尸任务被漏掉了"
+            assert (await store.require(task_id)).status is TaskStatus.PENDING
 
     async def test_sweep_leaves_live_tasks_alone(self, store: TaskStore) -> None:
         """误回收会造成一份任务两个执行者 —— 比不回收更糟。"""

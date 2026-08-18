@@ -15,10 +15,12 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
+from comet_rag.core.logging import logger
 from comet_rag.core.time import Time
 
 from .models import (
@@ -30,7 +32,7 @@ from .models import (
     TaskStatus,
     new_task_id,
 )
-from .states import assert_transition
+from .states import InvalidTransition, assert_transition
 
 
 class TaskNotFound(LookupError):
@@ -293,33 +295,48 @@ class TaskStore(ABC):
         """
         now, revived = Time.now(), []
         for task in await self._stale_candidates(lease, now):
-            if task.status is TaskStatus.CANCELLING:
-                # 用户要的是"停下来"，那就直接给他终态；重排队等于违背原意
-                await self.transition(
-                    task.task_id,
-                    TaskStatus.CANCELLED,
-                    error=TaskError(
-                        code="cancelled_lease_expired",
-                        message="worker 在处理取消的过程中失联",
-                    ),
-                    note="租约过期（取消中）",
-                )
-                revived.append(task.task_id)
+            try:
+                await self._reclaim(task)
+            except (InvalidTransition, TaskNotFound) as exc:
+                # 竞态，不是错误：候选选出来之后、回收动手之前，worker 自己把
+                # 任务推进到了终态（或它被删了）。回收本就是给"没人再推进它"
+                # 的任务兜底，这里恰恰说明不需要兜底。
+                #
+                # 关键在于**不能让它中断整轮扫描**。一个碰巧完成的任务若把异常
+                # 抛出去，同一批里其余的僵尸任务一个都回收不到 —— 而扫描正是
+                # 它们唯一的指望。下一轮很可能再撞上同样的竞态，于是僵尸任务
+                # 一直躺着，日志里却只有一条看不出所以然的迁移错误。
+                logger.debug(f"跳过 {task.task_id}：回收前状态已变（{exc!r}）")
                 continue
-
-            err = TaskError(
-                code="lease_expired", message="worker 心跳超时", retriable=True
-            )
-            nxt = (
-                TaskStatus.PENDING
-                if task.attempts < task.max_attempts
-                else TaskStatus.FAILED
-            )
-            await self.transition(task.task_id, nxt, error=err, note="租约过期")
             revived.append(task.task_id)
         return revived
 
-    async def _stale_candidates(self, lease: timedelta, now: Any) -> list[Task]:
+    async def _reclaim(self, task: Task) -> None:
+        """回收单个心跳超时的任务。竞态由调用方 `sweep_stale` 兜住。"""
+        if task.status is TaskStatus.CANCELLING:
+            # 用户要的是"停下来"，那就直接给他终态；重排队等于违背原意
+            await self.transition(
+                task.task_id,
+                TaskStatus.CANCELLED,
+                error=TaskError(
+                    code="cancelled_lease_expired",
+                    message="worker 在处理取消的过程中失联",
+                ),
+                note="租约过期（取消中）",
+            )
+            return
+
+        err = TaskError(code="lease_expired", message="worker 心跳超时", retriable=True)
+        nxt = (
+            TaskStatus.PENDING
+            if task.attempts < task.max_attempts
+            else TaskStatus.FAILED
+        )
+        await self.transition(task.task_id, nxt, error=err, note="租约过期")
+
+    async def _stale_candidates(
+        self, lease: timedelta, now: datetime
+    ) -> list[Task]:
         """所有心跳已超时的**活跃**任务。
 
         活跃 = RUNNING 或 CANCELLING，也就是 `TaskStatus.is_active` 的定义。
@@ -397,9 +414,29 @@ class TaskStore(ABC):
 
 # 内存实现
 def _clone(task: Task) -> Task:
-    """浅拷贝 + 拷贝可变容器。真实 DB 实现这里是一次序列化/反序列化。"""
+    """拷出一份**独立**快照。真实 DB 实现这里是一次序列化/反序列化。
+
+    `request`、`result` 与 `context` 里的嵌套值都必须真拷。原来只做
+    `dict(task.context)` 这种浅拷、且完全没碰 `request`/`result`，于是：
+
+        got = await store.get(task_id)
+        got.request["source"] = "别的东西"     # 没有 save、没有 CAS
+
+    这行就**直接改到了库里**：version 不涨、不留事件、别人手上的快照当场
+    与库不一致，而乐观锁一无所知 —— 它守的是 `_save`，这条路根本没经过
+    `_save`。`_load` 的文档说"返回副本，返回活对象会让调用方绕过 CAS 直接
+    改库"，而它自己就是那个活对象。
+
+    `request` 与 `result` 声明成 `Any`，实际装的几乎总是 dict（入库请求、
+    结果摘要），正是最容易被顺手改一下的两个字段。
+
+    deepcopy 对不可变值（str、int、datetime）会原样返回，所以代价与容器的
+    **元素个数**成正比，与内容大小无关；chunk 列表那种场景不会因此变慢。
+    """
     copy = replace(task)
-    copy.context = dict(task.context)
+    copy.context = deepcopy(task.context)
+    copy.request = deepcopy(task.request)
+    copy.result = deepcopy(task.result)
     copy.stage_history = [replace(r) for r in task.stage_history]
     return copy
 
