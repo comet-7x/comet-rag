@@ -248,12 +248,16 @@ class Gate:
         排除在失败率之外是同一条原则。
         """
         with self._lock:
+            if rejected:
+                # **两个分支都要计。** 只在"还在队列里"那支计数的话，超时若刚好
+                # 撞上移交就不计 —— 于是同一件事（请求因过载被拒）计不计取决于
+                # 时序。那正是本方法上面那段话反对的东西，我先前只把它用在了
+                # 取消上（评审指出）。
+                self._rejected += 1
             try:
                 self._waiters.remove(waiter)
             except ValueError:
                 return True  # 已被移交：名额在我们手上，调用方要负责还回去
-            if rejected:
-                self._rejected += 1
             return False
 
     # ── 获取与释放 ─────────────────────────────────────────────────────────

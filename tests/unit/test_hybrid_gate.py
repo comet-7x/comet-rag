@@ -14,7 +14,12 @@ import time
 
 import pytest
 
-from comet_rag.core.concurrency import Gate, Overloaded, _AsyncWaiter
+from comet_rag.core.concurrency import (
+    Gate,
+    Overloaded,
+    _AsyncWaiter,
+    _SyncWaiter,
+)
 
 
 def _available(gate: Gate) -> int:
@@ -498,3 +503,25 @@ def test_fail_fast_does_not_leak_a_seat() -> None:
     assert gate.stats.waiting == 0
     assert gate.stats.rejected == 0, "误用不是过载，不该计入 rejected"
     assert gate.stats.limit - gate.stats.in_flight == 1
+
+
+def test_timeout_is_counted_whether_or_not_it_races_with_a_grant() -> None:
+    """**同一件事，计不计不能取决于时序。**
+
+    超时被拒是过载的证据，无论它有没有刚好撞上"名额正被移交给我"。只在
+    "还在队列里"那一支计数的话，`rejected` 会随调度抖动地少计 —— 而调用方
+    两种情况下都拿到了 `Overloaded`。
+
+    这与取消一律不计是同一条原则的两面：**判据是发生了什么，不是撞上了什么。**
+    """
+    still_queued = Gate(limit=1, acquire_timeout=0.01)
+    waiter = _SyncWaiter()
+    with still_queued._lock:  # noqa: SLF001
+        still_queued._waiters.append(waiter)  # noqa: SLF001
+    assert still_queued._abandon(waiter, rejected=True) is False  # noqa: SLF001
+
+    raced = Gate(limit=1, acquire_timeout=0.01)
+    granted = _SyncWaiter()  # 不在队列里 = 已被移交
+    assert raced._abandon(granted, rejected=True) is True  # noqa: SLF001
+
+    assert still_queued.stats.rejected == raced.stats.rejected == 1
