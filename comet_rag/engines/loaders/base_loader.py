@@ -2,15 +2,17 @@ import asyncio
 import inspect
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from typing import final
 
 from comet_rag.engines.defaults import DEFAULT_LOADER_CONCURRENCY
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
+from comet_rag.ports.gate import GatedResource
 
 #: 兼容旧名；数字与理由都在 `engines/defaults.py`
 DEFAULT_MAX_CONCURRENCY = DEFAULT_LOADER_CONCURRENCY
 
 
-class BaseLoader(ABC):
+class BaseLoader(GatedResource, ABC):
     """Loader contract with conservative batch fallbacks.
 
     The default batch methods are suitable for loaders whose synchronous work can
@@ -20,13 +22,34 @@ class BaseLoader(ABC):
     批量方法的并发默认值来自 ``engines/defaults.py`` —— 它护的是本机文件描述符
     与对外连接数，跟模型侧的扇出不是同一种资源，所以是两个数字。跑参考服务时
     真正生效的值由 ``LimitsConfig`` 提供。
+
+    ## 两个旋钮叠加
+
+    ``max_concurrency`` 限的是**一次批量调用内**的宽度；进程级总量由闸门管
+    （``bind_gate``，组合根挂上）。只有前者时，多个任务各自守规矩、加起来不
+    守 —— 这正是模型侧实测出"配置写 4、实际 128"的那个失效模式，加载侧同样
+    存在：`ingestion.py` 每个任务调一次 ``aload``，32 个任务就是 32 路抓取。
+
+    **同步的 ``load`` 目前不受闸门约束**：闸门建立在 asyncio 原语上，线程里
+    拿不到（见 issue #44，模型侧同病）。
     """
 
     @abstractmethod
     def load(self, source: SourceContent | str) -> LoaderContent: ...
 
     @abstractmethod
-    async def aload(self, source: SourceContent | str) -> LoaderContent: ...
+    async def _aload(self, source: SourceContent | str) -> LoaderContent:
+        """适配器真正执行异步加载的扩展点。
+
+        扩展点是 `_aload` 而不是 `aload`：闸门必须在**每一次真实抓取**外面，
+        如果子类能覆写 `aload`，它一覆写就把闸门覆写掉了 —— 而且不报错。
+        拆成"final 的外壳 + abstract 的内核"，子类在类型层面就没有绕过的写法。
+        """
+
+    @final
+    async def aload(self, source: SourceContent | str) -> LoaderContent:
+        """异步加载一个来源。受进程级闸门保护，不可覆写。"""
+        return await self._through_gate(lambda: self._aload(source))
 
     @abstractmethod
     def cleanup(self) -> None: ...

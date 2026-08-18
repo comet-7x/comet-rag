@@ -195,6 +195,24 @@ def build_ingest_loader(config: APPConfig, policy: SourcePolicy) -> AutoLoader:
     return AutoLoader(routes)
 
 
+def build_loader_gate(config: APPConfig) -> Gate:
+    """**加载侧单独一个闸门，不与模型共用。**
+
+    模型闸门护的是 GPU 服务的排队位，加载闸门护的是本机文件描述符与对外连接
+    数 —— 两者的合理值差一个数量级。共用一个的话，"调大加载并发"会意外挤掉
+    模型的名额，而这种互相踩踏在监控上看不出来。
+
+    这跟 `build_model_gate` 里"embedding 与 rerank 必须共用"不矛盾：那两者抢
+    的确实是同一块 GPU，加载抢的是另一种资源。**判据是资源，不是模块。**
+    """
+    return build_gate(
+        limit=config.limits.loader_concurrency,
+        max_waiting=config.limits.model_queue,
+        acquire_timeout=config.limits.model_wait_timeout,
+        name="loader",
+    )
+
+
 def build_model_gate(
     config: APPConfig, degradation: DegradationController | None = None
 ) -> Gate:
@@ -269,6 +287,11 @@ def build_reranker(
     )
 
 
+def _gated_routes(loader: AutoLoader) -> list[object]:
+    """AutoLoader 自己不持有闸门，所以复验要落到真正发请求的叶子上。"""
+    return [route.loader for route in loader.routes]
+
+
 def _assert_gated(gate: Gate, *models: object) -> None:
     """**启动时就确认闸门真的挂上了**（PR 评审 #9/#12）。
 
@@ -339,6 +362,12 @@ def build_context(
     if reranker is not None:
         reranker.bind_gate(gate)
     _assert_gated(gate, embedding_model, reranker)
+
+    # 加载侧的闸门。`AutoLoader` 只转发给叶子 loader，自己不持有 —— 它是
+    # 路由器不是 I/O，持有会导致一次加载取两次许可（见 AutoLoader.bind_gate）。
+    loader_gate = build_loader_gate(config)
+    ingest_loader.bind_gate(loader_gate)
+    _assert_gated(loader_gate, *_gated_routes(ingest_loader))
     vector_store = vector_store or build_vector_store(config)
     task_store = task_store or build_task_store(config, database)
     task_executor = task_executor or build_task_executor(

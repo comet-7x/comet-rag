@@ -73,7 +73,7 @@ class StubLoader(BaseLoader):
             metadata={"file_type": STUB_TYPE},
         )
 
-    async def aload(
+    async def _aload(
         self, source: SourceContent | str, *args, **kwargs
     ) -> LoaderContent:
         return self.load(source)

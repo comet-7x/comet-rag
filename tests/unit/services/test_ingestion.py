@@ -89,7 +89,7 @@ class StubLoader(BaseLoader):
             metadata={"file_type": self.file_type, "file_name": self._path.name},
         )
 
-    async def aload(
+    async def _aload(
         self, source: SourceContent | str, *args, **kwargs
     ) -> LoaderContent:
         if self.fail_times > 0:

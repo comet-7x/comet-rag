@@ -82,7 +82,7 @@ class LocalStubLoader(BaseLoader):
             metadata={"file_type": STUB_TYPE, "file_name": self._path.name},
         )
 
-    async def aload(self, source, *args, **kwargs) -> LoaderContent:
+    async def _aload(self, source, *args, **kwargs) -> LoaderContent:
         return self.load(source)
 
     def cleanup(self) -> None:

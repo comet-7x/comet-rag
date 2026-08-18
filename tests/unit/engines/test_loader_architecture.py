@@ -47,7 +47,7 @@ class RecordingLoader(BaseLoader):
     def load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         return self._result(source)
 
-    async def aload(
+    async def _aload(
         self, source: SourceContent | str, *args, **kwargs
     ) -> LoaderContent:
         return self._result(source)
@@ -90,7 +90,7 @@ class LegacyCloseLoader(BaseLoader):
         )
         return LoaderContent(path=Path("legacy"), source=normalized)
 
-    async def aload(self, source: SourceContent | str) -> LoaderContent:
+    async def _aload(self, source: SourceContent | str) -> LoaderContent:
         return self.load(source)
 
     def cleanup(self) -> None:

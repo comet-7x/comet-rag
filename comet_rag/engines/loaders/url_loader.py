@@ -434,7 +434,7 @@ class URLLoader(BaseLoader):
             metadata=self._build_metadata(file_path, source),
         )
 
-    async def aload(
+    async def _aload(
         self,
         source: SourceContent | str,
         *,

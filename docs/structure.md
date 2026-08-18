@@ -145,7 +145,8 @@ flowchart TD
     D --> E["IngestRunner"]
 
     subgraph ST["三个阶段：各自可重试、可断点续跑"]
-        E --> F["extracting · CPU 道<br/>AutoLoader → parser → cleaner"]
+        E --> LG{{"加载闸门<br/>护本机 fd 与对外连接"}}
+        LG --> F["extracting · CPU 道<br/>AutoLoader → parser → cleaner"]
         F --> G["chunking · CPU 道<br/>chunker"]
         G -.->|"Handoff 移交道次"| H["indexing · IO 道"]
     end
@@ -200,7 +201,7 @@ flowchart TD
 | 改 embedding 契约本身 | `ports/embedding.py`（会波及所有适配器，pyright 会告诉你哪些） |
 | 加一种文件格式 | `engines/parsers/` + `engines/pipelines/hooks.py` 注册 |
 | 改切分策略 | `engines/chunkers/` |
-| 改并发上限 / 背压 | `core/concurrency.py`，配置在 `config/schemas.py` 的 `LimitsConfig` |
+| 改并发上限 / 背压 | `core/concurrency.py`；数字在 `LimitsConfig`，库兜底在 `engines/defaults.py` |
 | 改降级策略 | `core/degradation.py` |
 | 加一个 HTTP 端点 | `api/routes/` + `schemas/` |
 | 改任务重试 / 断点续跑 | `tasks/runner.py`、`tasks/executor.py` |

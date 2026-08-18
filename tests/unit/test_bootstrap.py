@@ -22,6 +22,8 @@ from comet_rag.config.schemas import (
     S3Config,
     ServerConfig,
 )
+from comet_rag.core.concurrency import Gate
+from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.loaders.types import SourceContent
 from comet_rag.engines.pipelines import DocxConfig, PipelineConfig
 from comet_rag.exceptions import CometRAGException
@@ -467,3 +469,51 @@ def test_explicit_pipeline_config_wins_over_deployment_limits() -> None:
     assert wired.max_concurrency == 9, "显式写的 9 被部署配置盖掉了"
     # 没写过的那个仍然跟随部署配置
     assert wired.embed_batch_size == config.limits.embed_batch_size
+
+
+def test_loader_gate_is_bound_to_the_leaves_not_the_router() -> None:
+    """**加载侧也必须有进程级闸门，且挂在真正发请求的那一层。**
+
+    `ingestion.py` 每个任务调一次 `aload`，`max_jobs=32` 就是 32 路对外抓取 ——
+    加载侧此前完全没有上限。
+
+    闸门挂在叶子而不是 `AutoLoader`：后者只是路由器，两层都持有会让一次加载
+    取两次许可（上限为 1 时实测死锁）。
+    """
+    context = build_context(
+        make_config(), embedding_model=FakeEmbedding(), vector_store=InMemoryVectorStore()
+    )
+    loader = context.ingest_loader
+    assert isinstance(loader, AutoLoader)
+
+    assert loader._gate is None, "路由器不该持有闸门"  # noqa: SLF001
+    leaf_gates = {route.loader._gate for route in loader.routes}  # noqa: SLF001
+    assert len(leaf_gates) == 1 and None not in leaf_gates, (
+        f"叶子 loader 的闸门不一致或没挂上：{leaf_gates}"
+    )
+
+
+def test_loader_and_model_gates_are_separate_budgets() -> None:
+    """**加载闸门与模型闸门是两份预算。**
+
+    模型闸门护 GPU 排队位，加载闸门护本机文件描述符与对外连接数，合理值差一个
+    数量级。共用会让"调大加载并发"意外挤掉模型的名额。
+
+    这与"embedding 与 rerank 必须共用"不矛盾 —— 那两者抢的确实是同一块 GPU。
+    **判据是资源，不是模块。**
+    """
+    config = make_config()
+    config.limits.loader_concurrency = 3
+    config.limits.model_concurrency = 9
+
+    context = build_context(
+        config, embedding_model=FakeEmbedding(), vector_store=InMemoryVectorStore()
+    )
+    loader = context.ingest_loader
+    assert isinstance(loader, AutoLoader)
+
+    loader_gate = next(iter({route.loader._gate for route in loader.routes}))  # noqa: SLF001
+    assert loader_gate is not context.model_gate, "两个闸门不该是同一个对象"
+    assert isinstance(loader_gate, Gate)
+    assert loader_gate.stats.limit == 3
+    assert context.model_gate.stats.limit == 9
