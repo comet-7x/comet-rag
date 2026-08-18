@@ -41,7 +41,7 @@ class KeywordEmbeddingModel(BaseEmbeddingModel):
             0.1,
         ]
 
-    def embed(self, data, **kwargs) -> list[float]:
+    def _embed(self, data, **kwargs) -> list[float]:
         return self._vector(str(data))
 
     async def _aembed(self, data, **kwargs) -> list[float]:

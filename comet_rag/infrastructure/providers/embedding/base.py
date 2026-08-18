@@ -64,8 +64,18 @@ class BaseEmbeddingModel(GatedModel, ABC):
         """
 
     @abstractmethod
+    def _embed(self, data: str, /, **kwargs: Any) -> list[float]:
+        """适配器真正执行同步请求的地方。"""
+
+    @final
     def embed(self, data: str, /, **kwargs: Any) -> list[float]:
-        """同步底层入口；同步调用不经过 asyncio 闸门。"""
+        """同步底层入口。受闸门保护，不可覆写。
+
+        这里曾经就是抽象方法本身，于是 `model.embed(...)` 直接调用完全绕开
+        预算：实测闸门 limit=2 时真实峰值 8（评审指出）。给上面几个带语义的
+        入口加闸而漏掉它们脚下这个公开入口，等于前门上锁、后门敞着。
+        """
+        return self._through_gate_sync(lambda: self._embed(data, **kwargs))
 
     @final
     async def aembed(self, data: str, **kwargs: Any) -> list[float]:
@@ -89,7 +99,7 @@ class BaseEmbeddingModel(GatedModel, ABC):
     def embed_query(self, query: str, /, **kwargs: Any) -> list[float]:
         """生成检索查询向量。"""
         options = self._options_for(EmbeddingTask.QUERY, kwargs)
-        return self._through_gate_sync(lambda: self.embed(query, **options))
+        return self._through_gate_sync(lambda: self._embed(query, **options))
 
     @final
     async def aembed_query(self, query: str, /, **kwargs: Any) -> list[float]:
@@ -102,7 +112,7 @@ class BaseEmbeddingModel(GatedModel, ABC):
     def embed_document(self, document: str, /, **kwargs: Any) -> list[float]:
         """生成单篇待检索文档的向量。"""
         options = self._options_for(EmbeddingTask.DOCUMENT, kwargs)
-        return self._through_gate_sync(lambda: self.embed(document, **options))
+        return self._through_gate_sync(lambda: self._embed(document, **options))
 
     @final
     async def aembed_document(self, document: str, /, **kwargs: Any) -> list[float]:
@@ -145,7 +155,8 @@ class BaseEmbeddingModel(GatedModel, ABC):
     ) -> list[list[float]]:
         """默认实现只处理"批量大小为 1"，即 ``batch_limit`` 保持默认的情形。"""
         self._require_native_batch(documents)
-        return [self.embed(documents[0], **kwargs)]
+        # 闸门已由 `embed_batch` 持有，这里调未加闸的 `_embed`
+        return [self._embed(documents[0], **kwargs)]
 
     async def _aembed_batch(
         self, documents: Sequence[str], /, **kwargs: Any

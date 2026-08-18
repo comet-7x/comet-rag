@@ -447,3 +447,54 @@ def test_a_waiter_on_a_closed_loop_does_not_swallow_the_permit() -> None:
         again.run_until_complete(reuse())
     finally:
         again.close()
+
+
+def test_waiting_on_the_event_loop_thread_fails_fast() -> None:
+    """**在事件循环线程上等同步名额 = 挂死整个进程，必须当场报错。**
+
+    `threading.Event.wait()` 阻塞调用线程。若那是事件循环线程，唤醒回调永远
+    跑不了、持有名额的协程也永远跑不到 `release()` —— 双方互等，而
+    `acquire_timeout=None` 时没有逃生路径。
+
+    抛 `RuntimeError` 而不是 `Overloaded`：这是**误用**不是过载，后者会被调用
+    方当成"退避重试"，而重试多少次都一样。
+    """
+
+    async def scenario() -> None:
+        gate = Gate(limit=1)
+        async with gate:  # 名额被本循环上的协程占住
+            with pytest.raises(RuntimeError, match="不能在事件循环线程上"):
+                gate.acquire_sync()
+
+    asyncio.run(scenario())
+
+
+def test_fast_path_still_works_on_the_event_loop_thread() -> None:
+    """只在**慢路径**拦：没争用时同步入口在协程里也能直接用。
+
+    否则"同步 API 在异步上下文里一律报错"会误伤大量正常调用 —— 而它们根本
+    不会阻塞。
+    """
+
+    async def scenario() -> None:
+        gate = Gate(limit=2)
+        with gate:  # 有空位，立刻拿到，不阻塞
+            pass
+
+    asyncio.run(scenario())
+
+
+def test_fail_fast_does_not_leak_a_seat() -> None:
+    """快速失败也要把自己从队列里摘掉，否则席位被永久占住。"""
+
+    async def scenario() -> Gate:
+        gate = Gate(limit=1, max_waiting=1)
+        async with gate:
+            with pytest.raises(RuntimeError):
+                gate.acquire_sync()
+        return gate
+
+    gate = asyncio.run(scenario())
+    assert gate.stats.waiting == 0
+    assert gate.stats.rejected == 0, "误用不是过载，不该计入 rejected"
+    assert gate.stats.limit - gate.stats.in_flight == 1

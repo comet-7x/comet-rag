@@ -48,7 +48,11 @@ class LocalLoader(BaseLoader):
         self, source: SourceContent | str, **kwargs: Any
     ) -> LoaderContent:
         self._reject_unsupported(kwargs)
-        return await asyncio.to_thread(self.load, source)
+        # 调**未加闸**的 `_load`：闸门已由外壳 `aload` 持有。走公开的 `load`
+        # 会在工作线程里再申请一次同一份预算 —— 上限为 1 时当场死锁（实测
+        # admitted=2 然后挂死），上限大时白白吃掉一半名额。与
+        # `AutoLoader.bind_gate` 里说的是同一个失效模式。
+        return await asyncio.to_thread(self._load, source)
 
     def cleanup(self) -> None:
         pass

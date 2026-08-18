@@ -52,7 +52,7 @@ class FakeEmbedding(BaseEmbeddingModel):
     def __init__(self) -> None:
         self.closed = False
 
-    def embed(self, data, **kwargs):  # pragma: no cover
+    def _embed(self, data, **kwargs):  # pragma: no cover
         return [0.0] * DIM
 
     async def _aembed(self, data, **kwargs):

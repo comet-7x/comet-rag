@@ -296,7 +296,9 @@ def test_local_image_size_limit_is_enforced(tmp_path: Path) -> None:
     )
     try:
         with pytest.raises(CometRAGException, match="图片大小超过上限 3 bytes"):
-            model.embed(EmbeddingData(image_url=str(image)))
+            # 走扩展点而不是公开的 `embed`：后者已是 final，签名固定为 `str`，
+            # 厂商无法再放宽。旧的 `EmbeddingData` DTO 只剩这条路（见下）。
+            model._embed(EmbeddingData(image_url=str(image)))  # noqa: SLF001
         assert requested == []
     finally:
         client.close()
@@ -340,7 +342,7 @@ async def test_continue_final_message_controls_assistant_placeholder() -> None:
         await model.aembed("plain text", continue_final_message=False)
         model.tokenize(data, continue_final_message=False)
         await model.atokenize(data, continue_final_message=False)
-        model.embed(data, continue_final_message=True)
+        model._embed(data, continue_final_message=True)  # noqa: SLF001
 
         assert all(
             payload["messages"][-1]["role"] == "user" for payload in payloads[:4]

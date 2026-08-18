@@ -299,7 +299,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
 
         return messages
 
-    def embed(
+    def _embed(
         self,
         embedding_data: (
             EmbeddingData
@@ -415,10 +415,10 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
     ) -> list[float]:
         """本适配器支持多模态，直接走内部编码路径。
 
-        调 `embed` 而不是 `embed_query` 之类：闸门已由外壳 `embed_media` 持有，
-        这里再走一层加闸入口会自锁。
+        调未加闸的 `_embed`：闸门已由外壳 `embed_media` 持有，再走一层加闸
+        入口会自锁。
         """
-        return self.embed(data, **kwargs)
+        return self._embed(data, **kwargs)
 
     async def _aembed_media(
         self, data: MediaResource | ContentInput, /, **kwargs: Any
@@ -596,9 +596,10 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
 
     def get_output_dim(self) -> int:
         """获取并校验输出维度"""
-        embedding = self.embed(
-            EmbeddingData(text="hello"), encoding_format=EncodingFormat.FLOAT
-        )
+        # 走公开入口：这是一次真实请求，同样该占闸门名额。传裸字符串而不是
+        # `EmbeddingData(text=...)` —— `_normalize_input` 对两者等价，而前者
+        # 与基类声明的 `str` 契约一致。
+        embedding = self.embed("hello", encoding_format=EncodingFormat.FLOAT)
         if not isinstance(embedding, list):
             raise ValueError("模型在 encoding_format=float 时返回了非浮点向量")
         actual_dim = len(embedding)

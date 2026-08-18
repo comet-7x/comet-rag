@@ -287,13 +287,41 @@ class Gate:
     def acquire_sync(self) -> None:
         waiter = self._try_take(_SyncWaiter)
         if waiter is None:
-            return
+            return  # 快路径：没争用，不阻塞，也就无所谓在哪个线程
+        self._refuse_to_block_the_loop(waiter)
         if waiter.event.wait(self._timeout):
             return
         if self._abandon(waiter, rejected=True):
             # 超时之后才被移交：名额确实在手上，但调用方已经不要了，还回去。
             self.release()
         raise self._overloaded_timeout()
+
+    def _refuse_to_block_the_loop(self, waiter: _SyncWaiter) -> None:
+        """在事件循环线程上排队 = 把整个循环挂住，**必须当场报错**。
+
+        `threading.Event.wait()` 阻塞调用线程。若那是事件循环线程：
+
+          · `_AsyncWaiter.wake()` 的 `call_soon_threadsafe` 回调永远跑不了；
+          · 持有名额的协程也永远跑不到 `release()`。
+
+        于是双方互等，而 `acquire_timeout=None` 时**没有逃生路径** —— 现象是
+        整个进程静默卡死（评审指出）。
+
+        只在**慢路径**检查：快路径没有阻塞，也就没有这个风险，不必为它付
+        `get_running_loop()` 的开销。这个错误是**误用**而不是过载，所以抛
+        `RuntimeError` 而不是 `Overloaded` —— 后者会被调用方当成"退避重试"，
+        而重试多少次都一样。
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return  # 没有运行中的循环：这是普通工作线程，阻塞是安全的
+        self._abandon(waiter, rejected=False)
+        raise RuntimeError(
+            f"{self.name} 闸门：不能在事件循环线程上等待同步名额。"
+            f"协程里请用 `async with gate:`（或模型/加载器的 a* 入口）；"
+            f"确需同步 API 时把它放进 `asyncio.to_thread`。"
+        )
 
     def release(self) -> None:
         """归还一个名额：优先**直接移交**给排在最前面的等待者。

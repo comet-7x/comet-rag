@@ -17,7 +17,7 @@ from comet_rag.ports import (
 
 
 class EchoEmbedding(BaseEmbeddingModel):
-    def embed(self, data: Any, **kwargs: Any) -> Any:
+    def _embed(self, data: Any, **kwargs: Any) -> Any:
         return data
 
     async def _aembed(self, data: Any, /, **kwargs: Any) -> Any:

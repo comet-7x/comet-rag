@@ -35,7 +35,14 @@ class RecordingEmbedding(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         #: 同步侧在别的线程里跑，计数要自己护住
         self._sync_lock = threading.Lock()
 
-    def embed(self, data: Any, **kwargs: Any) -> list[float]:  # pragma: no cover
+    def _embed(self, data: Any, **kwargs: Any) -> list[float]:
+        """同步文本：与多模态共用同一份计数，用来验证它也过闸门。"""
+        with self._sync_lock:
+            self.live += 1
+            self.peak = max(self.peak, self.live)
+        time.sleep(self.delay)
+        with self._sync_lock:
+            self.live -= 1
         return [0.0]
 
     async def _aembed(self, data: Any, **kwargs: Any) -> list[float]:
@@ -321,7 +328,7 @@ class _SyncCounting(BaseEmbeddingModel):
         self.live = 0
         self.peak = 0
 
-    def embed(self, data: str, /, **kwargs: Any) -> list[float]:
+    def _embed(self, data: str, /, **kwargs: Any) -> list[float]:
         with self._lock:
             self.live += 1
             self.peak = max(self.peak, self.live)
@@ -383,3 +390,22 @@ async def test_sync_media_also_goes_through_the_gate() -> None:
     )
 
     assert model.peak <= 2, f"同步多模态绕过了闸门：峰值 {model.peak}"
+
+
+def test_direct_embed_call_still_goes_through_the_gate() -> None:
+    """**公开的 `embed()` 也不能是后门。**
+
+    给 `embed_query` / `embed_document` / `embed_batch` / `embed_media` 都加了
+    闸，却漏掉它们脚下这个公开入口，等于前门上锁、后门敞着。实测修复前：
+    闸门 limit=2，直接调 `model.embed()` 真实峰值 8。
+    """
+    model = RecordingEmbedding(delay=0.02)
+    model.bind_gate(Gate(limit=2))
+
+    threads = [threading.Thread(target=lambda: model.embed("x")) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert model.peak <= 2, f"直接调 embed 绕过了闸门：峰值 {model.peak}"

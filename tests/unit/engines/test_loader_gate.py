@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -230,3 +231,32 @@ async def test_unknown_options_are_still_rejected(entry: str) -> None:
                 await loader.aload("https://example.invalid/a", typo=True)
     finally:
         loader.cleanup()
+
+
+async def test_local_loader_takes_exactly_one_permit_per_load() -> None:
+    """**`_aload` 委派时必须调未加闸的 `_load`。**
+
+    `LocalLoader._aload` 曾是 `to_thread(self.load, source)` —— `self.load` 是
+    加了闸的模板方法，于是一次加载取两次许可：实测 `admitted=2`，`limit=1` 时
+    当场死锁。这与 `AutoLoader.bind_gate` 里说的是同一个失效模式，只是发生在
+    另一个 loader 上。
+    """
+    from comet_rag.engines.loaders.local_loader import LocalLoader
+
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "a.txt"
+        target.write_text("hi", encoding="utf-8")
+
+        loader = LocalLoader()
+        gate = Gate(limit=1)
+        loader.bind_gate(gate)
+        try:
+            async with asyncio.timeout(5):
+                await loader.aload(SourceContent(str(target)))
+        finally:
+            loader.cleanup()
+
+    assert gate.stats.admitted == 1, (
+        f"一次加载取了 {gate.stats.admitted} 次许可"
+    )
+    assert gate.stats.in_flight == 0
