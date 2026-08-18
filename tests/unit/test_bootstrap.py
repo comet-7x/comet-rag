@@ -66,7 +66,7 @@ class FakeReranker(BaseReranker):
     def __init__(self) -> None:
         self.closed = False
 
-    def score(self, query, documents, **kwargs):  # pragma: no cover
+    def _score(self, query, documents, **kwargs):  # pragma: no cover
         return []
 
     async def _ascore(self, query, documents, **kwargs):  # pragma: no cover

@@ -33,7 +33,7 @@ class EchoMultimodalEmbedding(MultimodalEmbeddingMixin, EchoEmbedding):
 
 
 class EchoReranker(BaseReranker[str]):
-    def score(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
+    def _score(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
         return [0.0] * len(list(documents))
 
     async def _ascore(

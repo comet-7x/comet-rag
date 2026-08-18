@@ -52,14 +52,34 @@ class BaseReranker[ProviderInput](GatedModel, ABC):
         """适配器真正执行异步打分请求的地方。"""
 
     @abstractmethod
+    def _score(
+        self,
+        query: ProviderInput,
+        documents: Sequence[ProviderInput],
+        **kwargs: Any,
+    ) -> list[float]:
+        """适配器真正执行同步打分请求的地方。
+
+        入参已是供应商格式（由 ``_to_provider_input`` 翻译），所以类型随适配器
+        而定。
+        """
+
+    @final
     def score(
         self,
         query: ProviderInput,
         documents: Sequence[ProviderInput],
         **kwargs: Any,
     ) -> list[float]:
-        """同步低层打分接口。入参已是供应商格式（由 ``_to_provider_input``
-        翻译），所以类型随适配器而定。"""
+        """同步低层打分接口。受闸门保护，不可覆写。
+
+        这里曾经就是抽象方法本身，于是同步 ``rank()`` 整条路绕开预算：实测
+        闸门 limit=2 时真实峰值 8（评审指出）。embedding 与 loader 的同步入口
+        都补过了，reranker 这道后门原样留着 —— 同一个疏漏第三次。
+        """
+        return self._through_gate_sync(
+            lambda: self._score(query, documents, **kwargs)
+        )
 
     @final
     async def ascore(

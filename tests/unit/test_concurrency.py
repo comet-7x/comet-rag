@@ -78,8 +78,15 @@ class RecordingReranker(BaseReranker):
         #: 与 embedding 共用一份计数，用来验"两者共用同一个闸门"
         self.sink = sink
 
-    def score(self, query: Any, documents: Any, **kwargs: Any):  # pragma: no cover
-        return []
+    def _score(self, query: Any, documents: Any, **kwargs: Any) -> list[float]:
+        """与 embedding 共用同一份计数，用来验证同步重排也过闸门。"""
+        with self.sink._sync_lock:
+            self.sink.live += 1
+            self.sink.peak = max(self.sink.peak, self.sink.live)
+        time.sleep(self.sink.delay)
+        with self.sink._sync_lock:
+            self.sink.live -= 1
+        return [0.0] * len(list(documents))
 
     async def _ascore(self, query: Any, documents: Any, **kwargs: Any) -> list[float]:
         self.sink.live += 1
@@ -409,3 +416,28 @@ def test_direct_embed_call_still_goes_through_the_gate() -> None:
         thread.join()
 
     assert model.peak <= 2, f"直接调 embed 绕过了闸门：峰值 {model.peak}"
+
+
+def test_sync_rank_also_goes_through_the_gate() -> None:
+    """**同步 `rank()` 也不能是后门。**
+
+    embedding 与 loader 的同步入口都补过闸门了，reranker 这道原样留着 ——
+    同一个疏漏第三次。实测修复前：闸门 limit=2，同步 rank 真实峰值 8。
+
+    重排与嵌入抢的是同一块 GPU，所以它们共用同一个闸门；漏掉一边等于两边
+    都白限。
+    """
+    reranker = RecordingReranker(RecordingEmbedding(delay=0.02))
+    reranker.bind_gate(Gate(limit=2))
+
+    threads = [
+        threading.Thread(target=lambda: reranker.rank("q", ["d"])) for _ in range(8)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert reranker.sink.peak <= 2, (
+        f"同步 rank 绕过了闸门：峰值 {reranker.sink.peak}"
+    )

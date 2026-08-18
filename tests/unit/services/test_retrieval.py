@@ -60,7 +60,7 @@ class ReversingReranker(BaseReranker):
         self.failure: Exception | None = None
         self.wrong_length = False
 
-    def score(self, query, documents, **kwargs) -> list[float]:  # pragma: no cover
+    def _score(self, query, documents, **kwargs) -> list[float]:  # pragma: no cover
         raise NotImplementedError
 
     async def _ascore(self, query, documents, **kwargs) -> list[float]:

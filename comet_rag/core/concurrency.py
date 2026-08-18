@@ -320,7 +320,10 @@ class Gate:
             asyncio.get_running_loop()
         except RuntimeError:
             return  # 没有运行中的循环：这是普通工作线程，阻塞是安全的
-        self._abandon(waiter, rejected=False)
+        # 走 `_give_back` 而不是裸 `_abandon`：登记与检测之间存在窗口，名额
+        # 可能已经移交到手上。忽略返回值就是漏一个 —— 而这正是整个闸门实现
+        # 反复在防的事，我却在自己新加的快速失败路径上又留了一处（评审指出）。
+        self._give_back(waiter, rejected=False)
         raise RuntimeError(
             f"{self.name} 闸门：不能在事件循环线程上等待同步名额。"
             f"协程里请用 `async with gate:`（或模型/加载器的 a* 入口）；"

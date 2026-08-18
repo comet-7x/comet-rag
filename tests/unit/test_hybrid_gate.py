@@ -525,3 +525,44 @@ def test_timeout_is_counted_whether_or_not_it_races_with_a_grant() -> None:
     assert raced._abandon(granted, rejected=True) is True  # noqa: SLF001
 
     assert still_queued.stats.rejected == raced.stats.rejected == 1
+
+
+def test_fail_fast_returns_a_permit_that_was_already_handed_over() -> None:
+    """**快速失败也要归还已移交到手上的名额。**
+
+    `acquire_sync` 先登记等待者、再检测有没有运行中的事件循环。这中间存在
+    窗口：`release()` 可能已经把名额移交过来了。此时只把自己从队列摘掉、
+    不归还，就是漏一个 —— 上限为 1 时后续所有调用都会永久卡住。
+
+    整个闸门实现反复在防这件事，而它在快速失败这条新路径上又出现了一次
+    （评审指出）。
+    """
+    gate = Gate(limit=1)
+    waiter = _SyncWaiter()
+
+    async def scenario() -> None:
+        await gate.acquire()  # 名额被本循环上的协程占住
+
+        # 复现那个窗口：`acquire_sync` 已经登记了等待者……
+        with gate._lock:  # noqa: SLF001
+            gate._waiters.append(waiter)  # noqa: SLF001
+        # ……而在检测事件循环之前，名额已经移交给了它
+        gate.release()
+        assert gate.stats.waiting == 0, "名额没有被移交，前提就不成立"
+
+        # 此刻才走到快速失败：它必须把这个已经到手的名额还回去
+        with pytest.raises(RuntimeError, match="不能在事件循环线程上"):
+            gate._refuse_to_block_the_loop(waiter)  # noqa: SLF001
+
+    asyncio.run(scenario())
+
+    stats = gate.stats
+    assert stats.in_flight == 0, f"快速失败吞掉了名额：in_flight={stats.in_flight}"
+    assert stats.limit - stats.in_flight == 1
+
+    # 还能正常用 —— 漏了名额的话这里会挂住
+    async def reuse() -> None:
+        async with asyncio.timeout(2), gate:
+            pass
+
+    asyncio.run(reuse())

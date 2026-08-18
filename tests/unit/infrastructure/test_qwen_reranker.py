@@ -295,7 +295,7 @@ class _SlowTranslateReranker(BaseReranker[str]):
         time.sleep(self.TRANSLATE_SECONDS)  # 同步阻塞，正是真实实现的形状
         return str(content)
 
-    def score(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
+    def _score(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
         return [0.0] * len(list(documents))
 
     async def _ascore(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
