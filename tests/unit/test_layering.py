@@ -96,8 +96,19 @@ def _imported_full(tree: ast.AST, module: Path | None = None) -> set[str]:
             elif package is not None:
                 # level=1 是当前包，每多一级往上退一层
                 base = package[: len(package) - (node.level - 1)]
-                if base:
-                    names.add(".".join([*base, node.module] if node.module else base))
+                if not base:
+                    continue
+                if node.module:
+                    names.add(".".join([*base, node.module]))
+                    continue
+                # `from ... import services` —— module 是 None，被导入的名字在
+                # names 里。只记 base 的话解析结果是 `comet_rag`，它不以
+                # `comet_rag.` 开头，于是所有守卫都放行（评审指出）。
+                names.update(
+                    ".".join([*base, alias.name])
+                    for alias in node.names
+                    if alias.name != "*"
+                )
     return names
 
 
@@ -451,6 +462,29 @@ def test_relative_imports_are_resolved_to_absolute_names() -> None:
     }
     # 解析之后，越层的那条才拦得住
     assert _engine_internal_violations(tree, module) == {"comet_rag.services"}
+
+
+def test_bare_relative_import_resolves_each_imported_name() -> None:
+    """**`from ... import services` 里，包名在 `names` 而不在 `module`。**
+
+    这种写法的 AST 节点 `module is None`。只按 `module` 拼的话解析结果是
+    `comet_rag` —— 它不以 `comet_rag.` 开头，于是三条以此为前提的守卫
+    （engines 白名单、core 零依赖、顶层环检测）全部放行。
+
+    上一轮补相对导入解析时漏了这个形式，评审指出。
+    """
+    module = PROJECT_ROOT / "comet_rag" / "engines" / "pipelines" / "pipeline.py"
+    tree = ast.parse("from ... import services, tasks\nfrom .. import loaders\n")
+
+    assert _imported_full(tree, module) == {
+        "comet_rag.services",
+        "comet_rag.tasks",
+        "comet_rag.engines.loaders",
+    }
+    assert _engine_internal_violations(tree, module) == {
+        "comet_rag.services",
+        "comet_rag.tasks",
+    }
 
 
 def test_package_parts_handles_both_module_and_package_init() -> None:

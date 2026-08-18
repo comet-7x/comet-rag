@@ -327,3 +327,57 @@ async def test_arank_translation_does_not_block_the_event_loop() -> None:
         beat.cancel()
 
     assert ticks >= 10, f"翻译期间事件循环只调度了 {ticks} 次 —— 它被堵住了"
+
+
+# ── 公共入口与厂商 DTO 入口必须共用同一道准入 ──────────────────────────────
+
+
+def _guarded_reranker() -> Qwen3VLReranker:
+    def reject_url(reference: str) -> None:
+        raise CometRAGException(f"非公网地址：{reference}")
+
+    def reject_local(reference: str) -> None:
+        raise CometRAGException(f"未开放从服务器本地路径入库：{reference}")
+
+    return Qwen3VLReranker(
+        base_url="https://model.invalid/v1",
+        model_name="qwen",
+        api_key="test",
+        image_url_validator=reject_url,
+        local_image_validator=reject_local,
+    )
+
+
+@pytest.mark.parametrize(
+    ("resource", "expected"),
+    [
+        (MediaResource(url="http://127.0.0.1/metadata"), "非公网地址"),
+        (
+            MediaResource(path=Path("/etc/passwd"), mimetype="image/png"),
+            "未开放从服务器本地路径入库",
+        ),
+    ],
+    ids=["url", "path"],
+)
+async def test_public_content_input_goes_through_the_same_admission_policy(
+    resource: MediaResource, expected: str
+) -> None:
+    """**走公共 `ContentInput` 的图片，同样要过 SSRF / 本地路径准入。**
+
+    `_to_provider_input` 把 `resource.path` / `resource.url` 原样搬进 DTO，
+    读起来像绕过了校验 —— 评审就这么判过一次。实际上准入统一在
+    `_prepare_inputs` → `_prepare_multimodal_content` 里做，而 `score` 与
+    `_ascore` 都必经它。
+
+    校验点只有一个是刻意的：公共入口与厂商 DTO 入口落到同一道关卡，不会出现
+    "两条路两套策略"。但这条不变量此前**没有任何测试**证明 —— 那正是它看起来
+    可疑的原因。现在钉住它。
+    """
+    reranker = _guarded_reranker()
+    try:
+        with pytest.raises(CometRAGException, match=expected):
+            await reranker.arank([ImageContent(resource)], [RerankDocument(content="d")])
+        with pytest.raises(CometRAGException, match=expected):
+            reranker.rank([ImageContent(resource)], [RerankDocument(content="d")])
+    finally:
+        await reranker.aclose()

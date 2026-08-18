@@ -177,6 +177,15 @@ class Qwen3VLReranker(BaseReranker[str | ScoreMultiModalParam]):
                 continue
             if isinstance(part, ImageContent):
                 resource = part.resource
+                # 这里**故意**只把路径/URL 原样搬进 DTO，不在此处校验：准入检查
+                # 统一由 `_prepare_inputs` → `_prepare_multimodal_content` 做，
+                # 而 `score`/`_ascore` 两个入口都必经它（`_ascore` 还把它放进
+                # `to_thread`，因为 DNS 解析与读本地文件都是同步 I/O）。
+                #
+                # 校验点只有一个，是刻意的：无论调用方走公共的 `ContentInput`
+                # 还是直接递供应商 DTO，都落到同一道关卡上，不会出现"两条路两
+                # 套策略"。代价是这段读起来像绕过了检查 —— 评审确实这么判过一次，
+                # 所以 `test_qwen_reranker.py` 有专门的用例把这条不变量钉住。
                 if resource.path is not None:
                     reference = str(resource.path)
                 elif resource.url is not None:
