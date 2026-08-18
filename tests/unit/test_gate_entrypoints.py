@@ -226,7 +226,7 @@ class _StubLoader(BaseLoader):
 
 #: 每个登记入口调一次要花掉的名额数。绝大多数是 1；批量入口按来源数算。
 #: 写死期望值而不是"大于 0"：**重复取用与完全不取一样是缺陷**（前者会死锁）。
-INVOCATIONS: list[tuple[str, Any, int]] = [
+SYNC_INVOCATIONS: list[tuple[str, Any, int]] = [
     ("BaseEmbeddingModel.embed", lambda m: m.embed("x"), 1),
     ("BaseEmbeddingModel.embed_query", lambda m: m.embed_query("x"), 1),
     ("BaseEmbeddingModel.embed_document", lambda m: m.embed_document("x"), 1),
@@ -238,6 +238,26 @@ INVOCATIONS: list[tuple[str, Any, int]] = [
     ("BaseLoader.batch_load", lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2), 3),
 ]
 
+#: 异步入口同样要量。第一版把 `a` 开头的排除在完整性检查外，理由写的是
+#: "异步侧另有并发用例覆盖" —— 那些用例确实存在，但它们是**零散写的**，
+#: 不由这张表驱动。于是"守卫覆盖了每个登记入口"这句话当时是假的：新加一个
+#: 异步入口就会零行为覆盖，而元守卫不会吭声（评审指出）。
+ASYNC_INVOCATIONS: list[tuple[str, Any, int]] = [
+    ("BaseEmbeddingModel.aembed", lambda m: m.aembed("x"), 1),
+    ("BaseEmbeddingModel.aembed_query", lambda m: m.aembed_query("x"), 1),
+    ("BaseEmbeddingModel.aembed_document", lambda m: m.aembed_document("x"), 1),
+    ("BaseEmbeddingModel.aembed_batch", lambda m: m.aembed_batch(["x"]), 1),
+    ("MultimodalEmbeddingMixin.aembed_media", lambda m: m.aembed_media("x"), 1),
+    ("BaseReranker.ascore", lambda m: m.ascore("q", ["d"]), 1),
+    ("BaseReranker.arank", lambda m: m.arank("q", ["d"]), 1),
+    ("BaseLoader.aload", lambda m: m.aload("s"), 1),
+    (
+        "BaseLoader.abatch_load",
+        lambda m: m.abatch_load(["a", "b", "c"], max_concurrency=2),
+        3,
+    ),
+]
+
 _STUBS: dict[str, Any] = {
     "BaseEmbeddingModel": _StubEmbedding,
     "MultimodalEmbeddingMixin": _StubMultimodal,
@@ -247,7 +267,9 @@ _STUBS: dict[str, Any] = {
 
 
 @pytest.mark.parametrize(
-    ("label", "invoke", "expected"), INVOCATIONS, ids=[i[0] for i in INVOCATIONS]
+    ("label", "invoke", "expected"),
+    SYNC_INVOCATIONS,
+    ids=[i[0] for i in SYNC_INVOCATIONS],
 )
 def test_sync_entry_points_really_take_a_permit(
     label: str, invoke: Any, expected: int
@@ -272,18 +294,41 @@ def test_sync_entry_points_really_take_a_permit(
     assert stats.in_flight == 0, f"{label} 结束后还有 {stats.in_flight} 个名额在外"
 
 
-def test_behavioural_layer_covers_every_declared_direct_sync_entry() -> None:
-    """**行为层不能落下任何一个静态层登记过的同步入口。**
+@pytest.mark.parametrize(
+    ("label", "invoke", "expected"),
+    ASYNC_INVOCATIONS,
+    ids=[i[0] for i in ASYNC_INVOCATIONS],
+)
+async def test_async_entry_points_really_take_a_permit(
+    label: str, invoke: Any, expected: int
+) -> None:
+    """异步侧同理。静态层同样只能证明源码里出现过 `_through_gate`。"""
+    model = _STUBS[label.split(".")[0]]()
+    gate = Gate(limit=8)
+    model.bind_gate(gate)
+
+    await invoke(model)
+
+    stats = gate.stats
+    assert stats.admitted == expected, (
+        f"{label} 取了 {stats.admitted} 次名额，期望 {expected} —— "
+        f"少取是绕过限流，多取会死锁"
+    )
+    assert stats.in_flight == 0, f"{label} 结束后还有 {stats.in_flight} 个名额在外"
+
+
+def test_behavioural_layer_covers_every_declared_entry() -> None:
+    """**行为层不能落下任何一个登记入口，同步异步都算。**
 
     否则又回到"靠人记得给新入口补测试"—— 那正是这两层守卫要消灭的东西。
+    第一版把异步排除在外，于是这句话当时是假的。
     """
-    measured = {label for label, _, _ in INVOCATIONS}
+    measured = {label for label, _, _ in [*SYNC_INVOCATIONS, *ASYNC_INVOCATIONS]}
     declared = {
         f"{cls.__name__}.{name}"
         for cls, groups in CLASSIFICATION.items()
         for name in groups["direct"] | groups["indirect"]
-        if not name.startswith("a")  # 同步入口；异步侧另有并发用例覆盖
     }
     assert declared <= measured, (
-        f"这些同步入口只做了静态检查，没有行为验证：{sorted(declared - measured)}"
+        f"这些入口只做了静态检查，没有行为验证：{sorted(declared - measured)}"
     )
