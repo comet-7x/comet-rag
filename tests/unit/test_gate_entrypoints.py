@@ -29,11 +29,14 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from comet_rag.core.concurrency import Gate
 from comet_rag.engines.loaders.base_loader import BaseLoader
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.infrastructure.providers.embedding.base import (
     BaseEmbeddingModel,
     MultimodalEmbeddingMixin,
@@ -174,3 +177,113 @@ def _gated_subclasses(root: type) -> set[type]:
         found.add(child)
         found |= _gated_subclasses(child)
     return found
+
+
+# ── 第二层：行为守卫 ───────────────────────────────────────────────────────
+#
+# 上面那层是**静态**的：AST 里出现了 `self._through_gate_sync` 就算数。它证明不了
+# 运行时真的进了闸门 —— 实现可以把调用放进走不到的分支，也可以换个别名或辅助
+# 函数绕过字符串匹配（评审指出）。
+#
+# 这一层直接量：给每个登记的入口挂一个真闸门，调一次，看账本。
+# **判据从"源码里有没有"变成"名额有没有被取走"。**
+
+
+class _StubEmbedding(BaseEmbeddingModel):
+    def _embed(self, data: str, /, **kwargs: Any) -> list[float]:
+        return [0.0]
+
+    async def _aembed(self, data: str, /, **kwargs: Any) -> list[float]:
+        return [0.0]
+
+
+class _StubMultimodal(MultimodalEmbeddingMixin, _StubEmbedding):
+    def _embed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
+        return [0.0]
+
+    async def _aembed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
+        return [0.0]
+
+
+class _StubReranker(BaseReranker[str]):
+    def _score(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
+        return [0.0] * len(list(documents))
+
+    async def _ascore(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
+        return [0.0] * len(list(documents))
+
+
+class _StubLoader(BaseLoader):
+    def _load(self, source: Any, **kwargs: Any) -> LoaderContent:
+        return LoaderContent(path=Path("/dev/null"), source=SourceContent("x"))
+
+    async def _aload(self, source: Any, **kwargs: Any) -> LoaderContent:
+        return self._load(source)
+
+    def cleanup(self) -> None:
+        return None
+
+
+#: 每个登记入口调一次要花掉的名额数。绝大多数是 1；批量入口按来源数算。
+#: 写死期望值而不是"大于 0"：**重复取用与完全不取一样是缺陷**（前者会死锁）。
+INVOCATIONS: list[tuple[str, Any, int]] = [
+    ("BaseEmbeddingModel.embed", lambda m: m.embed("x"), 1),
+    ("BaseEmbeddingModel.embed_query", lambda m: m.embed_query("x"), 1),
+    ("BaseEmbeddingModel.embed_document", lambda m: m.embed_document("x"), 1),
+    ("BaseEmbeddingModel.embed_batch", lambda m: m.embed_batch(["x"]), 1),
+    ("MultimodalEmbeddingMixin.embed_media", lambda m: m.embed_media("x"), 1),
+    ("BaseReranker.score", lambda m: m.score("q", ["d"]), 1),
+    ("BaseReranker.rank", lambda m: m.rank("q", ["d"]), 1),
+    ("BaseLoader.load", lambda m: m.load("s"), 1),
+    ("BaseLoader.batch_load", lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2), 3),
+]
+
+_STUBS: dict[str, Any] = {
+    "BaseEmbeddingModel": _StubEmbedding,
+    "MultimodalEmbeddingMixin": _StubMultimodal,
+    "BaseReranker": _StubReranker,
+    "BaseLoader": _StubLoader,
+}
+
+
+@pytest.mark.parametrize(
+    ("label", "invoke", "expected"), INVOCATIONS, ids=[i[0] for i in INVOCATIONS]
+)
+def test_sync_entry_points_really_take_a_permit(
+    label: str, invoke: Any, expected: int
+) -> None:
+    """**量出来的，不是读出来的。**
+
+    静态那层只能证明源码里出现了 `_through_gate_sync`。这条给入口挂上真闸门、
+    调一次、看 `admitted` —— 少取是绕过了限流，多取是重复获取（会死锁，本轮
+    在 `LocalLoader` 上实测过）。两者都是缺陷，所以期望值写死。
+    """
+    model = _STUBS[label.split(".")[0]]()
+    gate = Gate(limit=8)
+    model.bind_gate(gate)
+
+    invoke(model)
+
+    stats = gate.stats
+    assert stats.admitted == expected, (
+        f"{label} 取了 {stats.admitted} 次名额，期望 {expected} —— "
+        f"少取是绕过限流，多取会死锁"
+    )
+    assert stats.in_flight == 0, f"{label} 结束后还有 {stats.in_flight} 个名额在外"
+
+
+def test_behavioural_layer_covers_every_declared_direct_sync_entry() -> None:
+    """**行为层不能落下任何一个静态层登记过的同步入口。**
+
+    否则又回到"靠人记得给新入口补测试"—— 那正是这两层守卫要消灭的东西。
+    """
+    measured = {label for label, _, _ in INVOCATIONS}
+    declared = {
+        f"{cls.__name__}.{name}"
+        for cls, groups in CLASSIFICATION.items()
+        for name in groups["direct"] | groups["indirect"]
+        if not name.startswith("a")  # 同步入口；异步侧另有并发用例覆盖
+    }
+    assert declared <= measured, (
+        f"这些同步入口只做了静态检查，没有行为验证：{sorted(declared - measured)}"
+    )
