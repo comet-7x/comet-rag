@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from typing import Any
 
 import pytest
 
 from comet_rag.core.concurrency import Gate, Overloaded
-from comet_rag.engines.embedding.batch import aembed_documents
+from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
 from comet_rag.infrastructure.providers.embedding.base import (
     BaseEmbeddingModel,
     MultimodalEmbeddingMixin,
@@ -296,3 +298,71 @@ async def test_media_entry_is_gated_like_text() -> None:
 
     assert model.calls == 12
     assert model.peak <= 2, f"闸门限 2，实际峰值 {model.peak} —— 多模态绕过了闸门"
+
+
+# ── 已知缺口：同步路径不受进程级闸门约束 ───────────────────────────────────
+
+
+class _SyncCounting(BaseEmbeddingModel):
+    """只数同步 `embed` 的真实并发峰值。"""
+
+    def __init__(self, delay: float = 0.02) -> None:
+        self.delay = delay
+        self._lock = threading.Lock()
+        self.live = 0
+        self.peak = 0
+
+    def embed(self, data: str, /, **kwargs: Any) -> list[float]:
+        with self._lock:
+            self.live += 1
+            self.peak = max(self.peak, self.live)
+        time.sleep(self.delay)
+        with self._lock:
+            self.live -= 1
+        return [0.0]
+
+    async def _aembed(self, data: str, /, **kwargs: Any) -> list[float]:
+        return [0.0]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="同步路径尚未接入进程级闸门（#44）；本用例即该 issue 的验收标准",
+)
+def test_sync_fanout_should_respect_the_process_gate() -> None:
+    """**同步扇出目前不受闸门约束，多个来源并行时并发会相乘。**
+
+    `Pipeline.batch_run` 用 `max_concurrency` 个线程跑来源，每个来源内部的
+    `embed_documents` 又开 `max_concurrency` 路 —— 而同步 `embed` 不经过
+    asyncio 闸门（它是协程原语，线程里用不了）。于是实测：
+
+        闸门 limit=4，4 个来源并行 → 对模型服务的真实并发峰值 16
+
+    这正是本项目当年实测出的"配置写 4、实际 128"同一个失效模式，只是发生在
+    同步这一侧。**该缺陷早于本次重构**：在 `origin/develop` 上用同样的探针
+    （那边入口叫 `batch_embed`）测得同样的 16。
+
+    修它需要一个**线程与协程共用同一份预算**的限流器：现在的 `Gate` 建立在
+    `asyncio.Semaphore` 上，线程里拿不到；而各配一个信号量等于没限 —— 同步 4
+    加异步 4，服务端看到 8，正是 `test_embedding_and_reranker_share_one_gate`
+    反对的那件事。
+
+    所以这里用 `xfail(strict=True)` 钉住：它现在必然失败，等混合闸门做出来会
+    自动变绿并提醒去掉标记 —— 而不是把缺口写进注释里等人忘记。
+    """
+    limit = 4
+    model = _SyncCounting()
+    model.bind_gate(Gate(limit=limit))
+
+    def one_source() -> None:
+        embed_documents(model, [f"d{i}" for i in range(16)], max_concurrency=limit)
+
+    threads = [threading.Thread(target=one_source) for _ in range(limit)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert model.peak <= limit, (
+        f"闸门 limit={limit}，同步路径实际并发峰值 {model.peak}"
+    )

@@ -71,8 +71,10 @@ uv run comet-rag worker embedder        # IO 密集：向量化 / 写库
 **worker 按负载特征分，不按业务名词分。** preprocessor 靠加进程扩、embedder
 靠加并发扩 —— 反过来会真的更慢，且症状是"上游变慢了"，很难联想到自己身上。
 
-**并发闸门做在基类的模板方法里。** `aembed()` 不可覆写，子类只能实现
-`_aembed()`，所以"绕过闸门"在结构上做不到。包装器只是约定，会被绕过且不报错。
+**并发闸门做在适配器基类的模板方法里。** `aembed()` / `aembed_media()` /
+`aembed_batch()` 都是 `@final`，子类只能实现下面那层 `_aembed()` 等，所以
+"绕过闸门"在类型层面就没有写法。换成"包一层 wrapper"只是约定 —— 谁直接调
+底层都能绕过去且不报错，而闸门恰恰是静默失效型的保护。
 
 **三个核心抽象各有一套与实现无关的契约测试**（79 条）。`InMemoryTaskStore` 与
 `PostgresTaskStore`、`InProcessExecutor` 与 `ArqExecutor`、`InMemoryVectorStore`

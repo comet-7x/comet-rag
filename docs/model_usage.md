@@ -69,16 +69,27 @@ from pathlib import Path
 from comet_rag.infrastructure.providers import Qwen3VLEmbeddingModel
 from comet_rag.ports import ImageContent, MediaResource, TextContent
 
-image = MediaResource(path=Path("/data/cat.png"), mimetype="image/png")
-
-image_vector = await model.aembed_image(image)
-mixed_vector = await model.aembed_content(
-    [
-        TextContent("一只坐在窗边的猫"),
-        ImageContent(image),
-    ]
+model = Qwen3VLEmbeddingModel(
+    base_url="http://localhost:8000/v1",
+    model_name="Qwen/Qwen3-VL-Embedding-8B",
+    api_key="EMPTY",
 )
+try:
+    image = MediaResource(path=Path("/data/cat.png"), mimetype="image/png")
+
+    image_vector = await model.aembed_image(image)
+    mixed_vector = await model.aembed_content(
+        [
+            TextContent("一只坐在窗边的猫"),
+            ImageContent(image),
+        ]
+    )
+finally:
+    await model.aclose()
 ```
+
+上一节的 `model` 已经 `aclose()` 过了，所以这里重新构造一个 —— 每段示例都能
+单独复制运行，不依赖前文残留的变量。
 
 `MediaResource` 必须且只能提供一种来源：
 
@@ -98,16 +109,21 @@ reranker = Qwen3VLReranker(
     model_name="Qwen/Qwen3-VL-Reranker-8B",
     api_key="EMPTY",
 )
+try:
+    ranked = await reranker.arank(
+        "并发闸门如何工作？",
+        ["候选文档一", "候选文档二"],
+        top_k=2,
+    )
 
-ranked = await reranker.arank(
-    "并发闸门如何工作？",
-    ["候选文档一", "候选文档二"],
-    top_k=2,
-)
-
-for item in ranked:
-    print(item.index, item.score, item.document.content)
+    for item in ranked:
+        print(item.index, item.score, item.document.content)
+finally:
+    await reranker.aclose()
 ```
+
+Reranker 与 Embedding 一样持有 HTTP 客户端，**用完必须 `aclose()`**；
+放在服务里时由 `Context.aclose()` 统一逆序释放，当库用时就得自己收。
 
 需要保留业务 ID 和元数据时使用结构化候选：
 

@@ -1,6 +1,4 @@
 import asyncio
-import base64
-import struct
 from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any, Literal
@@ -10,6 +8,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field
 
 from comet_rag.exceptions import CometRAGException
+from comet_rag.infrastructure.providers._embedding_wire import decode_vector
 from comet_rag.infrastructure.providers._image_reference import (
     DEFAULT_MAX_LOCAL_IMAGE_BYTES,
     ImageReferenceValidator,
@@ -248,16 +247,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         `list[float]`、实际给出 `str` —— 契约在说谎，而且只在配了 base64
         的部署上炸。
         """
-        embedding = EmbeddingResponse.model_validate(data).data[0].embedding
-        if not isinstance(embedding, str):
-            return embedding
-        raw = base64.b64decode(embedding)
-        if len(raw) % 4:
-            raise CometRAGException(
-                f"base64 向量长度 {len(raw)} 不是 4 的倍数，无法按 float32 解码"
-            )
-        # 显式小端 float32：OpenAI 协议如此规定，不能依赖本机字节序
-        return list(struct.unpack(f"<{len(raw) // 4}f", raw))
+        return decode_vector(EmbeddingResponse.model_validate(data).data[0].embedding)
 
     def _create_messages_params(
         self,
@@ -338,7 +328,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
             add_special_tokens (bool): 是否添加特殊分隔标记，默认为 `True`
 
         Returns:
-            list[float] | str: 浮点向量或 Base64 编码结果
+            list[float]: 浮点向量（base64 传输格式已在适配器内解回）
         """
         try:
             embedding_data = self._normalize_input(embedding_data)
@@ -392,7 +382,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
             add_special_tokens (bool): 是否添加特殊分隔标记，默认为 `True`
 
         Returns:
-            list[float] | str: 浮点向量或 Base64 编码结果
+            list[float]: 浮点向量（base64 传输格式已在适配器内解回）
         """
         try:
             embedding_data = await asyncio.to_thread(

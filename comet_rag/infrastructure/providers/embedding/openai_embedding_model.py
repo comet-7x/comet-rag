@@ -4,6 +4,7 @@ from typing import Any
 from openai import AsyncOpenAI, OpenAI
 
 from comet_rag.exceptions import CometRAGException
+from comet_rag.infrastructure.providers._embedding_wire import decode_vector
 from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
 
 #: OpenAI 官方 ``/embeddings`` 单请求的输入条数上限。
@@ -60,14 +61,20 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
 
     @staticmethod
     def _vectors(response: Any, *, expected_count: int) -> list[list[float]]:
-        """按服务端返回的 index 恢复输入顺序。"""
+        """按服务端返回的 index 恢复输入顺序，并把 base64 解回浮点数组。
+
+        OpenAI SDK 只在调用方**没有**显式指定 `encoding_format` 时才自动解码；
+        显式传 `"base64"`（经 `**kwargs` 透传）时拿到的是字符串，于是
+        `embed_query` 声明 `list[float]`、实际给出 `str`。与 Qwen 适配器同病，
+        用同一个 `decode_vector`。
+        """
         ordered = sorted(response.data, key=lambda item: item.index)
         indexes = [item.index for item in ordered]
         if indexes != list(range(expected_count)):
             raise ValueError(
                 f"Embedding 响应索引 {indexes} 无法与 {expected_count} 条输入对齐"
             )
-        return [item.embedding for item in ordered]
+        return [decode_vector(item.embedding) for item in ordered]
 
     def embed(self, text: str, **kwargs: Any) -> list[float]:
         """

@@ -27,7 +27,7 @@ from .store import TaskNotFound, TaskStore, VersionConflict
 def _clone(task: Task) -> Task:
     """拷出一份**独立**快照。真实 DB 实现这里是一次序列化/反序列化。
 
-    `request`、`result` 与 `context` 里的嵌套值都必须真拷。原来只做
+    `request`、`result`、`error` 与 `context` 里的嵌套值都必须真拷。原来只做
     `dict(task.context)` 这种浅拷、且完全没碰 `request`/`result`，于是：
 
         got = await store.get(task_id)
@@ -49,6 +49,9 @@ def _clone(task: Task) -> Task:
     copy.request = deepcopy(task.request)
     copy.result = deepcopy(task.result)
     copy.stage_history = [replace(r) for r in task.stage_history]
+    # `TaskError` 不是 frozen 的，`replace(task)` 只复制了引用。字段全是标量，
+    # 一层 `replace` 就够，不必 deepcopy。
+    copy.error = None if task.error is None else replace(task.error)
     return copy
 
 

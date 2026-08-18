@@ -67,13 +67,37 @@ def _imported_roots(tree: ast.AST) -> set[str]:
     return roots
 
 
-def _imported_full(tree: ast.AST) -> set[str]:
+def _package_parts(module: Path) -> list[str]:
+    """模块所在包的点分路径，用于解析相对导入。"""
+    parts = list(module.relative_to(PROJECT_ROOT).with_suffix("").parts)
+    parts.pop()  # `__init__` 或模块名，两种情况下要的都是它所在的目录
+    return parts
+
+
+def _imported_full(tree: ast.AST, module: Path | None = None) -> set[str]:
+    """收集导入的完整模块名；**相对导入会被解析成绝对名**。
+
+    这里原本直接跳过 `level > 0`，于是 `from ...services import x` 这类相对
+    写法能绕过**全部**分层守卫 —— 守卫看不见的依赖等于没有守卫。仓库里当前
+    的相对导入恰好都在包内，所以没有真实违规，但那是巧合，不是保证。
+
+    `module is None` 时无从解析相对导入（合成 AST 的自检用例会这样调），
+    这种情况下仍然跳过。
+    """
     names: set[str] = set()
+    package = _package_parts(module) if module is not None else None
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            names.add(node.module)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0:
+                if node.module:
+                    names.add(node.module)
+            elif package is not None:
+                # level=1 是当前包，每多一级往上退一层
+                base = package[: len(package) - (node.level - 1)]
+                if base:
+                    names.add(".".join([*base, node.module] if node.module else base))
     return names
 
 
@@ -87,10 +111,10 @@ def test_engines_do_not_import_infrastructure(module: Path) -> None:
     )
 
 
-def _engine_internal_violations(tree: ast.AST) -> set[str]:
+def _engine_internal_violations(tree: ast.AST, module: Path | None = None) -> set[str]:
     return {
         name
-        for name in _imported_full(tree)
+        for name in _imported_full(tree, module)
         if name.startswith("comet_rag.") and not name.startswith(ENGINES_MAY_IMPORT)
     }
 
@@ -104,7 +128,7 @@ def test_engines_only_depend_on_engines_and_ports(module: Path) -> None:
     FastAPI、Milvus，或者任何一层用例编排。
     """
     tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
-    violations = _engine_internal_violations(tree)
+    violations = _engine_internal_violations(tree, module)
     assert not violations, (
         f"{module.relative_to(PROJECT_ROOT)} 依赖了 engines/ports 之外的本项目包："
         f"{sorted(violations)}。engines 只能依赖 {list(ENGINES_MAY_IMPORT)} —— "
@@ -151,7 +175,7 @@ def test_business_code_depends_on_model_ports(module: Path) -> None:
     tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
     hits = {
         name
-        for name in _imported_full(tree)
+        for name in _imported_full(tree, module)
         if name.startswith(MODEL_ADAPTER_PACKAGE)
     }
     assert not hits, (
@@ -200,7 +224,7 @@ def test_single_process_paths_never_pull_in_lease_reclaim(module: Path) -> None:
     import 它，这里立刻变红。
     """
     tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
-    hits = {name for name in _imported_full(tree) if name.startswith(MAINTENANCE)}
+    hits = {name for name in _imported_full(tree, module) if name.startswith(MAINTENANCE)}
     assert not hits, (
         f"{module.relative_to(PROJECT_ROOT)} 导入了 {MAINTENANCE}。"
         f"租约回收只能挂在 workers/ 上：单进程模式下启用它会造成"
@@ -300,7 +324,7 @@ def test_core_is_a_zero_dependency_kernel(module: Path) -> None:
     tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
     violations = {
         name
-        for name in _imported_full(tree)
+        for name in _imported_full(tree, module)
         if name.startswith("comet_rag.") and not name.startswith("comet_rag.core")
     }
     assert not violations, (
@@ -337,7 +361,7 @@ def _package_edges() -> dict[str, set[str]]:
         relative = path.relative_to(root)
         source = relative.parts[0] if len(relative.parts) > 1 else "(top)"
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for name in _imported_full(tree):
+        for name in _imported_full(tree, path):
             if not name.startswith("comet_rag."):
                 continue
             target = name.split(".")[1]
@@ -396,3 +420,56 @@ def test_cycle_detector_actually_finds_cycles() -> None:
     """守卫自检：环检测本身要能真的发现环。"""
     assert _find_cycle({"a": {"b"}, "b": {"c"}, "c": {"a"}}) is not None
     assert _find_cycle({"a": {"b"}, "b": {"c"}}) is None
+
+
+# ── 相对导入必须被解析（守卫自身的盲区）────────────────────────────────────
+
+
+def test_relative_imports_are_resolved_to_absolute_names() -> None:
+    """**相对导入不解析，等于所有分层守卫都有一个后门。**
+
+    `from ...services import x` 与 `from comet_rag.services import x` 是同一
+    件事，但 AST 里前者的 `module` 只是 `"services"`、`level=3`。早先的
+    `_imported_full` 直接跳过 `level > 0`，于是相对写法能绕过全部五条守卫。
+
+    仓库当前的相对导入恰好都在包内，所以没有真实违规 —— 但那是巧合。
+    这条用例把解析本身钉死。
+    """
+    module = PROJECT_ROOT / "comet_rag" / "engines" / "pipelines" / "pipeline.py"
+    tree = ast.parse(
+        "from .types import Chunk\n"        # level=1 → 同包
+        "from ..loaders import Auto\n"      # level=2 → comet_rag.engines.loaders
+        "from ...services import Foo\n"     # level=3 → comet_rag.services（违规）
+        "from ...ports import EmbeddingPort\n"
+    )
+
+    assert _imported_full(tree, module) == {
+        "comet_rag.engines.pipelines.types",
+        "comet_rag.engines.loaders",
+        "comet_rag.services",
+        "comet_rag.ports",
+    }
+    # 解析之后，越层的那条才拦得住
+    assert _engine_internal_violations(tree, module) == {"comet_rag.services"}
+
+
+def test_package_parts_handles_both_module_and_package_init() -> None:
+    """`__init__.py` 的"所在包"是它自己的目录，普通模块是它的父目录。"""
+    root = PROJECT_ROOT / "comet_rag"
+    assert _package_parts(root / "engines" / "pipelines" / "pipeline.py") == [
+        "comet_rag",
+        "engines",
+        "pipelines",
+    ]
+    assert _package_parts(root / "engines" / "chunkers" / "__init__.py") == [
+        "comet_rag",
+        "engines",
+        "chunkers",
+    ]
+
+
+def test_cycle_detector_sees_relative_imports() -> None:
+    """环检测同样不能被相对导入绕过。"""
+    module = PROJECT_ROOT / "comet_rag" / "infrastructure" / "knowledge_base.py"
+    tree = ast.parse("from ..tasks.models import Time\n")
+    assert _imported_full(tree, module) == {"comet_rag.tasks.models"}

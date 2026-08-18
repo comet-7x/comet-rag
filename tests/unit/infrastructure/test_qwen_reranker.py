@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
 
 from comet_rag.exceptions import CometRAGException
+from comet_rag.infrastructure.providers.reranker.base import BaseReranker
 from comet_rag.infrastructure.providers.reranker.qwen3_vl_reranker import (
     ChatCompletionContentPartImageParam,
     ImageUrlParam,
@@ -277,3 +281,49 @@ async def test_local_image_is_sent_as_data_url(
     finally:
         sync_client.close()
         await async_client.aclose()
+
+
+# ── 翻译不得堵住事件循环 ───────────────────────────────────────────────────
+
+
+class _SlowTranslateReranker(BaseReranker[str]):
+    """`_to_provider_input` 故意做阻塞的重活，模拟大图片的 Base64 编码。"""
+
+    TRANSLATE_SECONDS = 0.04
+
+    def _to_provider_input(self, content: Any) -> str:
+        time.sleep(self.TRANSLATE_SECONDS)  # 同步阻塞，正是真实实现的形状
+        return str(content)
+
+    def score(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
+        return [0.0] * len(list(documents))
+
+    async def _ascore(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
+        return [0.0] * len(list(documents))
+
+
+async def test_arank_translation_does_not_block_the_event_loop() -> None:
+    """**多模态翻译要读本地文件、做 Base64，必须挪出事件循环。**
+
+    它堵的是请求发出**之前**那一段：闸门的排队统计看不见它，监控上只表现为
+    "整个进程莫名卡住"。这条用例不看耗时，只看**事件循环在此期间还能不能
+    调度别的协程** —— 那才是"没堵住"的定义。
+    """
+    reranker = _SlowTranslateReranker()
+    ticks = 0
+
+    async def heartbeat() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.002)
+            ticks += 1
+
+    beat = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0)  # 让心跳先跑起来
+    try:
+        # 1 个 query + 3 个候选 = 4 次翻译 ≈ 160ms
+        await reranker.arank("q", ["a", "b", "c"])
+    finally:
+        beat.cancel()
+
+    assert ticks >= 10, f"翻译期间事件循环只调度了 {ticks} 次 —— 它被堵住了"

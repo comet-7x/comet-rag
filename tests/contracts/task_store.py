@@ -28,6 +28,7 @@ from comet_rag.tasks import (
     InvalidTransition,
     Task,
     TaskBusy,
+    TaskError,
     TaskNotFound,
     TaskStatus,
     TaskStore,
@@ -369,17 +370,25 @@ class TaskStoreContract:
             result={"written": 0},
         )
 
+        await store.update(
+            task.task_id, error=TaskError(code="boom", message="原始信息")
+        )
+        before = await store.require(task.task_id)
+
         borrowed = await store.require(task.task_id)
         borrowed.request["kb_id"] = "篡改"
         borrowed.request["nested"]["deep"] = 999
         borrowed.context["chunks"].append("偷加的")
         borrowed.result["written"] = 999
+        assert borrowed.error is not None
+        borrowed.error.message = "篡改"  # TaskError 不是 frozen 的
 
         fresh = await store.require(task.task_id)
         assert fresh.request == {"kb_id": "demo", "nested": {"deep": 1}}
         assert fresh.context == {"chunks": ["a", "b"]}
         assert fresh.result == {"written": 0}
-        assert fresh.version == task.version, "库根本不该发生写入"
+        assert fresh.error is not None and fresh.error.message == "原始信息"
+        assert fresh.version == before.version, "库根本不该发生写入"
 
     async def test_sweep_requeues_zombie_with_attempts_left(
         self, store: TaskStore
@@ -460,6 +469,50 @@ class TaskStoreContract:
         assert len(others) == 2
         for task_id in others:
             assert task_id in revived, "同批里的其余僵尸任务被漏掉了"
+            assert (await store.require(task_id)).status is TaskStatus.PENDING
+
+    async def test_persistent_version_conflict_does_not_abort_the_sweep(
+        self, store: TaskStore
+    ) -> None:
+        """**别人一直在写的那条任务，跳过它，别停下整轮。**
+
+        `_reclaim` 不传 `expected_version`，`_cas` 会自己重试若干次；连撞这么
+        多次只说明有人正在密集地写这条任务 —— 也就是那个 worker 其实还活着
+        （心跳晚了而已）。此时把它抢过来重排队正是"一份任务两个执行者"。
+
+        所以它必须被**跳过**，而不是让异常冒出来把同批其余僵尸任务一起拖死。
+        """
+        zombies = []
+        for i in range(3):
+            task = await store.create(f"v{i}", max_attempts=2)
+            await store.transition(task.task_id, TaskStatus.RUNNING, worker_id="dead")
+            await store.update(
+                task.task_id, heartbeat_at=Time.now() - timedelta(minutes=5)
+            )
+            zombies.append(task.task_id)
+
+        # 让其中一条在回收期间被"另一个写入者"持续顶掉版本号
+        victim = zombies[0]
+        original_save = store._save  # noqa: SLF001
+
+        async def contended(task: Task, expected_version: int, **kwargs: Any) -> Task:
+            if task.task_id == victim:
+                await original_save(
+                    await store.require(victim), expected_version, **kwargs
+                )
+            return await original_save(task, expected_version, **kwargs)
+
+        store._save = contended  # type: ignore[method-assign]  # noqa: SLF001
+        try:
+            revived = await store.sweep_stale(lease=timedelta(seconds=30))
+        finally:
+            store._save = original_save  # type: ignore[method-assign]  # noqa: SLF001
+
+        assert victim not in revived, "被持续写入的任务不该被抢走"
+        assert (await store.require(victim)).status is TaskStatus.RUNNING
+
+        for task_id in zombies[1:]:
+            assert task_id in revived, "同批其余僵尸任务被这条竞态拖死了"
             assert (await store.require(task_id)).status is TaskStatus.PENDING
 
     async def test_sweep_leaves_live_tasks_alone(self, store: TaskStore) -> None:

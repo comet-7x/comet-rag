@@ -298,10 +298,17 @@ class TaskStore(ABC):
         for task in await self._stale_candidates(lease, now):
             try:
                 await self._reclaim(task)
-            except (InvalidTransition, TaskNotFound) as exc:
+            except (InvalidTransition, TaskNotFound, VersionConflict) as exc:
                 # 竞态，不是错误：候选选出来之后、回收动手之前，worker 自己把
                 # 任务推进到了终态（或它被删了）。回收本就是给"没人再推进它"
                 # 的任务兜底，这里恰恰说明不需要兜底。
+                #
+                # `VersionConflict` 属于同一类，而且理由更强：`_reclaim` 不传
+                # `expected_version`，`_cas` 会自己重试 `_CAS_RETRIES` 次；连撞
+                # 这么多次只说明**有人正在密集地写这条任务**——也就是那个
+                # worker 其实还活着（心跳晚了而已，比如 GC 停顿或网络抖动）。
+                # 此时把它抢过来重排队，正是本模块反复警告的"一份任务两个
+                # 执行者"。所以这里跳过不只是安全，是更正确。
                 #
                 # 关键在于**不能让它中断整轮扫描**。一个碰巧完成的任务若把异常
                 # 抛出去，同一批里其余的僵尸任务一个都回收不到 —— 而扫描正是

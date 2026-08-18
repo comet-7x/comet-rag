@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, cast, final
@@ -140,11 +141,8 @@ class BaseReranker[ProviderInput](GatedModel, ABC):
     ) -> list[RankedDocument]:
         """同步重排并返回携带原始候选的有序结果。"""
         normalized = self._normalize_documents(documents)
-        scores = self.score(
-            self._to_provider_input(query),
-            [self._to_provider_input(document.content) for document in normalized],
-            **kwargs,
-        )
+        provider_query, provider_documents = self._translate(query, normalized)
+        scores = self.score(provider_query, provider_documents, **kwargs)
         return self._ranked(normalized, scores, top_k)
 
     @final
@@ -157,14 +155,28 @@ class BaseReranker[ProviderInput](GatedModel, ABC):
         top_k: int | None = None,
         **kwargs: Any,
     ) -> list[RankedDocument]:
-        """异步重排并返回携带原始候选的有序结果。"""
+        """异步重排并返回携带原始候选的有序结果。
+
+        翻译放进 `to_thread`：`_to_provider_input` 对多模态输入要读本地文件并
+        做 Base64 编码（见 Qwen 适配器）。留在事件循环里，一批大图片会把整个
+        进程的协程**全部**堵住 —— 而且堵的是请求发出**之前**那一段，连闸门
+        的排队统计都看不见它。
+        """
         normalized = self._normalize_documents(documents)
-        scores = await self.ascore(
-            self._to_provider_input(query),
-            [self._to_provider_input(document.content) for document in normalized],
-            **kwargs,
+        provider_query, provider_documents = await asyncio.to_thread(
+            self._translate, query, normalized
         )
+        scores = await self.ascore(provider_query, provider_documents, **kwargs)
         return self._ranked(normalized, scores, top_k)
+
+    def _translate(
+        self, query: ContentInput, documents: Sequence[RerankDocument]
+    ) -> tuple[ProviderInput, list[ProviderInput]]:
+        """一次性翻译 query 与全部候选；同步，供 `rank` 直接用、`arank` 转线程用。"""
+        return (
+            self._to_provider_input(query),
+            [self._to_provider_input(document.content) for document in documents],
+        )
 
     async def aclose(self) -> None:
         return None

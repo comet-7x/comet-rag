@@ -8,7 +8,7 @@
 
 ## 目录
 
-```
+```text
 comet_rag/
 ├── api/                HTTP 入口（FastAPI）
 │   ├── routes/         ingest · search · kb · tasks · admin

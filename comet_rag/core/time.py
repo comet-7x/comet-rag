@@ -63,9 +63,13 @@ class Time:
 
     @classmethod
     def iso(cls, dt: datetime | None = None, tz: TZType = TimeZone.CST) -> str:
-        """直接获取或转换 ISO 8601 格式字符串"""
-        target_dt = dt or cls.now(tz)
-        return target_dt.isoformat()
+        """ISO 8601 字符串。传了 `dt` 就把它**转换**到 `tz`，而不是照原样输出。
+
+        原先写的是 `dt or cls.now(tz)` —— 传 `dt` 时 `tz` 被静默丢弃，
+        `iso(dt, TimeZone.UTC)` 返回的仍是 `dt` 自己的时区。参数在那里、
+        被接受、然后不起作用，比没有这个参数更糟。
+        """
+        return (cls.to(dt, tz) if dt is not None else cls.now(tz)).isoformat()
 
 
 __all__ = ["TZType", "Time", "TimeZone"]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import struct
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, cast
@@ -79,3 +81,25 @@ async def test_native_async_batch_still_uses_process_gate() -> None:
 
     assert await model.aembed_batch(["a", "b"]) == [[0.0], [1.0]]
     assert gate.stats.admitted == 1
+
+
+async def test_explicit_base64_encoding_is_decoded_to_floats() -> None:
+    """**显式传 `encoding_format="base64"` 不能让契约破掉。**
+
+    OpenAI SDK 只在调用方没指定该参数时才自动解码；显式传 `"base64"`（经
+    `**kwargs` 透传到 `embeddings.create`）时拿到的是字符串。若原样返回，
+    `embed_query` 声明 `list[float]`、实际给出 `str` —— 与 Qwen 适配器先前
+    同病，只是这一处直到评审才被发现。
+    """
+    model, _, _ = _model()
+    # 0.25, -0.5, 1.5 的小端 float32
+    payload = base64.b64encode(struct.pack("<3f", 0.25, -0.5, 1.5)).decode()
+
+    class _Item:
+        index = 0
+        embedding = payload
+
+    class _Resp:
+        data = [_Item()]
+
+    assert model._vectors(_Resp(), expected_count=1) == [[0.25, -0.5, 1.5]]
