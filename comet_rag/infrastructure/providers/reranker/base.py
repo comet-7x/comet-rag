@@ -1,6 +1,6 @@
 """Reranker 适配器基类：翻译成供应商格式，再打分，再排序。
 
-契约在 :mod:`comet_rag.application.ports.reranker`；本模块是**可选的**
+契约在 :mod:`comet_rag.ports.reranker`；本模块是**可选的**
 实现复用 —— 满足 ``RerankerPort`` 形状的对象不必继承它。
 
 ## ``ProviderInput`` 是这里的，不是 Port 的
@@ -25,15 +25,15 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, cast, final
 
-from comet_rag.application.ports.reranker import RerankerPort
-from comet_rag.infrastructure.models.base import GatedModel
-from comet_rag.models.content import (
+from comet_rag.infrastructure.providers.base import GatedModel
+from comet_rag.ports.content import (
     ContentInput,
     ImageContent,
     RankedDocument,
     RerankDocument,
     TextContent,
 )
+from comet_rag.ports.reranker import RerankerPort
 
 
 class BaseReranker[ProviderInput](GatedModel, ABC):

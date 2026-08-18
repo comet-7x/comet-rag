@@ -11,7 +11,6 @@ from typing import Any
 
 import pytest
 
-from comet_rag.application.ports import MultimodalEmbeddingPort
 from comet_rag.config.schemas import (
     APPConfig,
     Backend,
@@ -27,10 +26,10 @@ from comet_rag.engines.loaders.types import SourceContent
 from comet_rag.engines.pipelines import DocxConfig, PipelineConfig
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.loaders import S3Loader
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.providers.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
-from comet_rag.models import MediaResource
+from comet_rag.ports import MediaResource, MultimodalEmbeddingPort
 
 DIM = 3
 

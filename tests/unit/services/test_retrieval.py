@@ -14,8 +14,8 @@ from comet_rag.infrastructure.knowledge_base import (
     EmbeddingModelChanged,
     InMemoryKnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.providers.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore, VectorRecord
 from comet_rag.services.knowledge_base import KnowledgeBaseService, KnowledgeBaseSpec
 from comet_rag.services.retrieval import RetrievalService, SearchQuery

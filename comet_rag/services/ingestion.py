@@ -51,16 +51,16 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
-from comet_rag.application.embedding_batch import aembed_documents
-from comet_rag.application.ports import EmbeddingPort
 from comet_rag.core.concurrency import Overloaded
 from comet_rag.core.logging import logger
+from comet_rag.engines.embedding.batch import aembed_documents
 from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
 from comet_rag.infrastructure.vectorstore import BaseVectorStore, VectorRecord
+from comet_rag.ports import EmbeddingPort
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.tasks import (
     LANE_CPU,

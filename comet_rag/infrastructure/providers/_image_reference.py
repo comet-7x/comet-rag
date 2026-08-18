@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from comet_rag.engines.utils import image_to_base64
-from comet_rag.models import MediaResource
+from comet_rag.ports import MediaResource
 
 ImageReferenceValidator = Callable[[str], None]
 DEFAULT_MAX_LOCAL_IMAGE_BYTES = 20 * 1024 * 1024

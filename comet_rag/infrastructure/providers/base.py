@@ -4,14 +4,14 @@
 Embedding 和 Reranker 打的是不同的接口、收的是不同的类型，但它们都在跟
 同一个模型服务抢连接，所以共用一个闸门。
 
-契约在 :mod:`comet_rag.application.ports`；本模块只解决"怎么做"。
+契约在 :mod:`comet_rag.ports`；本模块只解决"怎么做"。
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from comet_rag.application.ports.gate import AsyncGate
+from comet_rag.ports.gate import AsyncGate
 
 
 class GatedModel:

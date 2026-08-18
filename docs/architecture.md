@@ -9,29 +9,49 @@ pydantic/httpx/lxml 一类的纯计算包；服务那一半在它之上加了任
 ## 分层
 
 ```
-    api/            HTTP 入口（FastAPI）      ┐
-    workers/        消费端进程（arq）          ├─ 参考服务
-    core/           组合根、闸门、降级、日志    ┘
+    api/            HTTP 入口（FastAPI）        ┐
+    workers/        消费端进程（arq）           ├─ 参考服务
+    core/           组合根、闸门、降级、日志     ┘
         ↓
     services/       用例编排（入库、检索、知识库）
-    application/    用例依赖的 Port（Embedding、Reranker）
-    models/         供应商无关的媒体、内容与排序值对象
+    schemas/        HTTP 请求/响应 DTO
         ↓
     tasks/          通用任务框架（与 RAG 无关）
-    infrastructure/ 向量库、模型客户端、数据库
+    infrastructure/ 向量库、供应商客户端、数据库
         ↓
-    engines/        纯计算：加载、解析、清洗、切分   ← 「库」就是这一层
+    engines/        纯计算：加载、解析、清洗、切分、排程   ← 「库」就是这一层
+        ↓
+    ports/          契约（Protocol）与其词汇表（值对象）   ← 零依赖地基
+    config/  exceptions/
 ```
 
-依赖方向**只能向下**。`tests/unit/test_layering.py` 用 AST 强制执行两条：
+依赖方向**只能向下**。`tests/unit/test_layering.py` 用 AST 强制执行三条：
 
 1. `engines/` 不得 import 任何基础设施包（redis / pymilvus / sqlalchemy /
    arq / fastapi …）。破了这条，用户为了跑一个 docx 解析器就得装一整套中间件，
    "库"这一半当场作废（spec A1）。
-2. `engines/` 不得反向 import `api` / `workers` / `services`。
+2. `engines/` 只能 import `engines` 与 `ports`（**白名单**）。
+3. `services/` 与 `engines/` 不得直接 import `infrastructure.providers` ——
+   具体供应商只在组合根选择。
 
-还有第三条守卫：单进程模式下的任何模块都不得 import `workers.maintenance`
+第 2 条原本是一份黑名单（禁止 api / workers / services）。黑名单只拦得住
+已经想到的那几个包：后来新增的 `application/` 就从缝里溜了进去，`pipeline.py`
+运行时 import 了它，而本文档白纸黑字写着 engines 在最底层。**文档说的规则
+和守卫执行的规则不是同一条，中间差出的那个洞刚好够放一个错误。** 改成白名单
+之后没有这个失效模式：新包默认被拒。
+
+还有第四条守卫：单进程模式下的任何模块都不得 import `workers.maintenance`
 （租约回收），理由见下文「崩溃恢复」。
+
+### 为什么 `ports/` 在最底层
+
+契约必须比所有使用者都低，否则使用者就得向上依赖。`engines/` 需要说出
+"我要一个 embedding 模型"；如果契约住在某个上层包里，engines 就只能反向依赖 ——
+这正是上面第 2 条要防的事。`ports/` 不 import 本项目任何其他包，所以谁依赖
+它都是向下。
+
+值对象（`MediaResource`、`RerankDocument` …）也放在 `ports/`：它们是 Port
+签名里出现的类型，也就是这套契约的词汇表。
 
 ## 三个核心抽象
 
@@ -130,10 +150,10 @@ POST /ingest ─► 积压上限 ─┤
 **闸门必须是进程级的。** 曾经是"每次调用建一个信号量"，于是 32 个任务各开
 4 路扇出 = 对模型服务 128 路并发，而配置写的是 4，监控上完全看不出来。
 
-闸门做在 application Port 的模板方法里（`aembed` 不可覆写，子类只能实现 `_aembed`），
+闸门做在适配器基类的模板方法里（`aembed` 不可覆写，子类只能实现 `_aembed`），
 所以"绕过闸门"在结构上做不到 —— 包装器只是约定，会被绕过且不报错。
 
-`services/` 只依赖 Port 和共享值对象，不再直接依赖 `infrastructure.models`。
+`services/` 只依赖 Port 和共享值对象，不再直接依赖 `infrastructure.providers`。
 具体的 Qwen/OpenAI 类只在组合根中选择并装配；这让模型实现可以替换，而查询、
 入库和重排用例不需要认识供应商请求字段。
 

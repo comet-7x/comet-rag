@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from comet_rag.application.embedding_batch import aembed_documents, embed_documents
+from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
 from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
@@ -14,7 +14,7 @@ from comet_rag.engines.pipelines.types import Chunk, PipelineConfig, PipelineRes
 from comet_rag.engines.utils import compute_sha256
 
 if TYPE_CHECKING:
-    from comet_rag.application.ports import EmbeddingPort
+    from comet_rag.ports import EmbeddingPort
 
 
 class Pipeline:

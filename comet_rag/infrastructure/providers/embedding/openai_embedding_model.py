@@ -4,7 +4,7 @@ from typing import Any
 from openai import AsyncOpenAI, OpenAI
 
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
 
 #: OpenAI 官方 ``/embeddings`` 单请求的输入条数上限。
 #:

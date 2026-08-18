@@ -83,7 +83,7 @@ class PipelineConfig(BaseModel):
             "首个 chunk 在第一个窗口完成后即可产出，因此该值越小首字延迟越低、"
             "整体吞吐越差；越大则相反。非流式模式下它只用来限制同时在内存中的"
             "待处理量。一个窗口会被切成几次请求，由模型声明的 batch_limit 决定"
-            "（见 application/embedding_batch.py）；同时在飞几个请求由 "
+            "（见 engines/embedding/batch.py）；同时在飞几个请求由 "
             "max_concurrency 决定。三者互不相同。"
         ),
     )

@@ -1,6 +1,6 @@
 """批量嵌入的排程：切块、限流、拼接。
 
-这些用例过去挂在 `BaseEmbeddingModel` 上，随实现一起搬到了 application 层。
+这些用例过去挂在 `BaseEmbeddingModel` 上，随实现一起搬到了 `engines/embedding/`。
 它们要盯的东西没变，但**盯的位置**变了 —— 现在 `max_concurrency` 真的只有
 一个含义了。
 """
@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
-from comet_rag.application.embedding_batch import aembed_documents, embed_documents
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
+from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
 
 
 class SpyEmbedding(BaseEmbeddingModel):

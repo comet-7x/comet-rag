@@ -20,7 +20,7 @@ import pytest
 from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import Pipeline, PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
 
 CHUNK_COUNT = 200
 STUB_TYPE = "stub"

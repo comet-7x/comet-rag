@@ -26,7 +26,7 @@ from comet_rag.config.schemas import (
 from comet_rag.core.degradation import Level
 from comet_rag.core.logging import logger
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.providers.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
 from tests.e2e.test_ingest_search import (
     DIM,

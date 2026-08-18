@@ -2,7 +2,7 @@
 
 ## 为什么"每次调用建一个信号量"是错的
 
-批量嵌入的排程（今在 `application/embedding_batch.py`）每次调用都新建一个
+批量嵌入的排程（今在 `engines/embedding/batch.py`）每次调用都新建一个
 `asyncio.Semaphore(max_concurrency)`。那个信号量只约束**这一次调用内部**的
 扇出，任务之间毫无关系。实测：
 

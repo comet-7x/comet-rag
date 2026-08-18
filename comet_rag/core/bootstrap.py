@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from comet_rag.application.ports import EmbeddingPort, RerankerPort
 from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.context import Context, wire_runners
@@ -28,6 +27,7 @@ from comet_rag.infrastructure.vectorstore import (
     BaseVectorStore,
     InMemoryVectorStore,
 )
+from comet_rag.ports import EmbeddingPort, RerankerPort
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
 from comet_rag.services.source_policy import SourcePolicy, build_source_policy
@@ -221,7 +221,7 @@ def build_embedding_model(
     image_url_validator: Callable[[str], None] | None = None,
     local_image_validator: Callable[[str], None] | None = None,
 ) -> EmbeddingPort:
-    from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import (  # noqa: PLC0415
+    from comet_rag.infrastructure.providers.embedding.qwen3_vl_embedding import (  # noqa: PLC0415
         Qwen3VLEmbeddingModel,
     )
 
@@ -250,7 +250,7 @@ def build_reranker(
     if settings is None:
         logger.info("未配置 reranker，检索将跳过重排")
         return None
-    from comet_rag.infrastructure.models.reranker.qwen3_vl_reranker import (  # noqa: PLC0415
+    from comet_rag.infrastructure.providers.reranker.qwen3_vl_reranker import (  # noqa: PLC0415
         Qwen3VLReranker,
     )
 

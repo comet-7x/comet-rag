@@ -1,6 +1,6 @@
 """Embedding 适配器基类：把供应商差异收敛成两个扩展点。
 
-契约在 :mod:`comet_rag.application.ports.embedding`；本模块是**可选的**
+契约在 :mod:`comet_rag.ports.embedding`；本模块是**可选的**
 实现复用 —— 满足 ``EmbeddingPort`` 形状的对象不必继承它。
 
 ## 适配器只需要填两个洞
@@ -18,7 +18,7 @@
 ## 这里不排程
 
 "发几个请求、几个并发"是调用方的事，代码在
-:mod:`comet_rag.application.embedding_batch`。本模块只回答两件事：
+:mod:`comet_rag.engines.embedding.batch`。本模块只回答两件事：
 **我一次最多能吃几篇**（``batch_limit``），以及**把这一块发出去**
 （``embed_batch``，恰好一次往返）。
 
@@ -32,13 +32,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from typing import Any, final
 
-from comet_rag.application.ports.embedding import (
+from comet_rag.infrastructure.providers.base import GatedModel
+from comet_rag.ports.content import ContentInput, MediaResource
+from comet_rag.ports.embedding import (
     EmbeddingPort,
     EmbeddingTask,
     MultimodalEmbeddingPort,
 )
-from comet_rag.infrastructure.models.base import GatedModel
-from comet_rag.models.content import ContentInput, MediaResource
 
 
 class BaseEmbeddingModel(GatedModel, ABC):

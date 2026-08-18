@@ -4,16 +4,16 @@ from typing import Any
 
 import pytest
 
-from comet_rag.application.ports import (
+from comet_rag.infrastructure.providers.embedding.base import (
+    BaseEmbeddingModel,
+    MultimodalEmbeddingMixin,
+)
+from comet_rag.infrastructure.providers.reranker.base import BaseReranker
+from comet_rag.ports import (
     EmbeddingPort,
     MultimodalEmbeddingPort,
     RerankerPort,
 )
-from comet_rag.infrastructure.models.embedding.base import (
-    BaseEmbeddingModel,
-    MultimodalEmbeddingMixin,
-)
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
 
 
 class EchoEmbedding(BaseEmbeddingModel):

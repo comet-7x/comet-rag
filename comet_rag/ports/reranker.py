@@ -24,8 +24,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
-from comet_rag.application.ports.gate import AsyncGate
-from comet_rag.models.content import ContentInput, RankedDocument, RerankDocument
+from comet_rag.ports.content import ContentInput, RankedDocument, RerankDocument
+from comet_rag.ports.gate import AsyncGate
 
 
 @runtime_checkable

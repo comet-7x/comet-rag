@@ -5,7 +5,7 @@
 本模块曾经同时是契约和基类，装着 ``ThreadPoolExecutor``、``asyncio.Semaphore``
 和一整套模板方法。那些是**适配器怎么把请求发出去**的问题 —— 扇出多宽、
 同步路径开几个线程、闸门在哪一层拿 —— 全是部署关切，不是应用层的要求。
-它们现在住在 :mod:`comet_rag.infrastructure.models.base` 及各自的
+它们现在住在 :mod:`comet_rag.infrastructure.providers.base` 及各自的
 ``base.py`` 里。
 
 分开之后契约小得能一眼看完，而这正是它该有的样子。多出来的每一个方法
@@ -15,7 +15,7 @@
 
 契约里没有 ``max_concurrency``：**发多少个请求、几个并发，是调用方的事**。
 模型只声明 ``batch_limit``（一次请求最多装几篇），由
-:mod:`comet_rag.application.embedding_batch` 据此排程。
+:mod:`comet_rag.engines.embedding.batch` 据此排程。
 
 这条线原本是划错的。旧的 ``aembed_documents(docs, max_concurrency=4)`` 在两类
 适配器上根本不是同一个意思：不支持原生批量的模型会扇出 4 个并发单条请求，
@@ -51,8 +51,8 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
-from comet_rag.application.ports.gate import AsyncGate
-from comet_rag.models.content import ContentInput, MediaResource
+from comet_rag.ports.content import ContentInput, MediaResource
+from comet_rag.ports.gate import AsyncGate
 
 
 class EmbeddingTask(StrEnum):

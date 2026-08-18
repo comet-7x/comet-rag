@@ -29,7 +29,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import Any
 
-from comet_rag.application.ports.embedding import EmbeddingPort
+from comet_rag.ports.embedding import EmbeddingPort
 
 #: 默认同时在飞的请求数。约束的是**一次调度内**的并发，进程级总量由闸门
 #: 另行控制 —— 两者是不同的旋钮，叠加生效。

@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, cast
 
-from comet_rag.application.embedding_batch import aembed_documents, embed_documents
 from comet_rag.core.concurrency import Gate
-from comet_rag.infrastructure.models.embedding import OpenAIEmbeddingModel
+from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
+from comet_rag.infrastructure.providers.embedding import OpenAIEmbeddingModel
 
 
 @dataclass

@@ -12,14 +12,14 @@ from typing import Any
 
 import pytest
 
-from comet_rag.application.embedding_batch import aembed_documents
 from comet_rag.core.concurrency import Gate, Overloaded
-from comet_rag.infrastructure.models.embedding.base import (
+from comet_rag.engines.embedding.batch import aembed_documents
+from comet_rag.infrastructure.providers.embedding.base import (
     BaseEmbeddingModel,
     MultimodalEmbeddingMixin,
 )
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
-from comet_rag.models import MediaResource
+from comet_rag.infrastructure.providers.reranker.base import BaseReranker
+from comet_rag.ports import MediaResource
 
 
 class RecordingEmbedding(MultimodalEmbeddingMixin, BaseEmbeddingModel):
@@ -244,13 +244,13 @@ async def test_gate_is_not_bypassable_by_subclasses() -> None:
     assert getattr(BaseReranker._ascore, "__isabstractmethod__", False)
 
     # 全仓的生产实现也不许覆写
-    from comet_rag.infrastructure.models.embedding.openai_embedding_model import (  # noqa: PLC0415
+    from comet_rag.infrastructure.providers.embedding.openai_embedding_model import (  # noqa: PLC0415
         OpenAIEmbeddingModel,
     )
-    from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import (  # noqa: PLC0415
+    from comet_rag.infrastructure.providers.embedding.qwen3_vl_embedding import (  # noqa: PLC0415
         Qwen3VLEmbeddingModel,
     )
-    from comet_rag.infrastructure.models.reranker.qwen3_vl_reranker import (  # noqa: PLC0415
+    from comet_rag.infrastructure.providers.reranker.qwen3_vl_reranker import (  # noqa: PLC0415
         Qwen3VLReranker,
     )
 

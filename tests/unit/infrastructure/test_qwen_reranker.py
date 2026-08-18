@@ -7,13 +7,13 @@ import httpx
 import pytest
 
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.models.reranker.qwen3_vl_reranker import (
+from comet_rag.infrastructure.providers.reranker.qwen3_vl_reranker import (
     ChatCompletionContentPartImageParam,
     ImageUrlParam,
     Qwen3VLReranker,
     ScoreMultiModalParam,
 )
-from comet_rag.models import ImageContent, MediaResource, RerankDocument, TextContent
+from comet_rag.ports import ImageContent, MediaResource, RerankDocument, TextContent
 
 
 def _multimodal(url: str) -> ScoreMultiModalParam:

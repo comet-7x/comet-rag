@@ -40,8 +40,15 @@ FORBIDDEN_IN_ENGINES = frozenset(
     }
 )
 
-# engines 不得反向依赖上层
-FORBIDDEN_INTERNAL = ("comet_rag.api", "comet_rag.workers", "comet_rag.services")
+#: `engines/` 允许依赖的本项目包。**白名单，不是黑名单。**
+#:
+#: 这里原本是一份黑名单（api / workers / services）。黑名单只拦得住已经想到
+#: 的那几个包，于是新增的 `application/` 从缝里溜了进去 —— `pipeline.py` 运行时
+#: import 了它，而 architecture.md 白纸黑字写着 engines 在最底层、依赖只能向下。
+#: 文档说的规则和守卫执行的规则不是同一条，正好差出一个洞。
+#:
+#: 白名单没有这个失效模式：新包默认被拒，要放行必须来这里改一行、并说明理由。
+ENGINES_MAY_IMPORT = ("comet_rag.engines", "comet_rag.ports")
 
 
 def _iter_engine_modules() -> list[Path]:
@@ -80,28 +87,52 @@ def test_engines_do_not_import_infrastructure(module: Path) -> None:
     )
 
 
-@pytest.mark.parametrize("module", _iter_engine_modules(), ids=lambda p: p.name)
-def test_engines_do_not_import_upper_layers(module: Path) -> None:
-    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
-    violations = {
-        name for name in _imported_full(tree) if name.startswith(FORBIDDEN_INTERNAL)
+def _engine_internal_violations(tree: ast.AST) -> set[str]:
+    return {
+        name
+        for name in _imported_full(tree)
+        if name.startswith("comet_rag.") and not name.startswith(ENGINES_MAY_IMPORT)
     }
+
+
+@pytest.mark.parametrize("module", _iter_engine_modules(), ids=lambda p: p.name)
+def test_engines_only_depend_on_engines_and_ports(module: Path) -> None:
+    """**`engines/` 是依赖图的底，只能向下看。**
+
+    它唯一被允许依赖的本项目包是 `ports/`（纯 Protocol，零依赖）。那正是
+    "库那一半"能被单独拿去用的前提：装一个 docx 解析器不该顺带拖进
+    FastAPI、Milvus，或者任何一层用例编排。
+    """
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    violations = _engine_internal_violations(tree)
     assert not violations, (
-        f"{module.relative_to(PROJECT_ROOT)} 反向依赖了上层：{sorted(violations)}。"
-        f"依赖方向必须是 api/workers → services → engines，不可反向。"
+        f"{module.relative_to(PROJECT_ROOT)} 依赖了 engines/ports 之外的本项目包："
+        f"{sorted(violations)}。engines 只能依赖 {list(ENGINES_MAY_IMPORT)} —— "
+        f"确需放行请修改 ENGINES_MAY_IMPORT 并在那里写明理由。"
     )
 
 
 def test_guard_actually_detects_violations() -> None:
-    """守卫自检：确保上面两个测试不是永远为真。"""
-    tree = ast.parse("import sqlalchemy\nfrom comet_rag.api import deps\n")
+    """守卫自检：确保上面两个测试不是永远为真。
+
+    第二条特意用 `comet_rag.application` 举例 —— 那正是旧黑名单漏掉的那个包。
+    """
+    tree = ast.parse(
+        "import sqlalchemy\n"
+        "from comet_rag.api import deps\n"
+        "from comet_rag.application.embedding_batch import aembed_documents\n"
+        "from comet_rag.ports import EmbeddingPort\n"
+    )
     assert _imported_roots(tree) & FORBIDDEN_IN_ENGINES == {"sqlalchemy"}
-    assert any(n.startswith(FORBIDDEN_INTERNAL) for n in _imported_full(tree))
+    assert _engine_internal_violations(tree) == {
+        "comet_rag.api",
+        "comet_rag.application.embedding_batch",
+    }
 
 
 # ── 业务/引擎依赖模型 Port，而不是供应商适配器 ─────────────────────────────
 
-MODEL_ADAPTER_PACKAGE = "comet_rag.infrastructure.models"
+MODEL_ADAPTER_PACKAGE = "comet_rag.infrastructure.providers"
 
 
 def _model_port_consumers() -> list[Path]:
@@ -125,7 +156,7 @@ def test_business_code_depends_on_model_ports(module: Path) -> None:
     }
     assert not hits, (
         f"{module.relative_to(PROJECT_ROOT)} 直接依赖了模型适配器：{sorted(hits)}。"
-        "请依赖 comet_rag.application.ports，并在 core/bootstrap.py 装配实现。"
+        "请依赖 comet_rag.ports，并在 core/bootstrap.py 装配实现。"
     )
 
 
@@ -221,7 +252,7 @@ def test_models_are_only_constructed_by_the_composition_root(module: Path) -> No
     易错的约定，就把它变成够不着的结构。
     """
     relative = module.relative_to(PROJECT_ROOT / "comet_rag").as_posix()
-    if relative.startswith("infrastructure/models/"):
+    if relative.startswith("infrastructure/providers/"):
         return  # 定义处自己不算
     if any(relative.endswith(allowed) for allowed in MAY_CONSTRUCT_MODELS):
         return

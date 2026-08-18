@@ -23,11 +23,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from comet_rag.application.ports import EmbeddingPort, RerankerPort
 from comet_rag.core.degradation import DegradationController
 from comet_rag.core.logging import logger
 from comet_rag.infrastructure.vectorstore import BaseVectorStore, Filter
-from comet_rag.models import RerankDocument
+from comet_rag.ports import EmbeddingPort, RerankDocument, RerankerPort
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 
 

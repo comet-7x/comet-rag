@@ -7,14 +7,14 @@ from httpx import AsyncClient, Client
 from pydantic import BaseModel, Field
 
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.models._image_reference import (
+from comet_rag.infrastructure.providers._image_reference import (
     DEFAULT_MAX_LOCAL_IMAGE_BYTES,
     ImageReferenceValidator,
     prepare_image_reference,
     prepare_media_resource,
 )
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
-from comet_rag.models import ContentInput, ImageContent, TextContent
+from comet_rag.infrastructure.providers.reranker.base import BaseReranker
+from comet_rag.ports import ContentInput, ImageContent, TextContent
 
 
 class ImageDetail(StrEnum):

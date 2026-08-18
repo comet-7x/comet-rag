@@ -7,12 +7,12 @@ import httpx
 import pytest
 
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import (
+from comet_rag.infrastructure.providers.embedding.qwen3_vl_embedding import (
     EmbeddingData,
     EncodingFormat,
     Qwen3VLEmbeddingModel,
 )
-from comet_rag.models import ImageContent, MediaResource, TextContent
+from comet_rag.ports import ImageContent, MediaResource, TextContent
 
 
 async def test_qwen_adapter_accepts_base_text_contract() -> None:

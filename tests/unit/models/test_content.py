@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from comet_rag.models import (
+from comet_rag.ports import (
     ImageContent,
     MediaResource,
     RankedDocument,

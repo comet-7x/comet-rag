@@ -313,7 +313,7 @@ def fake_embedding_model() -> BaseEmbeddingModel:
 
 - 在 `engines/` 里 import Redis / Postgres / Milvus / S3 / ARQ / FastAPI
 - 提交密钥。配置走 YAML + 环境变量，`config.yaml` 进 `.gitignore`
-- 在循环里逐条调 embedding（必须走 `application/embedding_batch.py` 的批量排程）
+- 在循环里逐条调 embedding（必须走 `engines/embedding/batch.py` 的批量排程）
 - 在函数内部 `httpx.AsyncClient()` 现建现销（必须复用应用级实例）
 - 无界队列 / 无上限并发
 - 让 Milvus 专有语法（表达式字符串、consistency level）穿透 `BaseVectorStore` 接口

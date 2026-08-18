@@ -9,19 +9,19 @@ from httpx import AsyncClient, Client
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field
 
-from comet_rag.application.ports.embedding import EmbeddingTask
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.models._image_reference import (
+from comet_rag.infrastructure.providers._image_reference import (
     DEFAULT_MAX_LOCAL_IMAGE_BYTES,
     ImageReferenceValidator,
     prepare_image_reference,
     prepare_media_resource,
 )
-from comet_rag.infrastructure.models.embedding.base import (
+from comet_rag.infrastructure.providers.embedding.base import (
     BaseEmbeddingModel,
     MultimodalEmbeddingMixin,
 )
-from comet_rag.models import ContentInput, ImageContent, MediaResource, TextContent
+from comet_rag.ports import ContentInput, ImageContent, MediaResource, TextContent
+from comet_rag.ports.embedding import EmbeddingTask
 
 
 class Qwen3VLEmbeddingModelSystemPrompt(StrEnum):
