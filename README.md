@@ -78,7 +78,7 @@ uv run comet-rag worker embedder        # IO 密集：向量化 / 写库
 `PostgresTaskStore`、`InProcessExecutor` 与 `ArqExecutor`、`InMemoryVectorStore`
 与 `MilvusStore` 跑同一套断言 —— "换后端行为不变"这句话靠它们兑现，不靠文档。
 
-更多见 [docs/architecture.md](docs/architecture.md)。
+更多见 [docs/architecture.md](docs/architecture.md)；目录结构与流程图见 [docs/structure.md](docs/structure.md)。
 
 ---
 
@@ -105,6 +105,7 @@ uv run ruff check && uv run ruff format
 |                                                          |                                      |
 | -------------------------------------------------------- | ------------------------------------ |
 | [architecture.md](docs/architecture.md)                   | 分层、核心抽象、两种部署形态         |
+| [structure.md](docs/structure.md)                         | 目录结构、依赖图、入库/检索流程图    |
 | [model_usage.md](docs/model_usage.md)                     | Embedding、图片与 Reranker 用法      |
 | [deployment.md](docs/deployment.md)                       | 配置、扩容、运维、排查               |
 | [benchmark.md](docs/benchmark.md)                         | 性能基线与它**不能**回答的问题 |

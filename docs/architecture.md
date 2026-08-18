@@ -162,6 +162,7 @@ POST /ingest ─► 积压上限 ─┤
 
 ## 相关文档
 
+- [目录结构与核心流程](structure.md) —— 东西放在哪、一次请求怎么走完（含依赖图与流程图）
 - [部署](deployment.md) —— 两条路径的具体命令与配置
 - [性能基线](benchmark.md) —— 数字的定位与采集方式
 - [Pipeline 用法](pipeline_usage.md) —— 只当库用时看这个
