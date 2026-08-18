@@ -11,12 +11,19 @@ import pytest
 
 from comet_rag.config.schemas import (
     IngestPolicyConfig,
+    LimitsConfig,
     ModelConfig,
     RedisConfig,
     S3Config,
     SqlDatabaseConfig,
     VectorDatabaseConfig,
 )
+from comet_rag.engines.defaults import (
+    DEFAULT_EMBED_FANOUT,
+    DEFAULT_EMBED_WINDOW,
+    DEFAULT_LOADER_CONCURRENCY,
+)
+from comet_rag.engines.pipelines.types import PipelineConfig
 
 # ── DSN 编码（PR 评审 #7）──────────────────────────────────────────────────
 
@@ -150,3 +157,31 @@ def test_secrets_are_masked_but_explicitly_unwrapped_for_connection_urls() -> No
     assert secret in redis.url
     assert model.api_key_value == secret
     assert vector.api_key_value == secret
+
+
+# ── 并发默认值：一处定义，不许漂移 ─────────────────────────────────────────
+
+
+def test_config_defaults_match_the_library_fallbacks() -> None:
+    """**部署默认值与"当库用"的兜底必须一致。**
+
+    这两个数字有意地各写了一遍字面量：`config/` 在分层里低于 `engines/`，
+    import 过去就是向上依赖（正是 `test_layering.py` 在守的方向）。重复一个
+    字面量、用这条测试防漂移，好过为了省一个字面量把依赖方向弄反。
+
+    一致不是巧合而是要求：库用户和服务用户拿到不同的并发行为，是最难查的那类
+    "在我机器上是好的"。
+    """
+    limits = LimitsConfig()
+
+    assert limits.pipeline_concurrency == DEFAULT_EMBED_FANOUT
+    assert limits.embed_batch_size == DEFAULT_EMBED_WINDOW
+    assert limits.loader_concurrency == DEFAULT_LOADER_CONCURRENCY
+
+
+def test_pipeline_defaults_come_from_the_same_place() -> None:
+    """`PipelineConfig` 自己的默认值也走同一处，而不是再写一遍。"""
+    config = PipelineConfig()
+
+    assert config.max_concurrency == DEFAULT_EMBED_FANOUT
+    assert config.embed_batch_size == DEFAULT_EMBED_WINDOW

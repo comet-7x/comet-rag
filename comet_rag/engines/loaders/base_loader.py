@@ -3,9 +3,11 @@ import inspect
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 
+from comet_rag.engines.defaults import DEFAULT_LOADER_CONCURRENCY
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 
-DEFAULT_MAX_CONCURRENCY = 10
+#: 兼容旧名；数字与理由都在 `engines/defaults.py`
+DEFAULT_MAX_CONCURRENCY = DEFAULT_LOADER_CONCURRENCY
 
 
 class BaseLoader(ABC):
@@ -15,8 +17,9 @@ class BaseLoader(ABC):
     safely run in threads. Loaders with resource-specific requirements (connection
     pooling, rate limits, process pools, and so on) should override them.
 
-    ``DEFAULT_MAX_CONCURRENCY`` is deliberately a safety cap rather than a claim
-    about optimal throughput. Callers should tune it for their resource budget.
+    批量方法的并发默认值来自 ``engines/defaults.py`` —— 它护的是本机文件描述符
+    与对外连接数，跟模型侧的扇出不是同一种资源，所以是两个数字。跑参考服务时
+    真正生效的值由 ``LimitsConfig`` 提供。
     """
 
     @abstractmethod

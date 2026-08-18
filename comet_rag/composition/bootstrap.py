@@ -390,7 +390,11 @@ def build_context(
         max_archive_xml_text_chars=limits.docx_max_archive_xml_text_chars,
     )
     if pipeline_config is None:
-        pipeline_config = PipelineConfig(docx=configured_docx)
+        pipeline_config = PipelineConfig(
+            docx=configured_docx,
+            max_concurrency=limits.pipeline_concurrency,
+            embed_batch_size=limits.embed_batch_size,
+        )
     else:
         # Deployment limits supply DOCX defaults even when callers inject a
         # PipelineConfig only to tune unrelated fields. Explicit DocxConfig
@@ -402,8 +406,19 @@ def build_context(
                 for field in pipeline_config.docx.model_fields_set
             }
         )
+        # 与 docx 同样的规则：部署配置提供默认值，调用方**显式写过**的字段保留。
+        # `model_fields_set` 正是"显式写过"的那份名单 —— 用它而不是比对是否等于
+        # 默认值，否则调用方特意写了一个恰好等于默认值的数，会被当成没写过。
+        concurrency_overrides = {
+            field: value
+            for field, value in (
+                ("max_concurrency", limits.pipeline_concurrency),
+                ("embed_batch_size", limits.embed_batch_size),
+            )
+            if field not in pipeline_config.model_fields_set
+        }
         pipeline_config = pipeline_config.model_copy(
-            update={"docx": DocxConfig(**docx_values)}
+            update={"docx": DocxConfig(**docx_values), **concurrency_overrides}
         )
     wire_runners(context, ingest_config=pipeline_config)
 

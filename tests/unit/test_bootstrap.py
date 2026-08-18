@@ -406,3 +406,64 @@ def test_reranker_is_checked_too() -> None:
             reranker=SilentlyUngatedReranker(),
             vector_store=InMemoryVectorStore(),
         )
+
+
+# ── 并发配置必须真的到达管道 ───────────────────────────────────────────────
+
+
+def test_pipeline_concurrency_reaches_the_runner_from_config() -> None:
+    """**YAML 里调并发，必须真的作用到管道上。**
+
+    此前 `bootstrap` 造 `PipelineConfig(docx=configured_docx)` 时只接了 docx
+    限额，`max_concurrency` 与 `embed_batch_size` 一个都没接 —— 那两个数字硬
+    编码在 `engines/pipelines/types.py` 里，**配置根本够不着**。
+
+    配置项在那里、写了值、然后不起作用，比没有这个配置项更糟：调小它的人会以为
+    自己限住了什么。
+    """
+    config = make_config()
+    config.limits.pipeline_concurrency = 3
+    config.limits.embed_batch_size = 7
+
+    captured: list[PipelineConfig | None] = []
+
+    def capture(context, *, ingest_config=None):
+        captured.append(ingest_config)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("comet_rag.composition.bootstrap.wire_runners", capture)
+        build_context(
+            config, embedding_model=FakeEmbedding(), vector_store=InMemoryVectorStore()
+        )
+
+    assert captured
+    wired = captured[0]
+    assert wired is not None
+    assert wired.max_concurrency == 3
+    assert wired.embed_batch_size == 7
+
+
+def test_explicit_pipeline_config_wins_over_deployment_limits() -> None:
+    """调用方显式写过的字段不被部署配置盖掉 —— 与 docx 那套规则一致。"""
+    config = make_config()
+    config.limits.pipeline_concurrency = 3
+
+    captured: list[PipelineConfig | None] = []
+
+    def capture(context, *, ingest_config=None):
+        captured.append(ingest_config)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("comet_rag.composition.bootstrap.wire_runners", capture)
+        build_context(
+            config,
+            embedding_model=FakeEmbedding(),
+            vector_store=InMemoryVectorStore(),
+            pipeline_config=PipelineConfig(max_concurrency=9),
+        )
+
+    wired = captured[0]
+    assert wired is not None
+    assert wired.max_concurrency == 9, "显式写的 9 被部署配置盖掉了"
+    # 没写过的那个仍然跟随部署配置
+    assert wired.embed_batch_size == config.limits.embed_batch_size

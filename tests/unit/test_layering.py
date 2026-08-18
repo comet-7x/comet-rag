@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -507,3 +508,66 @@ def test_cycle_detector_sees_relative_imports() -> None:
     module = PROJECT_ROOT / "comet_rag" / "infrastructure" / "knowledge_base.py"
     tree = ast.parse("from ..tasks.models import Time\n")
     assert _imported_full(tree, module) == {"comet_rag.tasks.models"}
+
+
+# ── engines 不得自己发明并发数字（第 6 条守卫）──────────────────────────────
+
+#: 唯一允许定义并发默认值的地方。
+CONCURRENCY_DEFAULTS_MODULE = "engines/defaults.py"
+
+#: 命中即视为"一个并发数字"。只看模块级常量，函数里的局部变量不算。
+_CONCURRENCY_NAME = re.compile(r"CONCURRENCY|FANOUT|MAX_WORKERS|BATCH_SIZE|WINDOW")
+
+
+@pytest.mark.parametrize("module", _iter_engine_modules(), ids=lambda p: p.name)
+def test_engines_do_not_invent_concurrency_defaults(module: Path) -> None:
+    """**并发数字只能在一处定义。**
+
+    这些数字原本散在三个文件：loader 10、嵌入扇出 16、管道 8，三处都没说明
+    为什么。`base_loader.py` 的注释甚至已经在替自己辩解 —— "a safety cap
+    rather than a claim about optimal throughput"，等于承认这个数没有依据。
+
+    集中不等于统一：它们保护的资源不同（本机 fd vs 模型服务），所以仍是几个
+    数字，但每个都必须在 `engines/defaults.py` 里写明护住的是什么。
+
+    engines 是"库"那一半，它凭什么知道你的服务扛得住几路 —— 真正生效的值由
+    `LimitsConfig` 提供，这里的只是兜底。
+    """
+    relative = module.relative_to(PROJECT_ROOT / "comet_rag").as_posix()
+    if relative == CONCURRENCY_DEFAULTS_MODULE:
+        return
+
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    offenders = {
+        target.id
+        for node in tree.body  # 只看模块级
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+        and _CONCURRENCY_NAME.search(target.id)
+        and isinstance(node.value, ast.Constant)  # 转发别处的常量不算
+    }
+    assert not offenders, (
+        f"{module.relative_to(PROJECT_ROOT)} 自己定义了并发默认值：{sorted(offenders)}。"
+        f"请挪到 comet_rag/{CONCURRENCY_DEFAULTS_MODULE} 并写明它护住的是什么资源。"
+    )
+
+
+def test_concurrency_guard_actually_detects_violations() -> None:
+    """守卫自检：转发别处的常量应放行，写死字面量应拦下。"""
+    forwarding = ast.parse("DEFAULT_MAX_CONCURRENCY = DEFAULT_LOADER_CONCURRENCY\n")
+    hardcoded = ast.parse("DEFAULT_MAX_CONCURRENCY = 10\n")
+
+    def offenders(tree: ast.Module) -> set[str]:
+        return {
+            t.id
+            for n in tree.body
+            if isinstance(n, ast.Assign)
+            for t in n.targets
+            if isinstance(t, ast.Name)
+            and _CONCURRENCY_NAME.search(t.id)
+            and isinstance(n.value, ast.Constant)
+        }
+
+    assert offenders(forwarding) == set()
+    assert offenders(hardcoded) == {"DEFAULT_MAX_CONCURRENCY"}

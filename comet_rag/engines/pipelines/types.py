@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from comet_rag.engines.defaults import DEFAULT_EMBED_FANOUT, DEFAULT_EMBED_WINDOW
+
 
 @dataclass
 class Chunk:
@@ -73,10 +75,12 @@ class PipelineConfig(BaseModel):
     chunk_overlap: int = Field(default=200, ge=0)
     embed: bool = False
     max_concurrency: int = Field(
-        default=8, gt=0, description="调用模型服务的并发上限（同时在飞的请求数）"
+        default=DEFAULT_EMBED_FANOUT,
+        gt=0,
+        description="调用模型服务的并发上限（同时在飞的请求数）",
     )
     embed_batch_size: int = Field(
-        default=32,
+        default=DEFAULT_EMBED_WINDOW,
         gt=0,
         description=(
             "流式模式下每次并发处理多少个 chunk，即**产出粒度**。"
