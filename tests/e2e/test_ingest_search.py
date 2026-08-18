@@ -72,7 +72,7 @@ class LocalStubLoader(BaseLoader):
     def __init__(self, path: Path) -> None:
         self._path = path
 
-    def load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
+    def _load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         if not isinstance(source, SourceContent):
             source = SourceContent(str(source))
         return LoaderContent(

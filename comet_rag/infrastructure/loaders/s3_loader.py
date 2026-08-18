@@ -429,7 +429,7 @@ class S3Loader(BaseLoader):
             _release=lambda: self._release_temp(path),
         )
 
-    def load(self, source: SourceContent | str) -> LoaderContent:
+    def _load(self, source: SourceContent | str) -> LoaderContent:
         normalized = (
             source if isinstance(source, SourceContent) else SourceContent(source)
         )

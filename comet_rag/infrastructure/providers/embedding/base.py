@@ -88,7 +88,8 @@ class BaseEmbeddingModel(GatedModel, ABC):
     @final
     def embed_query(self, query: str, /, **kwargs: Any) -> list[float]:
         """生成检索查询向量。"""
-        return self.embed(query, **self._options_for(EmbeddingTask.QUERY, kwargs))
+        options = self._options_for(EmbeddingTask.QUERY, kwargs)
+        return self._through_gate_sync(lambda: self.embed(query, **options))
 
     @final
     async def aembed_query(self, query: str, /, **kwargs: Any) -> list[float]:
@@ -100,9 +101,8 @@ class BaseEmbeddingModel(GatedModel, ABC):
     @final
     def embed_document(self, document: str, /, **kwargs: Any) -> list[float]:
         """生成单篇待检索文档的向量。"""
-        return self.embed(
-            document, **self._options_for(EmbeddingTask.DOCUMENT, kwargs)
-        )
+        options = self._options_for(EmbeddingTask.DOCUMENT, kwargs)
+        return self._through_gate_sync(lambda: self.embed(document, **options))
 
     @final
     async def aembed_document(self, document: str, /, **kwargs: Any) -> list[float]:
@@ -117,12 +117,15 @@ class BaseEmbeddingModel(GatedModel, ABC):
     def embed_batch(
         self, documents: Sequence[str], /, **kwargs: Any
     ) -> list[list[float]]:
-        """恰好一次往返，返回与输入等长、同序的向量。"""
+        """恰好一次往返，返回与输入等长、同序的向量。
+
+        与 `aembed_batch` 一样受闸门保护 —— 闸门现在两侧共用一份预算，同步
+        路径不再是限流的后门（#44）。
+        """
         if not documents:
             return []
-        return self._embed_batch(
-            documents, **self._options_for(EmbeddingTask.DOCUMENT, kwargs)
-        )
+        options = self._options_for(EmbeddingTask.DOCUMENT, kwargs)
+        return self._through_gate_sync(lambda: self._embed_batch(documents, **options))
 
     @final
     async def aembed_batch(

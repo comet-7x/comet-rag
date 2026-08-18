@@ -300,7 +300,7 @@ async def test_media_entry_is_gated_like_text() -> None:
     assert model.peak <= 2, f"闸门限 2，实际峰值 {model.peak} —— 多模态绕过了闸门"
 
 
-# ── 已知缺口：同步路径不受进程级闸门约束 ───────────────────────────────────
+# ── 同步路径与异步路径共用同一份预算（#44 已修）─────────────────────────────
 
 
 class _SyncCounting(BaseEmbeddingModel):
@@ -325,30 +325,20 @@ class _SyncCounting(BaseEmbeddingModel):
         return [0.0]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="同步路径尚未接入进程级闸门（#44）；本用例即该 issue 的验收标准",
-)
-def test_sync_fanout_should_respect_the_process_gate() -> None:
-    """**同步扇出目前不受闸门约束，多个来源并行时并发会相乘。**
+def test_sync_fanout_respects_the_process_gate() -> None:
+    """**同步扇出必须与异步共用同一份预算。**
 
     `Pipeline.batch_run` 用 `max_concurrency` 个线程跑来源，每个来源内部的
-    `embed_documents` 又开 `max_concurrency` 路 —— 而同步 `embed` 不经过
-    asyncio 闸门（它是协程原语，线程里用不了）。于是实测：
+    `embed_documents` 又开 `max_concurrency` 路。修复前同步 `embed` 完全不经过
+    闸门（那时它建在 `asyncio.Semaphore` 上，线程里拿不到），实测：
 
-        闸门 limit=4，4 个来源并行 → 对模型服务的真实并发峰值 16
+        闸门 limit=4，4 个来源并行 → 真实并发峰值 16
 
-    这正是本项目当年实测出的"配置写 4、实际 128"同一个失效模式，只是发生在
-    同步这一侧。**该缺陷早于本次重构**：在 `origin/develop` 上用同样的探针
-    （那边入口叫 `batch_embed`）测得同样的 16。
+    与本项目当年"配置写 4、实际 128"是同一个失效模式，只是发生在同步这一侧；
+    `origin/develop` 上用同样探针测得同样的 16，说明它早于那次重构。
 
-    修它需要一个**线程与协程共用同一份预算**的限流器：现在的 `Gate` 建立在
-    `asyncio.Semaphore` 上，线程里拿不到；而各配一个信号量等于没限 —— 同步 4
-    加异步 4，服务端看到 8，正是 `test_embedding_and_reranker_share_one_gate`
-    反对的那件事。
-
-    所以这里用 `xfail(strict=True)` 钉住：它现在必然失败，等混合闸门做出来会
-    自动变绿并提醒去掉标记 —— 而不是把缺口写进注释里等人忘记。
+    这条用例曾是 `xfail(strict=True)`，混合闸门做出来后自动 XPASS 提醒摘标记
+    —— 那正是当初标它的目的：把缺口钉成会自己响的闹钟，而不是写进注释等人忘记。
     """
     limit = 4
     model = _SyncCounting()

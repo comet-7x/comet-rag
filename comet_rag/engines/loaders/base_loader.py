@@ -30,12 +30,18 @@ class BaseLoader(GatedResource, ABC):
     守 —— 这正是模型侧实测出"配置写 4、实际 128"的那个失效模式，加载侧同样
     存在：`ingestion.py` 每个任务调一次 ``aload``，32 个任务就是 32 路抓取。
 
-    **同步的 ``load`` 目前不受闸门约束**：闸门建立在 asyncio 原语上，线程里
-    拿不到（见 issue #44，模型侧同病）。
+    ``load`` 与 ``aload`` 共用同一份闸门预算（#44 修复后）：闸门的计数换成了
+    线程原语，两侧都能拿。
     """
 
     @abstractmethod
-    def load(self, source: SourceContent | str) -> LoaderContent: ...
+    def _load(self, source: SourceContent | str) -> LoaderContent:
+        """适配器真正执行同步加载的扩展点。"""
+
+    @final
+    def load(self, source: SourceContent | str) -> LoaderContent:
+        """同步加载一个来源。与 `aload` 共用同一份闸门预算。"""
+        return self._through_gate_sync(lambda: self._load(source))
 
     @abstractmethod
     async def _aload(self, source: SourceContent | str) -> LoaderContent:

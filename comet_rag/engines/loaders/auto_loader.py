@@ -147,7 +147,7 @@ class AutoLoader(BaseLoader):
     def _normalize_source(source: SourceContent | str) -> SourceContent:
         return source if isinstance(source, SourceContent) else SourceContent(source)
 
-    def load(self, source: SourceContent | str) -> LoaderContent:
+    def _load(self, source: SourceContent | str) -> LoaderContent:
         normalized = self._normalize_source(source)
         return self._resolve(normalized).load(normalized)
 

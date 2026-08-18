@@ -17,7 +17,13 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class AsyncGate(Protocol):
-    """任何可作为异步上下文管理器使用的限流器。"""
+    """限流器：既能 `async with`，也能 `with`。
+
+    名字保留 `AsyncGate` 是为了不动一大片调用方；实际契约是**两个入口共用
+    同一份预算**。同步那半是可选的 —— 只有异步入口的实现仍然满足这个
+    Protocol（Python 的结构类型不检查缺失的可选成员），`GatedResource` 会
+    在同步侧先探测再使用。
+    """
 
     async def __aenter__(self) -> Any: ...
 
@@ -29,7 +35,21 @@ class AsyncGate(Protocol):
     ) -> None: ...
 
 
-__all__ = ["AsyncGate", "GatedResource"]
+@runtime_checkable
+class SyncGate(Protocol):
+    """限流器的同步入口。与 `AsyncGate` 是同一个对象的两副面孔。"""
+
+    def __enter__(self) -> Any: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None: ...
+
+
+__all__ = ["AsyncGate", "GatedResource", "SyncGate"]
 
 
 class GatedResource:
@@ -60,6 +80,23 @@ class GatedResource:
     def bind_gate(self, gate: AsyncGate | None) -> None:
         """绑定进程级并发闸门；由组合根调用。"""
         self._gate = gate
+
+    def _through_gate_sync[T](self, call: Callable[[], T]) -> T:
+        """在闸门内执行一次**同步**请求。
+
+        同步路径此前完全不受闸门约束（#44）：`Pipeline.batch_run` 用
+        `max_concurrency` 个线程跑来源，每个来源内部再开 `max_concurrency` 路，
+        实测配置写 4、真实并发 16。
+
+        闸门现在两侧共用一份预算，所以这里能直接 `with`。老的闸门实现只有
+        异步入口，因此先探测再用 —— 注入进来的第三方限流器可能还是旧形状，
+        那种情况下退化成不限流，与"没挂闸门"一致，而不是当场崩掉。
+        """
+        gate = self._gate
+        if gate is None or not isinstance(gate, SyncGate):
+            return call()
+        with gate:
+            return call()
 
     async def _through_gate[T](self, call: Callable[[], Awaitable[T]]) -> T:
         """在闸门内执行一次真实请求。

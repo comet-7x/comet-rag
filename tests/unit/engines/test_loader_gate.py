@@ -28,7 +28,7 @@ class CountingLoader(BaseLoader):
         self.peak = 0
         self.calls = 0
 
-    def load(self, source: SourceContent | str) -> LoaderContent:  # pragma: no cover
+    def _load(self, source: SourceContent | str) -> LoaderContent:  # pragma: no cover
         raise NotImplementedError
 
     async def _aload(self, source: SourceContent | str) -> LoaderContent:

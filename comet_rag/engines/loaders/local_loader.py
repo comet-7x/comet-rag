@@ -29,7 +29,7 @@ class LocalLoader(BaseLoader):
 
         return metadata
 
-    def load(self, source: SourceContent | str) -> LoaderContent:
+    def _load(self, source: SourceContent | str) -> LoaderContent:
         if isinstance(source, str):
             source = SourceContent(source)
         if not source.is_local:

@@ -400,7 +400,7 @@ class URLLoader(BaseLoader):
             await asyncio.to_thread(self._discard_temp, tmp.name)
             raise
 
-    def load(
+    def _load(
         self,
         source: SourceContent | str,
         *,

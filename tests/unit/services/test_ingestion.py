@@ -78,7 +78,7 @@ class StubLoader(BaseLoader):
         self.fail_times = 0
         self.failure: Exception | None = None
 
-    def load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
+    def _load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         self.loads += 1
         if not isinstance(source, SourceContent):
             source = SourceContent(str(source))

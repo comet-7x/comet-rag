@@ -44,7 +44,7 @@ class RecordingLoader(BaseLoader):
             metadata={"loader": self.name},
         )
 
-    def load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
+    def _load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         return self._result(source)
 
     async def _aload(
@@ -84,7 +84,7 @@ class LegacyCloseLoader(BaseLoader):
         self.sync_cleanup_calls = 0
         self.async_close_calls = 0
 
-    def load(self, source: SourceContent | str) -> LoaderContent:
+    def _load(self, source: SourceContent | str) -> LoaderContent:
         normalized = (
             source if isinstance(source, SourceContent) else SourceContent(source)
         )
