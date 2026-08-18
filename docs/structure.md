@@ -34,7 +34,8 @@ comet_rag/
 │   └── source_policy.py 入库来源准入（SSRF、本地路径、大小上限）
 ├── schemas/            HTTP 请求/响应 DTO
 ├── tasks/              通用任务框架（与 RAG 无关，可单独复用）
-│   ├── store.py / store_postgres.py    任务状态持久化
+│   ├── store.py        TaskStore 契约（ABC + 模板方法）
+│   ├── store_memory.py / store_postgres.py   两个实现，同跑一套契约测试
 │   ├── executor.py / executor_arq.py   执行与重试
 │   └── runner.py       StagePipeline：分阶段、可移交道次、可断点续跑
 ├── infrastructure/     外部世界的适配器
