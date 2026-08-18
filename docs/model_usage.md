@@ -132,5 +132,5 @@ assert ranked[0].document.id == "cat"
 ## 服务端装配
 
 上述示例适合把 comet-rag 当库直接使用。运行参考服务时，不要在业务模块中自行
-构造模型；`core.bootstrap` 会创建适配器、注入图片准入策略，并让 Embedding 与
+构造模型；`composition.bootstrap` 会创建适配器、注入图片准入策略，并让 Embedding 与
 Reranker 共享进程级并发闸门。

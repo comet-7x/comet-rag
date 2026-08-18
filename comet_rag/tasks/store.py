@@ -19,6 +19,8 @@ from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
+from comet_rag.core.time import Time
+
 from .models import (
     FIELD_NAMES,
     StageRecord,
@@ -26,7 +28,6 @@ from .models import (
     TaskError,
     TaskEvent,
     TaskStatus,
-    Time,
     new_task_id,
 )
 from .states import assert_transition

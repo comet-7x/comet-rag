@@ -8,8 +8,8 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from ..composition.context import Context
 from ..core.concurrency import Overloaded
-from ..core.context import Context
 from ..core.degradation import Level
 from ..infrastructure.vectorstore import BaseVectorStore
 from ..services.knowledge_base import KnowledgeBaseService

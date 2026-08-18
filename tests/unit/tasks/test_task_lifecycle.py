@@ -15,6 +15,7 @@ from datetime import timedelta
 
 import pytest
 
+from comet_rag.core.time import Time
 from comet_rag.tasks import (
     InProcessExecutor,
     InvalidTransition,
@@ -22,7 +23,6 @@ from comet_rag.tasks import (
     TaskService,
     TaskStatus,
     TaskStore,
-    Time,
     VersionConflict,
 )
 from tests.contracts.support import wait_for_terminal

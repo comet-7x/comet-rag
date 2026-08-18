@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from comet_rag.composition.bootstrap import build_context, build_embedding_model
 from comet_rag.config.schemas import (
     APPConfig,
     Backend,
@@ -21,7 +22,6 @@ from comet_rag.config.schemas import (
     S3Config,
     ServerConfig,
 )
-from comet_rag.core.bootstrap import build_context, build_embedding_model
 from comet_rag.engines.loaders.types import SourceContent
 from comet_rag.engines.pipelines import DocxConfig, PipelineConfig
 from comet_rag.exceptions import CometRAGException
@@ -149,7 +149,7 @@ def test_injected_pipeline_config_keeps_deployment_docx_limits(
     def capture_runners(context, *, ingest_config):
         captured["config"] = ingest_config
 
-    monkeypatch.setattr("comet_rag.core.bootstrap.wire_runners", capture_runners)
+    monkeypatch.setattr("comet_rag.composition.bootstrap.wire_runners", capture_runners)
     build_context(
         config,
         embedding_model=embedding,
@@ -174,7 +174,7 @@ def test_explicit_docx_pipeline_fields_override_deployment_defaults(
     def capture_runners(context, *, ingest_config):
         captured["config"] = ingest_config
 
-    monkeypatch.setattr("comet_rag.core.bootstrap.wire_runners", capture_runners)
+    monkeypatch.setattr("comet_rag.composition.bootstrap.wire_runners", capture_runners)
     build_context(
         config,
         embedding_model=embedding,

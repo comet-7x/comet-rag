@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from comet_rag.core.time import Time
 from comet_rag.tasks import (
     InvalidTransition,
     Task,
@@ -30,7 +31,6 @@ from comet_rag.tasks import (
     TaskNotFound,
     TaskStatus,
     TaskStore,
-    Time,
     VersionConflict,
 )
 

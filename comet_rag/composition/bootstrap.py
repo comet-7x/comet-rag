@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from comet_rag.composition.context import Context, wire_runners
 from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.core.concurrency import Gate, build_gate
-from comet_rag.core.context import Context, wire_runners
 from comet_rag.core.degradation import DegradationController, DegradationSettings
 from comet_rag.core.logging import logger
 from comet_rag.engines.loaders import AutoLoader, LoaderRoute

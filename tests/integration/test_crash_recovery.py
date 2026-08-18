@@ -316,7 +316,7 @@ class _FakeContext:
 
 
 def _long_ago():
-    from comet_rag.tasks import Time  # noqa: PLC0415
+    from comet_rag.core.time import Time  # noqa: PLC0415
 
     return Time.now() - timedelta(hours=1)
 

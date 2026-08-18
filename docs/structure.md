@@ -18,12 +18,15 @@ comet_rag/
 │   ├── embedder.py     IO 道次：调模型服务
 │   ├── preprocessor.py CPU 道次：解析、切分
 │   └── maintenance.py  租约回收（**单进程模式绝不能加载**）
-├── core/               组合根 + 横切设施（见文末「接缝」）
+├── composition/        组合根 —— 依赖所有人，只有进程入口该 import 它
 │   ├── bootstrap.py    按配置装配全套资源；模型只在这里被 new
-│   ├── context.py      长生命周期资源的唯一持有者，逆序关停
+│   └── context.py      长生命周期资源的唯一持有者，逆序关停
+├── core/               零依赖内核 —— 被所有人依赖
 │   ├── concurrency.py  进程级并发闸门 Gate
 │   ├── degradation.py  分级降级控制器
-│   └── logging.py      横切：被各层依赖
+│   ├── logging.py      日志
+│   ├── tracing.py      追踪
+│   └── time.py         带时区的时间工厂
 ├── services/           用例编排
 │   ├── ingestion.py    IngestRunner：extracting → chunking → indexing
 │   ├── retrieval.py    RetrievalService：召回 → 重排
@@ -64,9 +67,9 @@ comet_rag/
 ```mermaid
 flowchart TD
     subgraph SVC["参考服务"]
+        boot["composition/<br/>组合根 · 依赖所有人"]
         api["api/<br/>路由 · 依赖注入"]
         wrk["workers/<br/>arq 消费进程"]
-        boot["core/bootstrap · context<br/>组合根"]
     end
 
     subgraph UC["用例编排"]
@@ -77,42 +80,42 @@ flowchart TD
     subgraph EXT["外部世界 · 通用框架"]
         infra["infrastructure/<br/>providers · vectorstore · database"]
         tsk["tasks/<br/>store · executor · runner"]
-        pol["core/concurrency · degradation<br/>闸门 · 降级"]
     end
 
     lib["engines/<br/>loaders · parsers · cleaners · chunkers<br/>pipelines · embedding 排程"]
 
     subgraph BASE["零依赖地基"]
         ports["ports/<br/>Protocol 契约 + 值对象"]
+        kernel["core/<br/>闸门 · 降级 · 日志 · 时间"]
         cfg["config/"]
         exc["exceptions/"]
-        log["core/logging · tracing<br/>横切"]
     end
 
-    api --> svc
-    api --> tsk
-    api --> sch
-    wrk --> tsk
     boot --> svc
     boot --> infra
     boot --> tsk
     boot --> lib
+    api --> svc
+    api --> tsk
+    api --> sch
+    wrk --> tsk
+    wrk --> boot
     svc --> lib
     svc --> infra
     svc --> tsk
     svc --> ports
-    svc --> pol
     infra --> lib
     infra --> ports
     tsk --> infra
     lib --> ports
 
-    svc -.-> log
-    infra -.-> log
-    tsk -.-> log
+    svc -.-> kernel
+    infra -.-> kernel
+    tsk -.-> kernel
+    api -.-> kernel
 
     classDef base fill:#eef,stroke:#88a
-    class ports,cfg,exc,log base
+    class ports,kernel,cfg,exc base
 ```
 
 **依赖只能向下。** `tests/unit/test_layering.py` 用 AST 强制三条：
@@ -122,6 +125,8 @@ flowchart TD
 | 1 | `engines/` 不得 import redis / pymilvus / sqlalchemy / arq / fastapi … | 装一个 docx 解析器要拖进一整套中间件，「库」那一半作废 |
 | 2 | `engines/` 只能 import `engines` 和 `ports`（**白名单**） | 底层反向依赖上层，`ports/` 存在的意义消失 |
 | 3 | `services/` 与 `engines/` 不得 import `infrastructure.providers` | 供应商细节泄漏到用例，换模型要改业务代码 |
+| 4 | `core/` 不得 import 本项目任何其他包 | 人人依赖的内核回头依赖上层，立刻出环 |
+| 5 | 顶层包之间不得成环 | 环里的包无法被单独理解或单独拿走 |
 
 第 2 条原本是黑名单（禁 api / workers / services）。黑名单只拦得住已经想到的
 那几个 —— 后来新增的 `application/` 就从缝里溜了进去。白名单没有这个失效模式：
@@ -189,7 +194,7 @@ flowchart TD
 
 | 想做的事 | 位置 |
 |---|---|
-| 接一个新的 embedding 服务 | `infrastructure/providers/embedding/`，继承 `BaseEmbeddingModel`，在 `core/bootstrap.py` 装配 |
+| 接一个新的 embedding 服务 | `infrastructure/providers/embedding/`，继承 `BaseEmbeddingModel`，在 `composition/bootstrap.py` 装配 |
 | 改「一次请求发几条、几个并发」 | `engines/embedding/batch.py` |
 | 改 embedding 契约本身 | `ports/embedding.py`（会波及所有适配器，pyright 会告诉你哪些） |
 | 加一种文件格式 | `engines/parsers/` + `engines/pipelines/hooks.py` 注册 |
@@ -199,21 +204,29 @@ flowchart TD
 | 加一个 HTTP 端点 | `api/routes/` + `schemas/` |
 | 改任务重试 / 断点续跑 | `tasks/runner.py`、`tasks/executor.py` |
 
-## 已知的接缝
+## 两条已经修掉的接缝
 
-诚实记录，避免下一个人（或下一次重构）踩进去。
+留在这里，因为它们说明了守卫为什么长成现在这样。
 
-**`core/` 其实是三样东西。** 依赖图里 `core` 的箭头方向看着自相矛盾，因为它
-同时装着：
+**`core/` 曾经是三样东西**：组合根（顶层，依赖所有人）、策略对象（中层）、
+横切设施（底层，人人依赖）。方向相反的东西挤在一个包里，依赖图上 `core`
+的箭头就自相矛盾 —— 既指向 `services`，又被 `services` 指向。于是
+「`services` 不得依赖 `core`」这条规则**没法一刀切**，也就写不出守卫。
 
-- **组合根**（`bootstrap.py`、`context.py`）—— 在最顶层，依赖所有人；
-- **策略对象**（`concurrency.py`、`degradation.py`）—— 在中层，被 `services/` 依赖；
-- **横切设施**（`logging.py`、`tracing.py`）—— 在最底层，被 `services`、
-  `infrastructure`、`tasks` 依赖。
+组合根迁到 `composition/` 之后，`core/` 只剩一个含义，第 4 条守卫才成立。
 
-所以「`services/` 不得依赖 `core/`」这条规则**没法一刀切**，也就没有守卫。
-真要收干净，应当把横切设施单独提出来。目前记为已知债务。
+**`infrastructure` 与 `tasks` 曾经互指**，构成包级循环：
+`infrastructure/knowledge_base.py` 只为取个当前时间就 import 了
+`tasks.models.Time`，而 `tasks/store_postgres.py` 反过来 import
+`infrastructure.database`。
+
+环的代价不在于跑不起来（跑得起来），而在于这两个包**再也不能被单独理解或
+单独拿走**。`Time` 是个只依赖标准库的时间工具，跟"任务"毫无关系，挪进
+`core/time.py` 环就断了。第 5 条守卫盯着它不再回来。
+
+## 仍在的接缝
 
 **`tasks/` 依赖 `infrastructure/database`。** `store_postgres.py` 需要会话与
-ORM 表。两者在分层图里同级，不构成反向依赖，但确实让「任务框架可单独复用」
-这句话打了折 —— 复用时得连 `infrastructure/database` 一起拿。
+ORM 表。这是单向的、不成环，但确实让「任务框架可单独复用」打了折 —— 复用时
+得连 `infrastructure/database` 一起拿。要收干净得给任务框架定义自己的存储
+Port，目前记为已知债务。

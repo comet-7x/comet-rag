@@ -72,7 +72,7 @@ class KnowledgeBaseRepositoryContract:
     async def test_list_is_newest_first(self, repo: KnowledgeBaseRepository) -> None:
         from datetime import timedelta
 
-        from comet_rag.tasks.models import Time
+        from comet_rag.core.time import Time
 
         base = Time.now()
         await repo.acreate(make_kb("old", created_at=base - timedelta(hours=2)))

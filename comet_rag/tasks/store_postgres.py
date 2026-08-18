@@ -27,9 +27,10 @@ from typing import Any
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
+from comet_rag.core.time import Time
 from comet_rag.infrastructure.database.models import TaskEventRow, TaskRow
 from comet_rag.infrastructure.database.session import Database, affected_rows
-from comet_rag.tasks.models import Task, TaskEvent, TaskStatus, Time
+from comet_rag.tasks.models import Task, TaskEvent, TaskStatus
 from comet_rag.tasks.store import TaskNotFound, TaskStore, VersionConflict
 
 #: 这些字段在 Task 上是复杂结构，落库走 JSON 列。

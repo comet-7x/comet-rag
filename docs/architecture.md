@@ -9,9 +9,9 @@ pydantic/httpx/lxml 一类的纯计算包；服务那一半在它之上加了任
 ## 分层
 
 ```
-    api/            HTTP 入口（FastAPI）        ┐
-    workers/        消费端进程（arq）           ├─ 参考服务
-    core/           组合根、闸门、降级、日志     ┘
+    composition/    组合根：把配置装配成一整套资源  ┐
+    api/            HTTP 入口（FastAPI）          ├─ 参考服务
+    workers/        消费端进程（arq）             ┘
         ↓
     services/       用例编排（入库、检索、知识库）
     schemas/        HTTP 请求/响应 DTO
@@ -21,11 +21,12 @@ pydantic/httpx/lxml 一类的纯计算包；服务那一半在它之上加了任
         ↓
     engines/        纯计算：加载、解析、清洗、切分、排程   ← 「库」就是这一层
         ↓
-    ports/          契约（Protocol）与其词汇表（值对象）   ← 零依赖地基
-    config/  exceptions/
+    ports/          契约（Protocol）与其词汇表（值对象）   ┐
+    core/           闸门、降级、日志、时间 —— 人人依赖       ├─ 零依赖地基
+    config/  exceptions/                                    ┘
 ```
 
-依赖方向**只能向下**。`tests/unit/test_layering.py` 用 AST 强制执行三条：
+依赖方向**只能向下**。`tests/unit/test_layering.py` 用 AST 强制执行五条：
 
 1. `engines/` 不得 import 任何基础设施包（redis / pymilvus / sqlalchemy /
    arq / fastapi …）。破了这条，用户为了跑一个 docx 解析器就得装一整套中间件，
@@ -33,6 +34,9 @@ pydantic/httpx/lxml 一类的纯计算包；服务那一半在它之上加了任
 2. `engines/` 只能 import `engines` 与 `ports`（**白名单**）。
 3. `services/` 与 `engines/` 不得直接 import `infrastructure.providers` ——
    具体供应商只在组合根选择。
+4. `core/` 不得 import 本项目任何其他包。它是人人依赖的零依赖内核，
+   一旦回头依赖上层就出环。
+5. 顶层包之间不得成环。环里的包无法被单独理解或单独拿走。
 
 第 2 条原本是一份黑名单（禁止 api / workers / services）。黑名单只拦得住
 已经想到的那几个包：后来新增的 `application/` 就从缝里溜了进去，`pipeline.py`
@@ -40,7 +44,7 @@ pydantic/httpx/lxml 一类的纯计算包；服务那一半在它之上加了任
 和守卫执行的规则不是同一条，中间差出的那个洞刚好够放一个错误。** 改成白名单
 之后没有这个失效模式：新包默认被拒。
 
-还有第四条守卫：单进程模式下的任何模块都不得 import `workers.maintenance`
+还有第六条守卫：单进程模式下的任何模块都不得 import `workers.maintenance`
 （租约回收），理由见下文「崩溃恢复」。
 
 ### 为什么 `ports/` 在最底层

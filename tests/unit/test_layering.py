@@ -156,7 +156,7 @@ def test_business_code_depends_on_model_ports(module: Path) -> None:
     }
     assert not hits, (
         f"{module.relative_to(PROJECT_ROOT)} 直接依赖了模型适配器：{sorted(hits)}。"
-        "请依赖 comet_rag.ports，并在 core/bootstrap.py 装配实现。"
+        "请依赖 comet_rag.ports，并在 composition/bootstrap.py 装配实现。"
     )
 
 
@@ -166,7 +166,15 @@ def test_business_code_depends_on_model_ports(module: Path) -> None:
 MAINTENANCE = "comet_rag.workers.maintenance"
 
 #: 单进程部署会加载的东西：组合根、API、以及任务框架本身
-SINGLE_PROCESS_TREES = ("core", "api", "tasks", "services", "engines", "infrastructure")
+SINGLE_PROCESS_TREES = (
+    "core",
+    "composition",
+    "api",
+    "tasks",
+    "services",
+    "engines",
+    "infrastructure",
+)
 
 
 def _single_process_modules() -> list[Path]:
@@ -188,7 +196,7 @@ def test_single_process_paths_never_pull_in_lease_reclaim(module: Path) -> None:
 
     保证方式不是加一个开关（开关会被配错），而是**结构上够不着**：
     `sweep_cron` 只在 `workers/` 下注册，单进程部署压根不加载那个包。
-    本用例把这条结构性保证钉住 —— 哪天有人图省事在 `core/bootstrap.py` 里
+    本用例把这条结构性保证钉住 —— 哪天有人图省事在 `composition/bootstrap.py` 里
     import 它，这里立刻变红。
     """
     tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
@@ -211,7 +219,7 @@ CONCRETE_MODELS = (
 )
 
 #: 只有这些地方可以直接构造：组合根负责装配，模型模块自己是定义处。
-MAY_CONSTRUCT_MODELS = ("core/bootstrap.py",)
+MAY_CONSTRUCT_MODELS = ("composition/bootstrap.py",)
 
 
 def _model_construction_sites(module: Path) -> set[str]:
@@ -263,3 +271,128 @@ def test_models_are_only_constructed_by_the_composition_root(module: Path) -> No
         f"绕过了 build_context() 的 bind_gate() —— 闸门会静默失效。"
         f"请从 Context 取，或在 core/bootstrap.py 里装配。"
     )
+
+
+# ── `core/` 是零依赖内核（第 4 条守卫）────────────────────────────────────
+
+
+def _core_modules() -> list[Path]:
+    return sorted(
+        p
+        for p in (PROJECT_ROOT / "comet_rag" / "core").rglob("*.py")
+        if "__pycache__" not in p.parts
+    )
+
+
+@pytest.mark.parametrize("module", _core_modules(), ids=lambda p: p.name)
+def test_core_is_a_zero_dependency_kernel(module: Path) -> None:
+    """**`core/` 不得 import 本项目任何其他包。**
+
+    这里装的是日志、追踪、并发闸门、降级控制器 —— 被 `services/`、
+    `infrastructure/`、`tasks/`、`api/` 全都依赖的横切设施。既然人人依赖它，
+    它就必须在依赖图的最底下，否则立刻出环。
+
+    这条规则此前写不出来，因为 `core/` 同时还装着组合根（`bootstrap.py`、
+    `context.py`），而组合根依赖所有人。同一个包里两个方向相反的东西，
+    依赖图上 `core` 的箭头就自相矛盾：既指向 services，又被 services 指向。
+    组合根已迁至 `composition/`，这条守卫才成立。
+    """
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    violations = {
+        name
+        for name in _imported_full(tree)
+        if name.startswith("comet_rag.") and not name.startswith("comet_rag.core")
+    }
+    assert not violations, (
+        f"{module.relative_to(PROJECT_ROOT)} 依赖了 {sorted(violations)}。"
+        f"core/ 是零依赖内核，人人依赖它；它一旦回头依赖上层就会出环。"
+        f"需要上层能力的东西属于 composition/ 或 services/。"
+    )
+
+
+def test_core_guard_actually_detects_violations() -> None:
+    """守卫自检：确保上面那条不是永远为真。"""
+    tree = ast.parse(
+        "from comet_rag.core.logging import logger\n"
+        "from comet_rag.services.retrieval import RetrievalService\n"
+    )
+    violations = {
+        name
+        for name in _imported_full(tree)
+        if name.startswith("comet_rag.") and not name.startswith("comet_rag.core")
+    }
+    assert violations == {"comet_rag.services.retrieval"}
+
+
+# ── 包级依赖不得成环（第 5 条守卫）──────────────────────────────────────────
+
+
+def _package_edges() -> dict[str, set[str]]:
+    """把模块级 import 收敛成顶层包之间的有向边。"""
+    root = PROJECT_ROOT / "comet_rag"
+    edges: dict[str, set[str]] = {}
+    for path in root.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        relative = path.relative_to(root)
+        source = relative.parts[0] if len(relative.parts) > 1 else "(top)"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for name in _imported_full(tree):
+            if not name.startswith("comet_rag."):
+                continue
+            target = name.split(".")[1]
+            if target != source:
+                edges.setdefault(source, set()).add(target)
+    return edges
+
+
+def _find_cycle(edges: dict[str, set[str]]) -> list[str] | None:
+    """返回任意一条环（含首尾同名），没有环时返回 None。"""
+    state: dict[str, int] = {}
+    stack: list[str] = []
+
+    def walk(node: str) -> list[str] | None:
+        state[node] = 1
+        stack.append(node)
+        for nxt in sorted(edges.get(node, ())):
+            if state.get(nxt) == 1:
+                return stack[stack.index(nxt) :] + [nxt]
+            if state.get(nxt) is None and (found := walk(nxt)):
+                return found
+        stack.pop()
+        state[node] = 2
+        return None
+
+    for node in sorted(edges):
+        if state.get(node) is None and (found := walk(node)):
+            return found
+    return None
+
+
+def test_no_package_level_import_cycles() -> None:
+    """**顶层包之间不得出现循环依赖。**
+
+    此前 `infrastructure` 与 `tasks` 互指：`knowledge_base.py` 只为取个当前
+    时间就 import 了 `tasks.models.Time`，而 `store_postgres.py` 反过来 import
+    `infrastructure.database`。
+
+    环的代价不在于 Python 跑不起来（它跑得起来），而在于**这两个包再也不能
+    单独理解或单独拿走**：读任一个都得先读另一个，而且谁先初始化取决于导入
+    顺序。`Time` 是个只依赖标准库的时间工具，跟"任务"毫无关系，挪进
+    `core/` 环就断了。
+
+    逐条列出所有边太脆（每加一个 import 就要改测试），所以这里只断言**无环**
+    —— 这是结构性质，不是清单。
+    """
+    cycle = _find_cycle(_package_edges())
+    assert cycle is None, (
+        f"顶层包出现循环依赖：{' → '.join(cycle)}。"
+        f"环里的包无法被单独理解或单独复用；请把被共用的那部分下沉到"
+        f"两者都能依赖的低层包（如 core/ 或 ports/）。"
+    )
+
+
+def test_cycle_detector_actually_finds_cycles() -> None:
+    """守卫自检：环检测本身要能真的发现环。"""
+    assert _find_cycle({"a": {"b"}, "b": {"c"}, "c": {"a"}}) is not None
+    assert _find_cycle({"a": {"b"}, "b": {"c"}}) is None
