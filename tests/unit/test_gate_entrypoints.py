@@ -252,6 +252,7 @@ def _scoped_classes(
     module_name: str,
     scope: tuple[str, ...] = (),
     inherited_bindings: dict[str, str] | None = None,
+    function_bindings: dict[str, str] | None = None,
 ) -> Iterator[tuple[str, ast.ClassDef, set[str]]]:
     """Yield classes and resolved bases using lexical import bindings."""
     bindings = dict(inherited_bindings or {})
@@ -278,24 +279,33 @@ def _scoped_classes(
                 if (name := _ast_base_name(base, bindings)) is not None
             }
             yield qualified_name, item, bases
+            method_bindings = bindings if function_bindings is None else function_bindings
             yield from _scoped_classes(
                 item.body,
                 module_name,
                 class_scope,
                 bindings,
+                method_bindings,
             )
             bindings[item.name] = qualified_name
             continue
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            inherited = bindings if function_bindings is None else function_bindings
             yield from _scoped_classes(
                 item.body,
                 module_name,
                 (*scope, item.name, "<locals>"),
-                bindings,
+                inherited,
             )
             continue
         for block in _nested_statement_blocks(item):
-            yield from _scoped_classes(block, module_name, scope, bindings)
+            yield from _scoped_classes(
+                block,
+                module_name,
+                scope,
+                bindings,
+                function_bindings,
+            )
 
 
 def _gated_classes_from_modules(
@@ -477,6 +487,20 @@ def other_factory():
 
     class Unrelated(Resource):
         def request(self): ...
+
+class ClassScopeDoesNotEncloseMethods:
+    from comet_rag.ports.gate import GatedResource as ClassResource
+
+    def factory():
+        class AlsoUnrelated(ClassResource):
+            def request(self): ...
+
+class MethodFactory:
+    def factory():
+        from comet_rag.ports.gate import GatedResource as MethodResource
+
+        class MethodLocal(MethodResource):
+            def request(self): ...
 """
     )
 
@@ -485,6 +509,7 @@ def other_factory():
         "comet_rag.synthetic.Outer.Nested",
         "comet_rag.synthetic.factory.<locals>.Local",
         "comet_rag.synthetic.gated_factory.<locals>.GatedLocal",
+        "comet_rag.synthetic.MethodFactory.factory.<locals>.MethodLocal",
     }
 
 
