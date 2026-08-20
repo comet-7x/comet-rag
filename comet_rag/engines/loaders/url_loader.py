@@ -4,7 +4,7 @@ import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager, suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, final
 from urllib.parse import urlparse
 
 import httpx
@@ -473,6 +473,7 @@ class URLLoader(BaseLoader):
             path=Path(file_path), source=source, is_temp=True, metadata=metadata
         )
 
+    @final
     def batch_load(
         self,
         sources: list[SourceContent] | list[str],
@@ -511,6 +512,7 @@ class URLLoader(BaseLoader):
             futures = [executor.submit(_gated, s) for s in sources]
             return [f.result() for f in futures]
 
+    @final
     async def abatch_load(
         self,
         sources: list[SourceContent] | list[str],

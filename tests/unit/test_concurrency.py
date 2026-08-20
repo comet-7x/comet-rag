@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -409,11 +410,10 @@ def test_direct_embed_call_still_goes_through_the_gate() -> None:
     model = RecordingEmbedding(delay=0.02)
     model.bind_gate(Gate(limit=2))
 
-    threads = [threading.Thread(target=lambda: model.embed("x")) for _ in range(8)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(model.embed, "x") for _ in range(8)]
+        for future in futures:
+            future.result()  # 工作线程异常必须让测试失败，不能被 join() 吞掉
 
     assert model.peak <= 2, f"直接调 embed 绕过了闸门：峰值 {model.peak}"
 
@@ -430,13 +430,10 @@ def test_sync_rank_also_goes_through_the_gate() -> None:
     reranker = RecordingReranker(RecordingEmbedding(delay=0.02))
     reranker.bind_gate(Gate(limit=2))
 
-    threads = [
-        threading.Thread(target=lambda: reranker.rank("q", ["d"])) for _ in range(8)
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(reranker.rank, "q", ["d"]) for _ in range(8)]
+        for future in futures:
+            future.result()  # 传播 rank() 的异常，避免 peak 保持为 0 时假通过
 
     assert reranker.sink.peak <= 2, (
         f"同步 rank 绕过了闸门：峰值 {reranker.sink.peak}"

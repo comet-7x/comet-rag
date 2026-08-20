@@ -305,7 +305,7 @@ def test_models_are_only_constructed_by_the_composition_root(module: Path) -> No
     assert not hits, (
         f"{module.relative_to(PROJECT_ROOT)} 直接构造了 {sorted(hits)}，"
         f"绕过了 build_context() 的 bind_gate() —— 闸门会静默失效。"
-        f"请从 Context 取，或在 core/bootstrap.py 里装配。"
+        f"请从 Context 取，或在 composition/bootstrap.py 里装配。"
     )
 
 

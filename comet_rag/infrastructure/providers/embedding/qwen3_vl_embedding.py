@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, final
 
 from httpx import AsyncClient, Client
 from openai.types.chat import ChatCompletionMessageParam
@@ -450,6 +450,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         """异步生成文本、图片或二者组合内容的向量。"""
         return await self.aembed_media(content, **kwargs)
 
+    @final
     def tokenize(
         self,
         embedding_data: EmbeddingData,
@@ -468,6 +469,23 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         Returns:
             TokenizeResponse: tokenize 响应
         """
+        return self._through_gate_sync(
+            lambda: self._tokenize(
+                embedding_data,
+                continue_final_message=continue_final_message,
+                return_token_strs=return_token_strs,
+                **kwargs,
+            )
+        )
+
+    def _tokenize(
+        self,
+        embedding_data: EmbeddingData,
+        continue_final_message: bool = False,
+        return_token_strs: bool = False,
+        **kwargs: Any,
+    ) -> TokenizeResponse:
+        """执行一次同步 tokenize 请求；公开入口负责获取闸门名额。"""
         try:
             embedding_data = self._prepare_embedding_data(embedding_data)
             messages = self._create_messages_params(
@@ -498,6 +516,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
             )
             raise CometRAGException(error_msg) from e
 
+    @final
     async def atokenize(
         self,
         embedding_data: EmbeddingData,
@@ -516,6 +535,23 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         Returns:
             TokenizeResponse: tokenize 响应
         """
+        return await self._through_gate(
+            lambda: self._atokenize(
+                embedding_data,
+                continue_final_message=continue_final_message,
+                return_token_strs=return_token_strs,
+                **kwargs,
+            )
+        )
+
+    async def _atokenize(
+        self,
+        embedding_data: EmbeddingData,
+        continue_final_message: bool = False,
+        return_token_strs: bool = False,
+        **kwargs: Any,
+    ) -> TokenizeResponse:
+        """执行一次异步 tokenize 请求；公开入口负责获取闸门名额。"""
         try:
             embedding_data = await asyncio.to_thread(
                 self._prepare_embedding_data, embedding_data
@@ -546,11 +582,23 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
             error_msg = f"{self.__class__.__name__} | atokenize 方法操作发生非预期错误：{str(e)}"
             raise CometRAGException(error_msg) from e
 
+    @final
     def detokenize(
         self,
         tokens: list[int],
         **kwargs: Any,
     ) -> DetokenizeResponse:
+        """同步还原 token；与其他模型请求共用进程级闸门。"""
+        return self._through_gate_sync(
+            lambda: self._detokenize(tokens, **kwargs)
+        )
+
+    def _detokenize(
+        self,
+        tokens: list[int],
+        **kwargs: Any,
+    ) -> DetokenizeResponse:
+        """执行一次同步 detokenize 请求。"""
         try:
             response = self.sync_client.post(
                 f"{self._base_url.removesuffix('/v1')}/detokenize",
@@ -570,11 +618,23 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
             error_msg = f"{self.__class__.__name__} | detokenize 方法操作发生非预期错误：{str(e)}"
             raise CometRAGException(error_msg) from e
 
+    @final
     async def adetokenize(
         self,
         tokens: list[int],
         **kwargs: Any,
     ) -> DetokenizeResponse:
+        """异步还原 token；与其他模型请求共用进程级闸门。"""
+        return await self._through_gate(
+            lambda: self._adetokenize(tokens, **kwargs)
+        )
+
+    async def _adetokenize(
+        self,
+        tokens: list[int],
+        **kwargs: Any,
+    ) -> DetokenizeResponse:
+        """执行一次异步 detokenize 请求。"""
         try:
             response = await self.async_client.post(
                 f"{self._base_url.removesuffix('/v1')}/detokenize",

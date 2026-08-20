@@ -14,10 +14,11 @@
 
 漏掉一道门不会报错、不会打日志 —— 限流只是悄悄失效，而这个项目实测过一次
 "配置写 4、实际 128"。所以这条守卫的判据不是"有没有加闸"，而是
-**每个公开方法都必须被显式归入下面三类之一**：
+**每个公开方法都必须被显式归入下面四类之一**：
 
     direct    —— 自己进闸门（体内出现 `_through_gate*`）
     indirect  —— 经由某个 direct 方法进闸门（会核对它确实调了）
+    delegated —— 路由器把请求交给另一个受闸门保护的资源
     exempt    —— 不发下游请求（关闭、清理这类）
 
 新增一个公开方法却没归类，测试当场失败。**白名单没有"忘了新增的那个"这种
@@ -35,40 +36,128 @@ from typing import Any
 import pytest
 
 from comet_rag.core.concurrency import Gate
+from comet_rag.engines.loaders.auto_loader import AutoLoader, LoaderRoute
 from comet_rag.engines.loaders.base_loader import BaseLoader
+from comet_rag.engines.loaders.local_loader import LocalLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
+from comet_rag.engines.loaders.url_loader import URLLoader
+from comet_rag.infrastructure.loaders.s3_loader import S3Loader
 from comet_rag.infrastructure.providers.embedding.base import (
     BaseEmbeddingModel,
     MultimodalEmbeddingMixin,
 )
+from comet_rag.infrastructure.providers.embedding.openai_embedding_model import (
+    OpenAIEmbeddingModel,
+)
+from comet_rag.infrastructure.providers.embedding.qwen3_vl_embedding import (
+    DetokenizeResponse,
+    EmbeddingData,
+    Qwen3VLEmbeddingModel,
+    TokenizeResponse,
+)
 from comet_rag.infrastructure.providers.reranker.base import BaseReranker
+from comet_rag.infrastructure.providers.reranker.qwen3_vl_reranker import (
+    Qwen3VLReranker,
+)
+from comet_rag.ports import MediaResource
 from comet_rag.ports.gate import GatedResource
 
-#: 三类的含义见模块文档。改动这张表时请连同理由一起写。
+#: 四类的含义见模块文档。改动这张表时请连同理由一起写。
 CLASSIFICATION: dict[type, dict[str, set[str]]] = {
     BaseEmbeddingModel: {
         "direct": {"embed", "embed_batch", "embed_document", "embed_query", "aembed", "aembed_batch"},
         # 走 `aembed`，由它进闸门
         "indirect": {"aembed_document", "aembed_query"},
+        "delegated": set(),
         "exempt": {"aclose"},
     },
     MultimodalEmbeddingMixin: {
         "direct": {"embed_media", "aembed_media"},
         "indirect": set(),
+        "delegated": set(),
         "exempt": set(),
     },
     BaseReranker: {
         "direct": {"score", "ascore"},
         # 翻译成供应商格式之后走 `score`/`ascore`
         "indirect": {"rank", "arank"},
+        "delegated": set(),
         "exempt": {"aclose"},
     },
     BaseLoader: {
         "direct": {"load", "aload"},
         # 每个来源各走一次 `load`/`aload`，所以是每次请求一个名额
         "indirect": {"batch_load", "abatch_load"},
+        "delegated": set(),
         "exempt": {"cleanup", "acleanup"},
     },
+    Qwen3VLEmbeddingModel: {
+        # 供应商专属 token API 同样会发 HTTP 请求，不能躲在具体类里绕过预算。
+        "direct": {"tokenize", "atokenize", "detokenize", "adetokenize"},
+        "indirect": {
+            "embed_image",
+            "aembed_image",
+            "embed_content",
+            "aembed_content",
+            "get_output_dim",
+            "get_max_model_len",
+        },
+        "delegated": set(),
+        "exempt": {"aclose"},
+    },
+    URLLoader: {
+        # 为了复用 client，批量实现绕过 BaseLoader.batch_load，必须在这里自己进闸。
+        "direct": {"abatch_load"},
+        "indirect": set(),
+        # 同步逐请求闸门位于 `_batch_load_with` 的 worker 中。
+        "delegated": {"batch_load"},
+        "exempt": {"cleanup", "acleanup", "aclose"},
+    },
+    AutoLoader: {
+        "direct": set(),
+        "indirect": set(),
+        # 路由器自己不持有闸门；名额由匹配到的叶子 loader 获取。
+        "delegated": {"batch_load", "abatch_load"},
+        "exempt": {
+            "bind_gate",
+            "cleanup",
+            "acleanup",
+            "aclose",
+            "default",
+            "default_routes",
+        },
+    },
+    LocalLoader: {
+        "direct": set(),
+        "indirect": set(),
+        "delegated": set(),
+        "exempt": {"cleanup"},
+    },
+    S3Loader: {
+        "direct": set(),
+        "indirect": set(),
+        "delegated": set(),
+        "exempt": {"cleanup", "acleanup", "aclose"},
+    },
+    OpenAIEmbeddingModel: {
+        "direct": set(),
+        "indirect": set(),
+        "delegated": set(),
+        "exempt": {"aclose"},
+    },
+    Qwen3VLReranker: {
+        "direct": set(),
+        "indirect": set(),
+        "delegated": set(),
+        "exempt": {"aclose"},
+    },
+}
+
+#: delegated 不能只凭分类表口头承诺；每个入口都要指出真实委派目标。
+DELEGATION_TARGETS: dict[tuple[type, str], str] = {
+    (URLLoader, "batch_load"): "_batch_load_with",
+    (AutoLoader, "batch_load"): "batch_load",
+    (AutoLoader, "abatch_load"): "abatch_load",
 }
 
 
@@ -89,12 +178,35 @@ def _self_attributes(method: Any) -> set[str]:
     }
 
 
+def _all_attributes(method: Any) -> set[str]:
+    """方法体里所有属性访问；用于验证路由器确实委派给另一个公开入口。"""
+    source = textwrap.dedent(inspect.getsource(method))
+    return {
+        node.attr
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Attribute)
+    }
+
+
 def _public_methods(cls: type) -> dict[str, Any]:
     """类**自己定义**的公开方法。继承自 `GatedResource` 的不算。"""
+    methods: dict[str, Any] = {}
+    for name, value in vars(cls).items():
+        if name.startswith("_"):
+            continue
+        method = value.__func__ if isinstance(value, (classmethod, staticmethod)) else value
+        if callable(method):
+            methods[name] = method
+    return methods
+
+
+def _direct_entry_names(cls: type) -> set[str]:
+    """当前类及其基类声明的所有 direct 入口。"""
     return {
-        name: value
-        for name, value in vars(cls).items()
-        if not name.startswith("_") and callable(value)
+        name
+        for base in cls.__mro__
+        if base in CLASSIFICATION
+        for name in CLASSIFICATION[base]["direct"]
     }
 
 
@@ -132,13 +244,33 @@ def test_direct_entries_really_enter_the_gate(cls: type) -> None:
 @pytest.mark.parametrize("cls", list(CLASSIFICATION), ids=lambda c: c.__name__)
 def test_indirect_entries_really_delegate_to_a_direct_one(cls: type) -> None:
     """indirect 同理：必须能指出它经由哪个 direct 方法进闸门。"""
-    direct = CLASSIFICATION[cls]["direct"]
+    direct = _direct_entry_names(cls)
     for name in sorted(CLASSIFICATION[cls]["indirect"]):
         method = _public_methods(cls)[name]
         assert _self_attributes(method) & direct, (
             f"{cls.__name__}.{name} 归类为 indirect，但体内没有调用任何 direct 入口"
             f"（{sorted(direct)}）—— 它可能根本没经过闸门"
         )
+
+
+@pytest.mark.parametrize("cls", list(CLASSIFICATION), ids=lambda c: c.__name__)
+def test_delegated_entries_really_call_another_request_entry(cls: type) -> None:
+    """delegated 入口必须把工作交给另一个已登记的请求入口。"""
+    for name in sorted(CLASSIFICATION[cls]["delegated"]):
+        method = _public_methods(cls)[name]
+        target = DELEGATION_TARGETS[(cls, name)]
+        assert target in _all_attributes(method), (
+            f"{cls.__name__}.{name} 归类为 delegated，但没有调用约定目标 {target}"
+        )
+
+
+def test_every_delegated_entry_declares_its_target() -> None:
+    declared = {
+        (cls, name)
+        for cls, groups in CLASSIFICATION.items()
+        for name in groups["delegated"]
+    }
+    assert declared == set(DELEGATION_TARGETS)
 
 
 @pytest.mark.parametrize("cls", list(CLASSIFICATION), ids=lambda c: c.__name__)
@@ -156,18 +288,21 @@ def test_direct_entries_cannot_be_overridden(cls: type) -> None:
 
 
 def test_all_gated_classes_are_covered() -> None:
-    """**新增一个受闸门保护的基类，也要进这张表。**
+    """**抽象基类和具体适配器都必须进入这张表。**
 
-    否则整个类都在守卫视野之外 —— 那正是这条守卫要防的失效模式的更大版本。
+    旧实现只检查抽象类，因此 Qwen 在具体类上新增四个公开 HTTP 入口时，整组
+    守卫完全看不见。只要生产类自己声明了公开方法，就必须逐个分类。
     """
     known = set(CLASSIFICATION)
     missing = {
         cls
         for cls in _gated_subclasses(GatedResource)
-        if cls not in known and inspect.isabstract(cls)
+        if cls.__module__.startswith("comet_rag.")
+        and _public_methods(cls)
+        and cls not in known
     }
     assert not missing, (
-        f"这些受闸门保护的基类还没进分类表：{sorted(c.__name__ for c in missing)}"
+        f"这些受闸门保护的类还没进分类表：{sorted(c.__name__ for c in missing)}"
     )
 
 
@@ -224,6 +359,94 @@ class _StubLoader(BaseLoader):
         return None
 
 
+class _StubQwen(Qwen3VLEmbeddingModel):
+    """不建 HTTP client，只验证 Qwen 公开外壳的闸门记账。"""
+
+    def __init__(self) -> None:
+        self._output_dim: int | None = None
+        self._max_model_len: int | None = None
+
+    def _embed(
+        self,
+        embedding_data: Any,
+        system_prompt: Any = None,
+        encoding_format: Any = None,
+        continue_final_message: bool = True,
+        add_special_tokens: bool = True,
+        **kwargs: Any,
+    ) -> list[float]:
+        return [0.0]
+
+    async def _aembed(
+        self,
+        embedding_data: Any,
+        system_prompt: Any = None,
+        encoding_format: Any = None,
+        continue_final_message: bool = True,
+        add_special_tokens: bool = True,
+        **kwargs: Any,
+    ) -> list[float]:
+        return [0.0]
+
+    def _embed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
+        return [0.0]
+
+    async def _aembed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
+        return [0.0]
+
+    def _tokenize(
+        self,
+        embedding_data: EmbeddingData,
+        continue_final_message: bool = False,
+        return_token_strs: bool = False,
+        **kwargs: Any,
+    ) -> TokenizeResponse:
+        return TokenizeResponse(count=1, max_model_len=1024, tokens=[1])
+
+    async def _atokenize(
+        self,
+        embedding_data: EmbeddingData,
+        continue_final_message: bool = False,
+        return_token_strs: bool = False,
+        **kwargs: Any,
+    ) -> TokenizeResponse:
+        return TokenizeResponse(count=1, max_model_len=1024, tokens=[1])
+
+    def _detokenize(self, tokens: list[int], **kwargs: Any) -> DetokenizeResponse:
+        return DetokenizeResponse(prompt="x")
+
+    async def _adetokenize(
+        self, tokens: list[int], **kwargs: Any
+    ) -> DetokenizeResponse:
+        return DetokenizeResponse(prompt="x")
+
+
+class _StubURLLoader(URLLoader):
+    """保留 URLLoader 的批量外壳，但把真实下载替换成内存结果。"""
+
+    def _shared_client(self) -> Any:
+        return object()
+
+    def _shared_async_client(self) -> Any:
+        return object()
+
+    def _load_impl(
+        self, source: SourceContent | str, *, download_config: Any = None, client: Any = None
+    ) -> LoaderContent:
+        return LoaderContent(path=Path("/dev/null"), source=SourceContent("x"))
+
+    async def _aload_impl(
+        self, source: SourceContent | str, *, download_config: Any = None, client: Any = None
+    ) -> LoaderContent:
+        return LoaderContent(path=Path("/dev/null"), source=SourceContent("x"))
+
+
+def _stub_auto_loader() -> AutoLoader:
+    return AutoLoader(
+        [LoaderRoute(name="all", matcher=lambda _source: True, loader=_StubLoader())]
+    )
+
+
 #: 每个登记入口调一次要花掉的名额数。绝大多数是 1；批量入口按来源数算。
 #: 写死期望值而不是"大于 0"：**重复取用与完全不取一样是缺陷**（前者会死锁）。
 SYNC_INVOCATIONS: list[tuple[str, Any, int]] = [
@@ -236,6 +459,18 @@ SYNC_INVOCATIONS: list[tuple[str, Any, int]] = [
     ("BaseReranker.rank", lambda m: m.rank("q", ["d"]), 1),
     ("BaseLoader.load", lambda m: m.load("s"), 1),
     ("BaseLoader.batch_load", lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2), 3),
+    ("Qwen3VLEmbeddingModel.tokenize", lambda m: m.tokenize(EmbeddingData(text="x")), 1),
+    ("Qwen3VLEmbeddingModel.detokenize", lambda m: m.detokenize([1]), 1),
+    (
+        "Qwen3VLEmbeddingModel.embed_image",
+        lambda m: m.embed_image(MediaResource(data=b"x", mimetype="image/png")),
+        1,
+    ),
+    ("Qwen3VLEmbeddingModel.embed_content", lambda m: m.embed_content("x"), 1),
+    ("Qwen3VLEmbeddingModel.get_output_dim", lambda m: m.get_output_dim(), 1),
+    ("Qwen3VLEmbeddingModel.get_max_model_len", lambda m: m.get_max_model_len(), 1),
+    ("URLLoader.batch_load", lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2), 3),
+    ("AutoLoader.batch_load", lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2), 3),
 ]
 
 #: 异步入口同样要量。第一版把 `a` 开头的排除在完整性检查外，理由写的是
@@ -256,6 +491,28 @@ ASYNC_INVOCATIONS: list[tuple[str, Any, int]] = [
         lambda m: m.abatch_load(["a", "b", "c"], max_concurrency=2),
         3,
     ),
+    (
+        "Qwen3VLEmbeddingModel.atokenize",
+        lambda m: m.atokenize(EmbeddingData(text="x")),
+        1,
+    ),
+    ("Qwen3VLEmbeddingModel.adetokenize", lambda m: m.adetokenize([1]), 1),
+    (
+        "Qwen3VLEmbeddingModel.aembed_image",
+        lambda m: m.aembed_image(MediaResource(data=b"x", mimetype="image/png")),
+        1,
+    ),
+    ("Qwen3VLEmbeddingModel.aembed_content", lambda m: m.aembed_content("x"), 1),
+    (
+        "URLLoader.abatch_load",
+        lambda m: m.abatch_load(["a", "b", "c"], max_concurrency=2),
+        3,
+    ),
+    (
+        "AutoLoader.abatch_load",
+        lambda m: m.abatch_load(["a", "b", "c"], max_concurrency=2),
+        3,
+    ),
 ]
 
 _STUBS: dict[str, Any] = {
@@ -263,6 +520,9 @@ _STUBS: dict[str, Any] = {
     "MultimodalEmbeddingMixin": _StubMultimodal,
     "BaseReranker": _StubReranker,
     "BaseLoader": _StubLoader,
+    "Qwen3VLEmbeddingModel": _StubQwen,
+    "URLLoader": _StubURLLoader,
+    "AutoLoader": _stub_auto_loader,
 }
 
 
@@ -327,7 +587,7 @@ def test_behavioural_layer_covers_every_declared_entry() -> None:
     declared = {
         f"{cls.__name__}.{name}"
         for cls, groups in CLASSIFICATION.items()
-        for name in groups["direct"] | groups["indirect"]
+        for name in groups["direct"] | groups["indirect"] | groups["delegated"]
     }
     assert declared <= measured, (
         f"这些入口只做了静态检查，没有行为验证：{sorted(declared - measured)}"
