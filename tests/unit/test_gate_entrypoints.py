@@ -201,31 +201,101 @@ def _public_methods(cls: type) -> dict[str, Any]:
     return methods
 
 
-def _ast_base_name(node: ast.expr, aliases: dict[str, str]) -> str | None:
-    """Return the terminal class name used by an AST base expression."""
+def _ast_base_name(node: ast.expr, bindings: dict[str, str]) -> str | None:
+    """Resolve a base expression against the bindings in its lexical scope."""
     while isinstance(node, ast.Subscript):
         node = node.value
     if isinstance(node, ast.Name):
-        return aliases.get(node.id, node.id)
+        return bindings.get(node.id, node.id)
     if isinstance(node, ast.Attribute):
-        return node.attr
+        parts: list[str] = []
+        while isinstance(node, ast.Attribute):
+            parts.append(node.attr)
+            node = node.value
+        if not isinstance(node, ast.Name):
+            return None
+        root = bindings.get(node.id, node.id)
+        return ".".join((root, *reversed(parts)))
     return None
 
 
-def _scoped_classes(
-    node: ast.AST,
-    scope: tuple[str, ...] = (),
-) -> Iterator[tuple[tuple[str, ...], ast.ClassDef]]:
-    """Yield every class with the scope used by its runtime ``__qualname__``."""
-    child_scope = scope
-    if isinstance(node, ast.ClassDef):
-        child_scope = (*scope, node.name)
-        yield child_scope, node
-    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        child_scope = (*scope, node.name, "<locals>")
+def _nested_statement_blocks(node: ast.stmt) -> Iterator[list[ast.stmt]]:
+    """Yield child statement blocks without leaking bindings between branches."""
+    if isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+        yield node.body
+        yield node.orelse
+    elif isinstance(node, (ast.With, ast.AsyncWith)):
+        yield node.body
+    elif isinstance(node, (ast.Try, ast.TryStar)):
+        yield node.body
+        yield node.orelse
+        yield node.finalbody
+        for handler in node.handlers:
+            yield handler.body
+    elif isinstance(node, ast.Match):
+        for case in node.cases:
+            yield case.body
 
-    for child in ast.iter_child_nodes(node):
-        yield from _scoped_classes(child, child_scope)
+
+def _import_from_module(current_module: str, item: ast.ImportFrom) -> str:
+    """Resolve the module portion of an absolute or relative import."""
+    if item.level == 0:
+        return item.module or ""
+    package = current_module.rpartition(".")[0].split(".")
+    keep = max(0, len(package) - item.level + 1)
+    suffix = item.module.split(".") if item.module else []
+    return ".".join((*package[:keep], *suffix))
+
+
+def _scoped_classes(
+    statements: Iterable[ast.stmt],
+    module_name: str,
+    scope: tuple[str, ...] = (),
+    inherited_bindings: dict[str, str] | None = None,
+) -> Iterator[tuple[str, ast.ClassDef, set[str]]]:
+    """Yield classes and resolved bases using lexical import bindings."""
+    bindings = dict(inherited_bindings or {})
+    for item in statements:
+        if isinstance(item, ast.ImportFrom):
+            imported_module = _import_from_module(module_name, item)
+            for alias in item.names:
+                if alias.name == "*":
+                    continue
+                local_name = alias.asname or alias.name
+                bindings[local_name] = ".".join((imported_module, alias.name))
+            continue
+        if isinstance(item, ast.Import):
+            for alias in item.names:
+                local_name = alias.asname or alias.name.partition(".")[0]
+                bindings[local_name] = alias.name if alias.asname else local_name
+            continue
+        if isinstance(item, ast.ClassDef):
+            class_scope = (*scope, item.name)
+            qualified_name = ".".join((module_name, *class_scope))
+            bases = {
+                name
+                for base in item.bases
+                if (name := _ast_base_name(base, bindings)) is not None
+            }
+            yield qualified_name, item, bases
+            yield from _scoped_classes(
+                item.body,
+                module_name,
+                class_scope,
+                bindings,
+            )
+            bindings[item.name] = qualified_name
+            continue
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield from _scoped_classes(
+                item.body,
+                module_name,
+                (*scope, item.name, "<locals>"),
+                bindings,
+            )
+            continue
+        for block in _nested_statement_blocks(item):
+            yield from _scoped_classes(block, module_name, scope, bindings)
 
 
 def _gated_classes_from_modules(
@@ -236,20 +306,8 @@ def _gated_classes_from_modules(
     classes_with_public_methods: set[str] = set()
 
     for module_name, module in modules:
-        aliases = {
-            alias.asname: alias.name
-            for item in ast.walk(module)
-            if isinstance(item, ast.ImportFrom)
-            for alias in item.names
-            if alias.asname is not None
-        }
-        for scope, item in _scoped_classes(module):
-            qualified_name = ".".join((module_name, *scope))
-            bases_by_class[qualified_name] = {
-                name
-                for base in item.bases
-                if (name := _ast_base_name(base, aliases)) is not None
-            }
+        for qualified_name, item, bases in _scoped_classes(module.body, module_name):
+            bases_by_class[qualified_name] = bases
             if any(
                 isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
                 and not member.name.startswith("_")
@@ -259,14 +317,12 @@ def _gated_classes_from_modules(
 
     root_name = f"{GatedResource.__module__}.{GatedResource.__qualname__}"
     descendants = {root_name}
-    descendant_names = {GatedResource.__name__}
     while newly_found := {
         qualified_name
         for qualified_name, bases in bases_by_class.items()
-        if qualified_name not in descendants and bases & descendant_names
+        if qualified_name not in descendants and bases & descendants
     }:
         descendants.update(newly_found)
-        descendant_names.update(name.rpartition(".")[2] for name in newly_found)
 
     return (descendants - {root_name}) & classes_with_public_methods
 
@@ -393,7 +449,7 @@ def test_all_gated_classes_are_covered() -> None:
 
 
 def test_ast_discovery_covers_non_top_level_gated_classes() -> None:
-    """发现器自身不能遗漏条件块、外层类或工厂函数中的实现。"""
+    """发现器不能遗漏非顶层类，也不能混淆不同作用域里的同名别名。"""
     module = ast.parse(
         """
 from comet_rag.ports.gate import GatedResource as GateBase
@@ -409,6 +465,18 @@ class Outer:
 def factory():
     class Local(GateBase):
         def request(self): ...
+
+def gated_factory():
+    from comet_rag.ports.gate import GatedResource as Resource
+
+    class GatedLocal(Resource):
+        def request(self): ...
+
+def other_factory():
+    from other_module import OtherBase as Resource
+
+    class Unrelated(Resource):
+        def request(self): ...
 """
     )
 
@@ -416,6 +484,7 @@ def factory():
         "comet_rag.synthetic.Conditional",
         "comet_rag.synthetic.Outer.Nested",
         "comet_rag.synthetic.factory.<locals>.Local",
+        "comet_rag.synthetic.gated_factory.<locals>.GatedLocal",
     }
 
 
