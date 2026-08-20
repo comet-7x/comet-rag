@@ -30,6 +30,7 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -211,34 +212,39 @@ def _ast_base_name(node: ast.expr, aliases: dict[str, str]) -> str | None:
     return None
 
 
-def _production_gated_classes() -> set[str]:
-    """Discover every production ``GatedResource`` descendant from source.
+def _scoped_classes(
+    node: ast.AST,
+    scope: tuple[str, ...] = (),
+) -> Iterator[tuple[tuple[str, ...], ast.ClassDef]]:
+    """Yield every class with the scope used by its runtime ``__qualname__``."""
+    child_scope = scope
+    if isinstance(node, ast.ClassDef):
+        child_scope = (*scope, node.name)
+        yield child_scope, node
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        child_scope = (*scope, node.name, "<locals>")
 
-    Runtime ``__subclasses__()`` only sees modules already imported by this test.
-    Scanning the package AST makes an implementation in a newly added, otherwise
-    unimported module visible to the guard as well.
-    """
-    package_root = Path(__file__).parents[2] / "comet_rag"
+    for child in ast.iter_child_nodes(node):
+        yield from _scoped_classes(child, child_scope)
+
+
+def _gated_classes_from_modules(
+    modules: Iterable[tuple[str, ast.Module]],
+) -> set[str]:
+    """Build the complete gated inheritance graph from parsed modules."""
     bases_by_class: dict[str, set[str]] = {}
     classes_with_public_methods: set[str] = set()
 
-    for path in package_root.rglob("*.py"):
-        module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        module_parts = path.relative_to(package_root.parent).with_suffix("").parts
-        if module_parts[-1] == "__init__":
-            module_parts = module_parts[:-1]
-        module_name = ".".join(module_parts)
+    for module_name, module in modules:
         aliases = {
             alias.asname: alias.name
-            for item in module.body
+            for item in ast.walk(module)
             if isinstance(item, ast.ImportFrom)
             for alias in item.names
             if alias.asname is not None
         }
-        for item in module.body:
-            if not isinstance(item, ast.ClassDef):
-                continue
-            qualified_name = f"{module_name}.{item.name}"
+        for scope, item in _scoped_classes(module):
+            qualified_name = ".".join((module_name, *scope))
             bases_by_class[qualified_name] = {
                 name
                 for base in item.bases
@@ -263,6 +269,26 @@ def _production_gated_classes() -> set[str]:
         descendant_names.update(name.rpartition(".")[2] for name in newly_found)
 
     return (descendants - {root_name}) & classes_with_public_methods
+
+
+def _production_gated_classes() -> set[str]:
+    """Discover every production ``GatedResource`` descendant from source.
+
+    Runtime ``__subclasses__()`` only sees modules already imported by this test.
+    Scanning the package AST makes an implementation in a newly added, otherwise
+    unimported module visible to the guard as well.
+    """
+    package_root = Path(__file__).parents[2] / "comet_rag"
+
+    def parsed_modules() -> Iterator[tuple[str, ast.Module]]:
+        for path in package_root.rglob("*.py"):
+            module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            module_parts = path.relative_to(package_root.parent).with_suffix("").parts
+            if module_parts[-1] == "__init__":
+                module_parts = module_parts[:-1]
+            yield ".".join(module_parts), module
+
+    return _gated_classes_from_modules(parsed_modules())
 
 
 def _direct_entry_names(cls: type) -> set[str]:
@@ -364,6 +390,33 @@ def test_all_gated_classes_are_covered() -> None:
         f"生产源码与分类表不一致；未登记：{sorted(discovered - classified)}；"
         f"已失效：{sorted(classified - discovered)}"
     )
+
+
+def test_ast_discovery_covers_non_top_level_gated_classes() -> None:
+    """发现器自身不能遗漏条件块、外层类或工厂函数中的实现。"""
+    module = ast.parse(
+        """
+from comet_rag.ports.gate import GatedResource as GateBase
+
+if TYPE_CHECKING:
+    class Conditional(GateBase):
+        def request(self): ...
+
+class Outer:
+    class Nested(GateBase):
+        async def request(self): ...
+
+def factory():
+    class Local(GateBase):
+        def request(self): ...
+"""
+    )
+
+    assert _gated_classes_from_modules([("comet_rag.synthetic", module)]) == {
+        "comet_rag.synthetic.Conditional",
+        "comet_rag.synthetic.Outer.Nested",
+        "comet_rag.synthetic.factory.<locals>.Local",
+    }
 
 
 # ── 第二层：行为守卫 ───────────────────────────────────────────────────────
