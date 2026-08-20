@@ -200,6 +200,71 @@ def _public_methods(cls: type) -> dict[str, Any]:
     return methods
 
 
+def _ast_base_name(node: ast.expr, aliases: dict[str, str]) -> str | None:
+    """Return the terminal class name used by an AST base expression."""
+    while isinstance(node, ast.Subscript):
+        node = node.value
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _production_gated_classes() -> set[str]:
+    """Discover every production ``GatedResource`` descendant from source.
+
+    Runtime ``__subclasses__()`` only sees modules already imported by this test.
+    Scanning the package AST makes an implementation in a newly added, otherwise
+    unimported module visible to the guard as well.
+    """
+    package_root = Path(__file__).parents[2] / "comet_rag"
+    bases_by_class: dict[str, set[str]] = {}
+    classes_with_public_methods: set[str] = set()
+
+    for path in package_root.rglob("*.py"):
+        module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        module_parts = path.relative_to(package_root.parent).with_suffix("").parts
+        if module_parts[-1] == "__init__":
+            module_parts = module_parts[:-1]
+        module_name = ".".join(module_parts)
+        aliases = {
+            alias.asname: alias.name
+            for item in module.body
+            if isinstance(item, ast.ImportFrom)
+            for alias in item.names
+            if alias.asname is not None
+        }
+        for item in module.body:
+            if not isinstance(item, ast.ClassDef):
+                continue
+            qualified_name = f"{module_name}.{item.name}"
+            bases_by_class[qualified_name] = {
+                name
+                for base in item.bases
+                if (name := _ast_base_name(base, aliases)) is not None
+            }
+            if any(
+                isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and not member.name.startswith("_")
+                for member in item.body
+            ):
+                classes_with_public_methods.add(qualified_name)
+
+    root_name = f"{GatedResource.__module__}.{GatedResource.__qualname__}"
+    descendants = {root_name}
+    descendant_names = {GatedResource.__name__}
+    while newly_found := {
+        qualified_name
+        for qualified_name, bases in bases_by_class.items()
+        if qualified_name not in descendants and bases & descendant_names
+    }:
+        descendants.update(newly_found)
+        descendant_names.update(name.rpartition(".")[2] for name in newly_found)
+
+    return (descendants - {root_name}) & classes_with_public_methods
+
+
 def _direct_entry_names(cls: type) -> set[str]:
     """当前类及其基类声明的所有 direct 入口。"""
     return {
@@ -293,25 +358,12 @@ def test_all_gated_classes_are_covered() -> None:
     旧实现只检查抽象类，因此 Qwen 在具体类上新增四个公开 HTTP 入口时，整组
     守卫完全看不见。只要生产类自己声明了公开方法，就必须逐个分类。
     """
-    known = set(CLASSIFICATION)
-    missing = {
-        cls
-        for cls in _gated_subclasses(GatedResource)
-        if cls.__module__.startswith("comet_rag.")
-        and _public_methods(cls)
-        and cls not in known
-    }
-    assert not missing, (
-        f"这些受闸门保护的类还没进分类表：{sorted(c.__name__ for c in missing)}"
+    discovered = _production_gated_classes()
+    classified = {f"{cls.__module__}.{cls.__qualname__}" for cls in CLASSIFICATION}
+    assert discovered == classified, (
+        f"生产源码与分类表不一致；未登记：{sorted(discovered - classified)}；"
+        f"已失效：{sorted(classified - discovered)}"
     )
-
-
-def _gated_subclasses(root: type) -> set[type]:
-    found: set[type] = set()
-    for child in root.__subclasses__():
-        found.add(child)
-        found |= _gated_subclasses(child)
-    return found
 
 
 # ── 第二层：行为守卫 ───────────────────────────────────────────────────────
