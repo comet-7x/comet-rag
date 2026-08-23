@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -40,8 +41,15 @@ FORBIDDEN_IN_ENGINES = frozenset(
     }
 )
 
-# engines 不得反向依赖上层
-FORBIDDEN_INTERNAL = ("comet_rag.api", "comet_rag.workers", "comet_rag.services")
+#: `engines/` 允许依赖的本项目包。**白名单，不是黑名单。**
+#:
+#: 这里原本是一份黑名单（api / workers / services）。黑名单只拦得住已经想到
+#: 的那几个包，于是新增的 `application/` 从缝里溜了进去 —— `pipeline.py` 运行时
+#: import 了它，而 architecture.md 白纸黑字写着 engines 在最底层、依赖只能向下。
+#: 文档说的规则和守卫执行的规则不是同一条，正好差出一个洞。
+#:
+#: 白名单没有这个失效模式：新包默认被拒，要放行必须来这里改一行、并说明理由。
+ENGINES_MAY_IMPORT = ("comet_rag.engines", "comet_rag.ports")
 
 
 def _iter_engine_modules() -> list[Path]:
@@ -60,13 +68,48 @@ def _imported_roots(tree: ast.AST) -> set[str]:
     return roots
 
 
-def _imported_full(tree: ast.AST) -> set[str]:
+def _package_parts(module: Path) -> list[str]:
+    """模块所在包的点分路径，用于解析相对导入。"""
+    parts = list(module.relative_to(PROJECT_ROOT).with_suffix("").parts)
+    parts.pop()  # `__init__` 或模块名，两种情况下要的都是它所在的目录
+    return parts
+
+
+def _imported_full(tree: ast.AST, module: Path | None = None) -> set[str]:
+    """收集导入的完整模块名；**相对导入会被解析成绝对名**。
+
+    这里原本直接跳过 `level > 0`，于是 `from ...services import x` 这类相对
+    写法能绕过**全部**分层守卫 —— 守卫看不见的依赖等于没有守卫。仓库里当前
+    的相对导入恰好都在包内，所以没有真实违规，但那是巧合，不是保证。
+
+    `module is None` 时无从解析相对导入（合成 AST 的自检用例会这样调），
+    这种情况下仍然跳过。
+    """
     names: set[str] = set()
+    package = _package_parts(module) if module is not None else None
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            names.add(node.module)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0:
+                if node.module:
+                    names.add(node.module)
+            elif package is not None:
+                # level=1 是当前包，每多一级往上退一层
+                base = package[: len(package) - (node.level - 1)]
+                if not base:
+                    continue
+                if node.module:
+                    names.add(".".join([*base, node.module]))
+                    continue
+                # `from ... import services` —— module 是 None，被导入的名字在
+                # names 里。只记 base 的话解析结果是 `comet_rag`，它不以
+                # `comet_rag.` 开头，于是所有守卫都放行（评审指出）。
+                names.update(
+                    ".".join([*base, alias.name])
+                    for alias in node.names
+                    if alias.name != "*"
+                )
     return names
 
 
@@ -80,23 +123,77 @@ def test_engines_do_not_import_infrastructure(module: Path) -> None:
     )
 
 
-@pytest.mark.parametrize("module", _iter_engine_modules(), ids=lambda p: p.name)
-def test_engines_do_not_import_upper_layers(module: Path) -> None:
-    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
-    violations = {
-        name for name in _imported_full(tree) if name.startswith(FORBIDDEN_INTERNAL)
+def _engine_internal_violations(tree: ast.AST, module: Path | None = None) -> set[str]:
+    return {
+        name
+        for name in _imported_full(tree, module)
+        if name.startswith("comet_rag.") and not name.startswith(ENGINES_MAY_IMPORT)
     }
+
+
+@pytest.mark.parametrize("module", _iter_engine_modules(), ids=lambda p: p.name)
+def test_engines_only_depend_on_engines_and_ports(module: Path) -> None:
+    """**`engines/` 是依赖图的底，只能向下看。**
+
+    它唯一被允许依赖的本项目包是 `ports/`（纯 Protocol，零依赖）。那正是
+    "库那一半"能被单独拿去用的前提：装一个 docx 解析器不该顺带拖进
+    FastAPI、Milvus，或者任何一层用例编排。
+    """
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    violations = _engine_internal_violations(tree, module)
     assert not violations, (
-        f"{module.relative_to(PROJECT_ROOT)} 反向依赖了上层：{sorted(violations)}。"
-        f"依赖方向必须是 api/workers → services → engines，不可反向。"
+        f"{module.relative_to(PROJECT_ROOT)} 依赖了 engines/ports 之外的本项目包："
+        f"{sorted(violations)}。engines 只能依赖 {list(ENGINES_MAY_IMPORT)} —— "
+        f"确需放行请修改 ENGINES_MAY_IMPORT 并在那里写明理由。"
     )
 
 
 def test_guard_actually_detects_violations() -> None:
-    """守卫自检：确保上面两个测试不是永远为真。"""
-    tree = ast.parse("import sqlalchemy\nfrom comet_rag.api import deps\n")
+    """守卫自检：确保上面两个测试不是永远为真。
+
+    第二条特意用 `comet_rag.application` 举例 —— 那正是旧黑名单漏掉的那个包。
+    """
+    tree = ast.parse(
+        "import sqlalchemy\n"
+        "from comet_rag.api import deps\n"
+        "from comet_rag.application.embedding_batch import aembed_documents\n"
+        "from comet_rag.ports import EmbeddingPort\n"
+    )
     assert _imported_roots(tree) & FORBIDDEN_IN_ENGINES == {"sqlalchemy"}
-    assert any(n.startswith(FORBIDDEN_INTERNAL) for n in _imported_full(tree))
+    assert _engine_internal_violations(tree) == {
+        "comet_rag.api",
+        "comet_rag.application.embedding_batch",
+    }
+
+
+# ── 业务/引擎依赖模型 Port，而不是供应商适配器 ─────────────────────────────
+
+MODEL_ADAPTER_PACKAGE = "comet_rag.infrastructure.providers"
+
+
+def _model_port_consumers() -> list[Path]:
+    root = PROJECT_ROOT / "comet_rag"
+    return sorted(
+        path
+        for package in ("services", "engines")
+        for path in (root / package).rglob("*.py")
+        if "__pycache__" not in path.parts
+    )
+
+
+@pytest.mark.parametrize("module", _model_port_consumers(), ids=lambda p: p.name)
+def test_business_code_depends_on_model_ports(module: Path) -> None:
+    """供应商模型只能在组合根选择，不能泄漏到业务和纯计算模块。"""
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    hits = {
+        name
+        for name in _imported_full(tree, module)
+        if name.startswith(MODEL_ADAPTER_PACKAGE)
+    }
+    assert not hits, (
+        f"{module.relative_to(PROJECT_ROOT)} 直接依赖了模型适配器：{sorted(hits)}。"
+        "请依赖 comet_rag.ports，并在 composition/bootstrap.py 装配实现。"
+    )
 
 
 # ── 单进程模式不得挂上租约回收（T24）────────────────────────────────────────
@@ -105,7 +202,15 @@ def test_guard_actually_detects_violations() -> None:
 MAINTENANCE = "comet_rag.workers.maintenance"
 
 #: 单进程部署会加载的东西：组合根、API、以及任务框架本身
-SINGLE_PROCESS_TREES = ("core", "api", "tasks", "services", "engines", "infrastructure")
+SINGLE_PROCESS_TREES = (
+    "core",
+    "composition",
+    "api",
+    "tasks",
+    "services",
+    "engines",
+    "infrastructure",
+)
 
 
 def _single_process_modules() -> list[Path]:
@@ -127,11 +232,11 @@ def test_single_process_paths_never_pull_in_lease_reclaim(module: Path) -> None:
 
     保证方式不是加一个开关（开关会被配错），而是**结构上够不着**：
     `sweep_cron` 只在 `workers/` 下注册，单进程部署压根不加载那个包。
-    本用例把这条结构性保证钉住 —— 哪天有人图省事在 `core/bootstrap.py` 里
+    本用例把这条结构性保证钉住 —— 哪天有人图省事在 `composition/bootstrap.py` 里
     import 它，这里立刻变红。
     """
     tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
-    hits = {name for name in _imported_full(tree) if name.startswith(MAINTENANCE)}
+    hits = {name for name in _imported_full(tree, module) if name.startswith(MAINTENANCE)}
     assert not hits, (
         f"{module.relative_to(PROJECT_ROOT)} 导入了 {MAINTENANCE}。"
         f"租约回收只能挂在 workers/ 上：单进程模式下启用它会造成"
@@ -150,7 +255,7 @@ CONCRETE_MODELS = (
 )
 
 #: 只有这些地方可以直接构造：组合根负责装配，模型模块自己是定义处。
-MAY_CONSTRUCT_MODELS = ("core/bootstrap.py",)
+MAY_CONSTRUCT_MODELS = ("composition/bootstrap.py",)
 
 
 def _model_construction_sites(module: Path) -> set[str]:
@@ -191,7 +296,7 @@ def test_models_are_only_constructed_by_the_composition_root(module: Path) -> No
     易错的约定，就把它变成够不着的结构。
     """
     relative = module.relative_to(PROJECT_ROOT / "comet_rag").as_posix()
-    if relative.startswith("infrastructure/models/"):
+    if relative.startswith("infrastructure/providers/"):
         return  # 定义处自己不算
     if any(relative.endswith(allowed) for allowed in MAY_CONSTRUCT_MODELS):
         return
@@ -200,5 +305,269 @@ def test_models_are_only_constructed_by_the_composition_root(module: Path) -> No
     assert not hits, (
         f"{module.relative_to(PROJECT_ROOT)} 直接构造了 {sorted(hits)}，"
         f"绕过了 build_context() 的 bind_gate() —— 闸门会静默失效。"
-        f"请从 Context 取，或在 core/bootstrap.py 里装配。"
+        f"请从 Context 取，或在 composition/bootstrap.py 里装配。"
     )
+
+
+# ── `core/` 是零依赖内核（第 4 条守卫）────────────────────────────────────
+
+
+def _core_modules() -> list[Path]:
+    return sorted(
+        p
+        for p in (PROJECT_ROOT / "comet_rag" / "core").rglob("*.py")
+        if "__pycache__" not in p.parts
+    )
+
+
+@pytest.mark.parametrize("module", _core_modules(), ids=lambda p: p.name)
+def test_core_is_a_zero_dependency_kernel(module: Path) -> None:
+    """**`core/` 不得 import 本项目任何其他包。**
+
+    这里装的是日志、追踪、并发闸门、降级控制器 —— 被 `services/`、
+    `infrastructure/`、`tasks/`、`api/` 全都依赖的横切设施。既然人人依赖它，
+    它就必须在依赖图的最底下，否则立刻出环。
+
+    这条规则此前写不出来，因为 `core/` 同时还装着组合根（`bootstrap.py`、
+    `context.py`），而组合根依赖所有人。同一个包里两个方向相反的东西，
+    依赖图上 `core` 的箭头就自相矛盾：既指向 services，又被 services 指向。
+    组合根已迁至 `composition/`，这条守卫才成立。
+    """
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    violations = {
+        name
+        for name in _imported_full(tree, module)
+        if name.startswith("comet_rag.") and not name.startswith("comet_rag.core")
+    }
+    assert not violations, (
+        f"{module.relative_to(PROJECT_ROOT)} 依赖了 {sorted(violations)}。"
+        f"core/ 是零依赖内核，人人依赖它；它一旦回头依赖上层就会出环。"
+        f"需要上层能力的东西属于 composition/ 或 services/。"
+    )
+
+
+def test_core_guard_actually_detects_violations() -> None:
+    """守卫自检：确保上面那条不是永远为真。"""
+    tree = ast.parse(
+        "from comet_rag.core.logging import logger\n"
+        "from comet_rag.services.retrieval import RetrievalService\n"
+    )
+    violations = {
+        name
+        for name in _imported_full(tree)
+        if name.startswith("comet_rag.") and not name.startswith("comet_rag.core")
+    }
+    assert violations == {"comet_rag.services.retrieval"}
+
+
+# ── 包级依赖不得成环（第 5 条守卫）──────────────────────────────────────────
+
+
+def _package_edges() -> dict[str, set[str]]:
+    """把模块级 import 收敛成顶层包之间的有向边。"""
+    root = PROJECT_ROOT / "comet_rag"
+    edges: dict[str, set[str]] = {}
+    for path in root.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        relative = path.relative_to(root)
+        source = relative.parts[0] if len(relative.parts) > 1 else "(top)"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for name in _imported_full(tree, path):
+            if not name.startswith("comet_rag."):
+                continue
+            target = name.split(".")[1]
+            if target != source:
+                edges.setdefault(source, set()).add(target)
+    return edges
+
+
+def _find_cycle(edges: dict[str, set[str]]) -> list[str] | None:
+    """返回任意一条环（含首尾同名），没有环时返回 None。"""
+    state: dict[str, int] = {}
+    stack: list[str] = []
+
+    def walk(node: str) -> list[str] | None:
+        state[node] = 1
+        stack.append(node)
+        for nxt in sorted(edges.get(node, ())):
+            if state.get(nxt) == 1:
+                return stack[stack.index(nxt) :] + [nxt]
+            if state.get(nxt) is None and (found := walk(nxt)):
+                return found
+        stack.pop()
+        state[node] = 2
+        return None
+
+    for node in sorted(edges):
+        if state.get(node) is None and (found := walk(node)):
+            return found
+    return None
+
+
+def test_no_package_level_import_cycles() -> None:
+    """**顶层包之间不得出现循环依赖。**
+
+    此前 `infrastructure` 与 `tasks` 互指：`knowledge_base.py` 只为取个当前
+    时间就 import 了 `tasks.models.Time`，而 `store_postgres.py` 反过来 import
+    `infrastructure.database`。
+
+    环的代价不在于 Python 跑不起来（它跑得起来），而在于**这两个包再也不能
+    单独理解或单独拿走**：读任一个都得先读另一个，而且谁先初始化取决于导入
+    顺序。`Time` 是个只依赖标准库的时间工具，跟"任务"毫无关系，挪进
+    `core/` 环就断了。
+
+    逐条列出所有边太脆（每加一个 import 就要改测试），所以这里只断言**无环**
+    —— 这是结构性质，不是清单。
+    """
+    cycle = _find_cycle(_package_edges())
+    assert cycle is None, (
+        f"顶层包出现循环依赖：{' → '.join(cycle)}。"
+        f"环里的包无法被单独理解或单独复用；请把被共用的那部分下沉到"
+        f"两者都能依赖的低层包（如 core/ 或 ports/）。"
+    )
+
+
+def test_cycle_detector_actually_finds_cycles() -> None:
+    """守卫自检：环检测本身要能真的发现环。"""
+    assert _find_cycle({"a": {"b"}, "b": {"c"}, "c": {"a"}}) is not None
+    assert _find_cycle({"a": {"b"}, "b": {"c"}}) is None
+
+
+# ── 相对导入必须被解析（守卫自身的盲区）────────────────────────────────────
+
+
+def test_relative_imports_are_resolved_to_absolute_names() -> None:
+    """**相对导入不解析，等于所有分层守卫都有一个后门。**
+
+    `from ...services import x` 与 `from comet_rag.services import x` 是同一
+    件事，但 AST 里前者的 `module` 只是 `"services"`、`level=3`。早先的
+    `_imported_full` 直接跳过 `level > 0`，于是相对写法能绕过全部五条守卫。
+
+    仓库当前的相对导入恰好都在包内，所以没有真实违规 —— 但那是巧合。
+    这条用例把解析本身钉死。
+    """
+    module = PROJECT_ROOT / "comet_rag" / "engines" / "pipelines" / "pipeline.py"
+    tree = ast.parse(
+        "from .types import Chunk\n"        # level=1 → 同包
+        "from ..loaders import Auto\n"      # level=2 → comet_rag.engines.loaders
+        "from ...services import Foo\n"     # level=3 → comet_rag.services（违规）
+        "from ...ports import EmbeddingPort\n"
+    )
+
+    assert _imported_full(tree, module) == {
+        "comet_rag.engines.pipelines.types",
+        "comet_rag.engines.loaders",
+        "comet_rag.services",
+        "comet_rag.ports",
+    }
+    # 解析之后，越层的那条才拦得住
+    assert _engine_internal_violations(tree, module) == {"comet_rag.services"}
+
+
+def test_bare_relative_import_resolves_each_imported_name() -> None:
+    """**`from ... import services` 里，包名在 `names` 而不在 `module`。**
+
+    这种写法的 AST 节点 `module is None`。只按 `module` 拼的话解析结果是
+    `comet_rag` —— 它不以 `comet_rag.` 开头，于是三条以此为前提的守卫
+    （engines 白名单、core 零依赖、顶层环检测）全部放行。
+
+    上一轮补相对导入解析时漏了这个形式，评审指出。
+    """
+    module = PROJECT_ROOT / "comet_rag" / "engines" / "pipelines" / "pipeline.py"
+    tree = ast.parse("from ... import services, tasks\nfrom .. import loaders\n")
+
+    assert _imported_full(tree, module) == {
+        "comet_rag.services",
+        "comet_rag.tasks",
+        "comet_rag.engines.loaders",
+    }
+    assert _engine_internal_violations(tree, module) == {
+        "comet_rag.services",
+        "comet_rag.tasks",
+    }
+
+
+def test_package_parts_handles_both_module_and_package_init() -> None:
+    """`__init__.py` 的"所在包"是它自己的目录，普通模块是它的父目录。"""
+    root = PROJECT_ROOT / "comet_rag"
+    assert _package_parts(root / "engines" / "pipelines" / "pipeline.py") == [
+        "comet_rag",
+        "engines",
+        "pipelines",
+    ]
+    assert _package_parts(root / "engines" / "chunkers" / "__init__.py") == [
+        "comet_rag",
+        "engines",
+        "chunkers",
+    ]
+
+
+def test_cycle_detector_sees_relative_imports() -> None:
+    """环检测同样不能被相对导入绕过。"""
+    module = PROJECT_ROOT / "comet_rag" / "infrastructure" / "knowledge_base.py"
+    tree = ast.parse("from ..tasks.models import Time\n")
+    assert _imported_full(tree, module) == {"comet_rag.tasks.models"}
+
+
+# ── engines 不得自己发明并发数字（第 6 条守卫）──────────────────────────────
+
+#: 唯一允许定义并发默认值的地方。
+CONCURRENCY_DEFAULTS_MODULE = "engines/defaults.py"
+
+#: 命中即视为"一个并发数字"。只看模块级常量，函数里的局部变量不算。
+_CONCURRENCY_NAME = re.compile(r"CONCURRENCY|FANOUT|MAX_WORKERS|BATCH_SIZE|WINDOW")
+
+
+@pytest.mark.parametrize("module", _iter_engine_modules(), ids=lambda p: p.name)
+def test_engines_do_not_invent_concurrency_defaults(module: Path) -> None:
+    """**并发数字只能在一处定义。**
+
+    这些数字原本散在三个文件：loader 10、嵌入扇出 16、管道 8，三处都没说明
+    为什么。`base_loader.py` 的注释甚至已经在替自己辩解 —— "a safety cap
+    rather than a claim about optimal throughput"，等于承认这个数没有依据。
+
+    集中不等于统一：它们保护的资源不同（本机 fd vs 模型服务），所以仍是几个
+    数字，但每个都必须在 `engines/defaults.py` 里写明护住的是什么。
+
+    engines 是"库"那一半，它凭什么知道你的服务扛得住几路 —— 真正生效的值由
+    `LimitsConfig` 提供，这里的只是兜底。
+    """
+    relative = module.relative_to(PROJECT_ROOT / "comet_rag").as_posix()
+    if relative == CONCURRENCY_DEFAULTS_MODULE:
+        return
+
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    offenders = {
+        target.id
+        for node in tree.body  # 只看模块级
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+        and _CONCURRENCY_NAME.search(target.id)
+        and isinstance(node.value, ast.Constant)  # 转发别处的常量不算
+    }
+    assert not offenders, (
+        f"{module.relative_to(PROJECT_ROOT)} 自己定义了并发默认值：{sorted(offenders)}。"
+        f"请挪到 comet_rag/{CONCURRENCY_DEFAULTS_MODULE} 并写明它护住的是什么资源。"
+    )
+
+
+def test_concurrency_guard_actually_detects_violations() -> None:
+    """守卫自检：转发别处的常量应放行，写死字面量应拦下。"""
+    forwarding = ast.parse("DEFAULT_MAX_CONCURRENCY = DEFAULT_LOADER_CONCURRENCY\n")
+    hardcoded = ast.parse("DEFAULT_MAX_CONCURRENCY = 10\n")
+
+    def offenders(tree: ast.Module) -> set[str]:
+        return {
+            t.id
+            for n in tree.body
+            if isinstance(n, ast.Assign)
+            for t in n.targets
+            if isinstance(t, ast.Name)
+            and _CONCURRENCY_NAME.search(t.id)
+            and isinstance(n.value, ast.Constant)
+        }
+
+    assert offenders(forwarding) == set()
+    assert offenders(hardcoded) == {"DEFAULT_MAX_CONCURRENCY"}

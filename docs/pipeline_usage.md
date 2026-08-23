@@ -85,7 +85,7 @@ config = PipelineConfig(
 
 ```python
 from comet_rag.engines.pipelines import Pipeline, PipelineConfig
-from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import (
+from comet_rag.infrastructure.providers.embedding.qwen3_vl_embedding import (
     Qwen3VLEmbeddingModel,
 )
 
@@ -289,7 +289,22 @@ with AutoLoader.default() as loader:
 
 `AutoLoader` 只暴露所有 Loader 共有的 `source` 和 `max_concurrency` 参数。
 需要 `download_config`、自定义 HTTP client 等 URL 专用选项时，应直接使用
-`URLLoader`，避免把某个 Loader 的参数误传给混合批次中的其他 Loader。
+`URLLoader`，避免把某个 Loader 的参数误传给混合批次中的其他 Loader：
+
+```python
+from comet_rag.engines.loaders.url_loader import DownloadRequestConfig, URLLoader
+
+loader = URLLoader()
+config = DownloadRequestConfig(timeout=30, follow_redirects=False)
+try:
+    content = loader.load("https://example.com/report.docx", download_config=config)
+finally:
+    loader.cleanup()
+```
+
+这段是可执行示例，不是说明文字 —— `tests/unit/test_docs_examples.py` 会拿它
+去比对真实签名。这条用法曾经在一次模板方法重构里悄悄失效（`load()` 只剩
+`source` 一个参数），而当时它只是一句散文，守卫看不见。
 
 MinIO/S3 等可选对象存储不需要修改 engines 中的闭合来源枚举或让 engines
 依赖 SDK；在基础设施层实现 `BaseLoader`，再通过 `LoaderRoute` 统一装配即可：

@@ -57,10 +57,10 @@ def test_directory_is_not_treated_as_local_file(tmp_path: Path) -> None:
 
 
 class _RecordingLoader(BaseLoader):
-    def load(self, source, *args, **kwargs):  # pragma: no cover
+    def _load(self, source, *args, **kwargs):  # pragma: no cover
         raise NotImplementedError
 
-    async def aload(self, source, *args, **kwargs):
+    async def _aload(self, source, *args, **kwargs):
         if isinstance(source, str):
             source = SourceContent(source)
         return LoaderContent(path=Path(source.source), source=source)

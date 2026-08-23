@@ -6,8 +6,8 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from ..composition.bootstrap import build_context
 from ..config.schemas import APPConfig
-from ..core.bootstrap import build_context
 from ..core.logging import setup_logging
 
 

@@ -6,7 +6,9 @@
 分层：
     models   —— Task / TaskStatus / TaskError / StageRecord / TaskEvent（纯数据）
     states   —— 合法状态迁移表（唯一真相）
-    store    —— TaskStore（ABC，模板方法）+ InMemoryTaskStore     ← 只管状态
+    store          —— TaskStore（ABC，模板方法）                  ← 只管状态
+    store_memory   —— 进程内实现
+    store_postgres —— PostgreSQL 实现
     executor —— TaskExecutor（ABC）+ InProcessExecutor            ← 只管调度
     executor_arq —— ArqExecutor（跨进程）。**不在这里导出**：它会连带 import
                  redis，而只跑单机内存链路的用户不该为此付启动开销。
@@ -26,7 +28,6 @@ from .models import (
     TaskError,
     TaskEvent,
     TaskStatus,
-    Time,
 )
 from .runner import (
     LANE_CPU,
@@ -46,7 +47,8 @@ from .runner import (
 )
 from .service import TaskService
 from .states import InvalidTransition, assert_transition, can_transition
-from .store import InMemoryTaskStore, TaskBusy, TaskNotFound, TaskStore, VersionConflict
+from .store import TaskBusy, TaskNotFound, TaskStore, VersionConflict
+from .store_memory import InMemoryTaskStore
 
 __all__ = [
     "LANE_CPU",
@@ -73,7 +75,6 @@ __all__ = [
     "TaskService",
     "TaskStatus",
     "TaskStore",
-    "Time",
     "VersionConflict",
     "assert_transition",
     "can_transition",

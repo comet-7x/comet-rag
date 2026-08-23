@@ -31,7 +31,8 @@ from comet_rag.tasks import (
     register,
 )
 from comet_rag.tasks.executor_arq import ArqExecutor, run_task
-from comet_rag.tasks.store import InMemoryTaskStore, TaskStore
+from comet_rag.tasks.store import TaskStore
+from comet_rag.tasks.store_memory import InMemoryTaskStore
 from tests.contracts.support import wait_for_terminal, wait_until
 
 pytestmark = pytest.mark.integration

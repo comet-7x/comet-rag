@@ -8,16 +8,24 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
 
 from comet_rag.core.concurrency import Gate, Overloaded
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
+from comet_rag.infrastructure.providers.embedding.base import (
+    BaseEmbeddingModel,
+    MultimodalEmbeddingMixin,
+)
+from comet_rag.infrastructure.providers.reranker.base import BaseReranker
+from comet_rag.ports import MediaResource
 
 
-class RecordingEmbedding(BaseEmbeddingModel):
+class RecordingEmbedding(MultimodalEmbeddingMixin, BaseEmbeddingModel):
     """记录**真实并发峰值**的替身。峰值是 S4-2 唯一要看的那个数。"""
 
     def __init__(self, delay: float = 0.01) -> None:
@@ -25,8 +33,17 @@ class RecordingEmbedding(BaseEmbeddingModel):
         self.live = 0
         self.peak = 0
         self.calls = 0
+        #: 同步侧在别的线程里跑，计数要自己护住
+        self._sync_lock = threading.Lock()
 
-    def embed(self, data: Any, **kwargs: Any) -> list[float]:  # pragma: no cover
+    def _embed(self, data: Any, **kwargs: Any) -> list[float]:
+        """同步文本：与多模态共用同一份计数，用来验证它也过闸门。"""
+        with self._sync_lock:
+            self.live += 1
+            self.peak = max(self.peak, self.live)
+        time.sleep(self.delay)
+        with self._sync_lock:
+            self.live -= 1
         return [0.0]
 
     async def _aembed(self, data: Any, **kwargs: Any) -> list[float]:
@@ -39,6 +56,20 @@ class RecordingEmbedding(BaseEmbeddingModel):
             self.live -= 1
         return [0.0]
 
+    def _embed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
+        """同步多模态：与文本共用同一份计数，用来验证它也过闸门。"""
+        with self._sync_lock:
+            self.live += 1
+            self.peak = max(self.peak, self.live)
+        time.sleep(self.delay)
+        with self._sync_lock:
+            self.live -= 1
+        return [0.0]
+
+    async def _aembed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
+        """多模态走同一份计数 —— 用来验证它与文本共用同一个闸门。"""
+        return await self._aembed("<media>", **kwargs)
+
     async def close_client(self) -> None:
         return None
 
@@ -48,8 +79,15 @@ class RecordingReranker(BaseReranker):
         #: 与 embedding 共用一份计数，用来验"两者共用同一个闸门"
         self.sink = sink
 
-    def score(self, query: Any, documents: Any, **kwargs: Any):  # pragma: no cover
-        return []
+    def _score(self, query: Any, documents: Any, **kwargs: Any) -> list[float]:
+        """与 embedding 共用同一份计数，用来验证同步重排也过闸门。"""
+        with self.sink._sync_lock:
+            self.sink.live += 1
+            self.sink.peak = max(self.sink.peak, self.sink.live)
+        time.sleep(self.sink.delay)
+        with self.sink._sync_lock:
+            self.sink.live -= 1
+        return [0.0] * len(list(documents))
 
     async def _ascore(self, query: Any, documents: Any, **kwargs: Any) -> list[float]:
         self.sink.live += 1
@@ -183,7 +221,7 @@ async def test_per_call_fanout_alone_does_not_cap_the_service() -> None:
     model = RecordingEmbedding()  # 不挂闸门 = 修复前的行为
 
     await asyncio.gather(
-        *(model.abatch_embed(["x"] * 8, max_concurrency=4) for _ in range(32))
+        *(aembed_documents(model, ["x"] * 8, max_concurrency=4) for _ in range(32))
     )
 
     assert model.peak > 4, (
@@ -197,7 +235,7 @@ async def test_process_gate_caps_the_service_no_matter_how_many_tasks() -> None:
     model.bind_gate(Gate(limit=4))
 
     await asyncio.gather(
-        *(model.abatch_embed(["x"] * 8, max_concurrency=4) for _ in range(32))
+        *(aembed_documents(model, ["x"] * 8, max_concurrency=4) for _ in range(32))
     )
 
     assert model.peak <= 4, f"并发峰值 {model.peak} 超过闸门上限 4"
@@ -214,7 +252,7 @@ async def test_embedding_and_reranker_share_one_gate() -> None:
     reranker.bind_gate(gate)
 
     await asyncio.gather(
-        model.abatch_embed(["x"] * 20, max_concurrency=20),
+        aembed_documents(model, ["x"] * 20, max_concurrency=20),
         *(reranker.ascore("q", ["d"]) for _ in range(20)),
     )
 
@@ -232,13 +270,13 @@ async def test_gate_is_not_bypassable_by_subclasses() -> None:
     assert getattr(BaseReranker._ascore, "__isabstractmethod__", False)
 
     # 全仓的生产实现也不许覆写
-    from comet_rag.infrastructure.models.embedding.openai_embedding_model import (  # noqa: PLC0415
+    from comet_rag.infrastructure.providers.embedding.openai_embedding_model import (  # noqa: PLC0415
         OpenAIEmbeddingModel,
     )
-    from comet_rag.infrastructure.models.embedding.qwen3_vl_embedding import (  # noqa: PLC0415
+    from comet_rag.infrastructure.providers.embedding.qwen3_vl_embedding import (  # noqa: PLC0415
         Qwen3VLEmbeddingModel,
     )
-    from comet_rag.infrastructure.models.reranker.qwen3_vl_reranker import (  # noqa: PLC0415
+    from comet_rag.infrastructure.providers.reranker.qwen3_vl_reranker import (  # noqa: PLC0415
         Qwen3VLReranker,
     )
 
@@ -261,4 +299,142 @@ async def test_overload_propagates_instead_of_being_swallowed() -> None:
     assert (
         len(rejected) + len([r for r in results if not isinstance(r, BaseException)])
         == 6
+    )
+
+
+async def test_media_entry_is_gated_like_text() -> None:
+    """**图片入口也必须走闸门。**
+
+    图片请求通常比文本更重（一张图能顶几十倍 token），如果 `aembed_media`
+    绕开闸门，限流就等于开了个后门：配了 4 并发，实际可以有 4 + N 个在飞。
+
+    这条用例把文本与多模态混在一起打，只看**真实并发峰值**。
+    """
+    model = RecordingEmbedding(delay=0.02)
+    gate = Gate(limit=2, max_waiting=64)
+    model.bind_gate(gate)
+
+    media = MediaResource(url="https://example.invalid/a.png")
+    await asyncio.gather(
+        *[model.aembed(f"text-{i}") for i in range(6)],
+        *[model.aembed_media(media) for _ in range(6)],
+    )
+
+    assert model.calls == 12
+    assert model.peak <= 2, f"闸门限 2，实际峰值 {model.peak} —— 多模态绕过了闸门"
+
+
+# ── 同步路径与异步路径共用同一份预算（#44 已修）─────────────────────────────
+
+
+class _SyncCounting(BaseEmbeddingModel):
+    """只数同步 `embed` 的真实并发峰值。"""
+
+    def __init__(self, delay: float = 0.02) -> None:
+        self.delay = delay
+        self._lock = threading.Lock()
+        self.live = 0
+        self.peak = 0
+
+    def _embed(self, data: str, /, **kwargs: Any) -> list[float]:
+        with self._lock:
+            self.live += 1
+            self.peak = max(self.peak, self.live)
+        time.sleep(self.delay)
+        with self._lock:
+            self.live -= 1
+        return [0.0]
+
+    async def _aembed(self, data: str, /, **kwargs: Any) -> list[float]:
+        return [0.0]
+
+
+def test_sync_fanout_respects_the_process_gate() -> None:
+    """**同步扇出必须与异步共用同一份预算。**
+
+    `Pipeline.batch_run` 用 `max_concurrency` 个线程跑来源，每个来源内部的
+    `embed_documents` 又开 `max_concurrency` 路。修复前同步 `embed` 完全不经过
+    闸门（那时它建在 `asyncio.Semaphore` 上，线程里拿不到），实测：
+
+        闸门 limit=4，4 个来源并行 → 真实并发峰值 16
+
+    与本项目当年"配置写 4、实际 128"是同一个失效模式，只是发生在同步这一侧；
+    `origin/develop` 上用同样探针测得同样的 16，说明它早于那次重构。
+
+    这条用例曾是 `xfail(strict=True)`，混合闸门做出来后自动 XPASS 提醒摘标记
+    —— 那正是当初标它的目的：把缺口钉成会自己响的闹钟，而不是写进注释等人忘记。
+    """
+    limit = 4
+    model = _SyncCounting()
+    model.bind_gate(Gate(limit=limit))
+
+    def one_source() -> None:
+        embed_documents(model, [f"d{i}" for i in range(16)], max_concurrency=limit)
+
+    threads = [threading.Thread(target=one_source) for _ in range(limit)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert model.peak <= limit, (
+        f"闸门 limit={limit}，同步路径实际并发峰值 {model.peak}"
+    )
+
+
+async def test_sync_media_also_goes_through_the_gate() -> None:
+    """**同步多模态入口也不能绕过预算。**
+
+    修 #44 时只把文本入口接上了闸门，`embed_media` 仍是可覆写的抽象方法，
+    Qwen 的实现直接调未加闸的 `embed` —— 于是同步图片请求整条路绕开了预算，
+    而图片恰恰比文本重得多（评审指出）。
+    """
+    model = RecordingEmbedding(delay=0.02)
+    model.bind_gate(Gate(limit=2))
+    media = MediaResource(url="https://example.invalid/a.png")
+
+    await asyncio.gather(
+        *[asyncio.to_thread(model.embed_media, media) for _ in range(8)]
+    )
+
+    assert model.peak <= 2, f"同步多模态绕过了闸门：峰值 {model.peak}"
+
+
+def test_direct_embed_call_still_goes_through_the_gate() -> None:
+    """**公开的 `embed()` 也不能是后门。**
+
+    给 `embed_query` / `embed_document` / `embed_batch` / `embed_media` 都加了
+    闸，却漏掉它们脚下这个公开入口，等于前门上锁、后门敞着。实测修复前：
+    闸门 limit=2，直接调 `model.embed()` 真实峰值 8。
+    """
+    model = RecordingEmbedding(delay=0.02)
+    model.bind_gate(Gate(limit=2))
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(model.embed, "x") for _ in range(8)]
+        for future in futures:
+            future.result()  # 工作线程异常必须让测试失败，不能被 join() 吞掉
+
+    assert model.peak <= 2, f"直接调 embed 绕过了闸门：峰值 {model.peak}"
+
+
+def test_sync_rank_also_goes_through_the_gate() -> None:
+    """**同步 `rank()` 也不能是后门。**
+
+    embedding 与 loader 的同步入口都补过闸门了，reranker 这道原样留着 ——
+    同一个疏漏第三次。实测修复前：闸门 limit=2，同步 rank 真实峰值 8。
+
+    重排与嵌入抢的是同一块 GPU，所以它们共用同一个闸门；漏掉一边等于两边
+    都白限。
+    """
+    reranker = RecordingReranker(RecordingEmbedding(delay=0.02))
+    reranker.bind_gate(Gate(limit=2))
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(reranker.rank, "q", ["d"]) for _ in range(8)]
+        for future in futures:
+            future.result()  # 传播 rank() 的异常，避免 peak 保持为 0 时假通过
+
+    assert reranker.sink.peak <= 2, (
+        f"同步 rank 绕过了闸门：峰值 {reranker.sink.peak}"
     )

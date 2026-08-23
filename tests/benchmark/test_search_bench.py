@@ -22,7 +22,7 @@ from comet_rag.config.schemas import (
     ServerConfig,
 )
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.providers.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
 from tests.e2e.test_ingest_search import (
     DIM,
@@ -43,7 +43,7 @@ ROUNDS = 200
 class IdentityReranker(BaseReranker):
     """按原顺序打分。量的是重排这条路径的**框架开销**，不是模型质量。"""
 
-    def score(self, query, documents, **kwargs):  # pragma: no cover
+    def _score(self, query, documents, **kwargs):  # pragma: no cover
         return []
 
     async def _ascore(self, query, documents, **kwargs) -> list[float]:

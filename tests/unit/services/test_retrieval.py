@@ -14,8 +14,8 @@ from comet_rag.infrastructure.knowledge_base import (
     EmbeddingModelChanged,
     InMemoryKnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.providers.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore, VectorRecord
 from comet_rag.services.knowledge_base import KnowledgeBaseService, KnowledgeBaseSpec
 from comet_rag.services.retrieval import RetrievalService, SearchQuery
@@ -41,7 +41,7 @@ class KeywordEmbeddingModel(BaseEmbeddingModel):
             0.1,
         ]
 
-    def embed(self, data, **kwargs) -> list[float]:
+    def _embed(self, data, **kwargs) -> list[float]:
         return self._vector(str(data))
 
     async def _aembed(self, data, **kwargs) -> list[float]:
@@ -60,7 +60,7 @@ class ReversingReranker(BaseReranker):
         self.failure: Exception | None = None
         self.wrong_length = False
 
-    def score(self, query, documents, **kwargs) -> list[float]:  # pragma: no cover
+    def _score(self, query, documents, **kwargs) -> list[float]:  # pragma: no cover
         raise NotImplementedError
 
     async def _ascore(self, query, documents, **kwargs) -> list[float]:

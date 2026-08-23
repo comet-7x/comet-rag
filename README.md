@@ -71,14 +71,16 @@ uv run comet-rag worker embedder        # IO 密集：向量化 / 写库
 **worker 按负载特征分，不按业务名词分。** preprocessor 靠加进程扩、embedder
 靠加并发扩 —— 反过来会真的更慢，且症状是"上游变慢了"，很难联想到自己身上。
 
-**并发闸门做在基类的模板方法里。** `aembed()` 不可覆写，子类只能实现
-`_aembed()`，所以"绕过闸门"在结构上做不到。包装器只是约定，会被绕过且不报错。
+**并发闸门做在适配器基类的模板方法里。** `aembed()` / `aembed_media()` /
+`aembed_batch()` 都是 `@final`，子类只能实现下面那层 `_aembed()` 等，所以
+"绕过闸门"在类型层面就没有写法。换成"包一层 wrapper"只是约定 —— 谁直接调
+底层都能绕过去且不报错，而闸门恰恰是静默失效型的保护。
 
 **三个核心抽象各有一套与实现无关的契约测试**（79 条）。`InMemoryTaskStore` 与
 `PostgresTaskStore`、`InProcessExecutor` 与 `ArqExecutor`、`InMemoryVectorStore`
 与 `MilvusStore` 跑同一套断言 —— "换后端行为不变"这句话靠它们兑现，不靠文档。
 
-更多见 [docs/architecture.md](docs/architecture.md)。
+更多见 [docs/architecture.md](docs/architecture.md)；目录结构与流程图见 [docs/structure.md](docs/structure.md)。
 
 ---
 
@@ -105,6 +107,8 @@ uv run ruff check && uv run ruff format
 |                                                          |                                      |
 | -------------------------------------------------------- | ------------------------------------ |
 | [architecture.md](docs/architecture.md)                   | 分层、核心抽象、两种部署形态         |
+| [structure.md](docs/structure.md)                         | 目录结构、依赖图、入库/检索流程图    |
+| [model_usage.md](docs/model_usage.md)                     | Embedding、图片与 Reranker 用法      |
 | [deployment.md](docs/deployment.md)                       | 配置、扩容、运维、排查               |
 | [benchmark.md](docs/benchmark.md)                         | 性能基线与它**不能**回答的问题 |
 | [pipeline_usage.md](docs/pipeline_usage.md)               | 只当库用时看这个                     |

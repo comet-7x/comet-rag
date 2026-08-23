@@ -28,7 +28,7 @@ from comet_rag.config.schemas import (
 from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
 from comet_rag.services.ingestion import IngestRunner, register_ingest_runner
 
@@ -58,7 +58,7 @@ class KeywordEmbedding(BaseEmbeddingModel):
             1.0 if "橙子" in text else 0.0,
         ]
 
-    def embed(self, data, **kwargs):  # pragma: no cover
+    def _embed(self, data, **kwargs):  # pragma: no cover
         return self._vector(str(data))
 
     async def _aembed(self, data, **kwargs):
@@ -72,7 +72,7 @@ class LocalStubLoader(BaseLoader):
     def __init__(self, path: Path) -> None:
         self._path = path
 
-    def load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
+    def _load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         if not isinstance(source, SourceContent):
             source = SourceContent(str(source))
         return LoaderContent(
@@ -82,8 +82,8 @@ class LocalStubLoader(BaseLoader):
             metadata={"file_type": STUB_TYPE, "file_name": self._path.name},
         )
 
-    async def aload(self, source, *args, **kwargs) -> LoaderContent:
-        return self.load(source)
+    async def _aload(self, source, *args, **kwargs) -> LoaderContent:
+        return self._load(source)
 
     def cleanup(self) -> None:
         return None

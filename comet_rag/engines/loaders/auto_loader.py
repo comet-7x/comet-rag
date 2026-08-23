@@ -4,13 +4,14 @@ import asyncio
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from comet_rag.engines.loaders.base_loader import (
     DEFAULT_MAX_CONCURRENCY,
     BaseLoader,
 )
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
+from comet_rag.ports.gate import AsyncGate
 
 type LoaderMatcher = Callable[[SourceContent], bool]
 
@@ -107,6 +108,24 @@ class AutoLoader(BaseLoader):
             )
         )
 
+    @property
+    def routes(self) -> tuple[LoaderRoute, ...]:
+        """只读的路由表。组合根需要它来复验闸门确实挂到了叶子上。"""
+        return tuple(self._routes)
+
+    def bind_gate(self, gate: AsyncGate | None) -> None:
+        """**把闸门转发给叶子 loader，自己不持有。**
+
+        `AutoLoader` 是路由器不是 I/O：它的 `_aload` 只做匹配，真正的抓取发生在
+        叶子那一层。如果它也持有闸门，一次加载会取两次许可 —— 外层拿到之后
+        内层再要，闸门上限为 1 时**当场死锁**，上限大时也白白吃掉一半名额。
+
+        所以这里只转发。转发之后 `self._gate` 仍是 None，模板方法 `aload` 走
+        直通路径，名额全部留给真正发请求的那一层。
+        """
+        for route in self._routes:
+            route.loader.bind_gate(gate)
+
     @staticmethod
     def _validate_route_names(routes: Sequence[LoaderRoute]) -> None:
         names = [route.name for route in routes]
@@ -128,11 +147,15 @@ class AutoLoader(BaseLoader):
     def _normalize_source(source: SourceContent | str) -> SourceContent:
         return source if isinstance(source, SourceContent) else SourceContent(source)
 
-    def load(self, source: SourceContent | str) -> LoaderContent:
+    def _load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
+        self._reject_unsupported(kwargs)
         normalized = self._normalize_source(source)
         return self._resolve(normalized).load(normalized)
 
-    async def aload(self, source: SourceContent | str) -> LoaderContent:
+    async def _aload(
+        self, source: SourceContent | str, **kwargs: Any
+    ) -> LoaderContent:
+        self._reject_unsupported(kwargs)
         normalized = self._normalize_source(source)
         # Route matching may inspect the local filesystem. Keep that blocking stat
         # off the event loop for local paths and custom network filesystems.

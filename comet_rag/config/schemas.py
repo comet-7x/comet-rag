@@ -292,6 +292,35 @@ class LimitsConfig(BaseModel):
         gt=0,
         description="等闸门的最长时间。等太久算过载 —— 上游多半早就超时了",
     )
+    # 下面三个默认值与 `engines/defaults.py` 里的库兜底**必须一致**，由
+    # `test_config_schemas.py` 钉住。这里写字面量而不是 import 那边的常量，
+    # 是因为 `config/` 在分层里低于 `engines/`：反过来 import 就是向上依赖。
+    # 重复一个字面量、用测试防漂移，好过为了省一个字面量把依赖方向弄反。
+    pipeline_concurrency: int = Field(
+        default=8,
+        gt=0,
+        description="管道每个窗口内同时在飞的模型请求数。与 model_concurrency "
+        "不同：那是**整个进程**的总量（闸门），这是**一次调用**的扇出宽度，"
+        "两者叠加生效",
+    )
+    embed_batch_size: int = Field(
+        default=32,
+        gt=0,
+        description="流式管道每次处理多少个 chunk，即产出粒度。越小首字延迟越低、"
+        "整体吞吐越差。它**不是**单个 HTTP 请求携带的条数 —— 那由模型声明的 "
+        "batch_limit 决定",
+    )
+    loader_concurrency: int = Field(
+        default=10,
+        gt=0,
+        description="单次批量加载的并发上限。护的是本机文件描述符与对外连接数，"
+        "与模型侧不是同一种资源，所以是独立的一个数",
+    )
+    model_image_max_bytes: int = Field(
+        default=20 * 1024 * 1024,
+        gt=0,
+        description="单张本地模型图片的读取上限；Base64 编码会额外膨胀约三分之一",
+    )
     max_backlog: int = Field(
         default=1000,
         ge=0,

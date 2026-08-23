@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
 from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
@@ -13,7 +14,7 @@ from comet_rag.engines.pipelines.types import Chunk, PipelineConfig, PipelineRes
 from comet_rag.engines.utils import compute_sha256
 
 if TYPE_CHECKING:
-    from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+    from comet_rag.ports import EmbeddingPort
 
 
 class Pipeline:
@@ -21,7 +22,7 @@ class Pipeline:
         self,
         config: PipelineConfig | None = None,
         loader: BaseLoader | None = None,
-        embedding_model: BaseEmbeddingModel | None = None,
+        embedding_model: EmbeddingPort | None = None,
     ):
         self._config = config or PipelineConfig()
         self._loader = loader or AutoLoader.default()
@@ -131,12 +132,11 @@ class Pipeline:
     # `await aembed()` —— 200 个 chunk 就是 200 次**依次排队**的往返，
     # 模型服务大部分时间在空转等网络。
     #
-    # 注意窗口不等于"一个请求装多条"：当前模型层是一条一个请求
-    # （BaseEmbeddingModel.abatch_embed 扇出 N 个单条调用并用信号量限流），
-    # 所以这里的收益来自**并发**而非请求数。真正的请求级批量需要模型层
-    # 支持一次提交多条，属于后续优化。
+    # 窗口不等于"一个请求装多条"：窗口是**产出粒度**，装几条由
+    # `embedding_batch` 按模型声明的 `batch_limit` 决定。不支持原生批量的
+    # 模型（batch_limit=1）收益来自并发，支持的（OpenAI）则直接省下往返。
 
-    def _require_model(self) -> BaseEmbeddingModel:
+    def _require_model(self) -> EmbeddingPort:
         if self._embedding_model is None:
             raise RuntimeError(
                 "Embedding model is not initialized, cannot execute embedding."
@@ -155,8 +155,10 @@ class Pipeline:
             return
         model = self._require_model()
         for window in self._windows(chunks):
-            embeddings = model.batch_embed(
-                [c.text for c in window], max_concurrency=self._config.max_concurrency
+            embeddings = embed_documents(
+                model,
+                [c.text for c in window],
+                max_concurrency=self._config.max_concurrency,
             )
             for chunk, emb in zip(window, embeddings, strict=True):
                 chunk.embedding = emb
@@ -169,15 +171,17 @@ class Pipeline:
             return
         model = self._require_model()
         for window in self._windows(chunks):
-            embeddings = await model.abatch_embed(
-                [c.text for c in window], max_concurrency=self._config.max_concurrency
+            embeddings = await aembed_documents(
+                model,
+                [c.text for c in window],
+                max_concurrency=self._config.max_concurrency,
             )
             for chunk, emb in zip(window, embeddings, strict=True):
                 chunk.embedding = emb
                 yield chunk
 
     def _embed_chunks(self, chunks: list[Chunk]) -> None:
-        # 复用窗口化实现：一次性把所有 chunk 丢给 batch_embed 会为超大文档
+        # 复用窗口化实现：一次性把所有 chunk 交给调度器会为超大文档
         # 同时创建上万个待处理项，窗口化把峰值占用限制在 embed_batch_size。
         for _ in self._iter_embedded(chunks):
             pass

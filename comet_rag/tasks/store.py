@@ -1,4 +1,8 @@
-"""任务态存储：**只管状态，不管调度**。
+"""任务态存储的**契约**：只管状态，不管调度。
+
+实现分居各自的文件：`store_memory.py`（进程内）、`store_postgres.py`。
+本模块只有 `TaskStore` 抽象基类与它的异常 —— 这样"契约长什么样"和
+"某个后端怎么实现"不会挤在同一屏里互相干扰。
 
 与原稿最大的区别：`spawn / cancel` 被移出去了（见 executor.py）。
 理由很实在——`spawn(task, coro)` 收的是协程对象，Redis 里没地方放协程；
@@ -12,12 +16,13 @@
 
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
+
+from comet_rag.core.logging import logger
+from comet_rag.core.time import Time
 
 from .models import (
     FIELD_NAMES,
@@ -26,10 +31,9 @@ from .models import (
     TaskError,
     TaskEvent,
     TaskStatus,
-    Time,
     new_task_id,
 )
-from .states import assert_transition
+from .states import InvalidTransition, assert_transition
 
 
 class TaskNotFound(LookupError):
@@ -292,33 +296,55 @@ class TaskStore(ABC):
         """
         now, revived = Time.now(), []
         for task in await self._stale_candidates(lease, now):
-            if task.status is TaskStatus.CANCELLING:
-                # 用户要的是"停下来"，那就直接给他终态；重排队等于违背原意
-                await self.transition(
-                    task.task_id,
-                    TaskStatus.CANCELLED,
-                    error=TaskError(
-                        code="cancelled_lease_expired",
-                        message="worker 在处理取消的过程中失联",
-                    ),
-                    note="租约过期（取消中）",
-                )
-                revived.append(task.task_id)
+            try:
+                await self._reclaim(task)
+            except (InvalidTransition, TaskNotFound, VersionConflict) as exc:
+                # 竞态，不是错误：候选选出来之后、回收动手之前，worker 自己把
+                # 任务推进到了终态（或它被删了）。回收本就是给"没人再推进它"
+                # 的任务兜底，这里恰恰说明不需要兜底。
+                #
+                # `VersionConflict` 属于同一类，而且理由更强：`_reclaim` 不传
+                # `expected_version`，`_cas` 会自己重试 `_CAS_RETRIES` 次；连撞
+                # 这么多次只说明**有人正在密集地写这条任务**——也就是那个
+                # worker 其实还活着（心跳晚了而已，比如 GC 停顿或网络抖动）。
+                # 此时把它抢过来重排队，正是本模块反复警告的"一份任务两个
+                # 执行者"。所以这里跳过不只是安全，是更正确。
+                #
+                # 关键在于**不能让它中断整轮扫描**。一个碰巧完成的任务若把异常
+                # 抛出去，同一批里其余的僵尸任务一个都回收不到 —— 而扫描正是
+                # 它们唯一的指望。下一轮很可能再撞上同样的竞态，于是僵尸任务
+                # 一直躺着，日志里却只有一条看不出所以然的迁移错误。
+                logger.debug(f"跳过 {task.task_id}：回收前状态已变（{exc!r}）")
                 continue
-
-            err = TaskError(
-                code="lease_expired", message="worker 心跳超时", retriable=True
-            )
-            nxt = (
-                TaskStatus.PENDING
-                if task.attempts < task.max_attempts
-                else TaskStatus.FAILED
-            )
-            await self.transition(task.task_id, nxt, error=err, note="租约过期")
             revived.append(task.task_id)
         return revived
 
-    async def _stale_candidates(self, lease: timedelta, now: Any) -> list[Task]:
+    async def _reclaim(self, task: Task) -> None:
+        """回收单个心跳超时的任务。竞态由调用方 `sweep_stale` 兜住。"""
+        if task.status is TaskStatus.CANCELLING:
+            # 用户要的是"停下来"，那就直接给他终态；重排队等于违背原意
+            await self.transition(
+                task.task_id,
+                TaskStatus.CANCELLED,
+                error=TaskError(
+                    code="cancelled_lease_expired",
+                    message="worker 在处理取消的过程中失联",
+                ),
+                note="租约过期（取消中）",
+            )
+            return
+
+        err = TaskError(code="lease_expired", message="worker 心跳超时", retriable=True)
+        nxt = (
+            TaskStatus.PENDING
+            if task.attempts < task.max_attempts
+            else TaskStatus.FAILED
+        )
+        await self.transition(task.task_id, nxt, error=err, note="租约过期")
+
+    async def _stale_candidates(
+        self, lease: timedelta, now: datetime
+    ) -> list[Task]:
         """所有心跳已超时的**活跃**任务。
 
         活跃 = RUNNING 或 CANCELLING，也就是 `TaskStatus.is_active` 的定义。
@@ -392,104 +418,3 @@ class TaskStore(ABC):
             raise VersionConflict(
                 f"任务 {task.task_id} 版本 {task.version} ≠ 期望 {expected}"
             )
-
-
-# 内存实现
-def _clone(task: Task) -> Task:
-    """浅拷贝 + 拷贝可变容器。真实 DB 实现这里是一次序列化/反序列化。"""
-    copy = replace(task)
-    copy.context = dict(task.context)
-    copy.stage_history = [replace(r) for r in task.stage_history]
-    return copy
-
-
-class InMemoryTaskStore(TaskStore):
-    """进程内任务表（重启即丢）。仅用于开发/测试/单机。"""
-
-    def __init__(self) -> None:
-        self._tasks: dict[str, Task] = {}
-        self._events: dict[str, list[TaskEvent]] = {}
-        self._lock = asyncio.Lock()
-
-    async def _insert(self, task: Task) -> tuple[Task, bool]:
-        async with self._lock:
-            if task.idempotency_key:
-                for existing in self._tasks.values():
-                    if (
-                        existing.kind == task.kind
-                        and existing.idempotency_key == task.idempotency_key
-                    ):
-                        return _clone(existing), False
-            self._tasks[task.task_id] = _clone(task)
-            return _clone(task), True
-
-    async def _load(self, task_id: str) -> Task | None:
-        async with self._lock:
-            task = self._tasks.get(task_id)
-            return _clone(task) if task else None
-
-    async def _save(
-        self, task: Task, expected_version: int, *, bump: bool = True
-    ) -> Task:
-        async with self._lock:
-            current = self._tasks.get(task.task_id)
-            if current is None:
-                raise TaskNotFound(task.task_id)
-            if current.version != expected_version:
-                raise VersionConflict(
-                    f"任务 {task.task_id} 版本 {current.version} ≠ 期望 {expected_version}"
-                )
-            task.version = expected_version + 1 if bump else expected_version
-            self._tasks[task.task_id] = _clone(task)
-            return _clone(task)
-
-    async def _remove(self, task_id: str) -> bool:
-        async with self._lock:
-            self._events.pop(task_id, None)
-            return self._tasks.pop(task_id, None) is not None
-
-    async def _query(
-        self,
-        *,
-        kind: str | None = None,
-        status: TaskStatus | None = None,
-        owner_id: str | None = None,
-        idempotency_key: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> list[Task]:
-        async with self._lock:
-            rows = [
-                t
-                for t in self._tasks.values()
-                if (kind is None or t.kind == kind)
-                and (status is None or t.status is status)
-                and (owner_id is None or t.owner_id == owner_id)
-                and (idempotency_key is None or t.idempotency_key == idempotency_key)
-            ]
-        rows.sort(key=lambda t: t.created_at, reverse=True)
-        return [_clone(t) for t in rows[offset : offset + limit]]
-
-    async def _append_event(
-        self,
-        task_id: str,
-        type: str,
-        message: str = "",
-        data: dict[str, Any] | None = None,
-    ) -> TaskEvent:
-        async with self._lock:
-            bucket = self._events.setdefault(task_id, [])
-            event = TaskEvent(
-                task_id=task_id,
-                seq=len(bucket) + 1,
-                at=Time.now(),
-                type=type,
-                message=message,
-                data=data or {},
-            )
-            bucket.append(event)
-            return event
-
-    async def events(self, task_id: str, *, after_seq: int = 0) -> list[TaskEvent]:
-        async with self._lock:
-            return [e for e in self._events.get(task_id, []) if e.seq > after_seq]

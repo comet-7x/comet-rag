@@ -24,7 +24,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
-from comet_rag.tasks.models import Time
+from comet_rag.core.time import Time
 
 
 class KnowledgeBaseError(RuntimeError):

@@ -18,7 +18,9 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Protocol
 
-from .models import Task, TaskStatus, Time
+from comet_rag.core.time import Time
+
+from .models import Task, TaskStatus
 from .store import TaskStore
 
 # 负载分道

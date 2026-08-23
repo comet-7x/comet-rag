@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from comet_rag.composition.bootstrap import build_context, build_embedding_model
 from comet_rag.config.schemas import (
     APPConfig,
     Backend,
@@ -20,13 +22,16 @@ from comet_rag.config.schemas import (
     S3Config,
     ServerConfig,
 )
-from comet_rag.core.bootstrap import build_context
+from comet_rag.core.concurrency import Gate
+from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.loaders.types import SourceContent
 from comet_rag.engines.pipelines import DocxConfig, PipelineConfig
+from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.loaders import S3Loader
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.providers.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.ports import MediaResource, MultimodalEmbeddingPort
 
 DIM = 3
 
@@ -47,7 +52,7 @@ class FakeEmbedding(BaseEmbeddingModel):
     def __init__(self) -> None:
         self.closed = False
 
-    def embed(self, data, **kwargs):  # pragma: no cover
+    def _embed(self, data, **kwargs):  # pragma: no cover
         return [0.0] * DIM
 
     async def _aembed(self, data, **kwargs):
@@ -61,7 +66,7 @@ class FakeReranker(BaseReranker):
     def __init__(self) -> None:
         self.closed = False
 
-    def score(self, query, documents, **kwargs):  # pragma: no cover
+    def _score(self, query, documents, **kwargs):  # pragma: no cover
         return []
 
     async def _ascore(self, query, documents, **kwargs):  # pragma: no cover
@@ -84,6 +89,37 @@ def context(embedding: FakeEmbedding):
 
 
 # ── 装配 ───────────────────────────────────────────────────────────────────
+
+
+async def test_built_embedding_model_receives_source_policy() -> None:
+    """多模态 embedding 也会让模型服务抓取 URL，不能漏掉 SSRF 准入策略。
+
+    先 `isinstance` 再调用，不是为了让类型检查闭嘴：`build_embedding_model`
+    的返回类型是 `EmbeddingPort`，而多模态是**可选能力**。这行断言同时把
+    "当前配置装出来的模型确实支持图片"一并钉住 —— 哪天它退化成纯文本，
+    这条 SSRF 用例会立刻失败而不是静静地不再检查任何东西。
+    """
+    model = build_embedding_model(make_config())
+    try:
+        assert isinstance(model, MultimodalEmbeddingPort)
+        with pytest.raises(CometRAGException, match="非公网地址"):
+            model.embed_media(MediaResource(url="http://127.0.0.1/metadata"))
+    finally:
+        await model.aclose()
+
+
+async def test_built_embedding_model_rejects_local_image_by_default(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "private.png"
+    image.write_bytes(b"png-bytes")
+    model = build_embedding_model(make_config())
+    try:
+        assert isinstance(model, MultimodalEmbeddingPort)
+        with pytest.raises(CometRAGException, match="未开放从服务器本地路径入库"):
+            model.embed_media(MediaResource(path=image, mimetype="image/png"))
+    finally:
+        await model.aclose()
 
 
 async def test_memory_backends_need_no_middleware(context) -> None:
@@ -115,7 +151,7 @@ def test_injected_pipeline_config_keeps_deployment_docx_limits(
     def capture_runners(context, *, ingest_config):
         captured["config"] = ingest_config
 
-    monkeypatch.setattr("comet_rag.core.bootstrap.wire_runners", capture_runners)
+    monkeypatch.setattr("comet_rag.composition.bootstrap.wire_runners", capture_runners)
     build_context(
         config,
         embedding_model=embedding,
@@ -140,7 +176,7 @@ def test_explicit_docx_pipeline_fields_override_deployment_defaults(
     def capture_runners(context, *, ingest_config):
         captured["config"] = ingest_config
 
-    monkeypatch.setattr("comet_rag.core.bootstrap.wire_runners", capture_runners)
+    monkeypatch.setattr("comet_rag.composition.bootstrap.wire_runners", capture_runners)
     build_context(
         config,
         embedding_model=embedding,
@@ -372,3 +408,112 @@ def test_reranker_is_checked_too() -> None:
             reranker=SilentlyUngatedReranker(),
             vector_store=InMemoryVectorStore(),
         )
+
+
+# ── 并发配置必须真的到达管道 ───────────────────────────────────────────────
+
+
+def test_pipeline_concurrency_reaches_the_runner_from_config() -> None:
+    """**YAML 里调并发，必须真的作用到管道上。**
+
+    此前 `bootstrap` 造 `PipelineConfig(docx=configured_docx)` 时只接了 docx
+    限额，`max_concurrency` 与 `embed_batch_size` 一个都没接 —— 那两个数字硬
+    编码在 `engines/pipelines/types.py` 里，**配置根本够不着**。
+
+    配置项在那里、写了值、然后不起作用，比没有这个配置项更糟：调小它的人会以为
+    自己限住了什么。
+    """
+    config = make_config()
+    config.limits.pipeline_concurrency = 3
+    config.limits.embed_batch_size = 7
+
+    captured: list[PipelineConfig | None] = []
+
+    def capture(context, *, ingest_config=None):
+        captured.append(ingest_config)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("comet_rag.composition.bootstrap.wire_runners", capture)
+        build_context(
+            config, embedding_model=FakeEmbedding(), vector_store=InMemoryVectorStore()
+        )
+
+    assert captured
+    wired = captured[0]
+    assert wired is not None
+    assert wired.max_concurrency == 3
+    assert wired.embed_batch_size == 7
+
+
+def test_explicit_pipeline_config_wins_over_deployment_limits() -> None:
+    """调用方显式写过的字段不被部署配置盖掉 —— 与 docx 那套规则一致。"""
+    config = make_config()
+    config.limits.pipeline_concurrency = 3
+
+    captured: list[PipelineConfig | None] = []
+
+    def capture(context, *, ingest_config=None):
+        captured.append(ingest_config)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("comet_rag.composition.bootstrap.wire_runners", capture)
+        build_context(
+            config,
+            embedding_model=FakeEmbedding(),
+            vector_store=InMemoryVectorStore(),
+            pipeline_config=PipelineConfig(max_concurrency=9),
+        )
+
+    wired = captured[0]
+    assert wired is not None
+    assert wired.max_concurrency == 9, "显式写的 9 被部署配置盖掉了"
+    # 没写过的那个仍然跟随部署配置
+    assert wired.embed_batch_size == config.limits.embed_batch_size
+
+
+def test_loader_gate_is_bound_to_the_leaves_not_the_router() -> None:
+    """**加载侧也必须有进程级闸门，且挂在真正发请求的那一层。**
+
+    `ingestion.py` 每个任务调一次 `aload`，`max_jobs=32` 就是 32 路对外抓取 ——
+    加载侧此前完全没有上限。
+
+    闸门挂在叶子而不是 `AutoLoader`：后者只是路由器，两层都持有会让一次加载
+    取两次许可（上限为 1 时实测死锁）。
+    """
+    context = build_context(
+        make_config(), embedding_model=FakeEmbedding(), vector_store=InMemoryVectorStore()
+    )
+    loader = context.ingest_loader
+    assert isinstance(loader, AutoLoader)
+
+    assert loader._gate is None, "路由器不该持有闸门"  # noqa: SLF001
+    leaf_gates = {route.loader._gate for route in loader.routes}  # noqa: SLF001
+    assert len(leaf_gates) == 1 and None not in leaf_gates, (
+        f"叶子 loader 的闸门不一致或没挂上：{leaf_gates}"
+    )
+
+
+def test_loader_and_model_gates_are_separate_budgets() -> None:
+    """**加载闸门与模型闸门是两份预算。**
+
+    模型闸门护 GPU 排队位，加载闸门护本机文件描述符与对外连接数，合理值差一个
+    数量级。共用会让"调大加载并发"意外挤掉模型的名额。
+
+    这与"embedding 与 rerank 必须共用"不矛盾 —— 那两者抢的确实是同一块 GPU。
+    **判据是资源，不是模块。**
+    """
+    config = make_config()
+    config.limits.loader_concurrency = 3
+    config.limits.model_concurrency = 9
+
+    context = build_context(
+        config, embedding_model=FakeEmbedding(), vector_store=InMemoryVectorStore()
+    )
+    loader = context.ingest_loader
+    assert isinstance(loader, AutoLoader)
+
+    loader_gate = next(iter({route.loader._gate for route in loader.routes}))  # noqa: SLF001
+    assert loader_gate is not context.model_gate, "两个闸门不该是同一个对象"
+    assert isinstance(loader_gate, Gate)
+    assert loader_gate.stats.limit == 3
+    assert context.model_gate.stats.limit == 9

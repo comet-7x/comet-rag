@@ -25,9 +25,8 @@ from pydantic import BaseModel, Field
 
 from comet_rag.core.degradation import DegradationController
 from comet_rag.core.logging import logger
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import BaseVectorStore, Filter
+from comet_rag.ports import EmbeddingPort, RerankDocument, RerankerPort
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 
 
@@ -97,10 +96,10 @@ class RetrievalService:
     def __init__(
         self,
         *,
-        embedding_model: BaseEmbeddingModel,
+        embedding_model: EmbeddingPort,
         vector_store: BaseVectorStore,
         knowledge_base: KnowledgeBaseService | None = None,
-        reranker: BaseReranker | None = None,
+        reranker: RerankerPort | None = None,
         degradation: DegradationController | None = None,
     ) -> None:
         self._embedding_model = embedding_model
@@ -160,7 +159,7 @@ class RetrievalService:
         # 报错，却会在不兼容的语义空间中比较向量，结果只会静默变差。
         if self._knowledge_base is not None:
             await self._knowledge_base.resolve_for_search(query.kb_id)
-        embedding = await self._embedding_model.aembed(query.query)
+        embedding = await self._embedding_model.aembed_query(query.query)
         hits = await self._vector_store.asearch(
             query.kb_id,
             embedding,
@@ -180,7 +179,7 @@ class RetrievalService:
 
     @staticmethod
     async def _rerank(
-        reranker: BaseReranker, query: str, candidates: list[RetrievedChunk]
+        reranker: RerankerPort, query: str, candidates: list[RetrievedChunk]
     ) -> tuple[list[RetrievedChunk], bool]:
         """重排并返回 `(结果, 是否真的重排了)`。
 
@@ -192,30 +191,46 @@ class RetrievalService:
         reranker 由调用方传入而非从 self 取，省掉一个"此处它必不为 None"的断言。
         """
         try:
-            scores = await reranker.ascore(query, [c.text for c in candidates])
+            ranked = await reranker.arank(
+                query,
+                [
+                    RerankDocument(
+                        id=candidate.id,
+                        content=candidate.text,
+                        metadata=candidate.metadata,
+                    )
+                    for candidate in candidates
+                ],
+            )
         except Exception as exc:  # noqa: BLE001 —— 任何重排故障都降级
             logger.warning(f"重排失败，降级为向量召回结果：{exc!r}")
             return candidates, False
 
-        if len(scores) != len(candidates):
+        if len(ranked) != len(candidates):
             logger.warning(
-                f"重排返回 {len(scores)} 个分数但候选有 {len(candidates)} 个，"
+                f"重排返回 {len(ranked)} 个结果但候选有 {len(candidates)} 个，"
                 f"结果不可对齐，降级为向量召回结果"
+            )
+            return candidates, False
+
+        indexes = [item.index for item in ranked]
+        if sorted(indexes) != list(range(len(candidates))):
+            logger.warning(
+                f"重排结果索引 {indexes} 无法与 {len(candidates)} 个候选对齐，"
+                "降级为向量召回结果"
             )
             return candidates, False
 
         rescored = [
             RetrievedChunk(
-                id=c.id,
-                text=c.text,
-                score=score,
-                metadata=c.metadata,
-                vector_score=c.vector_score,
+                id=candidates[item.index].id,
+                text=candidates[item.index].text,
+                score=item.score,
+                metadata=candidates[item.index].metadata,
+                vector_score=candidates[item.index].vector_score,
             )
-            for c, score in zip(candidates, scores, strict=True)
+            for item in ranked
         ]
-        # id 作次级键，保证同分时顺序稳定
-        rescored.sort(key=lambda c: (-c.score, c.id))
         return rescored, True
 
 

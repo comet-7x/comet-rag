@@ -359,6 +359,6 @@ async def test_unknown_state_is_never_swallowed(store: TaskStore) -> None:
 
 
 async def _minutes_ago(store: TaskStore, task_id: str, minutes: int):
-    from comet_rag.tasks import Time
+    from comet_rag.core.time import Time
 
     return Time.now() - timedelta(minutes=minutes)
