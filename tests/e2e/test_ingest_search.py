@@ -58,7 +58,7 @@ class KeywordEmbedding(BaseEmbeddingModel):
             1.0 if "橙子" in text else 0.0,
         ]
 
-    def embed(self, data, **kwargs):  # pragma: no cover
+    def _embed(self, data, **kwargs):  # pragma: no cover
         return self._vector(str(data))
 
     async def _aembed(self, data, **kwargs):
@@ -72,7 +72,7 @@ class LocalStubLoader(BaseLoader):
     def __init__(self, path: Path) -> None:
         self._path = path
 
-    def load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
+    def _load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         if not isinstance(source, SourceContent):
             source = SourceContent(str(source))
         return LoaderContent(
@@ -83,7 +83,7 @@ class LocalStubLoader(BaseLoader):
         )
 
     async def _aload(self, source, *args, **kwargs) -> LoaderContent:
-        return self.load(source)
+        return self._load(source)
 
     def cleanup(self) -> None:
         return None

@@ -49,7 +49,7 @@ class FlakyReranker(BaseReranker):
         self.failing = False
         self.calls = 0
 
-    def score(self, query, documents, **kwargs):  # pragma: no cover
+    def _score(self, query, documents, **kwargs):  # pragma: no cover
         return []
 
     async def _ascore(self, query, documents, **kwargs) -> list[float]:

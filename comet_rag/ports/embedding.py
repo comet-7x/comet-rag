@@ -33,7 +33,7 @@ Port 表达的是"我需要什么"，不是"你要继承谁"。写成 Protocol�
 先 import 本项目的基类。仓库内的适配器仍然继承
 ``BaseEmbeddingModel``，但那是为了复用实现，不是为了满足契约。
 
-契约是否真被满足由 `core/bootstrap.py` 的返回类型静态钉住：
+契约是否真被满足由 `composition/bootstrap.py` 的返回类型静态钉住：
 ``build_embedding_model() -> EmbeddingPort`` 返回具体适配器，形状对不上
 pyright 当场报错。
 

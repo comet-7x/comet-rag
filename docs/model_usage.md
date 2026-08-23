@@ -128,17 +128,26 @@ Reranker 与 Embedding 一样持有 HTTP 客户端，**用完必须 `aclose()`**
 需要保留业务 ID 和元数据时使用结构化候选：
 
 ```python
+from comet_rag.infrastructure.providers import Qwen3VLReranker
 from comet_rag.ports import RerankDocument
 
-ranked = await reranker.arank(
-    "找猫",
-    [
-        RerankDocument(id="cat", content="一只猫"),
-        RerankDocument(id="dog", content="一只狗"),
-    ],
+reranker = Qwen3VLReranker(
+    base_url="http://localhost:8001/v1",
+    model_name="Qwen/Qwen3-VL-Reranker-8B",
+    api_key="EMPTY",
 )
+try:
+    ranked = await reranker.arank(
+        "找猫",
+        [
+            RerankDocument(id="cat", content="一只猫"),
+            RerankDocument(id="dog", content="一只狗"),
+        ],
+    )
 
-assert ranked[0].document.id == "cat"
+    assert ranked[0].document.id == "cat"
+finally:
+    await reranker.aclose()
 ```
 
 图片查询或候选使用与 Embedding 相同的 `TextContent`、`ImageContent` 和

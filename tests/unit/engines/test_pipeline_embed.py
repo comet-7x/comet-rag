@@ -39,7 +39,7 @@ class RecordingEmbeddingModel(BaseEmbeddingModel):
         self._latency = latency
         self._lock = asyncio.Lock()
 
-    def embed(self, data, **kwargs) -> list[float]:
+    def _embed(self, data, **kwargs) -> list[float]:
         self.calls += 1
         return [float(len(str(data)))]
 
@@ -63,7 +63,7 @@ class StubLoader(BaseLoader):
     def __init__(self, path: Path) -> None:
         self._path = path
 
-    def load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
+    def _load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         if not isinstance(source, SourceContent):
             source = SourceContent(str(source))
         return LoaderContent(
@@ -76,7 +76,7 @@ class StubLoader(BaseLoader):
     async def _aload(
         self, source: SourceContent | str, *args, **kwargs
     ) -> LoaderContent:
-        return self.load(source)
+        return self._load(source)
 
     def cleanup(self) -> None:
         return None

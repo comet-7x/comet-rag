@@ -17,7 +17,7 @@ from comet_rag.ports import (
 
 
 class EchoEmbedding(BaseEmbeddingModel):
-    def embed(self, data: Any, **kwargs: Any) -> Any:
+    def _embed(self, data: Any, **kwargs: Any) -> Any:
         return data
 
     async def _aembed(self, data: Any, /, **kwargs: Any) -> Any:
@@ -25,7 +25,7 @@ class EchoEmbedding(BaseEmbeddingModel):
 
 
 class EchoMultimodalEmbedding(MultimodalEmbeddingMixin, EchoEmbedding):
-    def embed_media(self, data: Any, /, **kwargs: Any) -> Any:
+    def _embed_media(self, data: Any, /, **kwargs: Any) -> Any:
         return data
 
     async def _aembed_media(self, data: Any, /, **kwargs: Any) -> Any:
@@ -33,7 +33,7 @@ class EchoMultimodalEmbedding(MultimodalEmbeddingMixin, EchoEmbedding):
 
 
 class EchoReranker(BaseReranker[str]):
-    def score(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
+    def _score(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
         return [0.0] * len(list(documents))
 
     async def _ascore(

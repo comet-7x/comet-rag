@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from comet_rag.engines.loaders.base_loader import (
     DEFAULT_MAX_CONCURRENCY,
@@ -147,11 +147,15 @@ class AutoLoader(BaseLoader):
     def _normalize_source(source: SourceContent | str) -> SourceContent:
         return source if isinstance(source, SourceContent) else SourceContent(source)
 
-    def load(self, source: SourceContent | str) -> LoaderContent:
+    def _load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
+        self._reject_unsupported(kwargs)
         normalized = self._normalize_source(source)
         return self._resolve(normalized).load(normalized)
 
-    async def _aload(self, source: SourceContent | str) -> LoaderContent:
+    async def _aload(
+        self, source: SourceContent | str, **kwargs: Any
+    ) -> LoaderContent:
+        self._reject_unsupported(kwargs)
         normalized = self._normalize_source(source)
         # Route matching may inspect the local filesystem. Keep that blocking stat
         # off the event loop for local paths and custom network filesystems.

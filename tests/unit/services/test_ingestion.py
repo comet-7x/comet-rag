@@ -55,7 +55,7 @@ class FakeEmbeddingModel(BaseEmbeddingModel):
     def _vector(self, text: str) -> list[float]:
         return [float(len(text)), float(sum(map(ord, text)) % 97), 1.0]
 
-    def embed(self, data, **kwargs) -> list[float]:
+    def _embed(self, data, **kwargs) -> list[float]:
         self.calls += 1
         return self._vector(str(data))
 
@@ -78,7 +78,7 @@ class StubLoader(BaseLoader):
         self.fail_times = 0
         self.failure: Exception | None = None
 
-    def load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
+    def _load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         self.loads += 1
         if not isinstance(source, SourceContent):
             source = SourceContent(str(source))
@@ -96,7 +96,7 @@ class StubLoader(BaseLoader):
             self.loads += 1
             self.fail_times -= 1
             raise self.failure or RuntimeError("注入的下载失败")
-        return self.load(source)
+        return self._load(source)
 
     def cleanup(self) -> None:
         return None

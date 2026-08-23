@@ -8,6 +8,9 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -28,10 +31,10 @@ class CountingLoader(BaseLoader):
         self.peak = 0
         self.calls = 0
 
-    def load(self, source: SourceContent | str) -> LoaderContent:  # pragma: no cover
+    def _load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:  # pragma: no cover
         raise NotImplementedError
 
-    async def _aload(self, source: SourceContent | str) -> LoaderContent:
+    async def _aload(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
         self.calls += 1
         self.live += 1
         self.peak = max(self.peak, self.live)
@@ -131,3 +134,129 @@ async def test_batch_load_also_goes_through_the_gate(limit: int) -> None:
         await auto.abatch_load(sources, max_concurrency=8)
 
     assert leaf.peak <= limit, f"闸门 {limit}，实际峰值 {leaf.peak}"
+
+
+# ── 批量路径同样不能绕过闸门（评审指出）─────────────────────────────────────
+
+
+async def test_url_batch_workers_also_go_through_the_gate() -> None:
+    """**批量 worker 直接调实现方法，于是绕开了 `load` 上的闸门。**
+
+    `URLLoader` 的批量刻意让 worker 直接调 `_load_impl`（避免嵌套登记活动操作
+    导致 cleanup 循环等待）。绕开的本该只是"登记"，结果连限流一起绕了 ——
+    `AutoLoader.batch_load` 一路下来，`max_concurrency` 个 worker 能同时打到
+    下游，哪怕闸门配得更小。
+    """
+    from comet_rag.engines.loaders.url_loader import URLLoader
+
+    gate = Gate(limit=2)
+    loader = URLLoader()
+    loader.bind_gate(gate)
+
+    live = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def fake_impl(source: Any, **_: Any) -> LoaderContent:
+        nonlocal live, peak
+        with lock:
+            live += 1
+            peak = max(peak, live)
+        time.sleep(0.02)
+        with lock:
+            live -= 1
+        return LoaderContent(path=Path("/dev/null"), source=SourceContent("x"))
+
+    loader._load_impl = fake_impl  # type: ignore[method-assign]  # noqa: SLF001
+    try:
+        await asyncio.to_thread(
+            loader.batch_load, [f"https://example.invalid/{i}" for i in range(12)],
+            max_concurrency=8,
+        )
+    finally:
+        loader.cleanup()
+
+    assert peak <= 2, f"批量 worker 绕过了闸门：峰值 {peak} 超过上限 2"
+    assert peak > 1, "峰值恒为 1 说明没并行，这条用例测了个寂寞"
+
+
+# ── 厂商专用选项必须能穿过模板方法 ─────────────────────────────────────────
+
+
+@pytest.mark.parametrize("entry", ["load", "aload"])
+async def test_loader_specific_options_survive_the_template_method(entry: str) -> None:
+    """**`docs/pipeline_usage.md` 教用户直接调 `URLLoader` 传专用选项。**
+
+    模板方法若只收 `source`，那条文档就地失效 —— 实测报
+    `BaseLoader.load() got an unexpected keyword argument 'download_config'`。
+    闸门是加在中间的，不该把参数吃掉。
+    """
+    from comet_rag.engines.loaders.url_loader import DownloadRequestConfig, URLLoader
+
+    loader = URLLoader()
+    seen: list[Any] = []
+
+    def fake_sync(source: Any, **kwargs: Any) -> LoaderContent:
+        seen.append(kwargs.get("download_config"))
+        return LoaderContent(path=Path("/dev/null"), source=SourceContent("x"))
+
+    async def fake_async(source: Any, **kwargs: Any) -> LoaderContent:
+        return fake_sync(source, **kwargs)
+
+    loader._load_impl = fake_sync  # type: ignore[method-assign]  # noqa: SLF001
+    loader._aload_impl = fake_async  # type: ignore[method-assign]  # noqa: SLF001
+    config = DownloadRequestConfig(timeout=5)
+    try:
+        if entry == "load":
+            loader.load("https://example.invalid/a", download_config=config)
+        else:
+            await loader.aload("https://example.invalid/a", download_config=config)
+    finally:
+        loader.cleanup()
+
+    assert seen == [config], "download_config 没有透传到实现层"
+
+
+@pytest.mark.parametrize("entry", ["load", "aload"])
+async def test_unknown_options_are_still_rejected(entry: str) -> None:
+    """转发不等于放行：拼错的参数名必须当场报错，不能悄悄忽略。"""
+    from comet_rag.engines.loaders.url_loader import URLLoader
+
+    loader = URLLoader()
+    try:
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            if entry == "load":
+                loader.load("https://example.invalid/a", typo=True)
+            else:
+                await loader.aload("https://example.invalid/a", typo=True)
+    finally:
+        loader.cleanup()
+
+
+async def test_local_loader_takes_exactly_one_permit_per_load() -> None:
+    """**`_aload` 委派时必须调未加闸的 `_load`。**
+
+    `LocalLoader._aload` 曾是 `to_thread(self.load, source)` —— `self.load` 是
+    加了闸的模板方法，于是一次加载取两次许可：实测 `admitted=2`，`limit=1` 时
+    当场死锁。这与 `AutoLoader.bind_gate` 里说的是同一个失效模式，只是发生在
+    另一个 loader 上。
+    """
+    from comet_rag.engines.loaders.local_loader import LocalLoader
+
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "a.txt"
+        target.write_text("hi", encoding="utf-8")
+
+        loader = LocalLoader()
+        gate = Gate(limit=1)
+        loader.bind_gate(gate)
+        try:
+            async with asyncio.timeout(5):
+                await loader.aload(SourceContent(str(target)))
+        finally:
+            loader.cleanup()
+
+    assert gate.stats.admitted == 1, (
+        f"一次加载取了 {gate.stats.admitted} 次许可"
+    )
+    assert gate.stats.in_flight == 0

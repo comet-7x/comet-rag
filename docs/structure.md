@@ -201,7 +201,7 @@ flowchart TD
 | 改 embedding 契约本身 | `ports/embedding.py`（会波及所有适配器，pyright 会告诉你哪些） |
 | 加一种文件格式 | `engines/parsers/` + `engines/pipelines/hooks.py` 注册 |
 | 改切分策略 | `engines/chunkers/` |
-| 改并发上限 / 背压 | `core/concurrency.py`；数字在 `LimitsConfig`，库兜底在 `engines/defaults.py` |
+| 改并发上限 / 背压 | `core/concurrency.py`（同步异步共用一份预算）；数字在 `LimitsConfig`，库兜底在 `engines/defaults.py` |
 | 改降级策略 | `core/degradation.py` |
 | 加一个 HTTP 端点 | `api/routes/` + `schemas/` |
 | 改任务重试 / 断点续跑 | `tasks/runner.py`、`tasks/executor.py` |

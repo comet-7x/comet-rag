@@ -32,7 +32,7 @@ class SpyEmbedding(BaseEmbeddingModel):
         self.request_sizes.append(len(documents))
         return [[float(len(document))] for document in documents]
 
-    def embed(self, data: str, /, **kwargs: Any) -> list[float]:
+    def _embed(self, data: str, /, **kwargs: Any) -> list[float]:
         return self._vectors([data])[0]
 
     async def _aembed(self, data: str, /, **kwargs: Any) -> list[float]:

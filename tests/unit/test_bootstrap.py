@@ -52,7 +52,7 @@ class FakeEmbedding(BaseEmbeddingModel):
     def __init__(self) -> None:
         self.closed = False
 
-    def embed(self, data, **kwargs):  # pragma: no cover
+    def _embed(self, data, **kwargs):  # pragma: no cover
         return [0.0] * DIM
 
     async def _aembed(self, data, **kwargs):
@@ -66,7 +66,7 @@ class FakeReranker(BaseReranker):
     def __init__(self) -> None:
         self.closed = False
 
-    def score(self, query, documents, **kwargs):  # pragma: no cover
+    def _score(self, query, documents, **kwargs):  # pragma: no cover
         return []
 
     async def _ascore(self, query, documents, **kwargs):  # pragma: no cover

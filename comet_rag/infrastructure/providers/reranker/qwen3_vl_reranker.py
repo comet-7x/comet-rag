@@ -326,7 +326,7 @@ class Qwen3VLReranker(BaseReranker[str | ScoreMultiModalParam]):
         rerank_response.raise_for_status()
         return rerank_response.json()
 
-    def score(
+    def _score(
         self,
         query: str | ScoreMultiModalParam,
         documents: str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],

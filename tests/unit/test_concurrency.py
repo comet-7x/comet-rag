@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -32,8 +33,17 @@ class RecordingEmbedding(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         self.live = 0
         self.peak = 0
         self.calls = 0
+        #: 同步侧在别的线程里跑，计数要自己护住
+        self._sync_lock = threading.Lock()
 
-    def embed(self, data: Any, **kwargs: Any) -> list[float]:  # pragma: no cover
+    def _embed(self, data: Any, **kwargs: Any) -> list[float]:
+        """同步文本：与多模态共用同一份计数，用来验证它也过闸门。"""
+        with self._sync_lock:
+            self.live += 1
+            self.peak = max(self.peak, self.live)
+        time.sleep(self.delay)
+        with self._sync_lock:
+            self.live -= 1
         return [0.0]
 
     async def _aembed(self, data: Any, **kwargs: Any) -> list[float]:
@@ -46,7 +56,14 @@ class RecordingEmbedding(MultimodalEmbeddingMixin, BaseEmbeddingModel):
             self.live -= 1
         return [0.0]
 
-    def embed_media(self, data: Any, /, **kwargs: Any) -> list[float]:  # pragma: no cover
+    def _embed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
+        """同步多模态：与文本共用同一份计数，用来验证它也过闸门。"""
+        with self._sync_lock:
+            self.live += 1
+            self.peak = max(self.peak, self.live)
+        time.sleep(self.delay)
+        with self._sync_lock:
+            self.live -= 1
         return [0.0]
 
     async def _aembed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
@@ -62,8 +79,15 @@ class RecordingReranker(BaseReranker):
         #: 与 embedding 共用一份计数，用来验"两者共用同一个闸门"
         self.sink = sink
 
-    def score(self, query: Any, documents: Any, **kwargs: Any):  # pragma: no cover
-        return []
+    def _score(self, query: Any, documents: Any, **kwargs: Any) -> list[float]:
+        """与 embedding 共用同一份计数，用来验证同步重排也过闸门。"""
+        with self.sink._sync_lock:
+            self.sink.live += 1
+            self.sink.peak = max(self.sink.peak, self.sink.live)
+        time.sleep(self.sink.delay)
+        with self.sink._sync_lock:
+            self.sink.live -= 1
+        return [0.0] * len(list(documents))
 
     async def _ascore(self, query: Any, documents: Any, **kwargs: Any) -> list[float]:
         self.sink.live += 1
@@ -300,7 +324,7 @@ async def test_media_entry_is_gated_like_text() -> None:
     assert model.peak <= 2, f"闸门限 2，实际峰值 {model.peak} —— 多模态绕过了闸门"
 
 
-# ── 已知缺口：同步路径不受进程级闸门约束 ───────────────────────────────────
+# ── 同步路径与异步路径共用同一份预算（#44 已修）─────────────────────────────
 
 
 class _SyncCounting(BaseEmbeddingModel):
@@ -312,7 +336,7 @@ class _SyncCounting(BaseEmbeddingModel):
         self.live = 0
         self.peak = 0
 
-    def embed(self, data: str, /, **kwargs: Any) -> list[float]:
+    def _embed(self, data: str, /, **kwargs: Any) -> list[float]:
         with self._lock:
             self.live += 1
             self.peak = max(self.peak, self.live)
@@ -325,30 +349,20 @@ class _SyncCounting(BaseEmbeddingModel):
         return [0.0]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="同步路径尚未接入进程级闸门（#44）；本用例即该 issue 的验收标准",
-)
-def test_sync_fanout_should_respect_the_process_gate() -> None:
-    """**同步扇出目前不受闸门约束，多个来源并行时并发会相乘。**
+def test_sync_fanout_respects_the_process_gate() -> None:
+    """**同步扇出必须与异步共用同一份预算。**
 
     `Pipeline.batch_run` 用 `max_concurrency` 个线程跑来源，每个来源内部的
-    `embed_documents` 又开 `max_concurrency` 路 —— 而同步 `embed` 不经过
-    asyncio 闸门（它是协程原语，线程里用不了）。于是实测：
+    `embed_documents` 又开 `max_concurrency` 路。修复前同步 `embed` 完全不经过
+    闸门（那时它建在 `asyncio.Semaphore` 上，线程里拿不到），实测：
 
-        闸门 limit=4，4 个来源并行 → 对模型服务的真实并发峰值 16
+        闸门 limit=4，4 个来源并行 → 真实并发峰值 16
 
-    这正是本项目当年实测出的"配置写 4、实际 128"同一个失效模式，只是发生在
-    同步这一侧。**该缺陷早于本次重构**：在 `origin/develop` 上用同样的探针
-    （那边入口叫 `batch_embed`）测得同样的 16。
+    与本项目当年"配置写 4、实际 128"是同一个失效模式，只是发生在同步这一侧；
+    `origin/develop` 上用同样探针测得同样的 16，说明它早于那次重构。
 
-    修它需要一个**线程与协程共用同一份预算**的限流器：现在的 `Gate` 建立在
-    `asyncio.Semaphore` 上，线程里拿不到；而各配一个信号量等于没限 —— 同步 4
-    加异步 4，服务端看到 8，正是 `test_embedding_and_reranker_share_one_gate`
-    反对的那件事。
-
-    所以这里用 `xfail(strict=True)` 钉住：它现在必然失败，等混合闸门做出来会
-    自动变绿并提醒去掉标记 —— 而不是把缺口写进注释里等人忘记。
+    这条用例曾是 `xfail(strict=True)`，混合闸门做出来后自动 XPASS 提醒摘标记
+    —— 那正是当初标它的目的：把缺口钉成会自己响的闹钟，而不是写进注释等人忘记。
     """
     limit = 4
     model = _SyncCounting()
@@ -365,4 +379,62 @@ def test_sync_fanout_should_respect_the_process_gate() -> None:
 
     assert model.peak <= limit, (
         f"闸门 limit={limit}，同步路径实际并发峰值 {model.peak}"
+    )
+
+
+async def test_sync_media_also_goes_through_the_gate() -> None:
+    """**同步多模态入口也不能绕过预算。**
+
+    修 #44 时只把文本入口接上了闸门，`embed_media` 仍是可覆写的抽象方法，
+    Qwen 的实现直接调未加闸的 `embed` —— 于是同步图片请求整条路绕开了预算，
+    而图片恰恰比文本重得多（评审指出）。
+    """
+    model = RecordingEmbedding(delay=0.02)
+    model.bind_gate(Gate(limit=2))
+    media = MediaResource(url="https://example.invalid/a.png")
+
+    await asyncio.gather(
+        *[asyncio.to_thread(model.embed_media, media) for _ in range(8)]
+    )
+
+    assert model.peak <= 2, f"同步多模态绕过了闸门：峰值 {model.peak}"
+
+
+def test_direct_embed_call_still_goes_through_the_gate() -> None:
+    """**公开的 `embed()` 也不能是后门。**
+
+    给 `embed_query` / `embed_document` / `embed_batch` / `embed_media` 都加了
+    闸，却漏掉它们脚下这个公开入口，等于前门上锁、后门敞着。实测修复前：
+    闸门 limit=2，直接调 `model.embed()` 真实峰值 8。
+    """
+    model = RecordingEmbedding(delay=0.02)
+    model.bind_gate(Gate(limit=2))
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(model.embed, "x") for _ in range(8)]
+        for future in futures:
+            future.result()  # 工作线程异常必须让测试失败，不能被 join() 吞掉
+
+    assert model.peak <= 2, f"直接调 embed 绕过了闸门：峰值 {model.peak}"
+
+
+def test_sync_rank_also_goes_through_the_gate() -> None:
+    """**同步 `rank()` 也不能是后门。**
+
+    embedding 与 loader 的同步入口都补过闸门了，reranker 这道原样留着 ——
+    同一个疏漏第三次。实测修复前：闸门 limit=2，同步 rank 真实峰值 8。
+
+    重排与嵌入抢的是同一块 GPU，所以它们共用同一个闸门；漏掉一边等于两边
+    都白限。
+    """
+    reranker = RecordingReranker(RecordingEmbedding(delay=0.02))
+    reranker.bind_gate(Gate(limit=2))
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(reranker.rank, "q", ["d"]) for _ in range(8)]
+        for future in futures:
+            future.result()  # 传播 rank() 的异常，避免 peak 保持为 0 时假通过
+
+    assert reranker.sink.peak <= 2, (
+        f"同步 rank 绕过了闸门：峰值 {reranker.sink.peak}"
     )

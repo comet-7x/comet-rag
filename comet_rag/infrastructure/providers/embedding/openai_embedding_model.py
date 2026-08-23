@@ -76,7 +76,7 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             )
         return [decode_vector(item.embedding) for item in ordered]
 
-    def embed(self, text: str, **kwargs: Any) -> list[float]:
+    def _embed(self, text: str, **kwargs: Any) -> list[float]:
         """
         同步生成文本嵌入向量。
 
