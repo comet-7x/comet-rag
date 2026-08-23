@@ -237,11 +237,11 @@ def _nested_statement_blocks(node: ast.stmt) -> Iterator[list[ast.stmt]]:
             yield case.body
 
 
-def _import_from_module(current_module: str, item: ast.ImportFrom) -> str:
+def _import_from_module(current_package: str, item: ast.ImportFrom) -> str:
     """Resolve the module portion of an absolute or relative import."""
     if item.level == 0:
         return item.module or ""
-    package = current_module.rpartition(".")[0].split(".")
+    package = current_package.split(".") if current_package else []
     keep = max(0, len(package) - item.level + 1)
     suffix = item.module.split(".") if item.module else []
     return ".".join((*package[:keep], *suffix))
@@ -250,6 +250,7 @@ def _import_from_module(current_module: str, item: ast.ImportFrom) -> str:
 def _scoped_classes(
     statements: Iterable[ast.stmt],
     module_name: str,
+    current_package: str,
     scope: tuple[str, ...] = (),
     inherited_bindings: dict[str, str] | None = None,
     function_bindings: dict[str, str] | None = None,
@@ -258,7 +259,7 @@ def _scoped_classes(
     bindings = dict(inherited_bindings or {})
     for item in statements:
         if isinstance(item, ast.ImportFrom):
-            imported_module = _import_from_module(module_name, item)
+            imported_module = _import_from_module(current_package, item)
             for alias in item.names:
                 if alias.name == "*":
                     continue
@@ -283,6 +284,7 @@ def _scoped_classes(
             yield from _scoped_classes(
                 item.body,
                 module_name,
+                current_package,
                 class_scope,
                 bindings,
                 method_bindings,
@@ -294,6 +296,7 @@ def _scoped_classes(
             yield from _scoped_classes(
                 item.body,
                 module_name,
+                current_package,
                 (*scope, item.name, "<locals>"),
                 inherited,
             )
@@ -302,6 +305,7 @@ def _scoped_classes(
             yield from _scoped_classes(
                 block,
                 module_name,
+                current_package,
                 scope,
                 bindings,
                 function_bindings,
@@ -309,14 +313,18 @@ def _scoped_classes(
 
 
 def _gated_classes_from_modules(
-    modules: Iterable[tuple[str, ast.Module]],
+    modules: Iterable[tuple[str, str, ast.Module]],
 ) -> set[str]:
     """Build the complete gated inheritance graph from parsed modules."""
     bases_by_class: dict[str, set[str]] = {}
     classes_with_public_methods: set[str] = set()
 
-    for module_name, module in modules:
-        for qualified_name, item, bases in _scoped_classes(module.body, module_name):
+    for module_name, current_package, module in modules:
+        for qualified_name, item, bases in _scoped_classes(
+            module.body,
+            module_name,
+            current_package,
+        ):
             bases_by_class[qualified_name] = bases
             if any(
                 isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -346,13 +354,18 @@ def _production_gated_classes() -> set[str]:
     """
     package_root = Path(__file__).parents[2] / "comet_rag"
 
-    def parsed_modules() -> Iterator[tuple[str, ast.Module]]:
+    def parsed_modules() -> Iterator[tuple[str, str, ast.Module]]:
         for path in package_root.rglob("*.py"):
             module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             module_parts = path.relative_to(package_root.parent).with_suffix("").parts
-            if module_parts[-1] == "__init__":
+            is_package = module_parts[-1] == "__init__"
+            if is_package:
                 module_parts = module_parts[:-1]
-            yield ".".join(module_parts), module
+            module_name = ".".join(module_parts)
+            current_package = (
+                module_name if is_package else module_name.rpartition(".")[0]
+            )
+            yield module_name, current_package, module
 
     return _gated_classes_from_modules(parsed_modules())
 
@@ -504,13 +517,31 @@ class MethodFactory:
 """
     )
 
-    assert _gated_classes_from_modules([("comet_rag.synthetic", module)]) == {
+    assert _gated_classes_from_modules(
+        [("comet_rag.synthetic", "comet_rag", module)]
+    ) == {
         "comet_rag.synthetic.Conditional",
         "comet_rag.synthetic.Outer.Nested",
         "comet_rag.synthetic.factory.<locals>.Local",
         "comet_rag.synthetic.gated_factory.<locals>.GatedLocal",
         "comet_rag.synthetic.MethodFactory.factory.<locals>.MethodLocal",
     }
+
+
+def test_ast_discovery_resolves_package_init_relative_imports() -> None:
+    """包 ``__init__`` 的一级相对导入必须留在当前包。"""
+    package_init = ast.parse(
+        """
+from .gate import GatedResource as Resource
+
+class PackageLocal(Resource):
+    def request(self): ...
+"""
+    )
+
+    assert _gated_classes_from_modules(
+        [("comet_rag.ports", "comet_rag.ports", package_init)]
+    ) == {"comet_rag.ports.PackageLocal"}
 
 
 # ── 第二层：行为守卫 ───────────────────────────────────────────────────────
