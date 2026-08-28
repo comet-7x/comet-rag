@@ -340,11 +340,36 @@ class TaskStore(ABC):
             if task.attempts < task.max_attempts
             else TaskStatus.FAILED
         )
-        await self.transition(task.task_id, nxt, error=err, note="租约过期")
+        await self.transition(
+            task.task_id,
+            nxt,
+            error=err,
+            resume_stage=self._resume_anchor(task),
+            note="租约过期",
+        )
 
-    async def _stale_candidates(
-        self, lease: timedelta, now: datetime
-    ) -> list[Task]:
+    @staticmethod
+    def _resume_anchor(task: Task) -> str | None:
+        """崩溃回收时的续跑锚点。
+
+        执行器在可重试失败时会写 `resume_stage = task.stage`
+        （`executor.py::_mark_failed`），但 worker 被 kill -9 时那段代码根本
+        没机会跑 —— 回收是这条任务唯一的收尾者，同一笔账得在这里补上。
+        不补的话，崩在 chunking 的任务会带着 `resume_stage=None` 退回队列，
+        重新下载、重新解析一遍，而它的产出其实还好好躺在 `context` 里。
+
+        **只在锚点为空时补，绝不覆盖已有的值。** `task.stage` 只由
+        `enter_stage` 改写，跨 transition 会留着上一次的值；于是"移交之后、
+        目标 worker 还没走到 enter_stage"这段窗口里，`stage` 是**陈旧的前一
+        阶段**而 `resume_stage` 才是对的。此时用 stage 覆盖会把锚点往回拨一格，
+        白跑一个阶段 —— 正是本方法要消除的那种浪费，方向还反了。
+
+        往回拨只是慢，不是错（阶段可重入，upsert 以确定性 chunk id 为主键），
+        所以两者取谁都不会损坏数据。但既然已有的锚点必然更准，就没有理由丢掉它。
+        """
+        return task.resume_stage or task.stage
+
+    async def _stale_candidates(self, lease: timedelta, now: datetime) -> list[Task]:
         """所有心跳已超时的**活跃**任务。
 
         活跃 = RUNNING 或 CANCELLING，也就是 `TaskStatus.is_active` 的定义。
