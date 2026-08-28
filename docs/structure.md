@@ -42,7 +42,7 @@ comet_rag/
 │   ├── providers/      供应商模型服务客户端
 │   │   ├── embedding/  OpenAI 兼容 · Qwen3-VL
 │   │   ├── reranker/   Qwen3-VL
-│   │   └── vision/ llm/ ocr/
+│   │   └── vision/     OpenAI 兼容（图片描述，docx 可选启用）
 │   ├── vectorstore/    Milvus · 内存
 │   ├── database/       SQLAlchemy 会话与 ORM 表
 │   └── loaders/        S3
