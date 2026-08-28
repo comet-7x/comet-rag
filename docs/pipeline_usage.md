@@ -313,6 +313,7 @@ MinIO/S3 等可选对象存储不需要修改 engines 中的闭合来源枚举�
 from comet_rag.engines.loaders import AutoLoader, LoaderRoute
 from your_project.loaders import MinioLoader
 
+
 async def load_from_object_storage():
     routes = AutoLoader.default_routes()
     routes.insert(

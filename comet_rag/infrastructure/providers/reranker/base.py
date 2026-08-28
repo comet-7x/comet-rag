@@ -77,9 +77,7 @@ class BaseReranker[ProviderInput](GatedModel, ABC):
         闸门 limit=2 时真实峰值 8（评审指出）。embedding 与 loader 的同步入口
         都补过了，reranker 这道后门原样留着 —— 同一个疏漏第三次。
         """
-        return self._through_gate_sync(
-            lambda: self._score(query, documents, **kwargs)
-        )
+        return self._through_gate_sync(lambda: self._score(query, documents, **kwargs))
 
     @final
     async def ascore(

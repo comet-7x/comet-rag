@@ -481,7 +481,9 @@ def test_loader_gate_is_bound_to_the_leaves_not_the_router() -> None:
     取两次许可（上限为 1 时实测死锁）。
     """
     context = build_context(
-        make_config(), embedding_model=FakeEmbedding(), vector_store=InMemoryVectorStore()
+        make_config(),
+        embedding_model=FakeEmbedding(),
+        vector_store=InMemoryVectorStore(),
     )
     loader = context.ingest_loader
     assert isinstance(loader, AutoLoader)

@@ -152,9 +152,7 @@ class AutoLoader(BaseLoader):
         normalized = self._normalize_source(source)
         return self._resolve(normalized).load(normalized)
 
-    async def _aload(
-        self, source: SourceContent | str, **kwargs: Any
-    ) -> LoaderContent:
+    async def _aload(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
         self._reject_unsupported(kwargs)
         normalized = self._normalize_source(source)
         # Route matching may inspect the local filesystem. Keep that blocking stat

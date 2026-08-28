@@ -44,9 +44,7 @@ class LocalLoader(BaseLoader):
             metadata=self._build_metadata(source),
         )
 
-    async def _aload(
-        self, source: SourceContent | str, **kwargs: Any
-    ) -> LoaderContent:
+    async def _aload(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
         self._reject_unsupported(kwargs)
         # 调**未加闸**的 `_load`：闸门已由外壳 `aload` 持有。走公开的 `load`
         # 会在工作线程里再申请一次同一份预算 —— 上限为 1 时当场死锁（实测

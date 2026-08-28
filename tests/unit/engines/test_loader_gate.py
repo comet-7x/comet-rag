@@ -31,7 +31,9 @@ class CountingLoader(BaseLoader):
         self.peak = 0
         self.calls = 0
 
-    def _load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:  # pragma: no cover
+    def _load(
+        self, source: SourceContent | str, **kwargs: Any
+    ) -> LoaderContent:  # pragma: no cover
         raise NotImplementedError
 
     async def _aload(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
@@ -170,7 +172,8 @@ async def test_url_batch_workers_also_go_through_the_gate() -> None:
     loader._load_impl = fake_impl  # type: ignore[method-assign]  # noqa: SLF001
     try:
         await asyncio.to_thread(
-            loader.batch_load, [f"https://example.invalid/{i}" for i in range(12)],
+            loader.batch_load,
+            [f"https://example.invalid/{i}" for i in range(12)],
             max_concurrency=8,
         )
     finally:
@@ -256,7 +259,5 @@ async def test_local_loader_takes_exactly_one_permit_per_load() -> None:
         finally:
             loader.cleanup()
 
-    assert gate.stats.admitted == 1, (
-        f"一次加载取了 {gate.stats.admitted} 次许可"
-    )
+    assert gate.stats.admitted == 1, f"一次加载取了 {gate.stats.admitted} 次许可"
     assert gate.stats.in_flight == 0

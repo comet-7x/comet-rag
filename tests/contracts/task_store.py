@@ -420,6 +420,132 @@ class TaskStoreContract:
 
         assert (await store.require(task.task_id)).status is TaskStatus.FAILED
 
+    async def test_sweep_anchors_resume_stage_at_the_crashed_stage(
+        self, store: TaskStore
+    ) -> None:
+        """崩溃回收必须留下续跑锚点，否则多阶段任务被迫从头重跑。
+
+        执行器在**可重试失败**时会写 `resume_stage = task.stage`，但 worker 被
+        kill -9 时那段代码没机会跑，回收是这条任务唯一的收尾者。锚点为空时
+        `StagePipeline` 会从第 0 个阶段起跑 —— 重新下载、重新解析，而这些产出
+        其实还在 `context` 里躺着。
+        """
+        task = await store.create("ingest", max_attempts=3)
+        await store.transition(task.task_id, TaskStatus.RUNNING, worker_id="dead")
+        await store.enter_stage(task.task_id, "extracting")
+        await store.enter_stage(task.task_id, "chunking")
+        await store.update(task.task_id, heartbeat_at=Time.now() - timedelta(minutes=5))
+
+        assert (await store.require(task.task_id)).resume_stage is None, (
+            "前置条件：崩溃前还没有人写过锚点"
+        )
+
+        revived = await store.sweep_stale(lease=timedelta(seconds=30))
+
+        assert revived == [task.task_id]
+        recovered = await store.require(task.task_id)
+        assert recovered.status is TaskStatus.PENDING
+        assert recovered.resume_stage == "chunking", (
+            "回收没留锚点，续跑会退回 extracting 重新下载解析一遍"
+        )
+
+    async def test_sweep_anchors_resume_stage_even_when_judged_dead(
+        self, store: TaskStore
+    ) -> None:
+        """重试次数耗尽而判死的那条路也要留锚点 —— 给日后的**人工 retry** 用。
+
+        与 `executor.py::_mark_failed` 两个分支都写锚点是同一个理由：
+        `TaskService.retry()` 默认续跑，锚点丢了它就只能从头再来。
+        """
+        task = await store.create("ingest", max_attempts=1)
+        await store.transition(
+            task.task_id, TaskStatus.RUNNING, attempts=1, worker_id="dead"
+        )
+        await store.enter_stage(task.task_id, "indexing")
+        await store.update(task.task_id, heartbeat_at=Time.now() - timedelta(minutes=5))
+
+        await store.sweep_stale(lease=timedelta(seconds=30))
+
+        recovered = await store.require(task.task_id)
+        assert recovered.status is TaskStatus.FAILED
+        assert recovered.resume_stage == "indexing"
+
+    async def test_sweep_never_rewinds_an_existing_resume_anchor(
+        self, store: TaskStore
+    ) -> None:
+        """**已有的锚点不许被 `stage` 覆盖。**
+
+        这条守的是移交路上一个很窄但真实的窗口：`StagePipeline` 在
+        `enter_stage` **之前**就返回 `Handoff`（否则会留下一条本 worker 根本
+        没执行过的阶段记录），于是任务退回队列时 `resume_stage="indexing"` 而
+        `stage` 仍是上一阶段的 "chunking" —— `stage` 只由 `enter_stage` 改写，
+        跨 transition 会一直留着旧值。
+
+        目标 worker 若在认领之后、走到 `enter_stage` 之前崩掉，天真的
+        `resume_stage = task.stage` 会把锚点从 indexing 拨回 chunking，
+        白跑一整个阶段。方向恰好和这个机制想省的事相反。
+        """
+        task = await store.create("ingest", max_attempts=3)
+        await store.transition(task.task_id, TaskStatus.RUNNING, worker_id="cpu-1")
+        await store.enter_stage(task.task_id, "chunking")
+        # 移交：退回 PENDING 并把锚点指向下一阶段，此时 stage 仍停在 chunking
+        await store.transition(
+            task.task_id, TaskStatus.PENDING, resume_stage="indexing"
+        )
+        handed_off = await store.require(task.task_id)
+        assert (handed_off.resume_stage, handed_off.stage) == (
+            "indexing",
+            "chunking",
+        ), "前置条件：移交后锚点比 stage 靠前"
+
+        # io 道的 worker 认领后立刻崩了，没来得及 enter_stage("indexing")
+        await store.transition(task.task_id, TaskStatus.RUNNING, worker_id="io-1")
+        await store.update(task.task_id, heartbeat_at=Time.now() - timedelta(minutes=5))
+
+        await store.sweep_stale(lease=timedelta(seconds=30))
+
+        recovered = await store.require(task.task_id)
+        assert recovered.status is TaskStatus.PENDING
+        assert recovered.resume_stage == "indexing", (
+            "回收把锚点拨回了陈旧的 stage，chunking 会被白跑一遍"
+        )
+
+    async def test_sweep_anchors_from_fresh_state_after_stage_change(
+        self, store: TaskStore
+    ) -> None:
+        """候选查询后、回收动手前，worker 又推进了一个阶段 —— 锚点按重读后的状态写。
+
+        候选是查询时刻的旧快照。若回收拿旧快照算锚点，就会把锚点写回上一
+        个阶段，续跑白跑一整段。所以锚点的计算必须发生在 CAS 重读**之后**
+        （模板方法内），而不是拿 `_stale_candidates` 返回的对象。
+        """
+        task = await store.create("ingest", max_attempts=3)
+        await store.transition(task.task_id, TaskStatus.RUNNING, worker_id="slow")
+        await store.enter_stage(task.task_id, "extracting")
+        await store.enter_stage(task.task_id, "chunking")
+        await store.update(task.task_id, heartbeat_at=Time.now() - timedelta(minutes=5))
+
+        # 模拟"worker 其实活着、心跳只是晚了"：候选查出来之后，它又进了下一阶段
+        original = store._stale_candidates  # noqa: SLF001
+
+        async def racing(lease: timedelta, now: Any) -> list[Task]:
+            candidates = await original(lease, now)
+            await store.enter_stage(task.task_id, "indexing")
+            return candidates
+
+        store._stale_candidates = racing  # type: ignore[method-assign]  # noqa: SLF001
+        try:
+            revived = await store.sweep_stale(lease=timedelta(seconds=30))
+        finally:
+            store._stale_candidates = original  # type: ignore[method-assign]  # noqa: SLF001
+
+        assert revived == [task.task_id]
+        recovered = await store.require(task.task_id)
+        assert recovered.status is TaskStatus.PENDING
+        assert recovered.resume_stage == "indexing", (
+            "锚点算自候选查询的旧快照，写回了 chunking，续跑会白跑一个阶段"
+        )
+
     async def test_one_racing_task_does_not_abort_the_whole_sweep(
         self, store: TaskStore
     ) -> None:

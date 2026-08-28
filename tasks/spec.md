@@ -234,9 +234,8 @@ class BaseEmbeddingModel(Protocol):
     """
 
     async def aembed_query(self, query: str, /) -> list[float]: ...
-    async def aembed_batch(
-        self, documents: Sequence[str], /
-    ) -> list[list[float]]: ...
+    async def aembed_batch(self, documents: Sequence[str], /) -> list[list[float]]: ...
+
     #: 一次请求最多装几篇；发几个请求、几个并发由调用方排程
     batch_limit: int
 ```
@@ -279,6 +278,7 @@ class BaseEmbeddingModel(Protocol):
 # tests/conftest.py
 @pytest.fixture
 def store() -> InMemoryTaskStore: ...
+
 
 @pytest.fixture
 def fake_embedding_model() -> BaseEmbeddingModel:

@@ -377,9 +377,7 @@ def test_sync_fanout_respects_the_process_gate() -> None:
     for thread in threads:
         thread.join()
 
-    assert model.peak <= limit, (
-        f"闸门 limit={limit}，同步路径实际并发峰值 {model.peak}"
-    )
+    assert model.peak <= limit, f"闸门 limit={limit}，同步路径实际并发峰值 {model.peak}"
 
 
 async def test_sync_media_also_goes_through_the_gate() -> None:
@@ -435,6 +433,4 @@ def test_sync_rank_also_goes_through_the_gate() -> None:
         for future in futures:
             future.result()  # 传播 rank() 的异常，避免 peak 保持为 0 时假通过
 
-    assert reranker.sink.peak <= 2, (
-        f"同步 rank 绕过了闸门：峰值 {reranker.sink.peak}"
-    )
+    assert reranker.sink.peak <= 2, f"同步 rank 绕过了闸门：峰值 {reranker.sink.peak}"

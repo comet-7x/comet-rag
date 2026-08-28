@@ -168,8 +168,7 @@ class Qwen3VLReranker(BaseReranker[str | ScoreMultiModalParam]):
             return content
 
         parts: list[
-            ChatCompletionContentPartTextParam
-            | ChatCompletionContentPartImageParam
+            ChatCompletionContentPartTextParam | ChatCompletionContentPartImageParam
         ] = []
         for part in content:
             if isinstance(part, TextContent):

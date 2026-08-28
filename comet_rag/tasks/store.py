@@ -229,6 +229,13 @@ class TaskStore(ABC):
 
         守卫在 `_cas` 的每一轮里重新过一遍 —— 重读之后状态可能已经变了，
         拿旧状态判定过的迁移未必还合法。
+
+        续跑锚点也在这一层**补写**（模板方法规则，不是调用方的事）：迁往
+        PENDING 或 FAILED 时，调用方没显式传 `resume_stage` 且库里为空，就补
+        本轮回读快照的 `task.stage`。必须在 CAS 内算 —— 调用方手里可能只有
+        候选查询的旧快照（见 `_reclaim`），在 CAS 外算会把锚点写到上一个阶段。
+        只补不覆盖：移交窗口里已有的锚点比 stage 更准（stage 只由 enter_stage
+        改写，跨 transition 留旧值），覆盖它会把锚点拨回一格。
         """
         self._check_fields(fields)
 
@@ -254,6 +261,7 @@ class TaskStore(ABC):
                 # 把这条失败记录关成 "succeeded"，阶段历史就骗人了。
                 if task.error is not None:
                     self._close_stage(task, "failed")
+                self._anchor_if_missing(task, fields)
             elif to.is_terminal:
                 task.finished_at = now
                 task.heartbeat_at = None
@@ -262,6 +270,10 @@ class TaskStore(ABC):
                 )
                 if to is TaskStatus.SUCCEEDED:
                     task.progress = 1.0
+                elif to is TaskStatus.FAILED:
+                    # 判死那条也补 —— 与 `executor.py::_mark_failed` 两个分支
+                    # 都写锚点同一个理由：日后的人工 retry 靠它续跑。
+                    self._anchor_if_missing(task, fields)
             return frm
 
         saved, frm = await self._cas(task_id, expected_version, mutate)
@@ -320,7 +332,13 @@ class TaskStore(ABC):
         return revived
 
     async def _reclaim(self, task: Task) -> None:
-        """回收单个心跳超时的任务。竞态由调用方 `sweep_stale` 兜住。"""
+        """回收单个心跳超时的任务。竞态由调用方 `sweep_stale` 兜住。
+
+        注意：这里的 `task` 是**候选查询时的快照**。心跳超时意味着那个 worker
+        大概率已经死了，它不可能再抢先写锚点；而 CAS 会自己重读，所以把锚点
+        的计算挪进 transition 内部（与状态变更同一笔 CAS）才是对的 —— 见
+        `transition` 的 `to is PENDING / FAILED` 分支。
+        """
         if task.status is TaskStatus.CANCELLING:
             # 用户要的是"停下来"，那就直接给他终态；重排队等于违背原意
             await self.transition(
@@ -340,11 +358,14 @@ class TaskStore(ABC):
             if task.attempts < task.max_attempts
             else TaskStatus.FAILED
         )
-        await self.transition(task.task_id, nxt, error=err, note="租约过期")
+        await self.transition(
+            task.task_id,
+            nxt,
+            error=err,
+            note="租约过期",
+        )
 
-    async def _stale_candidates(
-        self, lease: timedelta, now: datetime
-    ) -> list[Task]:
+    async def _stale_candidates(self, lease: timedelta, now: datetime) -> list[Task]:
         """所有心跳已超时的**活跃**任务。
 
         活跃 = RUNNING 或 CANCELLING，也就是 `TaskStatus.is_active` 的定义。
@@ -399,6 +420,15 @@ class TaskStore(ABC):
             rec = task.stage_history[-1]
             rec.finished_at = Time.now()
             rec.status = status
+
+    @staticmethod
+    def _anchor_if_missing(task: Task, fields: dict[str, Any]) -> None:
+        """调用方没传 `resume_stage` 且库里为空时，补成当前 stage。
+
+        传了（哪怕显式传 None）一律不动 —— 那是调用方在说"我知道该续到哪"。
+        """
+        if "resume_stage" not in fields and task.resume_stage is None:
+            task.resume_stage = task.stage
 
     # 内部校验
     @staticmethod

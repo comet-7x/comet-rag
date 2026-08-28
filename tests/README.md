@@ -30,9 +30,11 @@ class TestInMemoryTaskStore(TaskStoreContract):
     async def store(self):
         return InMemoryTaskStore()
 
+
 # 将来 tests/integration/test_store_postgres.py
 class TestPostgresTaskStore(TaskStoreContract):
     pytestmark = pytest.mark.integration
+
     @pytest.fixture
     async def store(self, pg_dsn):
         return PostgresTaskStore(pg_dsn)
