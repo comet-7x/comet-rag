@@ -189,9 +189,5 @@ logs/
 # 基准测试生成物（见 docs/benchmark.md）
 bench-report.json
 
-# AI 代理工具的本地产物。
-# `.claude/CLAUDE.md` 与 `AGENTS.md` 是项目说明，刻意不在此列 —— 它们该进版本库。
-# 忽略的是个人设置与依赖：settings.local.json 按约定是本机私有，
-# 而 .opencode/ 带着 60+ MB 的 node_modules，一次 `git add .` 就会灌进历史。
-.claude/settings.local.json
+.claude/
 .opencode/
