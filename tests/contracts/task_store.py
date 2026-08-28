@@ -510,6 +510,42 @@ class TaskStoreContract:
             "回收把锚点拨回了陈旧的 stage，chunking 会被白跑一遍"
         )
 
+    async def test_sweep_anchors_from_fresh_state_after_stage_change(
+        self, store: TaskStore
+    ) -> None:
+        """候选查询后、回收动手前，worker 又推进了一个阶段 —— 锚点按重读后的状态写。
+
+        候选是查询时刻的旧快照。若回收拿旧快照算锚点，就会把锚点写回上一
+        个阶段，续跑白跑一整段。所以锚点的计算必须发生在 CAS 重读**之后**
+        （模板方法内），而不是拿 `_stale_candidates` 返回的对象。
+        """
+        task = await store.create("ingest", max_attempts=3)
+        await store.transition(task.task_id, TaskStatus.RUNNING, worker_id="slow")
+        await store.enter_stage(task.task_id, "extracting")
+        await store.enter_stage(task.task_id, "chunking")
+        await store.update(task.task_id, heartbeat_at=Time.now() - timedelta(minutes=5))
+
+        # 模拟"worker 其实活着、心跳只是晚了"：候选查出来之后，它又进了下一阶段
+        original = store._stale_candidates  # noqa: SLF001
+
+        async def racing(lease: timedelta, now: Any) -> list[Task]:
+            candidates = await original(lease, now)
+            await store.enter_stage(task.task_id, "indexing")
+            return candidates
+
+        store._stale_candidates = racing  # type: ignore[method-assign]  # noqa: SLF001
+        try:
+            revived = await store.sweep_stale(lease=timedelta(seconds=30))
+        finally:
+            store._stale_candidates = original  # type: ignore[method-assign]  # noqa: SLF001
+
+        assert revived == [task.task_id]
+        recovered = await store.require(task.task_id)
+        assert recovered.status is TaskStatus.PENDING
+        assert recovered.resume_stage == "indexing", (
+            "锚点算自候选查询的旧快照，写回了 chunking，续跑会白跑一个阶段"
+        )
+
     async def test_one_racing_task_does_not_abort_the_whole_sweep(
         self, store: TaskStore
     ) -> None:
