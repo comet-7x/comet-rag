@@ -188,7 +188,3 @@ logs/
 
 # 基准测试生成物（见 docs/benchmark.md）
 bench-report.json
-
-.claude/
-.opencode/
-AGENTS.md
