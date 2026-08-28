@@ -158,9 +158,7 @@ async def test_shared_multimodal_types_are_converted_at_adapter_boundary(
         assert ranked[0].document.id == "cat"
         query_content = payloads[0]["query"]["content"]
         assert query_content[0]["text"] == "找猫"
-        assert query_content[1]["image_url"]["url"] == (
-            "data:image/png;base64,Y2F0"
-        )
+        assert query_content[1]["image_url"]["url"] == ("data:image/png;base64,Y2F0")
     finally:
         await client.aclose()
 
@@ -376,7 +374,9 @@ async def test_public_content_input_goes_through_the_same_admission_policy(
     reranker = _guarded_reranker()
     try:
         with pytest.raises(CometRAGException, match=expected):
-            await reranker.arank([ImageContent(resource)], [RerankDocument(content="d")])
+            await reranker.arank(
+                [ImageContent(resource)], [RerankDocument(content="d")]
+            )
         with pytest.raises(CometRAGException, match=expected):
             reranker.rank([ImageContent(resource)], [RerankDocument(content="d")])
     finally:

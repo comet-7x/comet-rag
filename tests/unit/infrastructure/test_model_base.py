@@ -36,9 +36,7 @@ class EchoReranker(BaseReranker[str]):
     def _score(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
         return [0.0] * len(list(documents))
 
-    async def _ascore(
-        self, query: str, documents: Any, **kwargs: Any
-    ) -> list[float]:
+    async def _ascore(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
         return [0.0] * len(list(documents))
 
 

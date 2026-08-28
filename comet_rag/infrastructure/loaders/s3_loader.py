@@ -447,9 +447,7 @@ class S3Loader(BaseLoader):
                 self._discard_temp(path)
                 raise
 
-    async def _aload(
-        self, source: SourceContent | str, **kwargs: Any
-    ) -> LoaderContent:
+    async def _aload(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
         self._reject_unsupported(kwargs)
         normalized = (
             source if isinstance(source, SourceContent) else SourceContent(source)

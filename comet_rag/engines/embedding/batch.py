@@ -45,9 +45,7 @@ def _plan(
         raise ValueError(f"max_concurrency 必须大于 0，收到 {max_concurrency}")
     limit = model.batch_limit
     if limit <= 0:
-        raise ValueError(
-            f"{type(model).__name__}.batch_limit 必须大于 0，收到 {limit}"
-        )
+        raise ValueError(f"{type(model).__name__}.batch_limit 必须大于 0，收到 {limit}")
     return [documents[i : i + limit] for i in range(0, len(documents), limit)]
 
 
@@ -85,7 +83,9 @@ def embed_documents(
     from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
     with ThreadPoolExecutor(max_workers=min(max_concurrency, len(blocks))) as executor:
-        futures = [executor.submit(model.embed_batch, block, **kwargs) for block in blocks]
+        futures = [
+            executor.submit(model.embed_batch, block, **kwargs) for block in blocks
+        ]
         return _joined([future.result() for future in futures], len(documents))
 
 

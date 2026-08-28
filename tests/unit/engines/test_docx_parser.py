@@ -491,8 +491,7 @@ def test_a_row_that_both_inherits_and_declares_a_wide_span_is_bounded() -> None:
     actual = sum(len(row.cells) for row in table.rows)
 
     assert projected >= actual, (
-        f"投影 {projected} 低于实际展开 {actual} —— 它就不是上界了，"
-        f"预算再小也拦不住"
+        f"投影 {projected} 低于实际展开 {actual} —— 它就不是上界了，预算再小也拦不住"
     )
 
 

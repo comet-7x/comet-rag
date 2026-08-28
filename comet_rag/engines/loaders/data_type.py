@@ -60,9 +60,7 @@ _CODE_EXTENSIONS = (
     AllowExt.RS,
     AllowExt.HTML,
 )
-_GENERIC_TEXT_DECLARATIONS = frozenset(
-    (AllowExt.TXT, AllowExt.MD, *_CODE_EXTENSIONS)
-)
+_GENERIC_TEXT_DECLARATIONS = frozenset((AllowExt.TXT, AllowExt.MD, *_CODE_EXTENSIONS))
 
 
 def normalize_extension(extension: str) -> str:

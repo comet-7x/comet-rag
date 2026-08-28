@@ -66,7 +66,14 @@ from comet_rag.ports.gate import GatedResource
 #: 四类的含义见模块文档。改动这张表时请连同理由一起写。
 CLASSIFICATION: dict[type, dict[str, set[str]]] = {
     BaseEmbeddingModel: {
-        "direct": {"embed", "embed_batch", "embed_document", "embed_query", "aembed", "aembed_batch"},
+        "direct": {
+            "embed",
+            "embed_batch",
+            "embed_document",
+            "embed_query",
+            "aembed",
+            "aembed_batch",
+        },
         # 走 `aembed`，由它进闸门
         "indirect": {"aembed_document", "aembed_query"},
         "delegated": set(),
@@ -195,7 +202,9 @@ def _public_methods(cls: type) -> dict[str, Any]:
     for name, value in vars(cls).items():
         if name.startswith("_"):
             continue
-        method = value.__func__ if isinstance(value, (classmethod, staticmethod)) else value
+        method = (
+            value.__func__ if isinstance(value, (classmethod, staticmethod)) else value
+        )
         if callable(method):
             methods[name] = method
     return methods
@@ -280,7 +289,9 @@ def _scoped_classes(
                 if (name := _ast_base_name(base, bindings)) is not None
             }
             yield qualified_name, item, bases
-            method_bindings = bindings if function_bindings is None else function_bindings
+            method_bindings = (
+                bindings if function_bindings is None else function_bindings
+            )
             yield from _scoped_classes(
                 item.body,
                 module_name,
@@ -405,7 +416,11 @@ def test_direct_entries_really_enter_the_gate(cls: type) -> None:
     """归类为 direct 不能只是口头承诺 —— 体内必须真的进闸门。"""
     for name in sorted(CLASSIFICATION[cls]["direct"]):
         method = _public_methods(cls)[name]
-        entry = "_through_gate" if inspect.iscoroutinefunction(method) else "_through_gate_sync"
+        entry = (
+            "_through_gate"
+            if inspect.iscoroutinefunction(method)
+            else "_through_gate_sync"
+        )
         assert entry in _self_attributes(method), (
             f"{cls.__name__}.{name} 归类为 direct，但体内没有调 self.{entry}"
         )
@@ -661,12 +676,20 @@ class _StubURLLoader(URLLoader):
         return object()
 
     def _load_impl(
-        self, source: SourceContent | str, *, download_config: Any = None, client: Any = None
+        self,
+        source: SourceContent | str,
+        *,
+        download_config: Any = None,
+        client: Any = None,
     ) -> LoaderContent:
         return LoaderContent(path=Path("/dev/null"), source=SourceContent("x"))
 
     async def _aload_impl(
-        self, source: SourceContent | str, *, download_config: Any = None, client: Any = None
+        self,
+        source: SourceContent | str,
+        *,
+        download_config: Any = None,
+        client: Any = None,
     ) -> LoaderContent:
         return LoaderContent(path=Path("/dev/null"), source=SourceContent("x"))
 
@@ -688,8 +711,16 @@ SYNC_INVOCATIONS: list[tuple[str, Any, int]] = [
     ("BaseReranker.score", lambda m: m.score("q", ["d"]), 1),
     ("BaseReranker.rank", lambda m: m.rank("q", ["d"]), 1),
     ("BaseLoader.load", lambda m: m.load("s"), 1),
-    ("BaseLoader.batch_load", lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2), 3),
-    ("Qwen3VLEmbeddingModel.tokenize", lambda m: m.tokenize(EmbeddingData(text="x")), 1),
+    (
+        "BaseLoader.batch_load",
+        lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2),
+        3,
+    ),
+    (
+        "Qwen3VLEmbeddingModel.tokenize",
+        lambda m: m.tokenize(EmbeddingData(text="x")),
+        1,
+    ),
     ("Qwen3VLEmbeddingModel.detokenize", lambda m: m.detokenize([1]), 1),
     (
         "Qwen3VLEmbeddingModel.embed_image",
@@ -699,8 +730,16 @@ SYNC_INVOCATIONS: list[tuple[str, Any, int]] = [
     ("Qwen3VLEmbeddingModel.embed_content", lambda m: m.embed_content("x"), 1),
     ("Qwen3VLEmbeddingModel.get_output_dim", lambda m: m.get_output_dim(), 1),
     ("Qwen3VLEmbeddingModel.get_max_model_len", lambda m: m.get_max_model_len(), 1),
-    ("URLLoader.batch_load", lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2), 3),
-    ("AutoLoader.batch_load", lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2), 3),
+    (
+        "URLLoader.batch_load",
+        lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2),
+        3,
+    ),
+    (
+        "AutoLoader.batch_load",
+        lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2),
+        3,
+    ),
 ]
 
 #: 异步入口同样要量。第一版把 `a` 开头的排除在完整性检查外，理由写的是

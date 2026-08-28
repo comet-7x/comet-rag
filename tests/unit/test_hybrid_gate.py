@@ -393,9 +393,7 @@ def test_cancellation_is_not_counted_as_a_rejection() -> None:
         return gate
 
     gate = asyncio.run(scenario())
-    assert gate.stats.rejected == 0, (
-        f"取消被计成了 {gate.stats.rejected} 次拒绝"
-    )
+    assert gate.stats.rejected == 0, f"取消被计成了 {gate.stats.rejected} 次拒绝"
 
 
 async def test_timeout_is_still_counted_as_a_rejection() -> None:

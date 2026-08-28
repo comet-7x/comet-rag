@@ -148,7 +148,9 @@ class BaseEmbeddingModel(GatedModel, ABC):
         if not documents:
             return []
         options = self._options_for(EmbeddingTask.DOCUMENT, kwargs)
-        return await self._through_gate(lambda: self._aembed_batch(documents, **options))
+        return await self._through_gate(
+            lambda: self._aembed_batch(documents, **options)
+        )
 
     def _embed_batch(
         self, documents: Sequence[str], /, **kwargs: Any

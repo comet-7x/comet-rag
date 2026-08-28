@@ -43,7 +43,7 @@ model = OpenAIEmbeddingModel(
     base_url="https://api.openai.com/v1",
     model_name="text-embedding-3-small",
     api_key="...",
-    batch_limit=512,       # 默认 2048，按实际服务端能力调整
+    batch_limit=512,  # 默认 2048，按实际服务端能力调整
 )
 vectors = await aembed_documents(model, docs, max_concurrency=4)
 ```

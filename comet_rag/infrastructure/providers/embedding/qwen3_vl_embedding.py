@@ -192,7 +192,10 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
 
     def _normalize_input(
         self,
-        data: EmbeddingData | str | MediaResource | Sequence[TextContent | ImageContent],
+        data: EmbeddingData
+        | str
+        | MediaResource
+        | Sequence[TextContent | ImageContent],
     ) -> EmbeddingData:
         if isinstance(data, EmbeddingData):
             return self._prepare_embedding_data(data)
@@ -302,10 +305,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
     def _embed(
         self,
         embedding_data: (
-            EmbeddingData
-            | str
-            | MediaResource
-            | Sequence[TextContent | ImageContent]
+            EmbeddingData | str | MediaResource | Sequence[TextContent | ImageContent]
         ),
         system_prompt: (
             Qwen3VLEmbeddingModelSystemPrompt | str
@@ -356,10 +356,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
     async def _aembed(
         self,
         embedding_data: (
-            EmbeddingData
-            | str
-            | MediaResource
-            | Sequence[TextContent | ImageContent]
+            EmbeddingData | str | MediaResource | Sequence[TextContent | ImageContent]
         ),
         system_prompt: (
             Qwen3VLEmbeddingModelSystemPrompt | str
@@ -426,21 +423,15 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         # 闸门已由 `aembed_media` 持有，这里调未加闸的 `_aembed`
         return await self._aembed(data, **kwargs)
 
-    def embed_image(
-        self, image: MediaResource, /, **kwargs: Any
-    ) -> list[float]:
+    def embed_image(self, image: MediaResource, /, **kwargs: Any) -> list[float]:
         """生成单张图片的向量。"""
         return self.embed_media(image, **kwargs)
 
-    async def aembed_image(
-        self, image: MediaResource, /, **kwargs: Any
-    ) -> list[float]:
+    async def aembed_image(self, image: MediaResource, /, **kwargs: Any) -> list[float]:
         """异步生成单张图片的向量。"""
         return await self.aembed_media(image, **kwargs)
 
-    def embed_content(
-        self, content: ContentInput, /, **kwargs: Any
-    ) -> list[float]:
+    def embed_content(self, content: ContentInput, /, **kwargs: Any) -> list[float]:
         """生成文本、图片或二者组合内容的向量。"""
         return self.embed_media(content, **kwargs)
 
@@ -589,9 +580,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         **kwargs: Any,
     ) -> DetokenizeResponse:
         """同步还原 token；与其他模型请求共用进程级闸门。"""
-        return self._through_gate_sync(
-            lambda: self._detokenize(tokens, **kwargs)
-        )
+        return self._through_gate_sync(lambda: self._detokenize(tokens, **kwargs))
 
     def _detokenize(
         self,
@@ -625,9 +614,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         **kwargs: Any,
     ) -> DetokenizeResponse:
         """异步还原 token；与其他模型请求共用进程级闸门。"""
-        return await self._through_gate(
-            lambda: self._adetokenize(tokens, **kwargs)
-        )
+        return await self._through_gate(lambda: self._adetokenize(tokens, **kwargs))
 
     async def _adetokenize(
         self,

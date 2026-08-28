@@ -236,7 +236,9 @@ def test_single_process_paths_never_pull_in_lease_reclaim(module: Path) -> None:
     import 它，这里立刻变红。
     """
     tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
-    hits = {name for name in _imported_full(tree, module) if name.startswith(MAINTENANCE)}
+    hits = {
+        name for name in _imported_full(tree, module) if name.startswith(MAINTENANCE)
+    }
     assert not hits, (
         f"{module.relative_to(PROJECT_ROOT)} 导入了 {MAINTENANCE}。"
         f"租约回收只能挂在 workers/ 上：单进程模式下启用它会造成"
@@ -449,9 +451,9 @@ def test_relative_imports_are_resolved_to_absolute_names() -> None:
     """
     module = PROJECT_ROOT / "comet_rag" / "engines" / "pipelines" / "pipeline.py"
     tree = ast.parse(
-        "from .types import Chunk\n"        # level=1 → 同包
-        "from ..loaders import Auto\n"      # level=2 → comet_rag.engines.loaders
-        "from ...services import Foo\n"     # level=3 → comet_rag.services（违规）
+        "from .types import Chunk\n"  # level=1 → 同包
+        "from ..loaders import Auto\n"  # level=2 → comet_rag.engines.loaders
+        "from ...services import Foo\n"  # level=3 → comet_rag.services（违规）
         "from ...ports import EmbeddingPort\n"
     )
 
