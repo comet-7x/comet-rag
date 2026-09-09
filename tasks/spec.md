@@ -25,6 +25,7 @@
 | A10-修正 | ⚠️ **原 A10 基于一个错误前提**。T4 实测（2026-08-09）证明：断点续跑目前**只由确认门驱动**——`resume_stage` 仅在 `NeedsReview` 时被赋值，`executor._mark_failed` 走可重试分支时不设它。多阶段流水线在可重试失败后是**从头全量重跑**（实测访问序列 `s1,s2,s3,s1,s2,s3`）。因此"保留断点续跑"不是保留，而是**新实现**：需改为由失败驱动。T5 范围相应扩大 | 已修正 |
 | A11 | Milvus collection schema **预留 sparse vector 字段**，M1 不写入、不实现混合检索逻辑（留给 M3）。理由：sparse 字段必须建表时声明，事后添加需全量重灌 | 已确认 |
 | A12 | 知识库建 `knowledge_bases` 表（不是纯字符串标签），**必须含 `embedding_model` 与 `embedding_dim` 字段** | 已确认 |
+| A13 | M2 **只连接外部 `mineru-api` / `mineru-router`**。Comet-RAG 不安装、不导入、不启动 MinerU SDK、Torch、模型权重或 GPU 运行时 | 已确认 |
 
 ---
 
@@ -53,7 +54,7 @@
 | | 范围 | 出口标准 |
 |---|---|---|
 | **M1** | **DOCX 全链路** —— 上传 docx → 解析 → 分块 → 向量化 → 入 Milvus → 检索命中 | §8 的 S1–S5 全绿（已完成） |
-| M2 | MinerU / PDF 支持（依赖重，作为 optional-dependency） | 复用 M1 的 hook 机制，`PipelineHooks.extractor("pdf")` |
+| M2 | PDF 支持（通过 HTTP 连接外部 MinerU 服务） | 本地、URL、S3 PDF 复用 M1 入库链路；默认安装不含 MinerU 运行时 |
 | M3 | 混合检索（BM25 + RRF） | sparse schema 已预留；实现召回与融合逻辑 |
 
 M1 已完成并具备单元、契约、集成、端到端和基准测试保护；M2 可以开始。
@@ -81,13 +82,15 @@ M1 已完成并具备单元、契约、集成、端到端和基准测试保护�
 | 任务状态 | PostgreSQL + SQLAlchemy 2.0 + Alembic | `server` extra |
 | 向量库 | Milvus（pymilvus） | `milvus` extra |
 | 对象存储 | S3 兼容（aioboto3） | `server` extra |
+| 文档提取 | 外部 `mineru-api` / `mineru-router`（httpx） | M2；Comet-RAG 不嵌入 MinerU SDK |
 | 模型 | OpenAI 兼容协议（openai SDK / httpx） | 核心依赖 |
 | 日志 | loguru | 核心依赖 |
 | 测试 | pytest + pytest-asyncio + pytest-cov | `dev` dependency group |
 | Lint | ruff + pyright | `dev` dependency group |
 | 提交 | commitizen + pre-commit | `dev` dependency group |
 
-M1 所需依赖均已落入对应分组；MinerU 保持独立 `mineru` extra，不进入 `all`。
+M1 所需依赖均已落入对应分组；M2 通过已有的 httpx 连接外部 MinerU 服务，
+不提供 `mineru` extra。
 
 ### 依赖分组（对应 A1）
 
@@ -406,6 +409,7 @@ def fake_embedding_model() -> BaseEmbeddingModel:
 |---|---|---|
 | 任务状态存哪 | PostgreSQL（A6） | 已有 SQLAlchemy + Alembic；任务表是强 schema；为一张表引入 Mongo 不划算。`TaskStore` 是 ABC，可换 |
 | MinerU/PDF 优先级 | 独立里程碑 M2（A8） | 先把 DOCX 一条链路做扎实 |
+| MinerU 部署方式 | 只连接外部 `mineru-api` / `mineru-router`（A13） | 保持默认安装轻量；解析服务独立扩容，避免把 Torch 与模型权重带进 Comet-RAG 进程 |
 | 多向量库兼容 | 只做 Milvus + InMemory（A9） | 过早抽象会拉到最小公分母；第二个实现（内存版）因测试需要本就要写，顺带验证抽象 |
 | 确认门去留 | 移除（A10） | 中间态重算便宜（解析 docx 几秒），重算比挂起划算。属纯代码逻辑、无数据迁移，将来需要可低成本加回 |
 

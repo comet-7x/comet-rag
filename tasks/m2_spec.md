@@ -1,6 +1,6 @@
 # Spec: M2 PDF / MinerU
 
-> 状态：待评审（v0.1）
+> 状态：排期评审中（v0.2）
 > GitHub Issue：[#50](https://github.com/comet-7x/comet-rag/issues/50)
 > 开发分支：`feature/m2-pdf-mineru`
 > 最后更新：2026-09-09
@@ -12,35 +12,39 @@
 
 ## 2. 非目标
 
-- 不把 MinerU、Torch、模型权重或 GPU 运行时加入核心依赖。
-- 不在 Comet-RAG 进程内启动或管理 MinerU 服务。
+- 不把 MinerU SDK、Torch、模型权重或 GPU 运行时加入任何依赖组。
+- 不在 Comet-RAG 进程内导入、启动或管理 MinerU 服务。
 - 不在本里程碑支持图片单独入库、图片检索或解析产物持久化。
 - 不借机重构 DOCX 解析器、TaskStore、TaskExecutor 或向量库 schema。
 
 ## 3. 已确定设计
 
-### D1 — 先接 HTTP 服务，不嵌入官方 Python SDK
+### D1 — 只接 HTTP 服务，不嵌入官方 Python SDK
 
 MinerU 3.x 已提供 `mineru-api` 与接口兼容的 `mineru-router`。Comet-RAG 通过
 `httpx` 适配它们，适配器放在 `infrastructure/providers/parser/`；`engines/`
 只依赖 Port 和规范化结果。这样默认安装、CPU worker 与 API 进程都不会带入
 MinerU 的重依赖，本地或多 GPU 部署也能在 Comet-RAG 之外独立扩容。
 
-现有 `mineru` extra 暂不用于运行时装配；是否保留本地 SDK 模式另开决策，不与
-HTTP 适配器混在同一实现中。
+项目不再提供 `mineru` extra。将来若要支持进程内 SDK，必须作为新规格重新评审，
+不能在 HTTP 适配器中增加隐式 fallback。
 
 ### D2 — 使用异步任务接口
 
 正常路径使用：
 
-1. `GET /health` 校验协议与容量信息；
+1. `GET /health` 校验健康状态与 `protocol_version`；
 2. `POST /tasks` 上传一个 PDF 并取得 MinerU `task_id`；
 3. `GET /tasks/{task_id}` 轮询终态；
-4. `GET /tasks/{task_id}/result` 取得 Markdown。
+4. `GET /tasks/{task_id}/result` 读取 JSON 中唯一结果的 `md_content`。
+
+提交时显式固定 `response_format_zip=false`、`return_md=true`，其余产物开关全部
+关闭；不能依赖 MinerU 的默认值。单次请求只上传一个 PDF，结果必须恰好包含一项，
+且该项必须提供字符串 `md_content`，否则按协议错误失败。
 
 `POST /file_parse` 只用于兼容测试，不作为生产默认。MinerU 的任务状态只在单个
-服务进程内保存，重启或超过保留期后可能返回 404；适配器遇到 404 时允许重新
-提交，不能把远端 task_id 当作永久记录。
+服务进程内保存，重启或超过保留期后可能返回 404；适配器遇到 404 时可在同一总
+超时预算内重提一次，不能无限重提，也不能把远端 task_id 当作永久记录。
 
 ### D3 — 新增通用文档提取 Port
 
@@ -81,7 +85,8 @@ class DocumentExtractorPort(Protocol):
 
 ### D5 — M2 只消费 Markdown
 
-请求固定 `return_md=true`，关闭原始模型输出、中间 JSON、图片和原文件回传。
+请求固定 `response_format_zip=false`、`return_md=true`，关闭原始模型输出、中间
+JSON、图片和原文件回传。
 表格与公式保留在 Markdown 中。`content_list`、提取图片及其对象存储生命周期
 留给后续里程碑，避免 M2 同时发明新的块模型和资产仓储。
 
@@ -94,7 +99,8 @@ class DocumentExtractorPort(Protocol):
 - 增加 MinerU 独立的进程级并发闸门，不与 embedding/rerank 或 loader 共用预算。
 - 配置必须区分连接超时、单次 HTTP 超时、总解析超时与轮询间隔；所有默认值需在
   `config/schemas.py` 写明保护的资源，并由测试覆盖。
-- 限制响应体/Markdown 大小；超过预算立即失败，不能让远端输出撑爆任务 context。
+- 分别限制 MinerU HTTP 响应体与最终 Markdown 大小；在写入 Task context 前再次
+  校验，不能让远端输出撑爆任务表或跨 worker 移交。
 - 取消 Comet-RAG 任务时停止轮询并释放本地响应流。MinerU 当前没有稳定的取消
   契约，因此只停止本地等待，不承诺终止远端计算。
 - 429、5xx、网络错误和远端任务丢失可重试；格式错误、超过资源限制和确定性
@@ -116,9 +122,13 @@ providers:
     language: ch
     formula: true
     table: true
+    connect_timeout_seconds: 10.0
+    request_timeout_seconds: 60.0
+    upload_timeout_seconds: 300.0
     poll_interval_seconds: 1.0
     parse_timeout_seconds: 900
-    max_response_bytes: 52428800
+    max_response_bytes: 16777216
+    max_markdown_bytes: 8388608
 
 limits:
   mineru_concurrency: 2
@@ -136,11 +146,13 @@ limits:
 - [ ] `tests/unit/test_layering.py` 证明 `engines/` 不 import MinerU 或具体适配器。
 - [ ] `uv sync --no-default-groups` 后 DOCX 全套测试仍通过。
 - [ ] 默认与 `all` 安装不下载 Torch、模型权重或 MinerU 本体。
+- [ ] `pyproject.toml` 与 `uv.lock` 不含 `mineru` 包或 `mineru` extra。
 
 ### S2 — 适配器契约
 
 - [ ] 用 `httpx.MockTransport` 覆盖 health、提交、排队、成功、失败、429/5xx、
   超时、404 重提、超大响应与取消清理。
+- [ ] 请求显式发送全部产物开关；JSON 结果必须恰好包含一个 `md_content`。
 - [ ] 同步/异步入口对同一响应生成相同 Markdown 和稳定 metadata。
 - [ ] 多次调用复用 client；`aclose()` 只关闭内部创建的资源。
 - [ ] 并发峰值不超过 `mineru_concurrency`，等待队列有界。
