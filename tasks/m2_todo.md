@@ -2,6 +2,7 @@
 
 > 状态：M2-T1～M2-T4 已完成；M2-T5 待执行。宏观排期见 `tasks/m2_plan.md`
 > 规格：`tasks/m2_spec.md` v0.3
+> 长期架构：`tasks/architecture_plan.md`；其中 Loader/DOCX 重构不属于当前 M2 工作
 
 ## Phase 0：决策与保护网
 

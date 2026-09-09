@@ -1,7 +1,7 @@
 # Implementation Plan: Comet-RAG M2（PDF / MinerU HTTP）
 
-> 状态：排期评审中（v0.1）
-> 依据：`tasks/m2_spec.md` v0.2、GitHub Issue #50
+> 状态：实施中（v0.2）
+> 依据：`tasks/m2_spec.md` v0.3、GitHub Issue #50
 > 目标完成：2026-09-22；评审缓冲至 2026-09-24
 > 范围：只连接外部 `mineru-api` / `mineru-router`，不嵌入 MinerU SDK
 
@@ -9,6 +9,18 @@
 
 M2 在不改变 M1 任务、存储与检索契约的前提下，让本地、URL 和 S3 来源的 PDF
 经过外部 MinerU 服务提取 Markdown，再复用现有分块、向量化和入库链路。
+
+长期 Port / Strategy / Service 边界、Loader 统一入口与目标目录形态见
+[`tasks/architecture_plan.md`](architecture_plan.md)。该计划不扩大 M2 范围。
+
+## Current Priority
+
+当前只执行 **M2-T5**。M2-T4 已完成 HTTP 主链路，但总解析 deadline、错误分类、
+404 单次重提、响应/Markdown 上限与取消清理尚未闭环；在 T5 通过契约测试前，
+不得把 MinerU 适配器接入组合根。
+
+Loader 统一和 DOCX 提取器迁移已记录为 M2 后 P1，不在此刻移动约 2,000 行 Loader
+代码。目录美化不能优先于一个可能无界轮询的外部服务调用。
 
 ## Architecture Decisions
 
@@ -18,6 +30,8 @@ M2 在不改变 M1 任务、存储与检索契约的前提下，让本地、URL 
 4. **异步优先、同步等价**：服务走 `aextract()`；库用户仍可通过 `Pipeline.run()` 同步调用。
 5. **中间态有界**：PDF、HTTP 响应和 Markdown 分别限流；大结果不得直接灌入 Task context。
 6. **兼容优先**：DOCX hook 与快照不变；不修改 TaskStore、TaskExecutor 或向量库 schema。
+7. **内部按依赖分层、外部统一入口**：Loader 实现允许分属 engines/infrastructure；
+   M2 后通过 `comet_rag.loaders` 门面解决使用者发现性，不把可选 S3 SDK 塞进 engines。
 
 ## Dependency Graph
 
@@ -89,4 +103,3 @@ M2-T3 可在 M2-T2 后半段并行准备，但合入前必须基于同一提取�
 
 - 真实 `mineru-api` / `mineru-router` 测试地址与可用时段。
 - 三 PR 策略是否确认；若改为单 PR，提交边界仍按三个 Checkpoint 保留。
-
