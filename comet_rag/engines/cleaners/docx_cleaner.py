@@ -112,21 +112,7 @@ class DocxCleaner(BaseCleaner):
         output_dir: Path | None = None,
         filename: str = "result",
     ) -> str:
-        """
-        Generate markdown from parsed DOCX content, optionally describing images and writing output files.
-
-        When a vision model is configured, processes image blocks using the model's async method. Otherwise, falls back to synchronous processing in a background thread.
-
-        If an output directory is specified, writes the markdown to `{filename}.md` and saves decoded images to `images/`.
-
-        Parameters:
-            parse_content (DocxParsedContent): The parsed DOCX content.
-            output_dir (Path | None): Directory to write output files. If None, only returns the markdown string.
-            filename (str): Base name for the markdown file without extension. Defaults to "result".
-
-        Returns:
-            str: The generated markdown string.
-        """
+        """异步生成 Markdown；未配置视觉模型时在线程中调用同步实现。"""
         if self._vision_model is None:
             return await asyncio.to_thread(
                 self.clean_to_markdown, parse_content, output_dir, filename

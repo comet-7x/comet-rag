@@ -1,32 +1,4 @@
-"""`TaskExecutor` 的 ARQ 实现：生产端与消费端被 Redis 隔开在两个进程里。
-
-## 队列里只放 task_id
-
-`enqueue_job("run_task", task_id)` —— 参数就这一个，任务数据一律回 `TaskStore` 读。
-这不是为了省几个字节，而是**整套语义的地基**：
-
-  * 重试、崩溃恢复、断点续跑退化成同一个动作 `submit(task_id)`；
-  * 任务状态只有一份真相（库里那份），队列里不会存在一份过期副本；
-  * 消息体不随文档大小膨胀，Redis 不会被当成对象存储用。
-
-反过来说：一旦把 request/context 塞进消息，上面三条会同时失效——而且是
-在生产环境里以"重试跑的是旧参数"这种极难复现的形式失效。
-
-## 与 InProcessExecutor 的差别只有三处
-
-    拉起方式    本地 create_task          ↔  Redis 队列 + 独立 worker 进程
-    重试排队    detach 一个延迟协程        ↔  enqueue_job(_defer_by=delay)
-    取消        协作取消 + 本地 hard cancel ↔  **只有**协作取消
-
-其余全部走 `StoreDrivenExecutor`。这样"换个部署方式行为不变"才是句实话，
-而不是两份代码碰巧长得像。
-
-## 并发闸门在 worker，不在这里
-
-`ArqExecutor.submit()` 只是入队，它**不该**限流：生产端限流拦不住别的生产端，
-真正的闸门必须在消费端（arq 的 `max_jobs`）。把闸门放错边的后果是模型服务
-照样被打爆，而监控上看生产端一切正常。
-"""
+"""通过 Redis 队列提交 task_id 的 ARQ 执行器。"""
 
 from __future__ import annotations
 

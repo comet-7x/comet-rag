@@ -1,23 +1,4 @@
-"""Reranker 适配器基类：翻译成供应商格式，再打分，再排序。
-
-契约在 :mod:`comet_rag.ports.reranker`；本模块是**可选的**
-实现复用 —— 满足 ``RerankerPort`` 形状的对象不必继承它。
-
-## ``ProviderInput`` 是这里的，不是 Port 的
-
-``rank``/``arank`` 全程用本项目自己的类型；``score``/``ascore`` 收的是
-**已翻译成供应商格式**的东西，文本模型是 ``str``，Qwen 多模态是
-``str | ScoreMultiModalParam``。这个类型因适配器而异，所以做成类型参数：
-
-    class Qwen3VLReranker(BaseReranker[str | ScoreMultiModalParam]): ...
-    class MyTextReranker(BaseReranker[str]): ...
-
-写成 ``Any`` 的话，``_to_provider_input`` 产出什么、``score`` 收什么就完全
-失去关联，传错了要到发请求时才知道。
-
-**参数化不是可选的**：``class X(BaseReranker)`` 会被静默当作
-``BaseReranker[Unknown]``，于是类型参数白加了。
-"""
+"""Reranker 适配器模板：统一输入转换、评分与排序。"""
 
 from __future__ import annotations
 
@@ -73,9 +54,7 @@ class BaseReranker[ProviderInput](GatedModel, ABC):
     ) -> list[float]:
         """同步低层打分接口。受闸门保护，不可覆写。
 
-        这里曾经就是抽象方法本身，于是同步 ``rank()`` 整条路绕开预算：实测
-        闸门 limit=2 时真实峰值 8（评审指出）。embedding 与 loader 的同步入口
-        都补过了，reranker 这道后门原样留着 —— 同一个疏漏第三次。
+        同步入口同样必须经模板方法取闸门，否则 ``rank()`` 会绕过进程级预算。
         """
         return self._through_gate_sync(lambda: self._score(query, documents, **kwargs))
 

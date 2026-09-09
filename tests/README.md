@@ -81,8 +81,10 @@ UPDATE_DOCX_SNAPSHOTS=1 uv run pytest tests/unit/engines/test_docx_parser.py
 
 python-docx 产出的 XML 比 Word 真实输出简单得多，覆盖不到 Word 特有的
 怪异结构（编号域、复杂嵌套、样式继承链）。`test_docx_parser.py` 里另有一条
-可选用例：本地存在 `poc/docs/*.docx` 时会拿真实文档跑**冒烟**（不崩、有产出），
-但不比对内容 —— 那些文档不进版本库，无法维护稳定快照。
+可选用例：设置 `COMET_RAG_REAL_DOCS=1` 且本地存在 `poc/docs/*.docx` 时，会拿
+真实文档跑**冒烟**（不崩、有产出），但不比对内容 —— 那些文档不进版本库，
+无法维护稳定快照。显式开关避免开发者机器上恰好有私有样本时，默认单测耗时
+突然增加且无法在 CI 复现。
 
 ## 编写测试的几条约定
 

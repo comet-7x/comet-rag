@@ -1,27 +1,4 @@
-"""`BaseVectorStore` 的 Milvus 实现。
-
-需要 `milvus` extra（`pip install comet-rag[milvus]`）。
-
-## 三个关键决定，都是实测出来的而非猜的
-
-**一致性级别用 `Session`，不是每次写完 flush。**
-Milvus 默认的 `Bounded` 一致性下，写入后立刻检索**命中 0 条**（实测）。
-契约要求"`aupsert` 返回即可查"（plan R1），有两条路能满足：
-  · 每次写完 `flush()` —— 会封存 segment，吞吐直接崩，是错的解法
-  · `Session` 一致性 —— "读己所写"，同一 client 立刻看得到
-实测三种级别的往返耗时：Bounded 0.22s（但查不到）、Session 0.34s、
-Strong 0.62s。Session 恰好给出契约要求的语义，代价只有 Strong 的一半。
-
-**一个知识库一个 collection**，而非共用 collection 靠 partition key 分。
-隔离更彻底，且换 embedding 模型时可以单库重建而不影响其他库。
-代价是 Milvus 单实例的 collection 数量有上限（几百量级）——
-真撞上那天会有真实负载数据来指导迁移，比现在拍脑袋强。
-
-**预留 sparse 向量字段**（spec A11），M1 不写入内容。
-Milvus 要求所有向量字段在 load 前都有索引，所以字段和索引一起建；
-写入时该字段给空 dict `{}`（实测可接受，省略字段则报错）。
-这样 M3 做混合检索时是纯加代码，不必重灌数据。
-"""
+"""Milvus 向量存储适配器。"""
 
 from __future__ import annotations
 
@@ -69,7 +46,7 @@ def collection_name_for(kb_id: str, *, prefix: str = "comet") -> str:
 def _quote_key(key: str) -> str:
     """把元数据键渲染成 Milvus JSON 路径里的字面量。
 
-    **键和值一样需要转义**（PR 评审 #5）。原来只转义了值，键是直接插进
+    键和值都必须转义。键会被直接插进
     `metadata["..."]` 的 —— 一个带引号或反斜杠的键就能改变表达式结构，
     轻则查询报错，重则改变谓词语义。检索的 filter 来自 HTTP 请求体，
     也就是说这个键是调用方完全可控的。
@@ -148,7 +125,7 @@ class MilvusStore(BaseVectorStore):
     async def _dim_of(self, kb_id: str) -> int:
         """读回已有 collection 的向量维度。不存在则抛 `CollectionNotFound`。
 
-        同步客户端的调用一律甩进线程（PR 评审 #8）：`has_collection` /
+        同步客户端的调用一律放在线程中：`has_collection` /
         `describe_collection` 都是真网络请求，直接在事件循环上调，Milvus 一慢
         就会把整个进程堵住 —— API 的其他请求、runner 的取消检查点、worker 的
         心跳全部跟着停摆。**心跳停摆会被租约回收误判成 worker 已死**，

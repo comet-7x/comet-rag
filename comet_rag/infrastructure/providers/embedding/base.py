@@ -1,30 +1,4 @@
-"""Embedding 适配器基类：把供应商差异收敛成两个扩展点。
-
-契约在 :mod:`comet_rag.ports.embedding`；本模块是**可选的**
-实现复用 —— 满足 ``EmbeddingPort`` 形状的对象不必继承它。
-
-## 适配器只需要填两个洞
-
-``embed``（同步）与 ``_aembed``（异步）。其余全部由本类合成：查询/文档的
-语义区分、闸门。多模态适配器再覆写 ``embed_media``/``_aembed_media``；
-支持服务端原生批量的适配器再抬高 ``batch_limit`` 并覆写 ``_embed_batch``。
-
-## 模板方法：``aembed`` 是 ``final``，``_aembed`` 才是扩展点
-
-闸门必须在**每一条真实请求**外面。如果扩展点就是 ``aembed`` 本身，子类
-一覆写就把闸门覆写掉了 —— 而且不报错。拆成"final 的外壳 + abstract 的内核"，
-子类在类型层面就没有绕过闸门的写法。
-
-## 这里不排程
-
-"发几个请求、几个并发"是调用方的事，代码在
-:mod:`comet_rag.engines.embedding.batch`。本模块只回答两件事：
-**我一次最多能吃几篇**（``batch_limit``），以及**把这一块发出去**
-（``embed_batch``，恰好一次往返）。
-
-线程池、信号量、``max_concurrency`` 都不在这里 —— 模型不该替调用方决定
-要不要起线程。
-"""
+"""Embedding 适配器模板：统一任务语义、批量能力与并发闸门。"""
 
 from __future__ import annotations
 
@@ -71,9 +45,8 @@ class BaseEmbeddingModel(GatedModel, ABC):
     def embed(self, data: str, /, **kwargs: Any) -> list[float]:
         """同步底层入口。受闸门保护，不可覆写。
 
-        这里曾经就是抽象方法本身，于是 `model.embed(...)` 直接调用完全绕开
-        预算：实测闸门 limit=2 时真实峰值 8（评审指出）。给上面几个带语义的
-        入口加闸而漏掉它们脚下这个公开入口，等于前门上锁、后门敞着。
+        所有公开入口必须经模板方法取闸门；否则直接调用 `model.embed(...)`
+        会绕过进程级预算。
         """
         return self._through_gate_sync(lambda: self._embed(data, **kwargs))
 
@@ -188,24 +161,7 @@ class BaseEmbeddingModel(GatedModel, ABC):
 
 
 class MultimodalEmbeddingMixin(GatedModel, ABC):
-    """图片与混合内容的向量化能力。
-
-    ## 为什么是 mixin，而不是基类上的一个"默认抛异常"的方法
-
-    ``MultimodalEmbeddingPort`` 是 ``@runtime_checkable`` 的，意思是调用方
-    可以用 ``isinstance`` 问"这个模型能不能吃图片"。而 Protocol 的
-    ``isinstance`` **只看方法在不在**，不看它做什么 —— 只要基类给了个
-    "默认抛 TypeError"的 ``embed_media``，纯文本的 OpenAI 适配器就同样
-    通过检查，协议当场变成谎话。
-
-    做成 mixin，能力就是**结构性**的：不继承就真的没有这个方法，
-    ``isinstance`` 的答案与运行时行为永远一致。
-
-    ## 与文本入口分开也是刻意的
-
-    两者输入域不同，硬合成一个就只能标 ``Any``，于是"这个参数能传什么"
-    重新变成运行时才知道的事 —— 那正是本次重构要消除的东西。
-    """
+    """以结构性能力暴露多模态接口，使运行时 Protocol 检查可信。"""
 
     @abstractmethod
     async def _aembed_media(
@@ -223,12 +179,7 @@ class MultimodalEmbeddingMixin(GatedModel, ABC):
     def embed_media(
         self, data: MediaResource | ContentInput, /, **kwargs: Any
     ) -> list[float]:
-        """同步多模态入口。与 `aembed_media` 一样受闸门保护。
-
-        修 #44 之前这里是个可覆写的抽象方法，Qwen 的实现直接调未加闸的
-        `embed` —— 于是同步图片请求整条路绕开了预算，而图片恰恰比文本重得多
-        （评审指出）。
-        """
+        """受共享闸门保护的同步多模态入口。"""
         return self._through_gate_sync(lambda: self._embed_media(data, **kwargs))
 
     @final

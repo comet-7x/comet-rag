@@ -9,9 +9,7 @@ import yaml
 
 from .schemas import APPConfig
 
-#: 配置文件路径的环境变量。**这是"配置路径可指定"的落点**：
-#: 此前只会从 cwd 读 `config.yaml`，于是进程必须在项目根目录启动，
-#: 而 uvicorn 的 `--reload` 会另起子进程 —— 只有环境变量传得过去。
+#: 配置路径必须通过环境变量传给 reload 与 worker 子进程。
 ENV_CONFIG_PATH = "COMET_RAG_CONFIG"
 DEFAULT_CONFIG_PATH = "config.yaml"
 

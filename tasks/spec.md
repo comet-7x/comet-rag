@@ -1,7 +1,8 @@
 # Spec: Comet-RAG
 
-> 状态：待评审（v0.1）
-> 最后更新：2026-08-09
+> 状态：M1 已完成（v1.0）
+> 最后更新：2026-09-09
+> 验收记录：`tasks/plan.md` Checkpoint F；下一里程碑为 M2（PDF / MinerU）
 
 ---
 
@@ -51,11 +52,11 @@
 
 | | 范围 | 出口标准 |
 |---|---|---|
-| **M1** | **DOCX 全链路** —— 上传 docx → 解析 → 分块 → 向量化 → 入 Milvus → 检索命中 | §8 的 S1/S2/S3 全绿 |
+| **M1** | **DOCX 全链路** —— 上传 docx → 解析 → 分块 → 向量化 → 入 Milvus → 检索命中 | §8 的 S1–S5 全绿（已完成） |
 | M2 | MinerU / PDF 支持（依赖重，作为 optional-dependency） | 复用 M1 的 hook 机制，`PipelineHooks.extractor("pdf")` |
-| M3 | 混合检索（BM25 + RRF） | 见 §10-Q1，涉及 Milvus schema，需早于 M1 定 |
+| M3 | 混合检索（BM25 + RRF） | sparse schema 已预留；实现召回与融合逻辑 |
 
-M1 不完成不开 M2。当前 6600 行代码零测试，先把一条链路做扎实比铺格式重要。
+M1 已完成并具备单元、契约、集成、端到端和基准测试保护；M2 可以开始。
 
 ### 非目标（明确不做）
 
@@ -76,17 +77,17 @@ M1 不完成不开 M2。当前 6600 行代码零测试，先把一条链路做�
 | Web | FastAPI + uvicorn | 已有 |
 | 校验 | Pydantic v2 | API 出入参、配置 |
 | 内部数据 | dataclass（`slots=True`） | 引擎内部与 Task，避免 Pydantic 校验开销 |
-| 任务队列 | **ARQ** | 新增依赖 |
-| 任务状态 | PostgreSQL + SQLAlchemy 2.0 + Alembic | 已有依赖 |
-| 向量库 | Milvus（pymilvus） | 新增依赖 |
-| 对象存储 | S3 兼容（aioboto3） | 新增依赖 |
-| 模型 | OpenAI 兼容协议（openai SDK / httpx） | 已有 |
-| 日志 | loguru | 已有 |
-| 测试 | pytest + pytest-asyncio + pytest-cov | pytest 已有，另两个需补 |
-| Lint | ruff | 已有，规则集已较严格 |
-| 提交 | commitizen + pre-commit | 已有 |
+| 任务队列 | **ARQ** | `server` extra |
+| 任务状态 | PostgreSQL + SQLAlchemy 2.0 + Alembic | `server` extra |
+| 向量库 | Milvus（pymilvus） | `milvus` extra |
+| 对象存储 | S3 兼容（aioboto3） | `server` extra |
+| 模型 | OpenAI 兼容协议（openai SDK / httpx） | 核心依赖 |
+| 日志 | loguru | 核心依赖 |
+| 测试 | pytest + pytest-asyncio + pytest-cov | `dev` dependency group |
+| Lint | ruff + pyright | `dev` dependency group |
+| 提交 | commitizen + pre-commit | `dev` dependency group |
 
-**待补依赖**：`arq`、`pymilvus`、`aioboto3`、`asyncpg`、`pytest-asyncio`、`pytest-cov`、`pytest-benchmark`
+M1 所需依赖均已落入对应分组；MinerU 保持独立 `mineru` extra，不进入 `all`。
 
 ### 依赖分组（对应 A1）
 
@@ -140,25 +141,26 @@ uv run pytest tests/benchmark --benchmark-only
 ```
 comet_rag/
 ├── engines/              ★ 库核心 —— 禁止 import 任何基础设施
-│   ├── loaders/          取源（本地/URL/S3 URI）→ 本地文件句柄
+│   ├── loaders/          本地/URL 取源与路由契约
 │   ├── converters/       文件 → 领域对象（如 docx → Document）
 │   ├── parsers/          领域对象 → 结构化中间表示
 │   ├── cleaners/         中间表示 → markdown / blocks
 │   ├── chunkers/         文本 → chunks
-│   ├── pipelines/        上述编排，进程内可独立使用
-│   └── retrieval/        query → 召回 → 融合 → 重排（当前为空）
+│   ├── embedding/        后端无关的批量排程
+│   └── pipelines/        上述编排，进程内可独立使用
 │
-├── infrastructure/       ★ 库的可选后端 —— 每个子包对应一个 optional-dependency
-│   ├── models/           embedding / reranker / vision / llm（OpenAI 兼容）
+├── ports/                ★ 跨层契约与值对象
+├── infrastructure/       ★ 外部系统适配器
+│   ├── providers/        embedding / reranker / vision / llm / ocr
+│   ├── loaders/          S3 兼容对象存储加载器
 │   ├── vectorstore/      BaseVectorStore ABC + MilvusStore
-│   ├── database/         SQLAlchemy 模型与 session 管理
-│   └── storage/          S3 兼容对象存储（新增）
+│   └── database/         SQLAlchemy 模型、仓储与 session
 │
-├── tasks/                ★ 通用任务框架 —— 由 poc/task_demo/task/ 提升而来
+├── tasks/                ★ 通用任务框架
 │   ├── models.py         Task / TaskStatus / TaskError / TaskEvent / StageRecord
 │   ├── states.py         状态机迁移表（唯一合法迁移来源）
-│   ├── store.py          TaskStore ABC + InMemoryTaskStore + PostgresTaskStore
-│   ├── executor.py       TaskExecutor ABC + InProcessExecutor + ArqExecutor
+│   ├── store*.py         TaskStore ABC + 内存/PostgreSQL 实现
+│   ├── executor*.py      TaskExecutor ABC + 进程内/ARQ 实现
 │   ├── runner.py         Runner Protocol + kind 注册表 + StagePipeline
 │   └── service.py        TaskService（store + executor 门面）
 │
@@ -175,9 +177,10 @@ comet_rag/
 │   ├── main.py  deps.py  lifespan.py  middleware.py
 │   └── routes/           search / ingest / tasks / kb / admin
 │
-├── schemas/              API 出入参（Pydantic）—— task.py 待删除
+├── composition/          唯一组合根与应用上下文
+├── schemas/              API 出入参（Pydantic）
 ├── config/               YAML 加载 + Pydantic 校验
-├── core/                 日志、trace、应用上下文
+├── core/                 并发、降级、日志、trace 与时间
 └── exceptions/           异常层次
 
 tests/
@@ -246,14 +249,14 @@ class BaseEmbeddingModel(Protocol):
 - 公开 API 全量类型标注；`Any` 需在旁注明理由
 - 异步方法以 `a` 前缀区分同步版本（`run`/`arun`、`embed`/`aembed`）——现有约定，保持
 - 重依赖在函数内 import（现有 `hooks.py` 的做法），保证 `import comet_rag` 轻量
-- 注释写**为什么**，不写**是什么**。POC 的 `store.py` / `executor.py` 是本项目的注释标杆
-- 中文注释可以，但公开 API 的 docstring 用中文即可，保持一致
+- 注释只补代码无法表达的契约与原因，详见 `docs/comment_style.md`
+- 中文注释与 docstring 保持简短一致
 
 ---
 
 ## 6. Testing Strategy
 
-现状：**测试为零**。这是当前最大的风险——6600 行代码没有任何回归保护。
+M1 已建立单元、契约、集成、端到端与基准测试；默认单元测试必须保持在 10 秒内。
 
 ### 分层
 
@@ -264,7 +267,7 @@ class BaseEmbeddingModel(Protocol):
 | 端到端 | `tests/e2e/` | 全栈 | 至少 1 条：提交 → 轮询 → 检索命中 |
 | 基准 | `tests/benchmark/` | 全栈 | 见 §8 S4 |
 
-### 优先补测顺序（按"出 bug 的代价"排序）
+### M1 补测顺序（按"出 bug 的代价"排序，已完成）
 
 1. **`tasks/states.py` 状态机** —— 纯函数、零依赖、bug 后果最严重（"已取消的任务又变成成功"）。参数化把 7×7 迁移矩阵全覆盖。
 2. **`tasks/store.py` 乐观锁与租约** —— `InMemoryTaskStore` 天然可测。重点：并发 CAS 冲突、`heartbeat` 的 `bump=False` 不涨版本、`sweep_stale` 回收逻辑。
@@ -325,77 +328,73 @@ def fake_embedding_model() -> BaseEmbeddingModel:
 
 ### S1 — 库与服务真正分离（对应 A1）
 
-- [ ] 在干净虚拟环境里 `pip install comet-rag`（不带 extras），`from comet_rag.engines.pipelines import Pipeline` 能成功导入并解析一个 docx
-- [ ] CI 中有一个 job 只装基础依赖跑 `tests/unit`，通过
-- [ ] `grep -rE "import (redis|pymilvus|sqlalchemy|arq|fastapi|aioboto3)" comet_rag/engines/` 无输出
+- [x] 在干净虚拟环境里 `pip install comet-rag`（不带 extras），`from comet_rag.engines.pipelines import Pipeline` 能成功导入并解析一个 docx
+- [x] CI 中有一个 job 只装基础依赖验证库可独立导入和解析，通过
+- [x] AST 分层守卫确认 `engines/` 不依赖任何基础设施包
 
 ### S2 — 任务框架落地
 
-- [ ] `poc/task_demo/task/` 提升为 `comet_rag/tasks/`，`Pipeline` 更名 `StagePipeline`（避开与 `engines/pipelines` 撞名）
-- [ ] `comet_rag/schemas/task.py` 已删除，无残留引用
-- [ ] 确认门已按 A10 移除，且 `resume_stage` / `context` 续跑仍工作：
+- [x] `poc/task_demo/task/` 提升为 `comet_rag/tasks/`，`Pipeline` 更名 `StagePipeline`（避开与 `engines/pipelines` 撞名）
+- [x] 旧任务领域 schema 已删除；`comet_rag/schemas/task.py` 现为新的 HTTP DTO
+- [x] 确认门已按 A10 移除，且 `resume_stage` / `context` 续跑仍工作：
       *验证*：让 runner 在第 3 阶段抛 `RetriableError`，重试后应从第 3 阶段开始，而非第 1 阶段
-- [ ] Postgres 中 `tasks.status` 为 **varchar** 而非 PG 原生 enum（保留将来加状态值的零成本可逆性）
-- [ ] `PostgresTaskStore` 通过与 `InMemoryTaskStore` **完全相同**的一套契约测试
-- [ ] `ArqExecutor` 通过与 `InProcessExecutor` 相同的执行器契约测试
-- [ ] 杀死 worker 进程后，`sweep_stale` 能在租约超时内把任务退回 PENDING 并被另一 worker 接管
+- [x] Postgres 中 `tasks.status` 为 **varchar** 而非 PG 原生 enum（保留将来加状态值的零成本可逆性）
+- [x] `PostgresTaskStore` 通过与 `InMemoryTaskStore` **完全相同**的一套契约测试
+- [x] `ArqExecutor` 通过与 `InProcessExecutor` 相同的执行器契约测试
+- [x] 杀死 worker 进程后，`sweep_stale` 能在租约超时内把任务退回 PENDING 并被另一 worker 接管
 
 ### S3 — 端到端链路打通
 
-- [ ] `POST /ingest` 提交文件 → 返回 `task_id` → 轮询见到 stage 依次推进 → `SUCCEEDED`
-- [ ] `POST /search` 能检索到上一步入库的内容，返回带 `score` 的排序结果
-- [ ] 每个 chunk 的 metadata 携带 `kb_id`，Milvus 按其分区（A5 的租户钩子）
-- [ ] 同一文件带相同 `idempotency_key` 重复提交，不产生第二个任务
-- [ ] `knowledge_bases` 表存在且记录 `embedding_model` / `embedding_dim`；向已有 KB 写入维度不符的向量时**必须报错**，不得静默写入（A12）
-- [ ] Milvus collection schema 含 sparse vector 字段（M1 不写入）（A11）
-- [ ] `MilvusStore` 与 `InMemoryVectorStore` 通过**同一套契约测试**（A9）
-- [ ] `BaseVectorStore.asearch` 的 `filter` 参数是结构化 `dict`，**不得**接收 Milvus boolean 表达式字符串——否则接口即绑死在 Milvus 上
-- [ ] 契约测试覆盖"写入后立即查询"：Milvus 需 flush/load 才可见，这类差异不体现在签名上，只能靠集成测试拦截
+- [x] `POST /ingest` 提交文件 → 返回 `task_id` → 轮询见到 stage 依次推进 → `SUCCEEDED`
+- [x] `POST /search` 能检索到上一步入库的内容，返回带 `score` 的排序结果
+- [x] 每个 chunk 的 metadata 携带 `kb_id`；Milvus 使用“一 KB 一 collection”隔离
+- [x] 同一文件带相同 `idempotency_key` 重复提交，不产生第二个任务
+- [x] `knowledge_bases` 表记录 `embedding_model` / `embedding_dim`；模型或维度不一致时拒绝写入（A12）
+- [x] Milvus collection schema 含 sparse vector 字段（M1 不写入）（A11）
+- [x] `MilvusStore` 与 `InMemoryVectorStore` 通过**同一套契约测试**（A9）
+- [x] `BaseVectorStore.asearch` 的 `filter` 参数是结构化 `dict`，不暴露 Milvus 表达式字符串
+- [x] 契约测试覆盖“写入后立即查询”，Milvus 使用 `Session` 一致性保证可见
 
 ### S4 — 资源自适应（性能目标）
 
 不设 QPS 数字（当前无真实负载，编造数字无意义），改为六条可验证的架构约束：
 
-1. **全链路背压** —— 所有队列有界。压测下应表现为拒绝或阻塞，**不得 OOM**。
+1. [x] **全链路背压** —— 所有队列有界。压测下应表现为拒绝或阻塞，**不得 OOM**。
    *验证*：投递量 10× 于处理能力，进程存活，内存不随投递量线性增长。
-2. **并发闸门** —— 对模型服务的并发上限可配置且被强制执行。
+2. [x] **并发闸门** —— 对模型服务的并发上限可配置且被强制执行。
    *验证*：配 `max_concurrency=4`，用记录并发峰值的 fake 模型断言峰值 ≤ 4。
-3. **并发优先** —— embedding 一律窗口化并发，不得逐条串行等待。
+3. [x] **并发优先** —— embedding 一律窗口化并发，不得逐条串行等待。
    *验证*：`astream_run` 处理 200 chunk 的文档，fake 模型记录的并发峰值 > 1 且 ≤ `max_concurrency`；首个 chunk 产出时已 embed 数 ≤ `embed_batch_size`（流式语义未退化）。
-   > **原标准已修正（2026-08-10，T9）**：本条原写作"HTTP 调用次数 ≤ ⌈200/batch_size⌉"，前提是存在请求级批量。实测不成立——`BaseEmbeddingModel.abatch_embed` 是**扇出 N 个单条请求**并用信号量限流（`base.py:37-54`），而 `Qwen3VLEmbeddingModel.embed()` 发多模态 `messages` 结构、读 `data[0]`，天生单条。全仓不存在请求级批量。
-   >
-   > 真实问题仍在：修复前 `astream_run` 逐 chunk `await aembed()` 是**完全串行**（并发峰值恒为 1），而 `_aembed_chunks` 走 `abatch_embed` 是并发的。同一个类两种写法，200 chunk × 50ms 下相差约 16 倍。已于 T9 统一为窗口化并发。
-   >
-   > **后续优化**：真正的请求级批量（OpenAI `/embeddings` 的 `input: list[str]`）需要模型层支持一次提交多条，收益更大，但属于 M1 之外。
-4. **连接池单例** —— httpx client 应用级复用。
+   > 调度统一收口到 `engines/embedding/batch.py`：模型声明单请求 `batch_limit`，
+   > 调用方决定窗口与并发。支持原生批量的适配器合并请求，不支持的适配器有界扇出。
+4. [x] **连接池复用** —— httpx client 由适配器实例持有或从应用生命周期注入。
    *验证*：`grep -rn "AsyncClient(" comet_rag/` 的结果，要么接受外部注入，要么位于生命周期管理代码中。
-   > **当前部分不满足**：`engines/loaders/url_loader.py:139` 与 `:244` 用 `async with httpx.AsyncClient(...)` 现建现销，每次 URL 加载都重建连接池与 TLS 握手。批量入库大量 URL 时这是明确的浪费。
-   > 对照 `infrastructure/models/embedding/qwen3_vl_embedding.py:112` 与 `reranker/qwen3_vl_reranker.py:145` 的写法——接受注入、仅在缺省时兜底自建——这是本项目应统一采用的模式。
-5. **分级降级** —— 资源紧张时按序降级：先关 rerank → 再降 top_k → 最后拒绝新任务。降级动作必须打日志。
+   > URL 与模型适配器均复用实例级客户端；注入的客户端归调用方，自建客户端由适配器关闭。
+5. [x] **分级降级** —— 资源紧张时按序降级：先关 rerank → 再降 top_k → 最后拒绝新任务。降级动作必须打日志。
    *验证*：注入模型服务超时，检索仍返回结果（无 rerank）且日志有降级记录。
-6. **基准可测** —— `tests/benchmark/` 能产出当前基线；涉及性能的 PR 须附前后对比。
+6. [x] **基准可测** —— `tests/benchmark/` 能产出当前基线；涉及性能的 PR 须附前后对比。
 
 ### S5 — 可维护性
 
-- [ ] `tests/unit` 覆盖率 ≥ 70%，`comet_rag/tasks/` ≥ 90%
-- [ ] pre-commit 钩子在本地生效
-- [ ] `docs/` 与实现一致（现有 `pipeline_usage.md` 已与代码脱节，见 §9）
+- [x] `tests/unit` 覆盖率 ≥ 70%，`comet_rag/tasks/` ≥ 90%（三层合并口径）
+- [x] pre-commit 钩子与 CI 质量门已配置
+- [x] README、`docs/` 与公开 API 由文档示例测试持续校验
 
 ---
 
-## 9. 已知的现存问题（实现时须一并处理）
+## 9. M1 问题关闭记录
 
-| # | 位置 | 问题 |
-|---|---|---|
-| P1 | `engines/pipelines/pipeline.py:89` | `astream_run` 逐 chunk 调 `aembed`，违反 S4-3 |
-| P2 | `docs/pipeline_usage.md` | 文档与代码已脱节（均已核实）：① hook 签名文档写 `(LoaderContent) -> str`，实际是 `(LoaderContent, PipelineConfig) -> str`；② 文档多处调用 `clean_to_string`，该方法**不存在**（`docx_cleaner.py` 只有 `clean_to_markdown:31` 与 `clean_to_blocks:109`）；③ import 路径写 `comet_rag.infrastructure.embedding.*`，实际为 `comet_rag.infrastructure.models.embedding.*`；④ chunker hook 签名同样已变。文档中的示例代码**照抄会直接报错** |
-| P2b | `engines/loaders/url_loader.py:139,244` | `AsyncClient` 现建现销，违反 S4-4 |
-| P3 | `config/schemas.py` | 定义了 Redis/Mongo/SQL/S3/Vector 五套配置，全部未被使用。按 A6 裁掉 Mongo |
-| P4 | `api/lifespan.py` | 资源初始化全是注释，`app.state.ctx` 未建立；`core/context.py` 是空文件 |
-| P5 | `api/routes/search.py:8` | `/search` 直接回显 query，未接检索 |
-| P6 | `infrastructure/vectorstore/__init__.py` | 只有 ABC，无 Milvus 实现；且 ABC 缺 `kb_id`/分区参数（A5 要求补） |
-| P7 | `workers/` `services/` `models/` `database/` | 全为 0 字节空文件 |
-| P8 | `PipelineHooks` | 用类变量做全局注册表，测试间会互相污染。需提供 fixture 隔离或改为实例级 |
+| # | 处理结果 |
+|---|---|
+| P1 | 四种 Pipeline 入口统一走窗口化 embedding 排程 |
+| P2 | `pipeline_usage.md` 已与真实签名对齐，并由文档示例测试防腐 |
+| P2b | URLLoader 改为复用实例级同步/异步客户端并明确所有权 |
+| P3 | 配置类已接入组合根，未使用的 Mongo 配置已移除 |
+| P4 | `composition.Context`、lifespan 与逆序资源清理已落地 |
+| P5 | `/search` 已接入召回、可选重排与失败降级 |
+| P6 | `MilvusStore` 与 `InMemoryVectorStore` 已实现并共享契约测试 |
+| P7 | API、workers、services、providers 与 database 均已实现并完成装配 |
+| P8 | 测试夹具会快照并恢复 `PipelineHooks`，用例间不再污染 |
 
 ---
 

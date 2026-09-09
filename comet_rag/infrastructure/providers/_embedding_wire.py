@@ -1,12 +1,4 @@
-"""OpenAI 兼容嵌入协议的线路格式处理。
-
-`encoding_format=base64` 是协议里的**传输优化**（报文小一半），不是调用方该
-看到的东西。就地解回浮点数组，否则 `embed_query` 声明返回 `list[float]`、
-实际给出 `str` —— 契约在说谎，而且只在配了 base64 的部署上才炸。
-
-放在共享位置是因为 Qwen 与 OpenAI 两个适配器讲的是同一套协议：先前只在
-Qwen 里解，OpenAI 那边同样的洞就一直开着（评审指出）。
-"""
+"""OpenAI 兼容嵌入响应的线路格式处理。"""
 
 from __future__ import annotations
 
@@ -23,7 +15,7 @@ def decode_vector(embedding: list[float] | str) -> list[float]:
     ``validate=True`` 不是可选的。默认的 `b64decode` 会**静默丢弃**非 base64
     字符：往合法编码里插一个 `!` 或换行，它照样解得出四字节对齐的数据、照样
     通过下面的长度检查，于是一条被损坏的报文变成一个看起来完全正常的向量 ——
-    没有异常、没有日志，只有检索结果慢慢变差（评审指出）。
+    损坏报文会伪装成正常向量，导致检索质量静默下降。
 
     实测（`AACAPgAAAL8AAMA/` 插入 `!`）：
 

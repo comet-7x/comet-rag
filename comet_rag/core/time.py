@@ -1,14 +1,4 @@
-"""带时区的时间工厂。
-
-## 为什么在 `core/` 而不是 `tasks/`
-
-它原本住在 `tasks/models.py` 里，而 `infrastructure/knowledge_base.py` 只为了
-取个当前时间就得 import `comet_rag.tasks.models` —— 与 `tasks/store_postgres.py`
-反过来 import `infrastructure.database` 一起，构成了包级**循环依赖**。
-
-一个只依赖标准库的时间工具跟"任务"没有任何关系，把它放进任务包纯属历史巧合。
-挪到零依赖内核后环就断了：`infrastructure` 不再依赖 `tasks`。
-"""
+"""集中生成带时区时间，便于测试替换时钟。"""
 
 from __future__ import annotations
 
@@ -65,9 +55,7 @@ class Time:
     def iso(cls, dt: datetime | None = None, tz: TZType = TimeZone.CST) -> str:
         """ISO 8601 字符串。传了 `dt` 就把它**转换**到 `tz`，而不是照原样输出。
 
-        原先写的是 `dt or cls.now(tz)` —— 传 `dt` 时 `tz` 被静默丢弃，
-        `iso(dt, TimeZone.UTC)` 返回的仍是 `dt` 自己的时区。参数在那里、
-        被接受、然后不起作用，比没有这个参数更糟。
+        传入 `dt` 时也必须转换到 `tz`，否则时区参数会被静默忽略。
         """
         return (cls.to(dt, tz) if dt is not None else cls.now(tz)).isoformat()
 

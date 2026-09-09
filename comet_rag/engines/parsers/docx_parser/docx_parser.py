@@ -1,26 +1,4 @@
-"""
-Production-grade DOCX parser for Comet-RAG.
-
-Block types emitted
--------------------
-text      — body paragraph            {type, content, style}
-heading   — heading paragraph         {type, content, level, is_numbered[, number]}
-list      — ordered / unordered list  {type, attribute, ilevel, content: [Block, …]}
-table     — table block               {type, content, rows, row_count, col_count}
-image     — embedded image            {type, content, format, name, alt_text, id, width_px, height_px}
-equation  — standalone equation       {type, content}   (LaTeX or raw text)
-caption   — figure / table caption    {type, content}
-header    — page header               {type, content}
-footer    — page footer               {type, content}
-
-Inline rich text in ``content`` uses Markdown conventions:
-  **bold**  *italic*  ***bold+italic***  ~~strikethrough~~  [text](url)
-  Inline equations:   $latex$
-  Standalone equations are wrapped in $$…$$.
-
-OMML → LaTeX conversion is handled by the built-in ``_omml`` module
-(no external dependencies beyond lxml and loguru).
-"""
+"""按文档顺序解析 DOCX；格式语义见 `docs/docx_parser_internals.md`。"""
 
 import asyncio
 import base64
@@ -606,12 +584,7 @@ class DocxParser(BaseParser[DocxDocument, DocxParsedContent]):
 
     @staticmethod
     def _declared_spans(row: Any) -> list[tuple[int, bool]]:
-        """本行每个 `tc` 的 `(自己声明的 span, 是不是纵向合并的续格)`。
-
-        续格的判定：`w:vMerge` 存在且 `w:val` 不是 `restart`（OOXML 里省略
-        `val` 就等于 `continue`）。这类格子**自己的 `gridSpan` 不作数** ——
-        展开时用的是上方根单元格的，见 `_projected_cells()`。
-        """
+        """读取 XML 声明的 span；纵向续格的宽度由上方根单元格决定。"""
         out: list[tuple[int, bool]] = []
         for tc in row._tr.tc_lst:  # noqa: SLF001
             tc_pr = tc.tcPr
@@ -620,70 +593,15 @@ class DocxParser(BaseParser[DocxDocument, DocxParsedContent]):
         return out
 
     def _row_extent(self, row: Any, grid_width: int) -> tuple[int, int]:
-        """`(两端缺列数之和, 本行 tc 自己声明的 span 之和)` —— **不碰 `row.cells`**。
-
-        为什么不能碰：`row.cells` 是按网格列展开的，长度由文档里的 `gridSpan`
-        决定。一份 2 列的表里塞一个 `gridSpan=10000000`，python-docx 就会建出
-        一千万个 `_Cell`（实测 75 MB）—— 而这发生在解析循环**之前**，循环里
-        再怎么设防都拦不住（PR #34 评审）。
-
-        所以只能从 XML 层数：`tc` 的个数与各自的 span 都是逐个元素声明的，
-        规模等于文件规模，攻击者拿不到杠杆。
-
-        这里走 `row._tr` / `tc.grid_span` 这条内部路径是**刻意的**，与
-        `_row_to_cells()` 里坚持用公开 `cell.grid_span` 不矛盾：那边是在读
-        已经安全展开的数据，这边是在决定要不要展开 —— 而公开 API 恰恰正是
-        那个无界的东西，用它做准入检查等于先中招再判断。
-        """
+        """从 XML 估算行宽，避免 `row.cells` 在校验前按恶意 span 展开。"""
         before, after = self._raw_gaps(row)
         spans = sum(max(tc.grid_span, 1) for tc in row._tr.tc_lst)  # noqa: SLF001
         return min(before, grid_width) + min(after, grid_width), spans
 
     def _projected_cells(self, table: Any, grid_width: int) -> int:
-        """整表展开后的单元格数**上界**，全程不碰 `row.cells`。
+        """在展开前计算安全上界。
 
-        ## 为什么不能只看本行自己声明的 span
-
-        `vMerge="continue"` 的续格会继承**上方根单元格**的 `gridSpan`，而它
-        自己的 `tc` 往往省略 `gridSpan`（本地值就是 1）。实测：
-
-            r0: XML 里 grid_span=[5]   row.cells 实际长度 = 5   (vMerge restart)
-            r1: XML 里 grid_span=[1]   row.cells 实际长度 = 5   (vMerge continue)
-
-        于是"逐行累加本地 span"会严重低估：根行声明 `gridSpan=S`、后面跟 R 个
-        续行，本地和约 `S + R`，实际展开却是 `S × (R+1)`。取 S=999000、R=999
-        就能把投影压在默认上限之下，而真实展开接近十亿格（PR #34 评审）。
-
-        ## 上界只能逐格取，不能按"历史最大行宽"取
-
-        我先前用的是"第 i 行宽度 ≤ 两端缺列 + max(前 i 行各自的 span 之和)"。
-        **那不是上界**：同一行可以既继承一个宽 span、又自己再声明一个宽 span。
-        实测（PR #34 评审给出的反例）：
-
-            r0: 本地 span=[5]     row.cells 实际 = 5
-            r1: 本地 span=[1, 5]  row.cells 实际 = 10   ← 继承 5 + 新声明 5
-
-            按行取 max 的投影 = 11 < 实际 15
-
-        改成**逐格**取：
-
-            续格   的有效 span ≤ 见过的最大单格 span（它继承的那个根，
-                                 一定是某处声明过的一个 gridSpan）
-            非续格 的有效 span  = 它自己声明的 gridSpan
-
-        这一条不依赖 python-docx 如何解析重叠布局，纯粹是"每格的展开宽度都
-        来自某个声明过的 gridSpan"，所以是硬上界。
-
-        非续格用真实值而不是一律取 max，是为了不误伤合法文档：一张 50 列的表
-        若某行是整行合并的表头，"全部按 50 算"会把正文行也放大 50 倍。实测
-        4 份真实文档 17 张表，最大投影 144（预算 100 万），没有误拒风险。
-
-        ## `widest_single` 刻意先更新再计分
-
-        于是本行**后面**才声明的宽格，也会被用来估本行前面的续格。严格说
-        续格只可能继承**更上方**的根，所以这是过估计 —— 但刻意保留（PR #34
-        评审也确认过安全性没问题）：它顺带兜住了"续格上方根本没有根"这类
-        畸形输入，而先计分再更新反倒会在首行给出 0。宁可松，不可漏。
+        纵向续格按已见最大单格 span 估算；这会略微过估，但不会漏过恶意表格。
         """
         projected = 0
         widest_single = 0
@@ -699,60 +617,7 @@ class DocxParser(BaseParser[DocxDocument, DocxParsedContent]):
         return projected
 
     def _row_to_cells(self, row: Any, before: int, after: int) -> list[str]:
-        """一行的单元格文本，横向合并（gridSpan）的续格留空。
-
-        ## 判据必须来自结构，不能是文本相等
-
-        python-docx 的 `row.cells` 按**网格列**返回：一个横跨两列的单元格会被
-        吐出两次。`grid_span` 直接告诉我们它横跨几列 —— "这一格后面还有几个
-        位置是它的续格"这件事，结构里写得明明白白。
-
-        此前用的是"相邻文本相等就折叠"。那等于拿数据去猜结构，而相邻两列取值
-        相同在真实表格里再常见不过：
-
-            文档里是 3 列  [季度, Q1, Q1] / [营收, 100, 100]
-            解析出的是     [季度, Q1]     / [营收, 100]
-
-        整整一列凭空消失，**不报错也不打日志**，一路进到向量库（#18）。
-        两个相邻的空单元格同样会被折叠成一个。
-
-        ## 用 `grid_span` 而不是比较底层的 `tc` 对象
-
-        两者都能识别出续格（同一个单元格会被吐出多次，`_tc` 自然相同），
-        但 `_tc` 是 python-docx 的**私有属性**，而 `grid_span` 是公开且有
-        文档的 API。依赖内部实现的代价不是抽象的：`python-docx>=1.2.0` 没有
-        上限，哪次升级把它改掉，这里要么当场 AttributeError，要么更糟 ——
-        识别不出合并却继续静默出错（PR #32 评审）。
-
-        ## 续格留空，而不是删掉
-
-        Markdown 表格没有 colspan，续格只能空着。但删掉会让它后面的列整体左移：
-
-            正确  [合并单元格, "",  C]
-            错误  [合并单元格, C,  ""]      ← C 落到了第 1 列
-
-        补齐是在**行尾**做的，所以出现在行中间的合并会把后面所有列都错位。
-        留空则天然对齐，`col_count` 也才是真实的网格宽度。
-
-        ## 两端的"缺列"也要占位（gridBefore / gridAfter）
-
-        Word 允许一行**晚开始**或**早结束**：`w:gridBefore` / `w:gridAfter`
-        声明该行头尾各有几个网格列压根不存在（常见于缩进的子表格行、
-        跨页表格的续行）。python-docx 把它们暴露为 `grid_cols_before` /
-        `grid_cols_after`，且明确写着"these are not simply empty cells"。
-
-        不补的话，"晚开始"那行的所有单元格都会左移一格：
-
-            正确  [A, B, C] / ["", y, z]
-            错误  [A, B, C] / [y, z, ""]      ← y 落到了第 0 列
-
-        与漏掉合并续格是**同一类错位**，只是成因不同（#33）。
-
-        ## 纵向合并（vMerge）不在此列
-
-        它的 `grid_span` 是 1，文本会沿列重复出现 —— 本方法按行处理，碰不到
-        它，行为与此前一致。对检索而言每行自带上下文反而是好事。
-        """
+        """按网格结构保留列位置；横向合并续格和两端缺列都以空串占位。"""
         # 行首的缺列：不是空单元格，是不存在的网格列。`before` / `after`
         # 已由调用方按网格宽度封顶，这里不再重复校验。
         cells: list[str] = [""] * before
@@ -816,7 +681,7 @@ class DocxParser(BaseParser[DocxDocument, DocxParsedContent]):
         #   gridSpan                 一格横跨几列
         #   行数 × 网格宽度           整表的矩形大小
         #
-        # 实测（均为 PR #34 评审）：
+        # 极小的 XML 可通过宽度、span 和行数产生乘法级内存放大：
         #   · N=R=3000 的"宽网格 + 短行"：约 9,000 个 XML 元素、38 KB 的 docx，
         #     展开成 900 万个单元格、峰值 87 MB
         #   · 2 列的表里塞一个 gridSpan=10000000：`row.cells` 直接返回一千万个
@@ -846,8 +711,7 @@ class DocxParser(BaseParser[DocxDocument, DocxParsedContent]):
 
         if truncated_rows:
             # 每张表只报一条。按行报的话，一份畸形文档能直接产出成千上万行
-            # 日志 —— 把"文档内容"放大成"日志写入量"，与上面那个内存放大
-            # 是同一类问题（PR #34 评审）。
+            # 日志，避免把文档内容再次放大成日志写入量。
             logger.warning(
                 f"表格有 {truncated_rows} 行声明的缺列数超出网格宽度 {grid_width}"
                 f"（最大 {largest_gap}），已截断 —— 文档很可能是畸形的"
@@ -866,8 +730,7 @@ class DocxParser(BaseParser[DocxDocument, DocxParsedContent]):
         max_cols = max(widths)
         if len(widths) > 1:
             # 只报区间与种数，不列全集：这条日志由**文档内容**触发，
-            # 而不同宽度的数量上限是行数 —— 一份畸形文档能让它长到几万项，
-            # 把日志管道撑坏（PR #34 评审）。
+            # 而不同宽度的数量上限是行数，完整输出可能撑坏日志管道。
             logger.warning(
                 f"表格各行的网格宽度不一致（{len(widths)} 种，"
                 f"{min(widths)}–{max_cols} 列），已按最宽的 {max_cols} 列"
@@ -891,8 +754,7 @@ class DocxParser(BaseParser[DocxDocument, DocxParsedContent]):
         # 它不支持空前缀，喂进去会直接抛 ValueError，整份文件的列表编号识别
         # 当场崩掉。
         #
-        # 手上的 docx 大多把命名空间都写成带前缀的，所以这个缺陷此前一直没有
-        # 暴露 —— 但那是**样本的性质，不是格式的保证**：默认命名空间在
+        # 测试样本常用带前缀命名空间，但默认命名空间在
         # OOXML 里完全合法，只是不常见。拿"实际文件通常都带前缀"当不变式，
         # 等于把正确性押在数据分布上。
         nsmap = {

@@ -1,17 +1,4 @@
-"""任务状态机：唯一的一张合法迁移表。
-
-为什么值得单独一个模块：状态字段一旦允许被任意 `update(status=...)` 改写，
-「已取消的任务又变成成功了」「失败的任务没有 finished_at」这类 bug 会散落在
-各个 runner 里，且只在生产环境偶发。把规则收敛成一张表 + 一个守卫函数，
-所有写入都必须过 `TaskStore.transition()`。
-
-    PENDING ──► RUNNING ──┬─► SUCCEEDED
-       ▲         │        ├─► FAILED ──► PENDING（显式 retry）
-       │         │        └─► CANCELLING ──► CANCELLED
-       └─────────┴ 可重排队（可重试失败 / 租约过期回收）
-
-注意 PENDING 不能直接跳到 SUCCEEDED —— 没跑过的任务不该算成功。
-"""
+"""任务状态的唯一合法迁移表。"""
 
 from __future__ import annotations
 

@@ -685,8 +685,10 @@ REAL_DOCS_DIR = Path(__file__).resolve().parents[3] / "poc" / "docs"
 
 
 @pytest.mark.skipif(
-    not REAL_DOCS_DIR.is_dir() or not list(REAL_DOCS_DIR.glob("*.docx")),
-    reason="本地没有 poc/docs/*.docx 真实样本",
+    os.getenv("COMET_RAG_REAL_DOCS") != "1"
+    or not REAL_DOCS_DIR.is_dir()
+    or not list(REAL_DOCS_DIR.glob("*.docx")),
+    reason="设置 COMET_RAG_REAL_DOCS=1 后运行本地真实 DOCX 冒烟",
 )
 def test_real_world_documents_parse_without_error() -> None:
     """合成样本的 XML 比 Word 真实输出简单得多，覆盖不到 Word 特有的怪异结构。

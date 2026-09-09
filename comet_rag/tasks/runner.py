@@ -1,14 +1,4 @@
-"""Runner 侧：执行上下文、结果类型、kind→runner 注册表、多阶段流水线。
-
-**断点续跑的关键取舍**（整个设计的分水岭）：
-阶段间的中间态一律写进 `task.context` 并落库，而不是留在协程的局部变量里。
-- 留局部变量更省事，但任务被绑死在进程的事件循环里，重启即丢，也无法跨机器接管；
-- 落库写法要求 `context` 必须可序列化，换来的是：进程可随意重启、
-  失败重试时由任何 worker 从 `resume_stage` 接手续跑，已完成的阶段不必重做。
-
-注意 `StagePipeline` 与 `engines.pipelines.Pipeline` 是两回事：
-前者编排**任务阶段**，后者编排**文档处理**。名字曾经撞过，故此处加 Stage 前缀。
-"""
+"""Runner 上下文、结果类型、注册表与阶段流水线。"""
 
 from __future__ import annotations
 
@@ -206,21 +196,7 @@ type StageFn = Callable[[TaskContext], Awaitable[Outcome | None]]
 
 @dataclass(slots=True)
 class StagePipeline:
-    """按顺序跑一串命名阶段；支持从 `task.resume_stage` 断点续跑。
-
-    阶段函数返回：
-      * `None`  → 继续下一阶段
-      * `Done`  → 提前结束整条流水线
-
-    续跑语义：`resume_stage` 由执行器在**可重试失败**时写入当前阶段名，
-    重试时本流水线跳过它之前的所有阶段，直接从失败处重来。被跳过阶段的
-    产出必须已经写进 `task.context`（用 `ctx.put()`），否则续跑会读不到。
-
-    分道语义：阶段可以声明 `lane`（见 `LANE_CPU` / `LANE_IO`）。当下一个
-    阶段的 lane 与本 worker 服务的 lane 不同时，流水线返回 `Handoff` ——
-    任务退回队列，由那条道上的 worker 接手。移交点复用的正是 `resume_stage`
-    这套已有机制：**移交与续跑在实现上是同一件事**，区别只在原因。
-    """
+    """顺序执行命名阶段，并用 `resume_stage` 同时实现续跑与跨道移交。"""
 
     stages: list[tuple[str, StageFn, str | None]] = field(default_factory=list)
 

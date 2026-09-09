@@ -112,22 +112,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         local_image_validator: ImageReferenceValidator | None = None,
         max_local_image_bytes: int = DEFAULT_MAX_LOCAL_IMAGE_BYTES,
     ) -> None:
-        """创建 Qwen3-VL OpenAI 兼容嵌入适配器。
-
-        Args:
-            base_url (str): 模型服务地址
-            model_name (str): 模型名称
-            api_key (str): 模型服务 api_key
-            output_dim (int | None): 嵌入向量的维度，默认为 `None`
-            max_model_len (int | None): 模型允许的最大输入序列长度，默认为 `None`
-            async_client (AsyncClient | None): 异步请求连接，默认为 `None`
-            sync_client (Client | None): 同步请求连接，默认为 `None`
-            image_url_validator: 远程图片 URL 准入策略
-            local_image_validator: 本地图片路径准入策略
-            max_local_image_bytes: 本地图片读取上限；转换 Base64 前执行
-
-        传入的客户端由调用方持有，本适配器只关闭自己创建的客户端。
-        """
+        """创建适配器；仅关闭内部创建的客户端。"""
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
         self._api_key = api_key
@@ -315,21 +300,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         add_special_tokens: bool = True,
         **kwargs: Any,
     ) -> list[float]:
-        """
-        编码文本或图片。本地图片会在当前进程读取并转换为 Base64 Data URL。
-
-        Args:
-            embedding_data (EmbeddingData): 嵌入数据
-            system_prompt (Qwen3VLEmbeddingModelSystemPrompt): 系统提示，默认为 `Qwen3VLEmbeddingModelSystemPrompt.COMMON`
-            encoding_format (EncodingFormat): 编码格式，默认为 `EncodingFormat.FLOAT`：
-                - `"base64"`：返回 base64 编码的向量表示
-                - `"float"`：返回浮点数表示的向量
-            continue_final_message (bool): 是否继续最后一条消息，默认为 `True`
-            add_special_tokens (bool): 是否添加特殊分隔标记，默认为 `True`
-
-        Returns:
-            list[float]: 浮点向量（base64 传输格式已在适配器内解回）
-        """
+        """编码文本或图片；本地图片先转换为 Data URL。"""
         try:
             embedding_data = self._normalize_input(embedding_data)
             payload = self._build_embedding_request(
@@ -366,21 +337,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         add_special_tokens: bool = True,
         **kwargs: Any,
     ) -> list[float]:
-        """
-        异步编码文本或图片。本地文件读取在线程中执行，不阻塞事件循环。
-
-        Args:
-            embedding_data (EmbeddingData): 嵌入数据
-            system_prompt (Qwen3VLEmbeddingModelSystemPrompt): 系统提示，默认为 `Qwen3VLEmbeddingModelSystemPrompt.COMMON`
-            encoding_format (EncodingFormat): 编码格式，默认为 `EncodingFormat.FLOAT`：
-                - `"base64"`：返回 base64 编码的向量表示
-                - `"float"`：返回浮点数表示的向量
-            continue_final_message (bool): 是否继续最后一条消息，默认为 `True`
-            add_special_tokens (bool): 是否添加特殊分隔标记，默认为 `True`
-
-        Returns:
-            list[float]: 浮点向量（base64 传输格式已在适配器内解回）
-        """
+        """异步编码文本或图片；本地读取在线程中执行。"""
         try:
             embedding_data = await asyncio.to_thread(
                 self._normalize_input,

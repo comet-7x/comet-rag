@@ -1,19 +1,4 @@
-"""向量存储抽象。
-
-**接口设计的两条纪律**（spec A9 / §7 Never）：
-
-1. `filter` 必须是**结构化 dict**，不得接收后端专有的表达式字符串。
-   写成 `filter="kb_id == 'abc'"` 会把接口当场绑死在 Milvus 上，
-   换 Qdrant/Weaviate 时要改的是每一个调用点，而不是一个适配器。
-
-2. 后端差异必须**封在实现内部**。Milvus 要显式建 collection、写入后
-   需 flush 才可见、过滤用 boolean 表达式；内存版三样都不需要。
-   这些差异一旦渗出接口，"可替换"就只是句空话。
-   `aensure_collection()` 存在的唯一理由就是吸收第一条差异。
-
-`kb_id` 贯穿所有方法：知识库既是租户隔离边界（spec A5），
-也是 Milvus 的 partition key。不带它的接口日后加不进去 —— 那要重灌数据。
-"""
+"""后端无关的向量存储契约。"""
 
 from __future__ import annotations
 

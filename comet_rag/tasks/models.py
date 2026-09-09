@@ -1,15 +1,4 @@
-"""通用任务记录与状态（产品无关）。
-
-任何领域的长任务都可复用：`kind` 区分业务种类，`context` 给多阶段 runner 存中间态，
-`result` 放最终产物，`resume_stage` 承载断点续跑。
-
-设计约束（贯穿全包）：
-1. **Task 必须可序列化**。`request / context / result` 只允许放
-   JSON 友好的值；大产物（PPT、图片、音频）只存 `result_uri` 引用，不要塞二进制。
-   这是「进程重启后能续跑」的前提。
-2. **status 只能经状态机迁移**（见 states.py），任何地方都不允许裸 `task.status = X`。
-3. **version 是乐观锁**，每次写 +1；并发写靠 CAS 失败重试，而不是靠祈祷。
-"""
+"""任务记录、状态与事件值对象。"""
 
 from __future__ import annotations
 
