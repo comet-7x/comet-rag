@@ -123,7 +123,7 @@
 **顺带修掉一个留痕 bug：** 退回 PENDING 时若不先把当前阶段收成 failed，
 续跑时 `enter_stage` 会把那条失败记录关成 `succeeded`，阶段历史会骗人。
 **新增 `TaskService.retry(from_scratch=True)`：** 怀疑前置阶段产出有问题时强制整条重来。
-**当阶段状态**：`poc/task_demo/` 在 T5 时尚未删除，T28 已完成删除。
+**当前状态**：`poc/task_demo/` 在 T5 时尚未删除，T28 已完成删除。
 
 ---
 
