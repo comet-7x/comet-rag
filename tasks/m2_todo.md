@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M2（PDF / MinerU HTTP）
 
-> 状态：M2-T1 已完成；M2-T2 待执行。宏观排期见 `tasks/m2_plan.md`
+> 状态：M2-T1～M2-T2 已完成；M2-T3 待执行。宏观排期见 `tasks/m2_plan.md`
 > 规格：`tasks/m2_spec.md` v0.2
 
 ## Phase 0：决策与保护网
@@ -25,10 +25,12 @@
 
 **日期：** 09-11　**依赖：** M2-T1
 
-- [ ] 新增 `ExtractedDocument` 与 `DocumentExtractorPort`
-- [ ] 明确协议错误、资源超限、可重试上游错误的类型边界
-- [ ] 同步/异步假实现通过同一组行为断言
-- [ ] Port 不引用 `engines`、httpx 或 MinerU 字段
+- [x] 新增 `ExtractedDocument` 与 `DocumentExtractorPort`
+- [x] 明确协议错误、资源超限、可重试上游错误的类型边界
+- [x] 同步/异步假实现通过同一组行为断言
+- [x] Port 不引用 `engines`、httpx 或 MinerU 字段
+
+**验收：** 全量 `1595 passed`，8.20s；Ruff、格式与 Pyright 均通过。
 
 **主要文件：** `comet_rag/ports/document.py`、`comet_rag/ports/__init__.py`、单元测试。
 

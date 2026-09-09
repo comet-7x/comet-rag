@@ -9,6 +9,15 @@ from .content import (
     RerankDocument,
     TextContent,
 )
+from .document import (
+    DocumentExtractionError,
+    DocumentExtractorPort,
+    DocumentProtocolError,
+    DocumentResourceLimitExceeded,
+    DocumentUpstreamError,
+    ExtractedDocument,
+    RetryableDocumentUpstreamError,
+)
 from .embedding import (
     EmbeddingPort,
     EmbeddingTask,
@@ -21,13 +30,20 @@ __all__ = [
     "AsyncGate",
     "ContentInput",
     "ContentPart",
+    "DocumentExtractionError",
+    "DocumentExtractorPort",
+    "DocumentProtocolError",
+    "DocumentResourceLimitExceeded",
+    "DocumentUpstreamError",
     "EmbeddingPort",
     "EmbeddingTask",
+    "ExtractedDocument",
     "ImageContent",
     "MediaResource",
     "MultimodalEmbeddingPort",
     "RankedDocument",
     "RerankDocument",
     "RerankerPort",
+    "RetryableDocumentUpstreamError",
     "TextContent",
 ]
