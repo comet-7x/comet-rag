@@ -1,6 +1,7 @@
 # Spec: M2 PDF / MinerU
 
 > 状态：待评审（v0.1）
+> GitHub Issue：[#50](https://github.com/comet-7x/comet-rag/issues/50)
 > 开发分支：`feature/m2-pdf-mineru`
 > 最后更新：2026-09-09
 
