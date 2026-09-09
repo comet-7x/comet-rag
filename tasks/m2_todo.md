@@ -1,7 +1,7 @@
 # TODO: Comet-RAG M2（PDF / MinerU HTTP）
 
-> 状态：M2-T1～M2-T3 已完成；M2-T4 待执行。宏观排期见 `tasks/m2_plan.md`
-> 规格：`tasks/m2_spec.md` v0.2
+> 状态：M2-T1～M2-T4 已完成；M2-T5 待执行。宏观排期见 `tasks/m2_plan.md`
+> 规格：`tasks/m2_spec.md` v0.3
 
 ## Phase 0：决策与保护网
 
@@ -53,11 +53,13 @@
 
 **日期：** 09-15～09-16　**依赖：** M2-T2、M2-T3
 
-- [ ] health 校验状态和协议版本
-- [ ] 流式上传单个 PDF，显式发送全部产物开关
-- [ ] 处理 pending / processing / completed / failed
-- [ ] 从唯一 `results.*.md_content` 生成稳定结果
-- [ ] 同步与异步入口语义一致并复用各自 client
+- [x] health 校验状态和协议版本
+- [x] 流式上传单个 PDF，显式发送全部产物开关
+- [x] 处理 pending / processing / completed / failed
+- [x] 从唯一 `results.*.md_content` 生成稳定结果
+- [x] 同步与异步入口语义一致并复用各自 client
+
+**验收：** 全量 `1633 passed`，8.62s；Ruff、格式与 Pyright 均通过。
 
 **主要文件：** `infrastructure/providers/document/mineru.py`、导出文件、MockTransport 测试。
 

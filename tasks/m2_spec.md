@@ -1,6 +1,6 @@
 # Spec: M2 PDF / MinerU
 
-> 状态：排期评审中（v0.2）
+> 状态：实施中（v0.3）
 > GitHub Issue：[#50](https://github.com/comet-7x/comet-rag/issues/50)
 > 开发分支：`feature/m2-pdf-mineru`
 > 最后更新：2026-09-09
@@ -22,7 +22,7 @@
 ### D1 — 只接 HTTP 服务，不嵌入官方 Python SDK
 
 MinerU 3.x 已提供 `mineru-api` 与接口兼容的 `mineru-router`。Comet-RAG 通过
-`httpx` 适配它们，适配器放在 `infrastructure/providers/parser/`；`engines/`
+`httpx` 适配它们，适配器放在 `infrastructure/providers/document/`；`engines/`
 只依赖 Port 和规范化结果。这样默认安装、CPU worker 与 API 进程都不会带入
 MinerU 的重依赖，本地或多 GPU 部署也能在 Comet-RAG 之外独立扩容。
 
@@ -152,9 +152,9 @@ limits:
 
 - [ ] 用 `httpx.MockTransport` 覆盖 health、提交、排队、成功、失败、429/5xx、
   超时、404 重提、超大响应与取消清理。
-- [ ] 请求显式发送全部产物开关；JSON 结果必须恰好包含一个 `md_content`。
-- [ ] 同步/异步入口对同一响应生成相同 Markdown 和稳定 metadata。
-- [ ] 多次调用复用 client；`aclose()` 只关闭内部创建的资源。
+- [x] 请求显式发送全部产物开关；JSON 结果必须恰好包含一个 `md_content`。
+- [x] 同步/异步入口对同一响应生成相同 Markdown 和稳定 metadata。
+- [x] 多次调用复用 client；`aclose()` 只关闭内部创建的资源。
 - [ ] 并发峰值不超过 `mineru_concurrency`，等待队列有界。
 
 ### S3 — Pipeline 与服务链路

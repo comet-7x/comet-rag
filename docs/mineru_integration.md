@@ -1,6 +1,7 @@
 # MinerU 集成
 
-> M2 状态：设计与排期阶段。实现进度见 `tasks/m2_spec.md` 和 `tasks/m2_todo.md`。
+> M2 状态：实施中。HTTP 主链路已经完成，容错、资源上限与服务装配仍在开发；
+> 实时进度见 `tasks/m2_spec.md` 和 `tasks/m2_todo.md`。
 
 Comet-RAG 只通过 HTTP 连接外部 `mineru-api` 或 `mineru-router`。项目不提供
 MinerU SDK extra，也不会在 API、worker 或库进程中加载 Torch、模型权重或 GPU
@@ -50,7 +51,7 @@ client_side_output_generation=false
 
 ## 手工验证 MinerU 服务
 
-下面的示例只验证 MinerU HTTP 服务，不代表尚未完成的 Comet-RAG 适配器 API：
+下面的示例只用于独立验证 MinerU HTTP 服务，不是 Comet-RAG 的公开调用方式：
 
 ```python
 import asyncio
@@ -102,8 +103,8 @@ async def parse_pdf(base_url: str, pdf_path: Path) -> str:
         return next(iter(results.values()))["md_content"]
 ```
 
-正式适配器还会增加总解析 deadline、有界轮询、404 单次重提、响应大小限制、
-取消清理和进程级并发闸门，不能直接把这个手工示例复制到生产代码。
+当前适配器的 HTTP 主链路已经完成；总解析 deadline、404 单次重提、响应大小限制、
+取消清理和进程级并发闸门将在后续任务接入，不能把这个手工示例复制到生产代码。
 
 ## 不支持的集成方式
 
