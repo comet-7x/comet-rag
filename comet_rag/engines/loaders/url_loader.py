@@ -94,7 +94,7 @@ class URLLoader(BaseLoader):
         # 只关自己造的
         self._owns_client = client is None
         self._owns_async_client = async_client is None
-        #: 保护"共享 client 正在被用"与"关掉它"这两件事互斥（PR 评审 #11）。
+        #: 保护共享 client 的使用与关闭互斥。
         #: `batch_load` 改用共享 client 之后（S4-4 要求复用连接池），
         #: 另一处调 `cleanup()` 就可能把它脚下的连接池抽掉，
         #: 在途请求会撞上"client has been closed"。
@@ -501,9 +501,7 @@ class URLLoader(BaseLoader):
         from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
         def _gated(source: SourceContent | str) -> LoaderContent:
-            # 批量 worker 刻意直接调 `_load_impl`（避免嵌套登记活动操作导致
-            # cleanup 循环等待），于是它绕开了 `load` 上的闸门 —— 评审指出。
-            # 闸门在这里单独补上：绕过的是登记，不是限流。
+            # 直接调用实现可避免活动操作重复登记，但仍须单独经过闸门。
             return self._through_gate_sync(
                 lambda: self._load_impl(source, download_config=config, client=client)
             )

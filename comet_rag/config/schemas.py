@@ -1,18 +1,4 @@
-"""配置模型。
-
-## `Field()` 的写法有一条硬约定
-
-    必填：Field(..., description=…)          ← 位置参数写 Ellipsis
-    选填：Field(default=X, description=…)    ← **必须**用 default= 关键字
-
-不是风格洁癖：pyright 按 PEP 681 只认 `default=` / `default_factory=` 这两个
-关键字参数，位置参数它一概不解析。于是 `Field(30, …)` 在类型检查器眼里是
-**没有默认值的必填字段** —— `SqlDatabaseConfig(host=…, port=…)` 会被报成
-"缺少参数 connect_timeout"，而运行时明明好好的。
-
-反过来 `Field(default=...)`（Ellipsis 走关键字）更危险：pyright 会当成
-"默认值是 Ellipsis" 的选填字段，于是漏报真正缺参的调用，运行时才炸。
-"""
+"""应用配置模型及跨字段约束。"""
 
 from enum import StrEnum
 from typing import Self
@@ -89,7 +75,7 @@ class SqlDatabaseConfig(_SecretsModel):
         """异步 DSN。驱动写死 asyncpg —— 同步驱动在 async 引擎里会静默阻塞
         整个事件循环，且症状是"偶尔很慢"而非报错，极难定位。
 
-        用户名/密码/库名一律**百分号编码**（PR 评审 #7）。直接拼接的话，
+        用户名、密码和库名必须百分号编码。直接拼接时，
         密码里一个 `@` 或 `/` 就会被解析成 URL 语法：连接串看着没问题、
         报错却是"host 不存在"或直接连到别的库去 —— 而这类密码在生产里很常见。
         用 stdlib 的 `quote` 而不是 SQLAlchemy 的 URL 构造器，是因为本模块属于
@@ -379,7 +365,7 @@ class LimitsConfig(BaseModel):
 
 
 class IngestPolicyConfig(BaseModel):
-    """入库来源准入（spec §7 Never 之外的一条硬边界，PR 评审 #4）。
+    """入库来源准入配置。
 
     `POST /ingest` 的 `source` 是调用方给的字符串，会被直接交给 loader ——
     不加约束的话，服务能读到的文件、能连到的网络，调用方都能拿到

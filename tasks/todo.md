@@ -1,5 +1,6 @@
 # TODO: Comet-RAG M1
 
+> 状态：T1–T28 全部完成；本文作为 M1 实施明细归档。
 > 依据 `tasks/plan.md`。每项完成后勾选并跑该阶段的 Checkpoint。
 > 规模：XS=1 文件 / S=1-2 / M=3-5。**无 L 及以上任务**——出现即需再拆。
 
@@ -9,7 +10,7 @@
 
 ### ✅ T1 — 测试基建与 CI 骨架
 
-**描述：** 当前 6600 行代码零测试。先建保护网，否则后续每一步改动都是盲改。
+**描述：** M1 开始时 6600 行代码零测试。先建保护网，否则后续每一步改动都是盲改。
 
 **验收标准：**
 - [x] `pyproject.toml` dev 组含 `pytest-asyncio`、`pytest-cov`；配置 `asyncio_mode = "auto"`
@@ -122,7 +123,7 @@
 **顺带修掉一个留痕 bug：** 退回 PENDING 时若不先把当前阶段收成 failed，
 续跑时 `enter_stage` 会把那条失败记录关成 `succeeded`，阶段历史会骗人。
 **新增 `TaskService.retry(from_scratch=True)`：** 怀疑前置阶段产出有问题时强制整条重来。
-**未删除 `poc/task_demo/`**：该目录被 `.gitignore` 忽略、从未进过版本库，删掉不可恢复，留给你处置。
+**当阶段状态**：`poc/task_demo/` 在 T5 时尚未删除，T28 已完成删除。
 
 ---
 
@@ -232,7 +233,8 @@
 
 ### ✅ T10 — `url_loader` 复用 httpx client（S4-4）
 
-**描述：** `loaders/url_loader.py:139,244` 每次加载都 `async with httpx.AsyncClient(...)`，重建连接池与 TLS 握手。对照 `infrastructure/models/embedding/qwen3_vl_embedding.py:112` 的注入式写法——那是本项目应统一采用的模式。
+**描述：** URLLoader 当时每次加载都新建 `httpx.AsyncClient`，会重复建立连接池与
+TLS 握手；T10 已改为实例级复用并明确注入资源的所有权。
 
 **验收标准：**
 - [x] `UrlLoader` 构造函数接受 `async_client: AsyncClient | None`，缺省时自建并由自身生命周期管理
@@ -413,10 +415,11 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 
 ### ✅ T17a — `Context` 与 `lifespan` 资源装配
 
-**描述：** `api/lifespan.py` 的资源初始化目前全是注释，`core/context.py` 是 0 字节空文件。本任务只做资源装配，不碰路由。
+**描述：** M1 开始时 `api/lifespan.py` 尚未装配资源。本任务建立
+`composition/context.py`，只做资源装配，不碰路由。
 
 **验收标准：**
-- [x] `core/context.py` 定义 `Context`，持有 store / executor / vectorstore / 模型 / httpx client
+- [x] `composition/context.py` 定义 `Context`，持有 store / executor / vectorstore / 模型 / httpx client
 - [x] `lifespan` 按配置装配并挂 `app.state.ctx`；关停时**逆序**释放
 - [x] 后端实现由配置决定（内存 / 真实），为 Phase 4 的逐个替换留好开关
 - [x] `api/deps.py` 从 `app.state.ctx` 取依赖，路由不得直接 new 资源
@@ -426,7 +429,7 @@ keep_separator=False、Mdx 首行标题、已知局限特征化）
 - [x] 配置切换到内存后端时，启动不触碰任何中间件
 
 **依赖：** T15、T16
-**文件：** `comet_rag/core/context.py`、`api/lifespan.py`、`api/deps.py`
+**文件：** `comet_rag/composition/context.py`、`api/lifespan.py`、`api/deps.py`
 **规模：** S
 
 ---
@@ -634,7 +637,7 @@ partition key 不需要；kb_id 仍写进 metadata，为将来可能的迁移留
 **验收标准：**
 - [x] `submit()` → `enqueue_job("run_task", task_id)`；~~`_job_id` 用 `task_id`~~ 用 `task_id:attempts`（见下方偏离说明）
 - [x] 跨任务复用 redis 连接（A3 选 ARQ 的核心理由，必须兑现）
-- [ ] 跨任务复用 httpx 连接池 —— 由 worker 侧共享 `Context` 提供，**归 T23**
+- [x] 跨任务复用 httpx 连接池 —— worker 侧共享 `Context`，资源由生命周期统一关闭
 - [x] `request_cancel` 跨进程语义：写 CANCELLING 状态，由 worker 的 `ctx.checkpoint()` 感知
 - [x] 通过 **T8 的同一套契约测试**（15 条，一行未改）
 
@@ -832,7 +835,7 @@ N 个副本会同时回收同一批任务 —— 那正是回收要防的"多个
 - [x] 投递量 10× 于处理能力，进程存活且积压始终有界
 
 **依赖：** T23
-**文件：** `comet_rag/core/concurrency.py`、`infrastructure/models/*/base.py`、`services/*.py`
+**文件：** `comet_rag/core/concurrency.py`、`infrastructure/providers/*/base.py`、`services/*.py`
 **规模：** S
 
 **先实测出了一个真缺陷：配置说 4，实际 128。**
@@ -963,10 +966,8 @@ mean/median/stddev，**没有 P95/P99** —— 而验收标准要的恰恰是后
 ### ✅ T28 — 清理与文档
 
 **验收标准：**
-- [x] `poc/task_demo/` 删除 —— **先归档再删**（你的选择）：
-      `poc/task_demo-archive.tar.gz`（19K，8 个源文件 1679 行，已验证可解出），
-      `poc/` 整个被 gitignore 覆盖，归档不会误入版本库。
-      价值已被 T4–T8 的 176 条测试固化，且现行实现比原型多了断点续跑、
+- [x] `poc/task_demo/` 已删除；`poc/` 整个被 gitignore 覆盖，不属于仓库交付物。
+      原型价值已被 T4–T8 的 176 条测试固化，且现行实现比原型多了断点续跑、
       租约围栏、CAS 重读等一大截。
 - [x] `config/schemas.py` 中未使用的配置类清理干净（删掉 `S3Config`，全仓 0 引用）
 - [x] `docs/` 全量校对：新增 `deployment.md`、`architecture.md`、`benchmark.md`

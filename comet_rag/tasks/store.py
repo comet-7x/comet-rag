@@ -1,18 +1,4 @@
-"""任务态存储的**契约**：只管状态，不管调度。
-
-实现分居各自的文件：`store_memory.py`（进程内）、`store_postgres.py`。
-本模块只有 `TaskStore` 抽象基类与它的异常 —— 这样"契约长什么样"和
-"某个后端怎么实现"不会挤在同一屏里互相干扰。
-
-与原稿最大的区别：`spawn / cancel` 被移出去了（见 executor.py）。
-理由很实在——`spawn(task, coro)` 收的是协程对象，Redis 里没地方放协程；
-一旦把它写进「换实现时签名不变」的接口，这句承诺就是假的。
-拆开后还顺带解决了两件事：协程对象丢了任务就没法重跑、进程重启后无法恢复。
-
-`TaskStore` 用 **ABC 而非 Protocol**：真正会变的只有 6 个存取原语，
-`create / update / transition / sweep_stale` 这些含业务规则的逻辑（状态机守卫、
-时间戳、事件留痕）应当由基类统一实现，换 Redis 时不该、也不能重写一遍。
-"""
+"""以 CAS 和状态机守卫维护任务状态的存储抽象。"""
 
 from __future__ import annotations
 
@@ -169,23 +155,10 @@ class TaskStore(ABC):
         *,
         bump: bool = True,
     ) -> tuple[Task, Any]:
-        """读—改—写，**撞版本就重读重来**。返回 (落库后的任务, mutate 的返回值)。
+        """执行 CAS 更新。
 
-        这里有个必须说清的区分，它是跨进程部署下的一处真实 bug 的修复
-        （T22 集成测试逼出来的）：
-
-          * 调用方**没传** `expected_version` —— CAS 只是本方法内部
-            "读出来—改—写回去"的护栏，防的是丢失更新。撞上了就该重读重来，
-            把冲突抛给调用方毫无意义：它压根没做过任何版本假设。
-          * 调用方**传了** `expected_version` —— 它在断言"我要的就是这一版"
-            （比如 API 层的条件更新）。这种冲突必须原样抛出，吞掉就等于
-            悄悄覆盖了别人的写入。
-
-        进程内跑不出这个 bug：InMemoryTaskStore 的读写之间没有真正的 await
-        间隙。换成 Postgres + 跨进程后窗口宽到必然撞上 —— runner 一边
-        `enter_stage`，另一边有人请求取消，两个写入就撞了。
-
-        `mutate` 必须是**纯内存且可重复执行**的：它每轮都拿到一份新快照。
+        内部冲突会重读重试；调用方显式传入版本时，冲突必须原样抛出。
+        `mutate` 因此必须是可重复执行的纯内存操作。
         """
         conflict: VersionConflict | None = None
         for _ in range(_CAS_RETRIES):
@@ -301,7 +274,7 @@ class TaskStore(ABC):
         注意：它是给**跨进程**部署兜底的（worker 崩了，没人再写心跳）。单进程模式下
         协程还活着，回收反而会造成一份任务两个执行者，所以单机不要挂这个定时器。
 
-        **CANCELLING 也要扫**（评审指出的缺口）。取消是协作式的：先把状态写成
+        CANCELLING 也要扫描。取消是协作式的：先把状态写成
         CANCELLING，再等 runner 走到 `ctx.checkpoint()` 自己退出并落 CANCELLED。
         worker 若在这中间死掉，那一步就永远不会发生 —— 任务卡在 CANCELLING，
         既不是终态、也没人再推进它，而它恰恰是**用户已经明确要求停掉**的任务。

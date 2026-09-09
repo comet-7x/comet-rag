@@ -1,12 +1,4 @@
-"""组合根：唯一知道"用哪个实现"的地方。
-
-本模块是刻意"向下"依赖 services / infrastructure 的 —— 组合根不属于任何
-一层，它坐在所有层之上，负责把接口与实现拼起来。除了它，任何模块都不该
-出现 `if backend == "milvus"` 这类分支：那意味着实现选择泄漏进了业务代码。
-
-API 进程与 worker 进程共用这里的装配逻辑，只是各自用到的部分不同 ——
-worker 不需要 FastAPI，但同样需要 runner 与全套资源。
-"""
+"""根据配置装配应用依赖；具体供应商只在这里选择。"""
 
 from __future__ import annotations
 
@@ -293,7 +285,7 @@ def _gated_routes(loader: AutoLoader) -> list[object]:
 
 
 def _assert_gated(gate: Gate, *models: object) -> None:
-    """**启动时就确认闸门真的挂上了**（PR 评审 #9/#12）。
+    """启动时确认闸门已绑定。
 
     闸门是"静默失效"型的保护：没挂上不会报错、不会打日志，只是限流不生效 ——
     而那正是本项目实测出"配置写 4、实际 128"的那个缺陷。

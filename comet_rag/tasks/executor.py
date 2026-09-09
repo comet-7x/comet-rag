@@ -1,23 +1,4 @@
-"""执行器：把 PENDING 任务真正推起来。
-
-与 TaskStore 分家的理由见 store.py 顶部。这里的接口只收 **task_id**，不收协程——
-执行器自己按 kind 去注册表取 runner，用 request/context 重建执行。
-于是「重试」「进程重启后恢复」「失败后从断点续跑」都变成同一个动作：`submit(task_id)`。
-
-**取消语义（务必让调用方知道）**：`request_cancel` 返回 True 只代表*已受理*，
-不代表*已停止*。RUNNING 任务先被打成 CANCELLING，真正落 CANCELLED 要等 runner
-走到下一个 `ctx.checkpoint()`。查 `task.status.is_terminal` 才是「真停了」。
-
-## 三层结构
-
-    TaskExecutor          纯接口，调用方只看得到 submit / request_cancel / shutdown
-    StoreDrivenExecutor   「一个 task_id 该怎么被执行」—— 进程内与跨进程共用
-    InProcessExecutor     asyncio 版：本地协程 + 信号量闸门
-
-进程内与跨进程执行器的**真差别只有两点**：任务在哪儿被拉起、重试怎么重排队。
-状态机推进、超时、失败分类、断点续跑锚点这些是同一件事，抄成两份必然会漂——
-而"漂"的症状是"换个部署方式行为就变了"，那正是本项目要消灭的东西。
-"""
+"""按 task_id 执行任务，并统一进程内与跨进程语义。"""
 
 from __future__ import annotations
 
@@ -163,24 +144,7 @@ class StoreDrivenExecutor(TaskExecutor):
             self._inflight.discard(task_id)
 
     async def _still_mine(self, task_id: str, *, claimed: bool) -> Task | None:
-        """**围栏（fencing）**：确认这条任务还归本 worker 管，否则一个字都别写。
-
-        没有这道栅栏，租约回收（T24）会主动制造数据损坏：sweep 把超时的
-        RUNNING 任务退回 PENDING、另一个 worker 接手，而**原 worker 其实还活着**
-        （只是心跳慢了）。它跑完后照样去写终态，于是
-
-          · 写成功 → 覆盖掉接手者正在做的那一份；
-          · 写失败（PENDING → SUCCEEDED 非法）→ 异常被 `execute` 收口成
-            `_mark_failed`，把一条正在被别人正常执行的任务判死。
-
-        第二种尤其恶劣：任务明明成功了，最终却是 FAILED，而且看日志像是
-        runner 自己出的错。租约机制天然允许误判（活着但慢），所以**必须**
-        有围栏，不能指望"超时了就一定是真死了"。
-
-        `claimed=False` 表示还没迁到 RUNNING（比如 kind 没注册、前置校验失败）。
-        那种情况下 `worker_id` 本来就是空的，不该被围栏挡住 —— 否则任务连
-        失败都写不进去。
-        """
+        """写终态前校验 worker 所有权，阻止租约误判后的旧执行者覆盖结果。"""
         task = await self._store.get(task_id)
         if task is None:
             return None

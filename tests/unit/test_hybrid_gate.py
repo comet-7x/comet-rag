@@ -353,7 +353,11 @@ async def test_mixed_load_never_leaks_a_permit() -> None:
     tasks = [asyncio.create_task(async_worker()) for _ in range(6)]
     tasks += [asyncio.create_task(canceller()) for _ in range(4)]
 
-    await asyncio.sleep(0.6)
+    deadline = asyncio.get_running_loop().time() + 1.0
+    while gate.stats.admitted <= 100:
+        if asyncio.get_running_loop().time() >= deadline:
+            break
+        await asyncio.sleep(0.01)
     stop.set()
     for task in tasks:
         task.cancel()

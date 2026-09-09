@@ -22,35 +22,7 @@ class HooksState:
 
 
 class PipelineHooks:
-    """
-    Global registry for format-specific pipeline hooks.
-
-    Two hook types:
-      - extractor: LoaderContent, PipelineConfig → str  (convert + parse + clean)
-      - chunker:   str, PipelineConfig → list[str]
-
-    Register custom hooks to extend format support:
-
-        @PipelineHooks.extractor("pdf")
-        def extract_pdf(loader_content: LoaderContent, config: PipelineConfig) -> str:
-            ...
-
-        @PipelineHooks.chunker("pdf")
-        def chunk_pdf(text: str, config: PipelineConfig) -> list[str]:
-            ...
-
-    注册表是**进程级全局**的，这让扩展格式只需 import 一个模块即可生效。
-    代价是注册会互相泄漏：临时覆盖某个格式后，同进程内其余代码也会看到。
-    需要限定作用域时用 `temporary()`：
-
-        with PipelineHooks.temporary():
-            @PipelineHooks.extractor("docx")
-            def only_here(lc, config): ...
-        # 出了 with 块，内置 docx extractor 自动恢复
-
-    测试尤其依赖这一点 —— 没有它，A 用例注册的 hook 会跑进 B 用例，
-    且失败与否取决于用例执行顺序。
-    """
+    """进程级格式钩子注册表；临时覆盖必须用 `temporary()` 隔离。"""
 
     _extractors: ClassVar[dict[str, ExtractHook]] = {}
     _chunkers: ClassVar[dict[str, ChunkHook]] = {}

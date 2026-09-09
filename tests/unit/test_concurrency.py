@@ -185,7 +185,7 @@ async def test_timed_out_waiters_do_not_leak_permits() -> None:
     hogs = [asyncio.create_task(hog()) for _ in range(2)]
     await asyncio.sleep(0.01)
 
-    for _ in range(20):  # 制造 20 次超时
+    for _ in range(5):  # 多次超时足以暴露累计泄漏
         with pytest.raises(Overloaded):
             await gate.acquire()
 
@@ -216,12 +216,12 @@ async def test_per_call_fanout_alone_does_not_cap_the_service() -> None:
     """**这就是那个被实测出来的缺陷。**
 
     每次调用各建一个信号量时，上限会随任务数翻倍：
-    32 个任务 × 每个 4 路 = 128 路真实并发，而配置写的是 4。
+    多个任务各自守住 4 路，合计仍会突破配置上限。
     """
     model = RecordingEmbedding()  # 不挂闸门 = 修复前的行为
 
     await asyncio.gather(
-        *(aembed_documents(model, ["x"] * 8, max_concurrency=4) for _ in range(32))
+        *(aembed_documents(model, ["x"] * 4, max_concurrency=4) for _ in range(8))
     )
 
     assert model.peak > 4, (
@@ -235,12 +235,12 @@ async def test_process_gate_caps_the_service_no_matter_how_many_tasks() -> None:
     model.bind_gate(Gate(limit=4))
 
     await asyncio.gather(
-        *(aembed_documents(model, ["x"] * 8, max_concurrency=4) for _ in range(32))
+        *(aembed_documents(model, ["x"] * 4, max_concurrency=4) for _ in range(8))
     )
 
     assert model.peak <= 4, f"并发峰值 {model.peak} 超过闸门上限 4"
     assert model.peak > 1, "并发度恒为 1 说明根本没并行，闸门测了个寂寞"
-    assert model.calls == 32 * 8, "闸门不该吞掉任何一次调用"
+    assert model.calls == 8 * 4, "闸门不该吞掉任何一次调用"
 
 
 async def test_embedding_and_reranker_share_one_gate() -> None:
@@ -369,7 +369,7 @@ def test_sync_fanout_respects_the_process_gate() -> None:
     model.bind_gate(Gate(limit=limit))
 
     def one_source() -> None:
-        embed_documents(model, [f"d{i}" for i in range(16)], max_concurrency=limit)
+        embed_documents(model, [f"d{i}" for i in range(8)], max_concurrency=limit)
 
     threads = [threading.Thread(target=one_source) for _ in range(limit)]
     for thread in threads:

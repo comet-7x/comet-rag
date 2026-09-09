@@ -114,3 +114,4 @@ uv run ruff check && uv run ruff format
 | [pipeline_usage.md](docs/pipeline_usage.md)               | 只当库用时看这个                     |
 | [docx_parser_internals.md](docs/docx_parser_internals.md) | docx 解析内幕                        |
 | [mineru_integration.md](docs/mineru_integration.md)       | MinerU 集成（M2）                    |
+| [comment_style.md](docs/comment_style.md)                 | 注释与 Docstring 的编写、评审标准    |
