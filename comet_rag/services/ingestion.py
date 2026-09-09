@@ -18,7 +18,7 @@ from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
 from comet_rag.infrastructure.vectorstore import BaseVectorStore, VectorRecord
-from comet_rag.ports import EmbeddingPort
+from comet_rag.ports import EmbeddingPort, RetryableDocumentUpstreamError
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.tasks import (
     LANE_CPU,
@@ -80,6 +80,11 @@ def _classify(exc: Exception, stage: str) -> Exception:
     HTTP 状态码单独判断：5xx 与 429 是"稍后再来"，4xx 是"你请求得不对"，
     后者重试没有任何意义。
     """
+    if isinstance(exc, RetryableDocumentUpstreamError):
+        return RetriableError(
+            f"{stage} 阶段文档服务暂时不可用：{exc!s}",
+            code="document_upstream_transient",
+        )
     if isinstance(exc, Overloaded):
         # 自家闸门满了，是最典型的"稍后再来"：退避重试正好让压力回落。
         # 判死就浪费了一次本来能成功的入库。
@@ -149,11 +154,7 @@ class IngestRunner:
         return flow
 
     async def _extract(self, ctx: TaskContext) -> None:
-        """取源 + 解析 + 清洗 → markdown 文本。
-
-        整段跑在线程里：docx 解析是 CPU 密集的，直接在事件循环上跑会把
-        同进程内其余协程全部堵住（embedder worker 尤其受不了）。
-        """
+        """取源 + 解析 + 清洗 → markdown 文本。"""
         task = await ctx.snapshot()
         request = IngestRequest.model_validate(task.request)
 
@@ -163,8 +164,7 @@ class IngestRunner:
             # 否则连接超时会绕过 _classify，第一次失败就把任务判死。
             loader_content = await self._loader.aload(SourceContent(request.source))
             file_type = str(loader_content.metadata.get("file_type", "")).lower()
-            extractor = PipelineHooks.get_extractor(file_type)
-            text = await asyncio.to_thread(extractor, loader_content, self._config)
+            text = await PipelineHooks.aextract(file_type, loader_content, self._config)
 
             await ctx.put(
                 text=text,

@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M2（PDF / MinerU HTTP）
 
-> 状态：M2-T1～M2-T2 已完成；M2-T3 待执行。宏观排期见 `tasks/m2_plan.md`
+> 状态：M2-T1～M2-T3 已完成；M2-T4 待执行。宏观排期见 `tasks/m2_plan.md`
 > 规格：`tasks/m2_spec.md` v0.2
 
 ## Phase 0：决策与保护网
@@ -38,10 +38,12 @@
 
 **日期：** 09-14　**依赖：** M2-T2
 
-- [ ] 保留同步 extractor 注册 API，新增异步注册与查找
-- [ ] `Pipeline.arun()` 和 `IngestRunner` 优先异步；同步 fallback 只进一次线程
-- [ ] 拆分 Pipeline 的提取、分块与结果构造，四种入口行为一致
-- [ ] DOCX 快照与已有 Hook 隔离测试不变
+- [x] 保留同步 extractor 注册 API，新增异步注册与查找
+- [x] `Pipeline.arun()` 和 `IngestRunner` 优先异步；同步 fallback 只进一次线程
+- [x] 拆分 Pipeline 的提取、分块与结果构造，四种入口行为一致
+- [x] DOCX 快照与已有 Hook 隔离测试不变
+
+**验收：** 全量 `1605 passed`，8.26s；Ruff、格式与 Pyright 均通过。
 
 **主要文件：** `engines/pipelines/hooks.py`、`pipeline.py`、`services/ingestion.py`、对应测试。
 

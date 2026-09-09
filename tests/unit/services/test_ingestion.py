@@ -20,6 +20,7 @@ from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.infrastructure.knowledge_base import InMemoryKnowledgeBaseRepository
 from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.ports import RetryableDocumentUpstreamError
 from comet_rag.services.ingestion import (
     INGEST_KIND,
     IngestRunner,
@@ -209,6 +210,25 @@ async def test_ingest_writes_all_chunks(
     assert await store.acount(KB) == 3
 
 
+async def test_ingest_prefers_async_extractor(
+    svc: TaskService, calls: dict[str, int]
+) -> None:
+    async_calls = 0
+
+    @PipelineHooks.aextractor(STUB_TYPE)
+    async def _extract(lc: LoaderContent, config: PipelineConfig) -> str:
+        nonlocal async_calls
+        async_calls += 1
+        return "段落一。段落二。段落三。"
+
+    task = await svc.submit(INGEST_KIND, request())
+    done = await wait_for_terminal(svc.store, task.task_id)
+
+    assert done.status is TaskStatus.SUCCEEDED, done.error
+    assert async_calls == 1
+    assert calls["extract"] == 0
+
+
 async def test_every_chunk_carries_kb_id(
     svc: TaskService, store: InMemoryVectorStore
 ) -> None:
@@ -326,6 +346,27 @@ async def test_download_network_error_retries_extracting_stage(
     assert done.status is TaskStatus.SUCCEEDED
     assert done.attempts == 2
     assert loader.loads == 2
+
+
+async def test_document_upstream_error_retries_extracting_stage(
+    svc: TaskService,
+) -> None:
+    attempts = 0
+
+    @PipelineHooks.aextractor(STUB_TYPE)
+    async def _extract(lc: LoaderContent, config: PipelineConfig) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RetryableDocumentUpstreamError("MinerU 返回 503")
+        return "段落一。段落二。段落三。"
+
+    task = await svc.submit(INGEST_KIND, request(), max_attempts=3)
+    done = await wait_for_terminal(svc.store, task.task_id)
+
+    assert done.status is TaskStatus.SUCCEEDED, done.error
+    assert done.attempts == 2
+    assert attempts == 2
 
 
 async def test_server_5xx_is_retriable(
