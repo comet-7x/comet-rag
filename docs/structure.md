@@ -39,10 +39,11 @@ comet_rag/
 │   ├── executor.py / executor_arq.py   执行与重试
 │   └── runner.py       StagePipeline：分阶段、可移交道次、可断点续跑
 ├── infrastructure/     外部世界的适配器
-│   ├── providers/      供应商模型服务客户端
+│   ├── providers/      供应商服务客户端
 │   │   ├── embedding/  OpenAI 兼容 · Qwen3-VL
 │   │   ├── reranker/   Qwen3-VL
-│   │   └── vision/     OpenAI 兼容（图片描述，docx 可选启用）
+│   │   ├── vision/     OpenAI 兼容（图片描述，docx 可选启用）
+│   │   └── document/   MinerU HTTP 文档提取
 │   ├── vectorstore/    Milvus · 内存
 │   ├── database/       SQLAlchemy 会话与 ORM 表
 │   └── loaders/        S3
@@ -57,6 +58,7 @@ comet_rag/
 ├── ports/              契约与词汇表 ← 零依赖地基
 │   ├── embedding.py    EmbeddingPort · MultimodalEmbeddingPort
 │   ├── reranker.py     RerankerPort
+│   ├── document.py     DocumentExtractorPort · 提取错误词汇表
 │   ├── gate.py         AsyncGate
 │   └── content.py      MediaResource · ContentInput · RerankDocument …
 ├── config/             YAML + 环境变量
@@ -146,8 +148,14 @@ flowchart TD
 
     subgraph ST["三个阶段：各自可重试、可断点续跑"]
         E --> LG{{"加载闸门<br/>护本机 fd 与对外连接"}}
-        LG --> F["extracting · CPU 道<br/>AutoLoader → parser → cleaner"]
-        F --> G["chunking · CPU 道<br/>chunker"]
+        LG --> F["AutoLoader<br/>Local / URL / S3 → 受管本地文件"]
+        F --> T{"实际文件类型"}
+        T -->|DOCX| DOCX["engines<br/>converter → parser → cleaner"]
+        T -->|PDF| DP["DocumentExtractorPort"]
+        DP --> MG{{"MinerU 独立闸门"}}
+        MG --> MU["providers/document<br/>mineru-api / mineru-router"]
+        DOCX --> G["chunking · CPU 道<br/>chunker"]
+        MU --> G
         G -.->|"Handoff 移交道次"| H["indexing · IO 道"]
     end
 
@@ -199,7 +207,9 @@ flowchart TD
 | 接一个新的 embedding 服务 | `infrastructure/providers/embedding/`，继承 `BaseEmbeddingModel`，在 `composition/bootstrap.py` 装配 |
 | 改「一次请求发几条、几个并发」 | `engines/embedding/batch.py` |
 | 改 embedding 契约本身 | `ports/embedding.py`（会波及所有适配器，pyright 会告诉你哪些） |
-| 加一种文件格式 | `engines/parsers/` + `engines/pipelines/hooks.py` 注册 |
+| 加一种进程内文件格式 | `engines/parsers/` + `engines/pipelines/hooks.py` 注册 |
+| 接一个外部文档解析服务 | 实现 `ports/document.py`，适配器放 `infrastructure/providers/document/`，只在 `composition/bootstrap.py` 装配 |
+| 改 MinerU 协议或资源上限 | `infrastructure/providers/document/mineru.py` + `config/schemas.py::MinerUConfig` |
 | 改切分策略 | `engines/chunkers/` |
 | 改并发上限 / 背压 | `core/concurrency.py`（同步异步共用一份预算）；数字在 `LimitsConfig`，库兜底在 `engines/defaults.py` |
 | 改降级策略 | `core/degradation.py` |

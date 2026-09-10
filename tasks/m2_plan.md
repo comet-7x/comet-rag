@@ -1,8 +1,8 @@
 # Implementation Plan: Comet-RAG M2（PDF / MinerU HTTP）
 
-> 状态：实施中（v0.6）
-> 依据：`tasks/m2_spec.md` v0.8、GitHub Issue #50
-> 目标完成：2026-09-22；评审缓冲至 2026-09-24
+> 状态：已完成（v1.0）
+> 依据：`tasks/m2_spec.md` v1.0、GitHub Issue #50
+> 实际完成：2026-09-10（原计划 2026-09-22；评审缓冲至 2026-09-24）
 > 范围：只连接外部 `mineru-api` / `mineru-router`，不嵌入 MinerU SDK
 
 ## Overview
@@ -15,13 +15,13 @@ M2 在不改变 M1 任务、存储与检索契约的前提下，让本地、URL 
 
 ## Current Priority
 
-M2-T8 已完成：MinerU 3.4.5 `mineru-api` 连接远端 MinerU 2.5 vLLM，文本与扫描
-PDF 均通过真实 `/tasks` 链路完成入库和检索，测试 `1 passed in 3.50s`。原始指标
-通过 `--mineru-report` 生成，验收摘要见 `tasks/m2_todo.md`。
+M2-T1～T9 已完成。Local、URL、S3 PDF 均通过外部 MinerU protocol v2 进入现有
+任务、分块、向量化和检索链路；core-only 安装、DOCX 行为与默认单测耗时未回退。
+最终测试矩阵和真实 MinerU 指标见 `tasks/m2_todo.md`。
 
-下一项为 **M2-T9**，尚未开始：补全文档与配置示例，执行 core-only、unit、
-integration、e2e 和质量门，随后同步 Issue #50 与 PR 描述。T8 的小样本不足以估计
-长文档尾延迟，因此保留当前保守资源默认值，并把动态分道留作有生产样本后的独立设计。
+下一项回到 `tasks/architecture_plan.md` 的 **M2 后 P1**：先统一 DOCX/PDF 的
+DocumentExtractor 使用入口与 Loader 公共门面，再为 M3 单独冻结 BM25/RRF 规格。
+动态分道仍需长文档生产样本，不作为 P1 的顺手改动。
 
 Loader 统一和 DOCX 提取器迁移已记录为 M2 后 P1，不在此刻移动约 2,000 行 Loader
 代码。目录美化不能优先于一个可能无界轮询的外部服务调用。
@@ -84,13 +84,9 @@ M2-T3 可在 M2-T2 后半段并行准备，但合入前必须基于同一提取�
 
 ## Pull Request Strategy
 
-建议拆成三个按顺序合入 `develop` 的 PR，降低评审噪声：
-
-1. **契约与扩展点**：M2-T1～M2-T3。
-2. **MinerU 适配器与装配**：M2-T4～M2-T6。
-3. **全链路与验收**：M2-T7～M2-T9。
-
-若真实 MinerU 环境直到最后才可用，前两个 PR 不被阻塞；第三个 PR 负责真实集成出口。
+实际实现保留了三组独立提交边界（契约与扩展点、适配器与装配、全链路与验收），
+但统一从 `feature/m2-pdf-mineru` 提交一个面向 `develop` 的 PR。这样避免在协议尚未
+经过真实 MinerU 验证前合入半条链路，同时仍可按提交组逐段评审。
 
 ## Risks and Mitigations
 
@@ -103,6 +99,8 @@ M2-T3 可在 M2-T2 后半段并行准备，但合入前必须基于同一提取�
 | 新单测突破 10 秒基线 | 中 | 轮询测试注入 sleeper/clock，禁止真实 sleep；每个 Checkpoint 复测耗时 |
 | DOCX 行为被 Hook 重构影响 | 中 | 现有 DOCX 快照、四种 Pipeline 入口和 core-only CI 必须保持全绿 |
 
-## Open Questions
+## Completion Record
 
-- 三 PR 策略是否确认；若改为单 PR，提交边界仍按三个 Checkpoint 保留。
+- Checkpoint A～F 全部完成；M2 成功标准见 `tasks/m2_spec.md`。
+- 真实 MinerU 3.4.5 / protocol v2 验证通过；外部运行时未进入项目依赖图。
+- 默认单测 8.71s；Ruff、格式、Pyright、core-only、integration、e2e 全绿。

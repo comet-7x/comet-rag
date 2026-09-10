@@ -68,7 +68,9 @@ infrastructure_config:
   # 也不会注册 PDF Hook；Comet-RAG 不安装或管理 MinerU SDK/进程。
   mineru:
     enabled: false
+    # 必须指向带 /health + /tasks 的 MinerU 文档服务，不能直接填 vLLM /v1 地址。
     base_url: http://127.0.0.1:8000
+    # 远端 MinerU 2.5 vLLM 使用 vlm-http-client；模型地址配置在 mineru-api 进程侧。
     backend: pipeline
     parse_method: auto                       # auto | txt | ocr
     language: ch

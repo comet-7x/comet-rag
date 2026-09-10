@@ -1,6 +1,6 @@
 # Pipeline 使用笔记
 
-本文档记录 `comet_rag.engines.pipelines` 模块的用法，涵盖基本使用、配置、流式输出、批量处理、自定义 Hook 扩展，以及底层模块的独立使用方式。
+本文档记录 `comet_rag.engines.pipelines` 模块的用法，涵盖基本使用、配置、流式输出、批量处理、自定义 Hook 扩展，以及底层模块的独立使用方式。DOCX 是纯库内置能力；PDF 需要外部 MinerU，并由服务组合根或库调用方显式注册。
 
 ---
 
@@ -15,6 +15,7 @@
 7. [覆盖内置 Hook](#7-覆盖内置-hook)
 8. [底层模块独立使用](#8-底层模块独立使用)
 9. [目前支持的文件格式](#9-目前支持的文件格式)
+10. [PDF 与外部 MinerU](#10-pdf-与外部-mineru)
 
 ---
 
@@ -388,8 +389,52 @@ chunks = DocxChunker(chunk_size=1500, chunk_overlap=150).chunk(text)
 | Word 文档 | `.docx` `.doc` | ✅ 内置 | ✅ `DocxChunker` |
 | 纯文本 | `.txt` | 需自定义注册 | 回退 `TextChunker` |
 | Markdown | `.md` | 需自定义注册 | 需自定义注册 |
-| PDF | `.pdf` | 待实现 | — |
+| PDF | `.pdf` | ✅ 外部 MinerU；服务自动装配，纯库显式注册 | 回退 `TextChunker` |
 | CSV | `.csv` | 待实现 | — |
 | 代码文件 | `.py` `.ts` 等 | 待实现 | Chunker 已就绪 |
 
 > 所有自定义注册见 [第 6 节](#6-自定义-hook-扩展新格式)。
+
+---
+
+## 10. PDF 与外部 MinerU
+
+`engines` 不会在 import 时偷偷连接外部服务。参考服务在
+`composition/bootstrap.py` 中根据配置创建 `MinerUDocumentExtractor`，同时注册
+同步和异步 PDF Hook；因此启用 `infrastructure_config.mineru.enabled` 后，
+`POST /ingest` 的 Local、URL 和 S3 PDF 都走同一条链路。
+
+库调用方也可以显式完成同样的装配。异步入口不会阻塞事件循环，更适合外部解析：
+
+```python
+import asyncio
+
+from comet_rag.composition.bootstrap import wire_pdf_extractor
+from comet_rag.engines.pipelines import Pipeline, PipelineHooks
+from comet_rag.infrastructure.providers.document import MinerUDocumentExtractor
+
+
+async def parse_pdf():
+    extractor = MinerUDocumentExtractor(
+        "http://127.0.0.1:8989",
+        backend="vlm-http-client",
+    )
+    try:
+        with PipelineHooks.temporary():
+            wire_pdf_extractor(extractor)
+            return await Pipeline().arun("document.pdf")
+    finally:
+        await extractor.aclose()
+
+
+result = asyncio.run(parse_pdf())
+print(result.chunks[0].text)
+```
+
+`base_url` 必须指向提供 protocol v2 `/health` 与 `/tasks` 的 `mineru-api` 或
+`mineru-router`，不能直接指向只有 `/v1/models` 的 vLLM。上例没有绑定进程级
+并发闸门，只适合单次库调用；服务和批量任务应使用组合根装配，以获得独立 MinerU
+闸门、来源准入、重试、Task context 二次限长和统一资源关闭。
+
+MinerU 部署、配置、错误语义与真实集成测试见
+[MinerU 集成](mineru_integration.md)。

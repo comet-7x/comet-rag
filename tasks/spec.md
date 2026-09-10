@@ -1,8 +1,8 @@
 # Spec: Comet-RAG
 
-> 状态：M1 已完成（v1.0）
-> 最后更新：2026-09-09
-> 验收记录：`tasks/plan.md` Checkpoint F；下一里程碑为 M2（PDF / MinerU）
+> 状态：M1、M2 已完成（v1.1）
+> 最后更新：2026-09-10
+> 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0
 
 ---
 
@@ -54,10 +54,11 @@
 | | 范围 | 出口标准 |
 |---|---|---|
 | **M1** | **DOCX 全链路** —— 上传 docx → 解析 → 分块 → 向量化 → 入 Milvus → 检索命中 | §8 的 S1–S5 全绿（已完成） |
-| M2 | PDF 支持（通过 HTTP 连接外部 MinerU 服务） | 本地、URL、S3 PDF 复用 M1 入库链路；默认安装不含 MinerU 运行时 |
+| **M2** | **PDF 支持（通过 HTTP 连接外部 MinerU 服务）** | 本地、URL、S3 PDF 复用 M1 入库链路；默认安装不含 MinerU 运行时（已完成） |
 | M3 | 混合检索（BM25 + RRF） | sparse schema 已预留；实现召回与融合逻辑 |
 
-M1 已完成并具备单元、契约、集成、端到端和基准测试保护；M2 可以开始。
+M1、M2 已完成并具备单元、契约、集成、端到端和基准测试保护。进入 M3 前先执行
+`tasks/architecture_plan.md` 中 M2 后 P1，统一文档提取与 Loader 的公共使用入口。
 
 ### 非目标（明确不做）
 

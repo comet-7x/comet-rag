@@ -1,6 +1,6 @@
 # Spec: M2 PDF / MinerU
 
-> 状态：实施中（v0.8）
+> 状态：已完成（v1.0）
 > GitHub Issue：[#50](https://github.com/comet-7x/comet-rag/issues/50)
 > 开发分支：`feature/m2-pdf-mineru`
 > 最后更新：2026-09-10
@@ -136,17 +136,17 @@ limits:
   mineru_wait_timeout: 30.0
 ```
 
-数值是规格草案，不在评审前固化。实现 PR 必须附一个小型文本 PDF 与一个扫描件
-的耗时、输出大小和峰值内存，依据基准确认默认值。
+这些默认值已由 T8 的小型文本 PDF 与扫描件验证可用。小样本不足以代表长文档
+尾延迟，因此 M2 不据此收紧上限；生产部署仍应按自己的文档集与上游容量采样调整。
 
 ## 6. 测试与验收
 
 ### S1 — 分层与安装
 
 - [x] `tests/unit/test_layering.py` 证明 `engines/` 不 import MinerU 或具体适配器。
-- [ ] `uv sync --no-default-groups` 后 DOCX 全套测试仍通过。
-- [ ] 默认与 `all` 安装不下载 Torch、模型权重或 MinerU 本体。
-- [ ] `pyproject.toml` 与 `uv.lock` 不含 `mineru` 包或 `mineru` extra。
+- [x] `uv sync --no-default-groups` 后 DOCX/Loader/Pipeline 引擎测试仍通过。
+- [x] 默认与 `all` 安装不下载 Torch、模型权重或 MinerU 本体。
+- [x] `pyproject.toml` 与 `uv.lock` 不含 `mineru` 包或 `mineru` extra。
 
 ### S2 — 适配器契约
 
@@ -168,14 +168,19 @@ limits:
 
 - [x] `COMET_TEST_MINERU_URL` 未设置或服务不可达时集成测试 skip，不 fail。
 - [x] 可用时对小型文本 PDF 与扫描 PDF 跑真实 `POST /tasks` 全链路。
-- [ ] 重写 `docs/mineru_integration.md`，删除固定内网地址与旧版私有 API 示例。
-- [ ] 更新配置示例、部署说明、模型/流水线用法和 M2 状态。
-- [x] 默认 `uv run pytest` 仍小于 10 秒（1686 passed，8.66s）。
+- [x] 重写 `docs/mineru_integration.md`，删除固定内网地址与旧版私有 API 示例。
+- [x] 更新配置示例、部署说明、架构/流水线用法和 M2 状态。
+- [x] 默认 `uv run pytest` 仍小于 10 秒（1687 passed，8.71s）。
 
 T8 于 2026-09-10 使用 MinerU 3.4.5 / protocol v2 和远端 MinerU 2.5 vLLM 验证：
 文本与扫描样本端到端分别为 2.10s / 3.11s，Markdown 9 B / 14 B，Comet-RAG
 测试进程 Python 堆峰值约 1.45 MB。样本过小，不据此收紧面向真实长文档的超时或
 大小上限；并发 2、总超时 900s、响应 16 MiB、Markdown 8 MiB 暂保持不变。
+
+T9 最终验收：Ruff 与格式检查通过，Pyright `0 errors`；隔离 core-only 环境的
+engines 测试 `362 passed, 1 skipped, 1 xfailed`；默认单测 `1687 passed`；
+integration `6 passed, 136 skipped`；e2e `29 passed`。真实 MinerU 用例的
+`1 passed in 3.50s` 记录见 T8。
 
 ## 7. 实施顺序
 

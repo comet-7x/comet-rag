@@ -1,7 +1,7 @@
 # TODO: Comet-RAG M2（PDF / MinerU HTTP）
 
-> 状态：M2-T1～M2-T7 已完成；M2-T8 执行中。宏观排期见 `tasks/m2_plan.md`
-> 规格：`tasks/m2_spec.md` v0.7
+> 状态：M2-T1～M2-T9 已完成。宏观排期见 `tasks/m2_plan.md`
+> 规格：`tasks/m2_spec.md` v1.0
 > 长期架构：`tasks/architecture_plan.md`；其中 Loader/DOCX 重构不属于当前 M2 工作
 
 ## Phase 0：决策与保护网
@@ -129,13 +129,18 @@ Ruff、格式、Pyright 与 414 条分层守卫均通过。
 
 ### M2-T9 — 文档、全量验证与收尾（S）
 
-**日期：** 09-22　**依赖：** M2-T8
+**原计划：** 09-22　**实际完成：** 09-10　**依赖：** M2-T8
 
-- [ ] 根据最终实现补全 MinerU 集成文档，覆盖 `mineru-api` 与 `mineru-router`
-- [ ] 更新配置示例、部署、结构与 Pipeline 用法
+- [x] 根据最终实现补全 MinerU 集成文档，覆盖 `mineru-api` 与 `mineru-router`
+- [x] 更新配置示例、部署、结构与 Pipeline 用法
 - [ ] M2 规格成功标准全部勾选，Issue #50 与 PR 描述同步
-- [ ] ruff、pyright、core-only、unit、integration、e2e 全部通过
-- [ ] 默认 `uv run pytest` 小于 10 秒
+- [x] ruff、pyright、core-only、unit、integration、e2e 全部通过
+- [x] 默认 `uv run pytest` 小于 10 秒
+
+**本地验收：** Ruff、格式检查和 Pyright 通过；隔离 core-only 环境的 engines
+测试 `362 passed, 1 skipped, 1 xfailed`；默认单测 `1687 passed, 19 skipped,
+1 xfailed`，pytest 计时 8.71s；integration `6 passed, 136 skipped`；e2e
+`29 passed`。未启动的中间件与真实 MinerU 用例按约定 skip。
 
 ## 规模与提交
 
