@@ -277,6 +277,9 @@ async def test_large_intermediate_state_is_cleared(svc: TaskService) -> None:
     assert done.context.get("text") is None
     assert done.context.get("chunks") is None
     assert done.context["source_id"], "但溯源信息要留着"
+    assert done.context["extracted_text_bytes"] == len(
+        "段落一。段落二。段落三。".encode()
+    )
 
 
 # ── 断点续跑（spec A10-修正）───────────────────────────────────────────────

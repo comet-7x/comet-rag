@@ -185,9 +185,13 @@ class IngestRunner:
             file_type = str(loader_content.metadata.get("file_type", "")).lower()
             text = await PipelineHooks.aextract(file_type, loader_content, self._config)
             self._validate_extracted_text_size(text, file_type)
+            extracted_text_bytes = len(text.encode("utf-8"))
 
             await ctx.put(
                 text=text,
+                # 原文会在 chunking 后清掉；保留这个小标量才能在终态任务上
+                # 观察外部提取量，而不把整份 Markdown 长期留在任务表。
+                extracted_text_bytes=extracted_text_bytes,
                 file_type=file_type,
                 source_id=loader_content.source.source_id,
                 source=loader_content.source.source,

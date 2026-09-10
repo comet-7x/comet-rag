@@ -31,6 +31,15 @@ MILVUS_URI = os.environ.get("COMET_TEST_MILVUS_URI", "http://localhost:19530")
 MINIO_ENDPOINT = os.environ.get("COMET_TEST_MINIO_ENDPOINT", "http://localhost:9010")
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    group = parser.getgroup("comet-integration")
+    group.addoption(
+        "--mineru-report",
+        default="mineru-report.json",
+        help="真实 MinerU 集成指标的 JSON 输出路径",
+    )
+
+
 def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
     """只探端口，不建真连接 —— 探测本身不该因为库没装而失败。"""
     try:

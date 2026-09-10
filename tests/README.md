@@ -121,6 +121,22 @@ uv run pytest -m integration
 可用 `COMET_TEST_POSTGRES_DSN` / `COMET_TEST_REDIS_URL` / `COMET_TEST_MILVUS_URI`
 指向别的实例。
 
+### 真实 MinerU
+
+真实 PDF 测试没有默认地址。未设置地址或服务不可达时会明确 skip：
+
+```bash
+COMET_TEST_MINERU_URL=http://127.0.0.1:8989 \
+  uv run pytest -m integration tests/integration/test_mineru_e2e.py \
+  --mineru-report mineru-report.json
+```
+
+若服务不是 `pipeline` 后端，可再设置 `COMET_TEST_MINERU_BACKEND`；解析方式和语言
+分别由 `COMET_TEST_MINERU_PARSE_METHOD`、`COMET_TEST_MINERU_LANGUAGE` 覆盖。测试会
+并发提交一个带文本层的 PDF 和一个纯图片扫描 PDF，通过 TaskStore 等待终态，并
+记录耗时、Markdown 字节、Comet-RAG 进程的 Python 堆峰值及 CPU lane 预计持有
+时间。报告不包含外部 MinerU 进程的 CPU、显存或 RSS，不能用来宣称服务总资源。
+
 ### 跑 arq 的用例时，Redis 键怎么隔离
 
 worker 相关的集成测试要真的用 Redis，隔离方式分两种，选哪种取决于

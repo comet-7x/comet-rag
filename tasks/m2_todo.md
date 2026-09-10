@@ -1,7 +1,7 @@
 # TODO: Comet-RAG M2（PDF / MinerU HTTP）
 
-> 状态：M2-T1～M2-T7 已完成；下一项为 M2-T8。宏观排期见 `tasks/m2_plan.md`
-> 规格：`tasks/m2_spec.md` v0.6
+> 状态：M2-T1～M2-T7 已完成；M2-T8 执行中。宏观排期见 `tasks/m2_plan.md`
+> 规格：`tasks/m2_spec.md` v0.7
 > 长期架构：`tasks/architecture_plan.md`；其中 Loader/DOCX 重构不属于当前 M2 工作
 
 ## Phase 0：决策与保护网
@@ -113,10 +113,15 @@ Ruff、格式、Pyright 与 414 条分层守卫均通过。
 
 **日期：** 09-21　**依赖：** M2-T7
 
-- [ ] 未设置 `COMET_TEST_MINERU_URL` 或服务不可达时 skip
+- [x] 未设置 `COMET_TEST_MINERU_URL` 或服务不可达时 skip
 - [ ] 文本 PDF 与扫描 PDF 各跑一次真实 `/tasks` 链路
 - [ ] 记录耗时、输出字节、峰值内存与 CPU lane 占用
 - [ ] 根据数据确认并发、超时和大小默认值
+
+**当前进度：** 已生成带文本层与纯图片扫描样本，完成真实 ASGI/TaskStore 链路、
+检索断言和 `mineru-report.json` 指标出口；未设置地址与不可达地址均已反向验证为
+skip。当前环境未设置 `COMET_TEST_MINERU_URL`，本机旧 POC 端口 8989 也未运行，
+因此后三项必须等真实服务采样后再勾选，不能用 MockTransport 数据冒充。
 
 ### M2-T9 — 文档、全量验证与收尾（S）
 
