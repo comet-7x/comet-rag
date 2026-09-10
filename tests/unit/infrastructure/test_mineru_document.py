@@ -400,6 +400,41 @@ async def test_http_statuses_are_mapped_at_the_adapter_boundary(
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
+async def test_redirects_are_rejected_even_when_injected_clients_follow_them(
+    document_path: Path, asynchronous: bool
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(302, headers={"location": "http://attacker.invalid"})
+
+    transport = httpx.MockTransport(handler)
+    sync_client = httpx.Client(transport=transport, follow_redirects=True)
+    async_client = httpx.AsyncClient(transport=transport, follow_redirects=True)
+    extractor = MinerUDocumentExtractor(
+        BASE_URL,
+        sync_client=sync_client,
+        async_client=async_client,
+    )
+
+    with pytest.raises(DocumentUpstreamError, match="302"):
+        if asynchronous:
+            await extractor.aextract(
+                document_path, filename="sample.pdf", media_type="application/pdf"
+            )
+        else:
+            extractor.extract(
+                document_path, filename="sample.pdf", media_type="application/pdf"
+            )
+
+    assert len(requests) == 1
+    assert requests[0].url.host == "mineru.test"
+    sync_client.close()
+    await async_client.aclose()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
 async def test_network_errors_are_mapped_to_retryable_document_errors(
     document_path: Path, asynchronous: bool
 ) -> None:

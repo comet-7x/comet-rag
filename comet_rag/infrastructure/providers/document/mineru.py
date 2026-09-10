@@ -265,6 +265,7 @@ class MinerUDocumentExtractor(GatedResource):
                 method,
                 self._url(path),
                 timeout=self._timeout(deadline, upload=upload),
+                follow_redirects=False,
                 **kwargs,
             ) as response:
                 self._raise_for_status(
@@ -294,6 +295,7 @@ class MinerUDocumentExtractor(GatedResource):
                 method,
                 self._url(path),
                 timeout=self._timeout(deadline, upload=upload),
+                follow_redirects=False,
                 **kwargs,
             ) as response:
                 self._raise_for_status(
