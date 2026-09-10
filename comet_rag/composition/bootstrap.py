@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -11,7 +12,9 @@ from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.degradation import DegradationController, DegradationSettings
 from comet_rag.core.logging import logger
 from comet_rag.engines.loaders import AutoLoader, LoaderContent, LoaderRoute
+from comet_rag.engines.loaders.data_type import resolve_detected_extension
 from comet_rag.engines.pipelines import DocxConfig, PipelineConfig, PipelineHooks
+from comet_rag.engines.utils import detect_content_type_from_path
 from comet_rag.infrastructure.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
     KnowledgeBaseRepository,
@@ -249,6 +252,11 @@ def build_mineru_extractor(config: APPConfig) -> MinerUDocumentExtractor | None:
 def wire_pdf_extractor(extractor: DocumentExtractorPort) -> None:
     """把 Port 适配到现有字符串 Hook；供应商字段不进入 engines。"""
 
+    def verify_content(content: LoaderContent) -> None:
+        """Loader 路由只声明候选格式；外发前以实际字节为最终依据。"""
+        detected = detect_content_type_from_path(str(content.path))
+        resolve_detected_extension("pdf", detected)
+
     def filename(content: LoaderContent) -> str:
         configured = content.metadata.get("file_name")
         if isinstance(configured, str) and configured.strip():
@@ -258,6 +266,7 @@ def wire_pdf_extractor(extractor: DocumentExtractorPort) -> None:
     @PipelineHooks.extractor("pdf")
     def extract_pdf(content: LoaderContent, config: PipelineConfig) -> str:
         del config
+        verify_content(content)
         return extractor.extract(
             content.path,
             filename=filename(content),
@@ -267,6 +276,7 @@ def wire_pdf_extractor(extractor: DocumentExtractorPort) -> None:
     @PipelineHooks.aextractor("pdf")
     async def aextract_pdf(content: LoaderContent, config: PipelineConfig) -> str:
         del config
+        await asyncio.to_thread(verify_content, content)
         document = await extractor.aextract(
             content.path,
             filename=filename(content),
@@ -386,6 +396,7 @@ def build_context(
     task_executor: TaskExecutor | None = None,
     kb_repository: KnowledgeBaseRepository | None = None,
     pipeline_config: PipelineConfig | None = None,
+    ingest_loader: AutoLoader | None = None,
     mineru_extractor: DocumentExtractorPort | None = None,
     executor_lane: str | None = None,
 ) -> Context:
@@ -401,7 +412,8 @@ def build_context(
     database = build_database(config) if needs_database else None
 
     source_policy = build_source_policy(config.ingest_policy)
-    ingest_loader = build_ingest_loader(config, source_policy)
+    if ingest_loader is None:
+        ingest_loader = build_ingest_loader(config, source_policy)
     embedding_model = embedding_model or build_embedding_model(
         config,
         image_url_validator=source_policy.check_redirect,

@@ -1,6 +1,6 @@
 # Spec: M2 PDF / MinerU
 
-> 状态：实施中（v0.5）
+> 状态：实施中（v0.6）
 > GitHub Issue：[#50](https://github.com/comet-7x/comet-rag/issues/50)
 > 开发分支：`feature/m2-pdf-mineru`
 > 最后更新：2026-09-10
@@ -159,10 +159,10 @@ limits:
 
 ### S3 — Pipeline 与服务链路
 
-- [ ] `Pipeline.run/arun` 能解析 PDF，DOCX 快照不变。
-- [ ] 本地、URL、S3 三种 PDF 来源走同一个提取 Port。
-- [ ] `/ingest` 的阶段记录、重试、取消和断点续跑仍只通过 TaskStore 观察。
-- [ ] PDF 入库后 `/search` 能命中正文、表格与公式文本。
+- [x] `Pipeline.run/arun` 能解析 PDF，DOCX 快照不变。
+- [x] 本地、URL、S3 三种 PDF 来源走同一个提取 Port。
+- [x] `/ingest` 的阶段记录、重试、取消和断点续跑仍只通过 TaskStore 观察。
+- [x] PDF 入库后 `/search` 能命中正文、表格与公式文本。
 
 ### S4 — 集成测试与文档
 
@@ -170,7 +170,7 @@ limits:
 - [ ] 可用时对小型文本 PDF 跑真实 `POST /tasks` 全链路。
 - [ ] 重写 `docs/mineru_integration.md`，删除固定内网地址与旧版私有 API 示例。
 - [ ] 更新配置示例、部署说明、模型/流水线用法和 M2 状态。
-- [x] 默认 `uv run pytest` 仍小于 10 秒（1684 passed，8.79s）。
+- [x] 默认 `uv run pytest` 仍小于 10 秒（1686 passed，8.48s）。
 
 ## 7. 实施顺序
 

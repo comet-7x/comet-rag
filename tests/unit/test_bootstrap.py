@@ -17,6 +17,7 @@ from comet_rag.composition.bootstrap import (
     build_context,
     build_embedding_model,
     build_mineru_extractor,
+    wire_pdf_extractor,
 )
 from comet_rag.config.schemas import (
     APPConfig,
@@ -31,8 +32,15 @@ from comet_rag.config.schemas import (
 )
 from comet_rag.core.concurrency import Gate
 from comet_rag.engines.loaders.auto_loader import AutoLoader
+from comet_rag.engines.loaders.data_type import ContentTypeMismatch
+from comet_rag.engines.loaders.local_loader import LocalLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
-from comet_rag.engines.pipelines import DocxConfig, PipelineConfig, PipelineHooks
+from comet_rag.engines.pipelines import (
+    DocxConfig,
+    Pipeline,
+    PipelineConfig,
+    PipelineHooks,
+)
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.loaders import S3Loader
 from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
@@ -41,6 +49,7 @@ from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
 from comet_rag.ports import ExtractedDocument, MediaResource, MultimodalEmbeddingPort
 from comet_rag.ports.gate import GatedResource
 from comet_rag.services.ingestion import IngestRunner
+from tests.fixtures.pdf import build_minimal_pdf
 
 DIM = 3
 
@@ -304,8 +313,7 @@ async def test_enabled_mineru_binds_an_independent_gate_and_pdf_hooks(
     assert context.mineru_gate._timeout == 7.0  # noqa: SLF001
     assert extractor._gate is context.mineru_gate  # noqa: SLF001
 
-    path = tmp_path / "report.pdf"
-    path.write_bytes(b"%PDF-1.7")
+    path = build_minimal_pdf(tmp_path / "report.pdf")
     content = LoaderContent(
         path=path,
         source=SourceContent(path),
@@ -322,6 +330,47 @@ async def test_enabled_mineru_binds_an_independent_gate_and_pdf_hooks(
 
     await context.aclose()
     assert extractor.closed
+
+
+async def test_pdf_pipeline_sync_and_async_use_the_document_extractor_port(
+    tmp_path: Path,
+) -> None:
+    path = build_minimal_pdf(tmp_path / "report.pdf")
+    extractor = FakePdfExtractor()
+    wire_pdf_extractor(extractor)
+    pipeline = Pipeline(loader=LocalLoader(), config=PipelineConfig(chunk_overlap=0))
+
+    sync_result = pipeline.run(path)
+    async_result = await pipeline.arun(path)
+
+    assert sync_result.file_type == "pdf"
+    assert async_result.file_type == "pdf"
+    assert [chunk.text for chunk in sync_result.chunks] == ["# PDF"]
+    assert [chunk.text for chunk in async_result.chunks] == ["# PDF"]
+    assert [call[0] for call in extractor.calls] == [path, path]
+
+
+async def test_pdf_content_is_rechecked_before_calling_the_extractor(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "forged.pdf"
+    path.write_text("This is plain text, not a PDF.", encoding="utf-8")
+    extractor = FakePdfExtractor()
+    wire_pdf_extractor(extractor)
+    content = LoaderContent(
+        path=path,
+        source=SourceContent(path),
+        metadata={"file_name": path.name, "file_type": "pdf"},
+    )
+
+    with pytest.raises(ContentTypeMismatch, match="pdf.*txt"):
+        PipelineHooks.get_extractor("pdf")(content, PipelineConfig())
+    async_hook = PipelineHooks.get_aextractor("pdf")
+    assert async_hook is not None
+    with pytest.raises(ContentTypeMismatch, match="pdf.*txt"):
+        await async_hook(content, PipelineConfig())
+
+    assert extractor.calls == [], "伪造 PDF 不得上传到外部解析服务"
 
 
 async def test_admin_limits_exposes_enabled_mineru_gate(

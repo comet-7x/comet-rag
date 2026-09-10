@@ -1,7 +1,7 @@
 # Implementation Plan: Comet-RAG M2（PDF / MinerU HTTP）
 
-> 状态：实施中（v0.3）
-> 依据：`tasks/m2_spec.md` v0.3、GitHub Issue #50
+> 状态：实施中（v0.4）
+> 依据：`tasks/m2_spec.md` v0.6、GitHub Issue #50
 > 目标完成：2026-09-22；评审缓冲至 2026-09-24
 > 范围：只连接外部 `mineru-api` / `mineru-router`，不嵌入 MinerU SDK
 
@@ -15,9 +15,9 @@ M2 在不改变 M1 任务、存储与检索契约的前提下，让本地、URL 
 
 ## Current Priority
 
-M2-T6 已完成。当前只执行 **M2-T7**：验证 Local、URL、S3 三种 PDF 来源经过
-同一个提取 Port 入库，补提取前 PDF 内容复验，并从 TaskStore 观察阶段、重试、
-取消与断点续跑。真实 MinerU 环境和性能数据仍留给 T8。
+M2-T7 已完成。当前只执行 **M2-T8**：增加由 `COMET_TEST_MINERU_URL` 控制的真实
+服务集成出口，以文本与扫描 PDF 跑完整任务链路，并记录耗时、输出大小、峰值内存
+和 CPU lane 占用，用数据确认并发、超时与大小默认值。
 
 Loader 统一和 DOCX 提取器迁移已记录为 M2 后 P1，不在此刻移动约 2,000 行 Loader
 代码。目录美化不能优先于一个可能无界轮询的外部服务调用。

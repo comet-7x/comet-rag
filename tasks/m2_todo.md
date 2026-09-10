@@ -1,7 +1,7 @@
 # TODO: Comet-RAG M2（PDF / MinerU HTTP）
 
-> 状态：M2-T1～M2-T6 已完成；M2-T7 待执行。宏观排期见 `tasks/m2_plan.md`
-> 规格：`tasks/m2_spec.md` v0.3
+> 状态：M2-T1～M2-T7 已完成；下一项为 M2-T8。宏观排期见 `tasks/m2_plan.md`
+> 规格：`tasks/m2_spec.md` v0.6
 > 长期架构：`tasks/architecture_plan.md`；其中 Loader/DOCX 重构不属于当前 M2 工作
 
 ## Phase 0：决策与保护网
@@ -100,10 +100,14 @@ Ruff、格式、Pyright、闸门入口行为守卫与分层守卫通过。
 
 **日期：** 09-21　**依赖：** M2-T6
 
-- [ ] 三种来源经 Loader 后走同一个 DocumentExtractorPort
-- [ ] 提取前用内容检测复验 PDF，伪造后缀必须拒绝
-- [ ] Task 阶段、重试、取消和断点续跑只通过 TaskStore 观察
-- [ ] `/search` 命中正文、表格和公式文本；DOCX E2E 不回退
+- [x] 三种来源经 Loader 后走同一个 DocumentExtractorPort
+- [x] 提取前用内容检测复验 PDF，伪造后缀必须拒绝
+- [x] Task 阶段、重试、取消和断点续跑只通过 TaskStore 观察
+- [x] `/search` 命中正文、表格和公式文本；DOCX E2E 不回退
+
+**验收：** PDF 定向 `3 passed`，三来源与 DOCX E2E `5 passed`；完整 E2E
+`29 passed`；全量 `1686 passed`、20 skipped、176 deselected、1 xfailed，8.48s；
+Ruff、格式、Pyright 与 414 条分层守卫均通过。
 
 ### M2-T8 — 真实 MinerU 集成与基准（M）
 
