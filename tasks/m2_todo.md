@@ -133,7 +133,7 @@ Ruff、格式、Pyright 与 414 条分层守卫均通过。
 
 - [x] 根据最终实现补全 MinerU 集成文档，覆盖 `mineru-api` 与 `mineru-router`
 - [x] 更新配置示例、部署、结构与 Pipeline 用法
-- [ ] M2 规格成功标准全部勾选，Issue #50 与 PR 描述同步
+- [x] M2 规格成功标准全部勾选，Issue #50 与 PR #51 描述同步
 - [x] ruff、pyright、core-only、unit、integration、e2e 全部通过
 - [x] 默认 `uv run pytest` 小于 10 秒
 
