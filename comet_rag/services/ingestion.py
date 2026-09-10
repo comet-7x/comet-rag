@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,7 +19,11 @@ from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
 from comet_rag.infrastructure.vectorstore import BaseVectorStore, VectorRecord
-from comet_rag.ports import EmbeddingPort, RetryableDocumentUpstreamError
+from comet_rag.ports import (
+    DocumentResourceLimitExceeded,
+    EmbeddingPort,
+    RetryableDocumentUpstreamError,
+)
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.tasks import (
     LANE_CPU,
@@ -118,12 +123,26 @@ class IngestRunner:
         knowledge_base: KnowledgeBaseService,
         loader: BaseLoader | None = None,
         config: PipelineConfig | None = None,
+        max_extracted_text_bytes_by_type: Mapping[str, int] | None = None,
     ) -> None:
         self._embedding_model = embedding_model
         self._vector_store = vector_store
         self._kb = knowledge_base
         self._loader = loader or AutoLoader.default()
         self._config = config or PipelineConfig()
+        self._max_extracted_text_bytes_by_type = {
+            file_type.lower(): limit
+            for file_type, limit in (max_extracted_text_bytes_by_type or {}).items()
+        }
+        invalid_limits = {
+            file_type: limit
+            for file_type, limit in self._max_extracted_text_bytes_by_type.items()
+            if limit <= 0
+        }
+        if invalid_limits:
+            raise ValueError(
+                f"max_extracted_text_bytes_by_type 必须全部大于 0：{invalid_limits!r}"
+            )
         self._flow = self._build_flow()
 
     async def __call__(self, ctx: TaskContext) -> Outcome:
@@ -165,6 +184,7 @@ class IngestRunner:
             loader_content = await self._loader.aload(SourceContent(request.source))
             file_type = str(loader_content.metadata.get("file_type", "")).lower()
             text = await PipelineHooks.aextract(file_type, loader_content, self._config)
+            self._validate_extracted_text_size(text, file_type)
 
             await ctx.put(
                 text=text,
@@ -180,6 +200,17 @@ class IngestRunner:
             # 临时文件必须清掉，否则批量入库会把磁盘塞满
             if loader_content is not None:
                 loader_content.cleanup()
+
+    def _validate_extracted_text_size(self, text: str, file_type: str) -> None:
+        """在跨 worker 持久化前复验；不能只信任某个 provider 的入口检查。"""
+        limit = self._max_extracted_text_bytes_by_type.get(file_type)
+        if limit is None:
+            return
+        size = len(text.encode("utf-8"))
+        if size > limit:
+            raise DocumentResourceLimitExceeded(
+                f"{file_type} 提取文本超过 Task context 限制：{size} > {limit} bytes"
+            )
 
     async def _chunk(self, ctx: TaskContext) -> None:
         task = await ctx.snapshot()

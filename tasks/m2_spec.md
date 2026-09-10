@@ -1,9 +1,9 @@
 # Spec: M2 PDF / MinerU
 
-> 状态：实施中（v0.3）
+> 状态：实施中（v0.4）
 > GitHub Issue：[#50](https://github.com/comet-7x/comet-rag/issues/50)
 > 开发分支：`feature/m2-pdf-mineru`
-> 最后更新：2026-09-09
+> 最后更新：2026-09-10
 
 ## 1. 目标
 
@@ -150,7 +150,7 @@ limits:
 
 ### S2 — 适配器契约
 
-- [ ] 用 `httpx.MockTransport` 覆盖 health、提交、排队、成功、失败、429/5xx、
+- [x] 用 `httpx.MockTransport` 覆盖 health、提交、排队、成功、失败、429/5xx、
   超时、404 重提、超大响应与取消清理。
 - [x] 请求显式发送全部产物开关；JSON 结果必须恰好包含一个 `md_content`。
 - [x] 同步/异步入口对同一响应生成相同 Markdown 和稳定 metadata。
@@ -170,7 +170,7 @@ limits:
 - [ ] 可用时对小型文本 PDF 跑真实 `POST /tasks` 全链路。
 - [ ] 重写 `docs/mineru_integration.md`，删除固定内网地址与旧版私有 API 示例。
 - [ ] 更新配置示例、部署说明、模型/流水线用法和 M2 状态。
-- [ ] 默认 `uv run pytest` 仍小于 10 秒。
+- [x] 默认 `uv run pytest` 仍小于 10 秒（1661 passed，8.63s）。
 
 ## 7. 实施顺序
 

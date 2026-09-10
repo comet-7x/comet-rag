@@ -369,6 +369,40 @@ async def test_document_upstream_error_retries_extracting_stage(
     assert attempts == 2
 
 
+async def test_extracted_text_is_rechecked_before_task_context_write(
+    task_store: InMemoryTaskStore,
+    model: FakeEmbeddingModel,
+    store: InMemoryVectorStore,
+    loader: StubLoader,
+    kb_service: KnowledgeBaseService,
+) -> None:
+    """Provider 限长不是信任边界；持久化前必须按 UTF-8 字节数再检查一次。"""
+    await kb_service.create(KnowledgeBaseSpec(kb_id=KB))
+    register_ingest_runner(
+        IngestRunner(
+            embedding_model=model,
+            vector_store=store,
+            knowledge_base=kb_service,
+            loader=loader,
+            max_extracted_text_bytes_by_type={STUB_TYPE: 5},
+        )
+    )
+    executor = InProcessExecutor(task_store, retry_backoff=0.01)
+    service = TaskService(task_store, executor)
+    try:
+        task = await service.submit(INGEST_KIND, request(), max_attempts=3)
+        done = await wait_for_terminal(task_store, task.task_id)
+    finally:
+        await executor.shutdown(timeout=5.0)
+        unregister(INGEST_KIND)
+
+    assert done.status is TaskStatus.FAILED
+    assert done.attempts == 1
+    assert "text" not in done.context
+    assert done.error is not None
+    assert "Task context" in done.error.message
+
+
 async def test_server_5xx_is_retriable(
     svc: TaskService, model: FakeEmbeddingModel
 ) -> None:

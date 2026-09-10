@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M2（PDF / MinerU HTTP）
 
-> 状态：M2-T1～M2-T4 已完成；M2-T5 待执行。宏观排期见 `tasks/m2_plan.md`
+> 状态：M2-T1～M2-T5 已完成；M2-T6 待执行。宏观排期见 `tasks/m2_plan.md`
 > 规格：`tasks/m2_spec.md` v0.3
 > 长期架构：`tasks/architecture_plan.md`；其中 Loader/DOCX 重构不属于当前 M2 工作
 
@@ -68,12 +68,15 @@
 
 **日期：** 09-17　**依赖：** M2-T4
 
-- [ ] 429、5xx、网络错误映射为可重试错误；确定性 4xx 直接失败
-- [ ] 远端 404 在总 deadline 内最多重提一次
-- [ ] 区分连接、上传、单次请求和总解析超时
-- [ ] 响应体与 Markdown 分别限长，写 Task context 前复验
-- [ ] 取消时停止轮询并关闭响应流；内部 client 正确关闭，注入 client 不关闭
-- [ ] 轮询单测注入 sleeper/clock，不使用真实 sleep
+- [x] 429、5xx、网络错误映射为可重试错误；确定性 4xx 直接失败
+- [x] 远端 404 在总 deadline 内最多重提一次
+- [x] 区分连接、上传、单次请求和总解析超时
+- [x] 响应体与 Markdown 分别限长，写 Task context 前复验
+- [x] 取消时停止轮询并关闭响应流；内部 client 正确关闭，注入 client 不关闭
+- [x] 轮询单测注入 sleeper/clock，不使用真实 sleep
+
+**验收：** MinerU/ingestion 定向 `72 passed`；全量 `1661 passed`、20 skipped、
+171 deselected、1 xfailed，8.63s；Ruff、Pyright 与分层守卫通过。
 
 ## Phase 3：服务装配
 
@@ -84,6 +87,7 @@
 - [ ] 新增 MinerU provider 配置与跨字段校验，`enabled=false` 为安全默认
 - [ ] 新增独立并发、队列和等待预算，不复用 loader/model 闸门
 - [ ] 组合根注册 PDF 同步/异步 Hook，具体适配器不泄漏到 services/engines
+- [ ] 将 PDF 的 Markdown 限制注入 IngestRunner，启用 Task context 写入前复验
 - [ ] Context 逆序关闭 MinerU 资源，重复关闭幂等
 - [ ] 配置打印不泄漏凭据或内部请求头
 
