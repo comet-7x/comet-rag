@@ -2,6 +2,7 @@
 
 > 状态：已完成（v1.0）
 > 依据：`tasks/architecture_plan.md` P1
+> GitHub Issue：#52
 > 范围：DocumentExtractor 与 Loader 公共概念、契约和入口；不包含 M3 检索设计
 > 完成日期：2026-09-10
 
