@@ -154,12 +154,23 @@ class S3Loader(BaseLoader):
         return kwargs
 
     def _new_sync_client(self) -> Any:
-        import boto3  # noqa: PLC0415
+        try:
+            import boto3  # noqa: PLC0415
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "S3Loader 需要可选依赖，请安装 comet-rag[server] 或 comet-rag[all]"
+            ) from exc
 
         return boto3.client("s3", **self._client_kwargs())
 
     def _new_async_client_context(self) -> Any:
-        import aioboto3  # noqa: PLC0415
+        try:
+            import aioboto3  # noqa: PLC0415
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "S3Loader 异步入口需要可选依赖，请安装 "
+                "comet-rag[server] 或 comet-rag[all]"
+            ) from exc
 
         return aioboto3.Session().client("s3", **self._client_kwargs())
 
