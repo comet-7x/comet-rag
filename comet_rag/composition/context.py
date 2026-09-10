@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from comet_rag.core.logging import logger
 from comet_rag.engines.loaders.auto_loader import AutoLoader
+from comet_rag.engines.pipelines import HookProvider
 from comet_rag.infrastructure.knowledge_base import KnowledgeBaseRepository
 from comet_rag.infrastructure.vectorstore import BaseVectorStore
 from comet_rag.ports import EmbeddingPort, RerankerPort
@@ -33,6 +35,7 @@ class Context:
     kb_repository: KnowledgeBaseRepository
     knowledge_base: KnowledgeBaseService
     embedding_dim: int
+    pipeline_hooks: HookProvider
     reranker: RerankerPort | None = None
     #: 对模型服务的进程级并发闸门。放进 Context 是为了让 /admin/health
     #: 能读到它的实时统计 —— 过载时最先想看的就是这几个数。
@@ -43,17 +46,33 @@ class Context:
     source_policy: Any = None
     #: 组合根装配的来源路由器；包含可选的基础设施 Loader。
     ingest_loader: AutoLoader | None = None
+    #: MinerU 使用独立预算；None 表示未启用 PDF 外部提取。
+    mineru_gate: Any = None
+    #: 写入 Task context 前按文件类型执行的第二道文本字节限制。
+    extracted_text_limits: dict[str, int] = field(default_factory=dict)
     #: 仅在 task_store/kb 用 postgres 时存在。关停时要 dispose 连接池。
     database: Any = None
     #: 需要在关停时释放、但不属于上面任何一类的资源（按注册顺序逆序关闭）
     _extra_closers: list[Any] = field(default_factory=list)
+    #: 先撤销引用外围资源的注册，再真正关闭资源。
+    _hook_cleanups: list[Callable[[], None]] = field(default_factory=list)
 
     async def aclose(self) -> None:
         """逆序释放。任一步失败都不得中断其余释放 —— 否则一个坏掉的连接
         会让整个进程留下一堆泄漏的资源。"""
         # 1. 先停执行器：让在途任务落到一致状态，再拆它们脚下的地板
         await _safe(self.task_executor.shutdown(), "task_executor")
-        # 2. 再关它们用到的下游
+        # 2. 执行器排干后先断开 Hook 引用，避免后续误用已关闭的适配器。
+        for cleanup in reversed(self._hook_cleanups):
+            try:
+                cleanup()
+            except Exception as exc:  # noqa: BLE001 — 关停必须继续
+                logger.warning(f"清理 Pipeline Hook 时出错（已忽略）：{exc!r}")
+        self._hook_cleanups.clear()
+        # 3. 按装配注册的逆序关掉 Loader / Extractor 等外围资源。
+        for closer in reversed(self._extra_closers):
+            await _safe(_maybe_close(closer), type(closer).__name__)
+        # 4. 再关持久化与模型资源。
         await _safe(self.vector_store.aclose(), "vector_store")
         if self.reranker is not None:
             await _safe(_maybe_close(self.reranker), "reranker")
@@ -61,8 +80,6 @@ class Context:
         # 数据库放最后：上面几步失败时的错误处理可能还要读写任务状态
         if self.database is not None:
             await _safe(_maybe_close(self.database), "database")
-        for closer in reversed(self._extra_closers):
-            await _safe(_maybe_close(closer), type(closer).__name__)
 
 
 async def _maybe_close(resource: Any) -> None:
@@ -113,5 +130,7 @@ def wire_runners(context: Context, *, ingest_config: Any = None) -> None:
             knowledge_base=context.knowledge_base,
             loader=loader,
             config=ingest_config,
+            hooks=context.pipeline_hooks,
+            max_extracted_text_bytes_by_type=context.extracted_text_limits,
         )
     )

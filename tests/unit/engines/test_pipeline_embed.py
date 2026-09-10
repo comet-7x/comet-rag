@@ -201,6 +201,46 @@ async def test_all_entry_points_embed_every_chunk(make_pipeline) -> None:
     assert all([c.embedding async for c in make_pipeline().astream_run("任意")])
 
 
+async def test_async_entry_points_prefer_async_extractor(make_pipeline) -> None:
+    pipeline = make_pipeline(embed=False)
+    calls = {"sync": 0, "async": 0}
+
+    @PipelineHooks.extractor(STUB_TYPE)
+    def _sync(lc: LoaderContent, config: PipelineConfig) -> str:
+        calls["sync"] += 1
+        return "sync"
+
+    @PipelineHooks.aextractor(STUB_TYPE)
+    async def _async(lc: LoaderContent, config: PipelineConfig) -> str:
+        calls["async"] += 1
+        return "async"
+
+    await pipeline.arun("任意")
+    _ = [chunk async for chunk in pipeline.astream_run("任意")]
+
+    assert calls == {"sync": 0, "async": 2}
+
+
+def test_sync_entry_points_keep_using_sync_extractor(make_pipeline) -> None:
+    pipeline = make_pipeline(embed=False)
+    calls = {"sync": 0, "async": 0}
+
+    @PipelineHooks.extractor(STUB_TYPE)
+    def _sync(lc: LoaderContent, config: PipelineConfig) -> str:
+        calls["sync"] += 1
+        return "sync"
+
+    @PipelineHooks.aextractor(STUB_TYPE)
+    async def _async(lc: LoaderContent, config: PipelineConfig) -> str:
+        calls["async"] += 1
+        return "async"
+
+    pipeline.run("任意")
+    list(pipeline.stream_run("任意"))
+
+    assert calls == {"sync": 2, "async": 0}
+
+
 async def test_embed_disabled_leaves_embedding_none(make_pipeline) -> None:
     pipeline = make_pipeline(embed=False)
 

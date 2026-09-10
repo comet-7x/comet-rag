@@ -8,7 +8,8 @@
 两者共用同一份解析代码。这个双重定位由 `pyproject.toml` 的依赖分组
 **在安装期强制**，并由 AST 层级守卫在 CI 里盯着（`tests/unit/test_layering.py`）。
 
-> 当前进度：M1（DOCX 全链路）。PDF / MinerU 是 M2，混合检索是 M3。
+> 当前进度：M1（DOCX）与 M2（PDF / 外部 MinerU）已完成；下一里程碑是
+> M3（BM25 + RRF 混合检索）。
 
 ---
 
@@ -29,7 +30,8 @@ for chunk in result.chunks:
     print(chunk.text[:100])
 ```
 
-没有 Redis、没有 Postgres、没有 FastAPI。详见 [docs/pipeline_usage.md](docs/pipeline_usage.md)。
+没有 Redis、没有 Postgres、没有 FastAPI。PDF 也能通过 Pipeline 使用，但必须显式
+连接外部 MinerU；详见 [docs/pipeline_usage.md](docs/pipeline_usage.md)。
 
 ---
 
@@ -87,14 +89,15 @@ uv run comet-rag worker embedder        # IO 密集：向量化 / 写库
 ## 开发
 
 ```bash
-uv sync --all-extras
+make install
 
 uv run pytest                    # 单元测试，零依赖，~10s
 uv run pytest -m e2e             # 端到端，全内存
 uv run pytest -m integration     # 需要 docker compose up -d
 uv run pytest -m benchmark       # 性能基线（见 docs/benchmark.md）
 
-uv run ruff check && uv run ruff format
+make lint
+make format
 ```
 
 **中间件没起时集成测试会 skip，不会 fail** —— 让它们红一片只会训练出"看到红色
@@ -113,5 +116,5 @@ uv run ruff check && uv run ruff format
 | [benchmark.md](docs/benchmark.md)                         | 性能基线与它**不能**回答的问题 |
 | [pipeline_usage.md](docs/pipeline_usage.md)               | 只当库用时看这个                     |
 | [docx_parser_internals.md](docs/docx_parser_internals.md) | docx 解析内幕                        |
-| [mineru_integration.md](docs/mineru_integration.md)       | MinerU 集成（M2）                    |
+| [mineru_integration.md](docs/mineru_integration.md)       | PDF / MinerU 部署、配置与验收        |
 | [comment_style.md](docs/comment_style.md)                 | 注释与 Docstring 的编写、评审标准    |

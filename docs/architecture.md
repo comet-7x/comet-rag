@@ -57,6 +57,11 @@ pydantic/httpx/lxml 一类的纯计算包；服务那一半在它之上加了任
 值对象（`MediaResource`、`RerankDocument` …）也放在 `ports/`：它们是 Port
 签名里出现的类型，也就是这套契约的词汇表。
 
+M2 的 `DocumentExtractorPort` 也遵循这条规则：它只接收 Loader 已经落地的受管
+本地文件，返回 Markdown 与稳定 metadata，不认识 URL、S3 凭据、MinerU backend
+或 HTTP 响应。`MinerUDocumentExtractor` 是 `infrastructure/providers/document/`
+中的外部适配器，只有 `composition/` 能把它注册成 PDF Pipeline Hook。
+
 ## 三个核心抽象
 
 每一个都配有一套**与实现无关的契约测试**（`tests/contracts/`）。
@@ -146,8 +151,9 @@ worker 被 `kill -9` 时，库里那条任务会永远停在 RUNNING：没人推
 ## 资源治理
 
 ```
-                        ┌── 闸门（进程级，embedding 与 rerank 共用）
-POST /ingest ─► 积压上限 ─┤
+                        ┌── 模型闸门（embedding 与 rerank 共用）
+POST /ingest ─► 积压上限 ─┼── Loader 闸门（文件描述符与外部连接）
+                        ├── MinerU 闸门（外部文档解析服务）
                         └── 降级：关 rerank → 降 top_k → 拒新任务
 ```
 
@@ -157,8 +163,8 @@ POST /ingest ─► 积压上限 ─┤
 异步等待者（Future），取消只是把自己摘掉。
 
 **闸门按资源分，不按模块分。** embedding 与 rerank 共用一个（抢的是同一块
-GPU），加载另配一个（护的是本机文件描述符与对外连接数，合理值差一个数量级）。
-共用会让"调大加载并发"意外挤掉模型的名额。
+GPU）；加载另配一个（护本机文件描述符与对外连接）；MinerU 再单独一个（护外部
+解析服务）。混用会让"调大加载并发"意外挤掉模型或 PDF 解析名额。
 
 **闸门必须是进程级的。** 曾经是"每次调用建一个信号量"，于是 32 个任务各开
 4 路扇出 = 对模型服务 128 路并发，而配置写的是 4，监控上完全看不出来。

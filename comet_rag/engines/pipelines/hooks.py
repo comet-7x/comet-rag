@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+import asyncio
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import ClassVar
+from dataclasses import dataclass, field
+from typing import ClassVar, Protocol
 
 from comet_rag.engines.loaders.types import LoaderContent
 from comet_rag.engines.pipelines.types import PipelineConfig
 
 # Hook type aliases
 ExtractHook = Callable[[LoaderContent, PipelineConfig], str]
+AsyncExtractHook = Callable[[LoaderContent, PipelineConfig], Awaitable[str]]
 ChunkHook = Callable[[str, PipelineConfig], list[str]]
 
 
@@ -19,12 +21,119 @@ class HooksState:
 
     extractors: dict[str, ExtractHook]
     chunkers: dict[str, ChunkHook]
+    # 尾字段保留旧的 HooksState(extractors, chunkers) 构造方式。
+    async_extractors: dict[str, AsyncExtractHook] = field(default_factory=dict)
+
+
+class HookProvider(Protocol):
+    """Pipeline 实际需要的最小 Hook 查询面。"""
+
+    def snapshot(self) -> HooksState: ...
+
+    def restore(self, state: HooksState) -> None: ...
+
+    def extractor(self, *file_types: str) -> Callable[[ExtractHook], ExtractHook]: ...
+
+    def aextractor(
+        self, *file_types: str
+    ) -> Callable[[AsyncExtractHook], AsyncExtractHook]: ...
+
+    def get_extractor(self, file_type: str) -> ExtractHook: ...
+
+    def get_aextractor(self, file_type: str) -> AsyncExtractHook | None: ...
+
+    async def aextract(
+        self, file_type: str, loader_content: LoaderContent, config: PipelineConfig
+    ) -> str: ...
+
+    def get_chunker(self, file_type: str) -> ChunkHook: ...
+
+
+class HookRegistry:
+    """可按 Context 复制的 Hook 注册表，隔离带生命周期的适配器。"""
+
+    def __init__(self, state: HooksState | None = None) -> None:
+        state = state or HooksState({}, {})
+        self._extractors = dict(state.extractors)
+        self._async_extractors = dict(state.async_extractors)
+        self._chunkers = dict(state.chunkers)
+
+    def snapshot(self) -> HooksState:
+        return HooksState(
+            extractors=dict(self._extractors),
+            chunkers=dict(self._chunkers),
+            async_extractors=dict(self._async_extractors),
+        )
+
+    def restore(self, state: HooksState) -> None:
+        self._extractors = dict(state.extractors)
+        self._async_extractors = dict(state.async_extractors)
+        self._chunkers = dict(state.chunkers)
+
+    @contextmanager
+    def temporary(self) -> Iterator[None]:
+        state = self.snapshot()
+        try:
+            yield
+        finally:
+            self.restore(state)
+
+    def extractor(self, *file_types: str) -> Callable[[ExtractHook], ExtractHook]:
+        def decorator(fn: ExtractHook) -> ExtractHook:
+            for file_type in file_types:
+                self._extractors[file_type.lower()] = fn
+            return fn
+
+        return decorator
+
+    def aextractor(
+        self, *file_types: str
+    ) -> Callable[[AsyncExtractHook], AsyncExtractHook]:
+        def decorator(fn: AsyncExtractHook) -> AsyncExtractHook:
+            for file_type in file_types:
+                self._async_extractors[file_type.lower()] = fn
+            return fn
+
+        return decorator
+
+    def chunker(self, *file_types: str) -> Callable[[ChunkHook], ChunkHook]:
+        def decorator(fn: ChunkHook) -> ChunkHook:
+            for file_type in file_types:
+                self._chunkers[file_type.lower()] = fn
+            return fn
+
+        return decorator
+
+    def get_extractor(self, file_type: str) -> ExtractHook:
+        try:
+            return self._extractors[file_type]
+        except KeyError:
+            raise ValueError(
+                f"No extractor registered for {file_type!r}. "
+                f"Registered: {sorted(self._extractors)}"
+            ) from None
+
+    def get_aextractor(self, file_type: str) -> AsyncExtractHook | None:
+        return self._async_extractors.get(file_type)
+
+    async def aextract(
+        self, file_type: str, loader_content: LoaderContent, config: PipelineConfig
+    ) -> str:
+        if extractor := self.get_aextractor(file_type):
+            return await extractor(loader_content, config)
+        return await asyncio.to_thread(
+            self.get_extractor(file_type), loader_content, config
+        )
+
+    def get_chunker(self, file_type: str) -> ChunkHook:
+        return self._chunkers.get(file_type, _default_chunk)
 
 
 class PipelineHooks:
     """进程级格式钩子注册表；临时覆盖必须用 `temporary()` 隔离。"""
 
     _extractors: ClassVar[dict[str, ExtractHook]] = {}
+    _async_extractors: ClassVar[dict[str, AsyncExtractHook]] = {}
     _chunkers: ClassVar[dict[str, ChunkHook]] = {}
 
     # ── 作用域控制 ─────────────────────────────────────────────────────────
@@ -32,12 +141,22 @@ class PipelineHooks:
     @classmethod
     def snapshot(cls) -> HooksState:
         """拍下当前注册表（浅拷贝：hook 函数本身不复制，也无需复制）。"""
-        return HooksState(dict(cls._extractors), dict(cls._chunkers))
+        return HooksState(
+            extractors=dict(cls._extractors),
+            chunkers=dict(cls._chunkers),
+            async_extractors=dict(cls._async_extractors),
+        )
+
+    @classmethod
+    def fork(cls) -> HookRegistry:
+        """复制内建/用户 Hook；之后的资源型注册只影响当前 Context。"""
+        return HookRegistry(cls.snapshot())
 
     @classmethod
     def restore(cls, state: HooksState) -> None:
         """还原到某次快照。快照之后新增的注册会被丢弃。"""
         cls._extractors = dict(state.extractors)
+        cls._async_extractors = dict(state.async_extractors)
         cls._chunkers = dict(state.chunkers)
 
     @classmethod
@@ -60,6 +179,17 @@ class PipelineHooks:
         return decorator
 
     @classmethod
+    def aextractor(
+        cls, *file_types: str
+    ) -> Callable[[AsyncExtractHook], AsyncExtractHook]:
+        def decorator(fn: AsyncExtractHook) -> AsyncExtractHook:
+            for ft in file_types:
+                cls._async_extractors[ft.lower()] = fn
+            return fn
+
+        return decorator
+
+    @classmethod
     def chunker(cls, *file_types: str) -> Callable[[ChunkHook], ChunkHook]:
         def decorator(fn: ChunkHook) -> ChunkHook:
             for ft in file_types:
@@ -77,6 +207,21 @@ class PipelineHooks:
                 f"No extractor registered for {file_type!r}. "
                 f"Registered: {sorted(cls._extractors)}"
             ) from None
+
+    @classmethod
+    def get_aextractor(cls, file_type: str) -> AsyncExtractHook | None:
+        return cls._async_extractors.get(file_type)
+
+    @classmethod
+    async def aextract(
+        cls, file_type: str, loader_content: LoaderContent, config: PipelineConfig
+    ) -> str:
+        """优先使用异步 Hook；同步兼容路径只在线程池调度一次。"""
+        if extractor := cls.get_aextractor(file_type):
+            return await extractor(loader_content, config)
+        return await asyncio.to_thread(
+            cls.get_extractor(file_type), loader_content, config
+        )
 
     @classmethod
     def get_chunker(cls, file_type: str) -> ChunkHook:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,10 +16,14 @@ from comet_rag.engines.embedding.batch import aembed_documents
 from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
-from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
+from comet_rag.engines.pipelines import HookProvider, PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
 from comet_rag.infrastructure.vectorstore import BaseVectorStore, VectorRecord
-from comet_rag.ports import EmbeddingPort
+from comet_rag.ports import (
+    DocumentResourceLimitExceeded,
+    EmbeddingPort,
+    RetryableDocumentUpstreamError,
+)
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.tasks import (
     LANE_CPU,
@@ -80,6 +85,11 @@ def _classify(exc: Exception, stage: str) -> Exception:
     HTTP 状态码单独判断：5xx 与 429 是"稍后再来"，4xx 是"你请求得不对"，
     后者重试没有任何意义。
     """
+    if isinstance(exc, RetryableDocumentUpstreamError):
+        return RetriableError(
+            f"{stage} 阶段文档服务暂时不可用：{exc!s}",
+            code="document_upstream_transient",
+        )
     if isinstance(exc, Overloaded):
         # 自家闸门满了，是最典型的"稍后再来"：退避重试正好让压力回落。
         # 判死就浪费了一次本来能成功的入库。
@@ -113,12 +123,28 @@ class IngestRunner:
         knowledge_base: KnowledgeBaseService,
         loader: BaseLoader | None = None,
         config: PipelineConfig | None = None,
+        hooks: HookProvider | None = None,
+        max_extracted_text_bytes_by_type: Mapping[str, int] | None = None,
     ) -> None:
         self._embedding_model = embedding_model
         self._vector_store = vector_store
         self._kb = knowledge_base
         self._loader = loader or AutoLoader.default()
         self._config = config or PipelineConfig()
+        self._hooks = hooks or PipelineHooks
+        self._max_extracted_text_bytes_by_type = {
+            file_type.lower(): limit
+            for file_type, limit in (max_extracted_text_bytes_by_type or {}).items()
+        }
+        invalid_limits = {
+            file_type: limit
+            for file_type, limit in self._max_extracted_text_bytes_by_type.items()
+            if limit <= 0
+        }
+        if invalid_limits:
+            raise ValueError(
+                f"max_extracted_text_bytes_by_type 必须全部大于 0：{invalid_limits!r}"
+            )
         self._flow = self._build_flow()
 
     async def __call__(self, ctx: TaskContext) -> Outcome:
@@ -149,11 +175,7 @@ class IngestRunner:
         return flow
 
     async def _extract(self, ctx: TaskContext) -> None:
-        """取源 + 解析 + 清洗 → markdown 文本。
-
-        整段跑在线程里：docx 解析是 CPU 密集的，直接在事件循环上跑会把
-        同进程内其余协程全部堵住（embedder worker 尤其受不了）。
-        """
+        """取源 + 解析 + 清洗 → markdown 文本。"""
         task = await ctx.snapshot()
         request = IngestRequest.model_validate(task.request)
 
@@ -163,11 +185,15 @@ class IngestRunner:
             # 否则连接超时会绕过 _classify，第一次失败就把任务判死。
             loader_content = await self._loader.aload(SourceContent(request.source))
             file_type = str(loader_content.metadata.get("file_type", "")).lower()
-            extractor = PipelineHooks.get_extractor(file_type)
-            text = await asyncio.to_thread(extractor, loader_content, self._config)
+            text = await self._hooks.aextract(file_type, loader_content, self._config)
+            self._validate_extracted_text_size(text, file_type)
+            extracted_text_bytes = len(text.encode("utf-8"))
 
             await ctx.put(
                 text=text,
+                # 原文会在 chunking 后清掉；保留这个小标量才能在终态任务上
+                # 观察外部提取量，而不把整份 Markdown 长期留在任务表。
+                extracted_text_bytes=extracted_text_bytes,
                 file_type=file_type,
                 source_id=loader_content.source.source_id,
                 source=loader_content.source.source,
@@ -181,12 +207,23 @@ class IngestRunner:
             if loader_content is not None:
                 loader_content.cleanup()
 
+    def _validate_extracted_text_size(self, text: str, file_type: str) -> None:
+        """在跨 worker 持久化前复验；不能只信任某个 provider 的入口检查。"""
+        limit = self._max_extracted_text_bytes_by_type.get(file_type)
+        if limit is None:
+            return
+        size = len(text.encode("utf-8"))
+        if size > limit:
+            raise DocumentResourceLimitExceeded(
+                f"{file_type} 提取文本超过 Task context 限制：{size} > {limit} bytes"
+            )
+
     async def _chunk(self, ctx: TaskContext) -> None:
         task = await ctx.snapshot()
         text: str = task.context["text"]
         file_type: str = task.context["file_type"]
 
-        chunker = PipelineHooks.get_chunker(file_type)
+        chunker = self._hooks.get_chunker(file_type)
         chunks = await asyncio.to_thread(chunker, text, self._config)
 
         # 清掉原始文本：留着的话 context 会同时装文本和 chunk，体积翻倍，

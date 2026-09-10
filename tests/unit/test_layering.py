@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,9 @@ FORBIDDEN_IN_ENGINES = frozenset(
 #:
 #: 白名单没有这个失效模式：新包默认被拒，要放行必须来这里改一行、并说明理由。
 ENGINES_MAY_IMPORT = ("comet_rag.engines", "comet_rag.ports")
+
+# Port 是所有上层共同依赖的契约；引入第三方包或上层模块会让抽象反向依赖实现。
+PORTS_MAY_IMPORT = ("comet_rag.ports",)
 
 
 def _iter_engine_modules() -> list[Path]:
@@ -163,6 +167,47 @@ def test_guard_actually_detects_violations() -> None:
     assert _engine_internal_violations(tree) == {
         "comet_rag.api",
         "comet_rag.application.embedding_batch",
+    }
+
+
+def _port_dependency_violations(tree: ast.AST, module: Path | None = None) -> set[str]:
+    violations: set[str] = set()
+    for name in _imported_full(tree, module):
+        root = name.split(".")[0]
+        if root == "comet_rag":
+            if not name.startswith(PORTS_MAY_IMPORT):
+                violations.add(name)
+        elif root not in sys.stdlib_module_names:
+            violations.add(name)
+    return violations
+
+
+@pytest.mark.parametrize(
+    "module",
+    sorted((PROJECT_ROOT / "comet_rag" / "ports").glob("*.py")),
+    ids=lambda p: p.name,
+)
+def test_ports_only_depend_on_standard_library(module: Path) -> None:
+    """Port 必须比使用者和适配器更低，不能反向携带实现依赖。"""
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    violations = _port_dependency_violations(tree, module)
+    assert not violations, (
+        f"{module.relative_to(PROJECT_ROOT)} 依赖了标准库/ports 之外的模块："
+        f"{sorted(violations)}。Port 只能描述跨层契约，供应商字段和客户端属于适配器。"
+    )
+
+
+def test_ports_dependency_guard_detects_upper_and_third_party_imports() -> None:
+    tree = ast.parse(
+        "from pathlib import Path\n"
+        "import httpx\n"
+        "from comet_rag.engines.loaders import AutoLoader\n"
+        "from comet_rag.ports.content import MediaResource\n"
+    )
+
+    assert _port_dependency_violations(tree) == {
+        "comet_rag.engines.loaders",
+        "httpx",
     }
 
 

@@ -1,231 +1,200 @@
-# MinerU Integration Notes
+# MinerU 集成
 
-## Architecture Overview
+Comet-RAG 的 PDF 链路已经在 M2 完成。它只通过 HTTP 连接外部
+`mineru-api` / `mineru-router`，不会安装、导入或启动 MinerU SDK、Torch、模型
+权重和 GPU 运行时。
 
-The MinerU stack in this project has three distinct layers:
-
+```text
+Local / URL / S3 PDF
+        │
+        ▼
+Comet-RAG Loader → DocumentExtractorPort → 分块 → 向量化 → 入库
+                         │
+                         │ /health · /tasks · /tasks/{id} · /result
+                         ▼
+                 mineru-api / mineru-router
+                         │
+                         ▼
+                 本地模型或远端 vLLM
 ```
-RAG Pipeline
-    ↓
-mineru-api server  (localhost:8989)   ← document parsing orchestrator
-    ↓
-vLLM server  (steins-middleware.steins.net:9909)  ← GPU-backed VLM inference
-```
 
-- **Port 9909** is an OpenAI/vLLM-compatible inference server (exposes `/v1/chat/completions`). It is the VLM backend MinerU uses for image/chart/text recognition.
-- **Port 8989** is `mineru-api`, the document-level FastAPI server (exposes `/file_parse`, `/tasks`, `/health`). It orchestrates PDF parsing and calls the vLLM server for VLM inference.
+边界很明确：Comet-RAG 管来源准入、任务重试、并发限制、入库和检索；MinerU
+服务管 PDF 解析、模型生命周期、GPU 调度和服务端产物清理。`/ingest` 调用方不能
+覆盖 MinerU 地址、backend 或解析选项，避免把解析服务变成 SSRF 代理。
 
-These are two separate services. Do not confuse them.
+## 协议要求
 
----
+适配器要求 MinerU API protocol v2：
 
-## Integration Options
+1. `GET /health` 必须返回 `status=healthy`、`protocol_version=2` 和非空版本号；
+2. `POST /tasks` 流式上传一个 PDF，并以 202 返回 `task_id`；
+3. `GET /tasks/{task_id}` 轮询 `pending`、`processing`、`completed` 或 `failed`；
+4. `GET /tasks/{task_id}/result` 返回唯一一项 `results.*.md_content`。
 
-### Option 1: `mineru-api` HTTP (recommended for microservice)
+M2 只消费 Markdown。适配器显式关闭 ZIP、图片、content list、中间 JSON、模型
+输出与原文件回传，不依赖 MinerU 默认值。`POST /file_parse` 是同步兼容接口，不是
+Comet-RAG 的生产路径。
 
-Start the server:
+先确认你拿到的是 MinerU 文档服务，而不是底层 vLLM：
 
 ```bash
-MINERU_API_OUTPUT_ROOT=/path/to/output \
-  mineru-api --host 0.0.0.0 --port 8989 \
-  -b hybrid-http-client \
-  -u http://steins-middleware.steins.net:9909
+curl http://127.0.0.1:8989/health
 ```
 
-Call it from Python:
+健康响应中必须包含 `protocol_version: 2`。仅有 `/v1/models` 和
+`/v1/chat/completions` 的地址是 OpenAI 兼容模型后端，不能直接填入
+`infrastructure_config.mineru.base_url`。
 
-```python
-import httpx
+## 部署 mineru-api
 
+单实例或开发环境直接运行 `mineru-api`。如果模型由该进程自行管理：
 
-async def parse_pdf_via_api(pdf_path: str) -> dict:
-    with open(pdf_path, "rb") as f:
-        pdf_bytes = f.read()
-
-    filename = pdf_path.split("/")[-1]
-
-    async with httpx.AsyncClient(timeout=900) as client:
-        response = await client.post(
-            "http://localhost:8989/file_parse",
-            files={"files": (filename, pdf_bytes, "application/pdf")},
-            data={
-                "backend": "hybrid-http-client",
-                "server_url": "http://steins-middleware.steins.net:9909",
-                "effort": "high",  # "high" enables image/chart analysis
-                "return_md": "true",
-                "return_content_list": "true",
-                "return_images": "false",
-            },
-        )
-        response.raise_for_status()
-        body = response.json()
-
-    stem = filename.removesuffix(".pdf")
-    result = body["results"][stem]
-    return {
-        "markdown": result["md_content"],
-        "content_list": result.get("content_list"),
-    }
+```bash
+mineru-api --host 127.0.0.1 --port 8989
 ```
 
-**Key API facts:**
+如果已有 OpenAI 兼容的 MinerU 2.5 vLLM，则让外部网关连接它：
 
-- Endpoint: `POST /file_parse` (sync) or `POST /tasks` (async)
-- Response key under `results` is the **filename stem** (no extension)
-- Batch: pass multiple files as `files=[("files", ...), ("files", ...)]`
-- `effort="medium"` is faster but disables image/chart analysis
-- `effort="high"` enables image/chart analysis (slower)
-- Output path is **not configurable per request** — controlled server-side via `MINERU_API_OUTPUT_ROOT` env var (default `./output`). Server auto-cleans files after 24h.
-
-**Full form parameters:**
-
-| Field                   | Default           | Description                                                     |
-| ----------------------- | ----------------- | --------------------------------------------------------------- |
-| `files`               | required          | PDF / image / DOCX / PPTX / XLSX                                |
-| `backend`             | `hybrid-engine` | `pipeline`, `vlm-http-client`, `hybrid-http-client`, etc. |
-| `server_url`          | `None`          | VLM server URL for`*-http-client` backends                    |
-| `effort`              | `medium`        | `medium` or `high` (hybrid backends only)                   |
-| `parse_method`        | `auto`          | `auto`, `txt`, `ocr` (pipeline/hybrid only)               |
-| `lang_list`           | `["ch"]`        | OCR language hint                                               |
-| `formula_enable`      | `True`          | Enable formula parsing                                          |
-| `table_enable`        | `True`          | Enable table parsing                                            |
-| `image_analysis`      | `True`          | Enable image/chart analysis                                     |
-| `return_md`           | `True`          | Return markdown in response                                     |
-| `return_content_list` | `False`         | Return structured content list                                  |
-| `return_middle_json`  | `False`         | Return internal middle JSON                                     |
-| `return_model_output` | `False`         | Return raw model output JSON                                    |
-| `return_images`       | `False`         | Return extracted images (base64)                                |
-| `response_format_zip` | `False`         | Return ZIP file instead of JSON                                 |
-| `start_page_id`       | `0`             | First page to parse (0-indexed)                                 |
-| `end_page_id`         | `99999`         | Last page to parse (0-indexed)                                  |
-
----
-
-### Option 2: Python library directly (`MinerUClient`)
-
-Use this when you need full control over output paths or want to embed parsing directly in your process without running an extra server.
-
-```python
-import asyncio
-from pathlib import Path
-import pypdfium2 as pdfium
-from pdf2image import convert_from_path
-from mineru_vl_utils import MinerUClient
-from mineru.backend.vlm.model_output_to_middle_json import result_to_middle_json
-from mineru.backend.vlm.vlm_middle_json_mkcontent import union_make
-from mineru.utils.pdfium_guard import open_pdfium_document
-from mineru.data.data_reader_writer.filebase import FileBasedDataWriter
-from mineru.utils.pdf_image_tools import load_images_from_pdf_doc
-from mineru.utils.enum_class import MakeMode
-
-
-def get_mineru_client() -> MinerUClient:
-    return MinerUClient(
-        backend="http-client",
-        server_url="http://steins-middleware.steins.net:9909",
-        max_concurrency=10,
-        http_timeout=3600,
-        image_analysis=True,
-    )
-
-
-async def parse_pdf(pdf_path: str, output_dir: str) -> str:
-    images_dir = Path(output_dir) / "images"
-    images_dir.mkdir(parents=True, exist_ok=True)
-
-    pdf_bytes = Path(pdf_path).read_bytes()
-    pdf_doc = open_pdfium_document(pdfium.PdfDocument, pdf_bytes)
-    image_list = load_images_from_pdf_doc(
-        pdf_doc=pdf_doc,
-        start_page_id=0,
-        end_page_id=len(pdf_doc) - 1,
-        pdf_bytes=pdf_bytes,
-    )
-
-    client = get_mineru_client()
-    images_pil = convert_from_path(pdf_path, dpi=300, fmt="png")
-    model_outputs = await client.aio_batch_two_step_extract(images_pil)
-
-    images_writer = FileBasedDataWriter(parent_dir=str(images_dir))
-    middle_json = result_to_middle_json(
-        model_outputs, image_list, pdf_doc, images_writer
-    )
-
-    markdown = union_make(middle_json["pdf_info"], MakeMode.MM_MD, images_dir)
-    return markdown
+```bash
+MINERU_VL_SERVER=http://<vlm-host>:<vlm-port> \
+MINERU_VL_MODEL_NAME=opendatalab/MinerU2.5-2509-1.2B \
+mineru-api --host 127.0.0.1 --port 8989
 ```
 
-**Processing pipeline:**
+对应的 Comet-RAG backend 是 `vlm-http-client`。当前 MinerU 用上述环境变量配置
+模型地址；不要把 `server_url` 开放成每个入库请求都能修改的参数。
 
-```
-PDF bytes
-  → pdf2image  → PIL images (one per page)
-  → MinerUClient.aio_batch_two_step_extract()
-      Step 1: layout detect  → ContentBlock list (bbox + type per block)
-      Step 2: content extract → text per block (via vLLM /v1/chat/completions)
-  → result_to_middle_json()  → internal middle JSON
-  → union_make(MakeMode.MM_MD)  → markdown string (in memory)
-```
+MinerU 在绑定 `0.0.0.0` 或 `::` 时默认禁用 `*-http-client` 和请求级
+`server_url`。确需远程访问时，`--allow-public-http-client` 是风险确认开关，
+**不是鉴权**；服务仍应放在私网并由 ACL 或认证代理保护。
 
-**Output control:**
+## 部署 mineru-router
 
-- `FileBasedDataWriter(parent_dir=...)` controls where images are saved
-- Markdown string is returned in memory — no file write needed
-- Also available: `MakeMode.CONTENT_LIST`, `MakeMode.CONTENT_LIST_V2`
+多实例或多 GPU 使用 `mineru-router`，Comet-RAG 只连接 Router 的统一地址。
+Router 会维护 `task_id → worker` 的亲和关系；不能用普通轮询负载均衡器替代，
+否则后续状态查询可能落到另一进程并返回 404。
 
----
+让 Router 管理本机 GPU：
 
-### Option 3: CLI subprocess (original approach)
-
-Use when running as a one-off tool or when you need the CLI's file-writing behavior.
-
-```python
-MINERU_CMD = [
-    "mineru",
-    "-p",
-    "{pdf}",
-    "-o",
-    "{outdir}",
-    "-b",
-    "hybrid-http-client",
-    "-u",
-    "http://steins-middleware.steins.net:9909",
-    "--effort",
-    "high",
-]
+```bash
+mineru-router --host 0.0.0.0 --port 8002 --local-gpus auto
 ```
 
-Cold-start overhead per invocation is low because the heavy VLM work goes to the remote server. Output is written to `{outdir}/{stem}/` as files on disk.
+绑定 `0.0.0.0` 只表示监听所有网卡，不代表接口已经受保护。Router 必须部署在
+私网，并至少由网络 ACL、防火墙或带身份认证的反向代理限制访问；对 Comet-RAG
+提供远程地址时还必须由代理终止 TLS。`--allow-public-http-client` 只解除 MinerU
+的 SSRF 防护限制，**不是身份认证或访问控制机制**。
 
----
+聚合已有 MinerU API 实例：
 
-## Comparison
+```bash
+mineru-router --host 0.0.0.0 --port 8002 \
+  --local-gpus none \
+  --upstream-url http://mineru-a:8000 \
+  --upstream-url http://mineru-b:8000
+```
 
-|                     | CLI subprocess        | Python library                      | `mineru-api` HTTP                           |
-| ------------------- | --------------------- | ----------------------------------- | --------------------------------------------- |
-| Extra server        | No                    | No                                  | Yes (`mineru-api`)                          |
-| Output path control | Full (via`-o`)      | Full (via`FileBasedDataWriter`)   | Server-side only (`MINERU_API_OUTPUT_ROOT`) |
-| Concurrency         | Semaphore + processes | `asyncio` + semaphore             | Server queue (max 3 concurrent by default)    |
-| Content in memory   | No (read from disk)   | Yes (`union_make` returns string) | Yes (JSON response)                           |
-| Best for            | Simple scripts        | Embedded in RAG service             | Microservice / multi-client                   |
+Router 对外提供相同的 `/health` 和 `/tasks` 协议，因此 Comet-RAG 不需要切换
+适配器。Router 和 worker 的任务映射都在内存中，服务重启后旧任务可能消失；
+适配器遇到 404 会在同一总超时内重提一次，不会无限重提。
 
----
+## 配置 Comet-RAG
 
-## `MinerUClient` Key Methods
+`base_url` 指向 `mineru-api` 或 `mineru-router`，不是 vLLM：
 
-| Method                                 | Description                                                |
-| -------------------------------------- | ---------------------------------------------------------- |
-| `two_step_extract(image)`            | Sync: layout detect + content extract for one page         |
-| `aio_two_step_extract(image)`        | Async single page                                          |
-| `batch_two_step_extract(images)`     | Sync batch (all pages)                                     |
-| `aio_batch_two_step_extract(images)` | Async batch — use this for RAG                            |
-| `layout_detect(image)`               | Layout only (returns`ExtractResult` with bounding boxes) |
-| `content_extract(image, type)`       | Extract content from a single block type                   |
+```yaml
+infrastructure_config:
+  mineru:
+    enabled: true
+    base_url: http://127.0.0.1:8989
+    backend: vlm-http-client       # 自带模型可使用 pipeline
+    parse_method: auto             # auto | txt | ocr
+    language: ch
+    formula: true
+    table: true
+    connect_timeout_seconds: 10.0
+    request_timeout_seconds: 60.0
+    upload_timeout_seconds: 300.0
+    poll_interval_seconds: 1.0
+    parse_timeout_seconds: 900.0
+    max_response_bytes: 16777216   # 16 MiB
+    max_markdown_bytes: 8388608    # 8 MiB
 
-`ExtractResult` is a `list[ContentBlock]`. Each `ContentBlock` is a dict with:
+limits:
+  mineru_concurrency: 2
+  mineru_queue: 16
+  mineru_wait_timeout: 30.0
+```
 
-- `type`: `"text"`, `"title"`, `"table"`, `"image"`, `"chart"`, `"equation"`, etc.
-- `bbox`: `[x1, y1, x2, y2]` normalized to `[0, 1]`
-- `content`: extracted text string
-- `angle`: rotation angle (`None`, `0`, `90`, `180`, `270`)
+Comet-RAG 仅允许 `localhost`、`127.0.0.0/8` 和 `::1` 使用明文 HTTP；任何非回环
+`base_url` 都必须使用 HTTPS，避免上传的原始 PDF 在网络路径中被读取或篡改。
 
+`enabled=false` 时不会创建 MinerU 客户端，也不会注册 PDF Hook。启用后，组合根
+为同步与异步 Pipeline 注册同一个 PDF 提取器，并在应用关停时释放连接池。
+
+来源准入仍单独生效：本地文件需要 `allow_local` 与 `local_roots`，S3/MinIO 需要
+`allow_s3`、bucket 白名单和连接配置；URL 仍受私网与重定向 SSRF 检查。后缀为
+`.pdf` 只是候选格式，上传 MinerU 前还会按真实字节复验。
+
+## 入库与观察
+
+```bash
+curl -X POST http://127.0.0.1:8000/kb \
+  -H 'Content-Type: application/json' \
+  -d '{"kb_id":"pdf-demo"}'
+
+curl -X POST http://127.0.0.1:8000/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{"kb_id":"pdf-demo","source":"/data/report.pdf"}'
+
+curl http://127.0.0.1:8000/tasks/<task_id>
+
+curl -X POST http://127.0.0.1:8000/search \
+  -H 'Content-Type: application/json' \
+  -d '{"kb_id":"pdf-demo","query":"报告结论","top_k":5}'
+```
+
+`GET /admin/limits` 中的 `mineru_gate` 给出 `limit`、`in_flight`、`waiting` 和
+`rejected`。`in_flight` 长期贴顶说明解析服务是瓶颈；`waiting` 或 `rejected`
+持续增长时，应优先扩 MinerU/Router 容量，再按上游能力调整本进程并发。
+
+错误语义：429、5xx、网络错误和远端任务丢失可重试；确定性 4xx、协议不兼容、
+伪造 PDF 与资源超限直接失败。取消 Comet-RAG 任务会停止本地轮询并释放响应流，
+但 MinerU protocol v2 没有稳定的远端取消接口，不能承诺终止已经开始的 GPU 计算。
+
+## 真实集成测试与基准
+
+未设置地址或服务不可达时用例会 skip，不会让普通开发环境失败：
+
+```bash
+COMET_TEST_MINERU_URL=http://127.0.0.1:8989 \
+COMET_TEST_MINERU_BACKEND=vlm-http-client \
+uv run pytest -m integration tests/integration/test_mineru_e2e.py \
+  --mineru-report mineru-report.json
+```
+
+2026-09-10 的 M2 验收使用 MinerU 3.4.5 / protocol v2 与远端 MinerU 2.5
+vLLM：文本 PDF 端到端 2.10s，扫描 PDF 3.11s，均完成提取、分块、入库和检索；
+Comet-RAG 测试进程 Python 堆峰值约 1.45 MB。
+
+样本只有单页，只证明协议和全链路可工作，不能代表生产长文档的 p95/p99，也不能
+测出外部 MinerU 的 CPU、显存或 RSS。因此保留 900s 总超时、16 MiB 响应和
+8 MiB Markdown 的保守默认值，生产部署应使用自己的文档集重新采样。
+
+## 不支持的集成方式
+
+- 在 Comet-RAG 中 import `mineru` 或 `mineru_vl_utils`；
+- 通过 Python SDK 直接调用 `MinerUClient`；
+- 从 API 或 worker 启动 `mineru` CLI 子进程；
+- 在 Comet-RAG 配置中管理模型权重或 GPU；
+- 把 vLLM 地址直接当作 `mineru-api` 地址。
+
+将来若要支持进程内 MinerU，必须新建规格重新评审依赖、进程隔离与资源治理，
+不能作为 HTTP 适配器的隐式 fallback。
+
+## 官方依据
+
+- [MinerU 快速使用](https://github.com/opendatalab/MinerU/blob/master/docs/zh/usage/quick_usage.md)
+- [MinerU FastAPI 实现](https://github.com/opendatalab/MinerU/blob/master/mineru/cli/fast_api.py)
+- [MinerU 请求参数](https://github.com/opendatalab/MinerU/blob/master/mineru/cli/api_request.py)
+- [MinerU API 客户端](https://github.com/opendatalab/MinerU/blob/master/mineru/cli/api_client.py)

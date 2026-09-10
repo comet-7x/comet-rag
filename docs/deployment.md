@@ -186,6 +186,49 @@ ingest_policy:
 
 ---
 
+## PDF 与外部 MinerU
+
+PDF 提取不是 Comet-RAG 进程内能力。先独立部署 `mineru-api` 或
+`mineru-router`，确认 `GET /health` 返回 `protocol_version=2`，再启用配置：
+
+```yaml
+infrastructure_config:
+  mineru:
+    enabled: true
+    base_url: "https://mineru-router.example.internal"  # 或单实例 mineru-api
+    backend: vlm-http-client               # 本地 pipeline 部署可改为 pipeline
+    parse_method: auto
+    language: ch
+    formula: true
+    table: true
+    connect_timeout_seconds: 10.0
+    request_timeout_seconds: 60.0
+    upload_timeout_seconds: 300.0
+    poll_interval_seconds: 1.0
+    parse_timeout_seconds: 900.0
+    max_response_bytes: 16777216
+    max_markdown_bytes: 8388608
+limits:
+  mineru_concurrency: 2
+  mineru_queue: 16
+  mineru_wait_timeout: 30.0
+```
+
+`base_url` 必须是 MinerU 文档服务，不能是只提供 `/v1/models` 的 vLLM。使用远端
+MinerU VLM 时，在 `mineru-api` 进程侧设置 `MINERU_VL_SERVER` 和
+`MINERU_VL_MODEL_NAME`，不要允许 `/ingest` 调用方传模型地址。
+
+跨进程部署中，PDF 的外部等待目前仍属于 preprocessor 的 `extracting` 阶段，
+会占用一个 worker job 名额，但不会阻塞 asyncio 事件循环。M2 实测两个单页样本的
+CPU lane 持有比例都超过 99%，因此不要仅靠提高 preprocessor 并发来掩盖慢上游；
+先观察 `/admin/limits` 的 `mineru_gate`，再扩 MinerU/Router 容量。按格式动态分道
+会改变任务路由语义，留给有长文档生产数据后的独立规格。
+
+完整的单实例、远端 vLLM、Router、协议验证和集成测试命令见
+[MinerU 集成](mineru_integration.md)。
+
+---
+
 ## 运维
 
 ### 看限流与降级
@@ -197,6 +240,7 @@ curl localhost:8000/admin/limits
 ```json
 {
   "model_gate": {"limit": 8, "in_flight": 8, "waiting": 42, "rejected": 3, ...},
+  "mineru_gate": {"limit": 2, "in_flight": 2, "waiting": 4, "rejected": 0, ...},
   "backlog": {"pending": 137, "max_backlog": 1000},
   "degradation": {"level": "NO_RERANK", "failure_rate": 0.31, ...}
 }
@@ -205,6 +249,7 @@ curl localhost:8000/admin/limits
 - `in_flight` 贴着 `limit` → 下游是瓶颈
 - `waiting` 一直很高 → 该加 worker 或提高上限了
 - `rejected` 在涨 → 已经在拒请求
+- `mineru_gate` 为 `null` → PDF 外部提取未启用
 - `level` ≠ NORMAL → 服务正在降级运行，检索质量已经打了折
 
 `/admin/health` **刻意不查下游**：探针查下游会让一次数据库抖动把整个服务从

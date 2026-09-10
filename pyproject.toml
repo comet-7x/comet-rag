@@ -40,10 +40,6 @@ server = [
     "aioboto3>=13.0.0",
 ]
 
-# M2 才会用到。刻意独立成组：它会拖进 torch/modelscope/opencv 等数 GB 依赖，
-# 不应进入 `all`。装法：uv sync --extra mineru
-mineru = ["mineru>=2.0.0"]
-
 all = ["comet-rag[milvus,server]"]
 
 # 唯一推荐的启动入口。见 docs/deployment.md 与 comet_rag/cli.py 顶部：

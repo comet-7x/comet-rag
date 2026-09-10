@@ -17,7 +17,7 @@ help: ## 显示此帮助信息
 install: ## 安装依赖并配置 pre-commit
 	# --extra all（milvus + server）而非裸 uv sync：少了它们，pyright 会把
 	# fastapi / sqlalchemy / pymilvus 全报成"无法解析的导入"，make lint 直接红。
-	# 刻意不用 --all-extras —— 那会把 mineru 的数 GB 依赖一起拖下来（M2 才要）。
+	# MinerU 不属于任何项目依赖组；PDF 只通过 HTTP 连接外部服务。
 	uv sync --extra all
 	uv run pre-commit install
 

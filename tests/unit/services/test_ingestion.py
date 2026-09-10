@@ -20,6 +20,7 @@ from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.infrastructure.knowledge_base import InMemoryKnowledgeBaseRepository
 from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.ports import RetryableDocumentUpstreamError
 from comet_rag.services.ingestion import (
     INGEST_KIND,
     IngestRunner,
@@ -209,6 +210,25 @@ async def test_ingest_writes_all_chunks(
     assert await store.acount(KB) == 3
 
 
+async def test_ingest_prefers_async_extractor(
+    svc: TaskService, calls: dict[str, int]
+) -> None:
+    async_calls = 0
+
+    @PipelineHooks.aextractor(STUB_TYPE)
+    async def _extract(lc: LoaderContent, config: PipelineConfig) -> str:
+        nonlocal async_calls
+        async_calls += 1
+        return "段落一。段落二。段落三。"
+
+    task = await svc.submit(INGEST_KIND, request())
+    done = await wait_for_terminal(svc.store, task.task_id)
+
+    assert done.status is TaskStatus.SUCCEEDED, done.error
+    assert async_calls == 1
+    assert calls["extract"] == 0
+
+
 async def test_every_chunk_carries_kb_id(
     svc: TaskService, store: InMemoryVectorStore
 ) -> None:
@@ -257,6 +277,9 @@ async def test_large_intermediate_state_is_cleared(svc: TaskService) -> None:
     assert done.context.get("text") is None
     assert done.context.get("chunks") is None
     assert done.context["source_id"], "但溯源信息要留着"
+    assert done.context["extracted_text_bytes"] == len(
+        "段落一。段落二。段落三。".encode()
+    )
 
 
 # ── 断点续跑（spec A10-修正）───────────────────────────────────────────────
@@ -326,6 +349,61 @@ async def test_download_network_error_retries_extracting_stage(
     assert done.status is TaskStatus.SUCCEEDED
     assert done.attempts == 2
     assert loader.loads == 2
+
+
+async def test_document_upstream_error_retries_extracting_stage(
+    svc: TaskService,
+) -> None:
+    attempts = 0
+
+    @PipelineHooks.aextractor(STUB_TYPE)
+    async def _extract(lc: LoaderContent, config: PipelineConfig) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RetryableDocumentUpstreamError("MinerU 返回 503")
+        return "段落一。段落二。段落三。"
+
+    task = await svc.submit(INGEST_KIND, request(), max_attempts=3)
+    done = await wait_for_terminal(svc.store, task.task_id)
+
+    assert done.status is TaskStatus.SUCCEEDED, done.error
+    assert done.attempts == 2
+    assert attempts == 2
+
+
+async def test_extracted_text_is_rechecked_before_task_context_write(
+    task_store: InMemoryTaskStore,
+    model: FakeEmbeddingModel,
+    store: InMemoryVectorStore,
+    loader: StubLoader,
+    kb_service: KnowledgeBaseService,
+) -> None:
+    """Provider 限长不是信任边界；持久化前必须按 UTF-8 字节数再检查一次。"""
+    await kb_service.create(KnowledgeBaseSpec(kb_id=KB))
+    register_ingest_runner(
+        IngestRunner(
+            embedding_model=model,
+            vector_store=store,
+            knowledge_base=kb_service,
+            loader=loader,
+            max_extracted_text_bytes_by_type={STUB_TYPE: 5},
+        )
+    )
+    executor = InProcessExecutor(task_store, retry_backoff=0.01)
+    service = TaskService(task_store, executor)
+    try:
+        task = await service.submit(INGEST_KIND, request(), max_attempts=3)
+        done = await wait_for_terminal(task_store, task.task_id)
+    finally:
+        await executor.shutdown(timeout=5.0)
+        unregister(INGEST_KIND)
+
+    assert done.status is TaskStatus.FAILED
+    assert done.attempts == 1
+    assert "text" not in done.context
+    assert done.error is not None
+    assert "Task context" in done.error.message
 
 
 async def test_server_5xx_is_retriable(

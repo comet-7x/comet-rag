@@ -7,11 +7,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from comet_rag.composition.bootstrap import build_context, build_embedding_model
+from comet_rag.api.routes.admin import limits as admin_limits
+from comet_rag.composition.bootstrap import (
+    build_context,
+    build_embedding_model,
+    build_mineru_extractor,
+    wire_pdf_extractor,
+)
 from comet_rag.config.schemas import (
     APPConfig,
     Backend,
@@ -19,19 +26,30 @@ from comet_rag.config.schemas import (
     EmbeddingModelConfig,
     InfrastructureConfig,
     IngestPolicyConfig,
+    MinerUConfig,
     S3Config,
     ServerConfig,
 )
 from comet_rag.core.concurrency import Gate
 from comet_rag.engines.loaders.auto_loader import AutoLoader
-from comet_rag.engines.loaders.types import SourceContent
-from comet_rag.engines.pipelines import DocxConfig, PipelineConfig
+from comet_rag.engines.loaders.data_type import ContentTypeMismatch
+from comet_rag.engines.loaders.local_loader import LocalLoader
+from comet_rag.engines.loaders.types import LoaderContent, SourceContent
+from comet_rag.engines.pipelines import (
+    DocxConfig,
+    Pipeline,
+    PipelineConfig,
+    PipelineHooks,
+)
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.loaders import S3Loader
 from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.providers.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
-from comet_rag.ports import MediaResource, MultimodalEmbeddingPort
+from comet_rag.ports import ExtractedDocument, MediaResource, MultimodalEmbeddingPort
+from comet_rag.ports.gate import GatedResource
+from comet_rag.services.ingestion import IngestRunner
+from tests.fixtures.pdf import build_minimal_pdf
 
 DIM = 3
 
@@ -45,6 +63,14 @@ def make_config(**backend_overrides: Any) -> APPConfig:
             )
         ),
         backends=BackendsConfig(**backend_overrides),
+    )
+
+
+def enable_mineru(config: APPConfig, **overrides: Any) -> None:
+    config.infrastructure_config.mineru = MinerUConfig(
+        enabled=True,
+        base_url="https://mineru.test/api",
+        **overrides,
     )
 
 
@@ -74,6 +100,33 @@ class FakeReranker(BaseReranker):
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+class FakePdfExtractor(GatedResource):
+    def __init__(
+        self, *, markdown: str = "# PDF", close_order: list[str] | None = None
+    ) -> None:
+        self.calls: list[tuple[Path, str, str]] = []
+        self.closed = False
+        self.markdown = markdown
+        self._close_order = close_order
+
+    def extract(
+        self, path: Path, /, *, filename: str, media_type: str
+    ) -> ExtractedDocument:
+        self.calls.append((path, filename, media_type))
+        return ExtractedDocument(markdown=self.markdown)
+
+    async def aextract(
+        self, path: Path, /, *, filename: str, media_type: str
+    ) -> ExtractedDocument:
+        self.calls.append((path, filename, media_type))
+        return ExtractedDocument(markdown=self.markdown)
+
+    async def aclose(self) -> None:
+        self.closed = True
+        if self._close_order is not None:
+            self._close_order.append("mineru")
 
 
 @pytest.fixture
@@ -226,6 +279,230 @@ def test_allowing_s3_without_connection_config_fails_at_startup(
         build_context(config, embedding_model=embedding)
 
 
+async def test_mineru_is_not_built_or_registered_when_disabled(
+    embedding: FakeEmbedding,
+) -> None:
+    context = build_context(make_config(), embedding_model=embedding)
+
+    assert context.mineru_gate is None
+    assert context.extracted_text_limits == {}
+    with pytest.raises(ValueError, match="No extractor registered"):
+        PipelineHooks.get_extractor("pdf")
+
+    await context.aclose()
+
+
+async def test_enabled_mineru_binds_an_independent_gate_and_pdf_hooks(
+    embedding: FakeEmbedding,
+    tmp_path: Path,
+) -> None:
+    config = make_config()
+    enable_mineru(config)
+    config.limits.mineru_concurrency = 2
+    config.limits.mineru_queue = 5
+    config.limits.mineru_wait_timeout = 7.0
+    extractor = FakePdfExtractor()
+    context = build_context(
+        config,
+        embedding_model=embedding,
+        mineru_extractor=extractor,
+    )
+
+    assert isinstance(context.mineru_gate, Gate)
+    assert context.mineru_gate is not context.model_gate
+    assert context.mineru_gate.stats.limit == 2
+    assert context.mineru_gate.name == "mineru"
+    assert context.mineru_gate._max_waiting == 5  # noqa: SLF001
+    assert context.mineru_gate._timeout == 7.0  # noqa: SLF001
+    assert extractor._gate is context.mineru_gate  # noqa: SLF001
+
+    path = build_minimal_pdf(tmp_path / "report.pdf")
+    content = LoaderContent(
+        path=path,
+        source=SourceContent(path),
+        metadata={"file_name": "original.pdf", "file_type": "pdf"},
+    )
+    assert (
+        context.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        == "# PDF"
+    )
+    async_hook = context.pipeline_hooks.get_aextractor("pdf")
+    assert async_hook is not None
+    assert await async_hook(content, PipelineConfig()) == "# PDF"
+    assert extractor.calls == [
+        (path, "original.pdf", "application/pdf"),
+        (path, "original.pdf", "application/pdf"),
+    ]
+
+    await context.aclose()
+    assert extractor.closed
+    with pytest.raises(ValueError, match="No extractor registered"):
+        context.pipeline_hooks.get_extractor("pdf")
+
+
+async def test_mineru_hooks_are_isolated_between_contexts_and_disabled_restart(
+    embedding: FakeEmbedding,
+    tmp_path: Path,
+) -> None:
+    enabled = make_config()
+    enable_mineru(enabled)
+    first_extractor = FakePdfExtractor(markdown="# first")
+    second_extractor = FakePdfExtractor(markdown="# second")
+    first = build_context(
+        enabled, embedding_model=embedding, mineru_extractor=first_extractor
+    )
+    second = build_context(
+        enabled, embedding_model=embedding, mineru_extractor=second_extractor
+    )
+    path = build_minimal_pdf(tmp_path / "isolated.pdf")
+    content = LoaderContent(
+        path=path,
+        source=SourceContent(path),
+        metadata={"file_name": path.name, "file_type": "pdf"},
+    )
+
+    assert (
+        first.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        == "# first"
+    )
+    assert (
+        second.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        == "# second"
+    )
+    with pytest.raises(ValueError, match="No extractor registered"):
+        PipelineHooks.get_extractor("pdf")
+
+    await first.aclose()
+    disabled = build_context(make_config(), embedding_model=embedding)
+    assert first_extractor.closed
+    assert not second_extractor.closed
+    with pytest.raises(ValueError, match="No extractor registered"):
+        disabled.pipeline_hooks.get_extractor("pdf")
+    assert (
+        second.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        == "# second"
+    )
+
+    await second.aclose()
+    await disabled.aclose()
+
+
+async def test_pdf_pipeline_sync_and_async_use_the_document_extractor_port(
+    tmp_path: Path,
+) -> None:
+    path = build_minimal_pdf(tmp_path / "report.pdf")
+    extractor = FakePdfExtractor()
+    wire_pdf_extractor(extractor)
+    pipeline = Pipeline(loader=LocalLoader(), config=PipelineConfig(chunk_overlap=0))
+
+    sync_result = pipeline.run(path)
+    async_result = await pipeline.arun(path)
+
+    assert sync_result.file_type == "pdf"
+    assert async_result.file_type == "pdf"
+    assert [chunk.text for chunk in sync_result.chunks] == ["# PDF"]
+    assert [chunk.text for chunk in async_result.chunks] == ["# PDF"]
+    assert [call[0] for call in extractor.calls] == [path, path]
+
+
+async def test_pdf_content_is_rechecked_before_calling_the_extractor(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "forged.pdf"
+    path.write_text("This is plain text, not a PDF.", encoding="utf-8")
+    extractor = FakePdfExtractor()
+    wire_pdf_extractor(extractor)
+    content = LoaderContent(
+        path=path,
+        source=SourceContent(path),
+        metadata={"file_name": path.name, "file_type": "pdf"},
+    )
+
+    with pytest.raises(ContentTypeMismatch, match="pdf.*txt"):
+        PipelineHooks.get_extractor("pdf")(content, PipelineConfig())
+    async_hook = PipelineHooks.get_aextractor("pdf")
+    assert async_hook is not None
+    with pytest.raises(ContentTypeMismatch, match="pdf.*txt"):
+        await async_hook(content, PipelineConfig())
+
+    assert extractor.calls == [], "伪造 PDF 不得上传到外部解析服务"
+
+
+async def test_admin_limits_exposes_enabled_mineru_gate(
+    embedding: FakeEmbedding,
+) -> None:
+    config = make_config()
+    enable_mineru(config)
+    context = build_context(
+        config,
+        embedding_model=embedding,
+        mineru_extractor=FakePdfExtractor(),
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(ctx=context)),
+    )
+
+    body = await admin_limits(request)  # type: ignore[arg-type]
+
+    assert body["mineru_gate"]["limit"] == config.limits.mineru_concurrency
+    await context.aclose()
+
+
+async def test_mineru_builder_forwards_all_provider_settings() -> None:
+    config = make_config()
+    enable_mineru(
+        config,
+        backend="vlm-http-client",
+        parse_method="ocr",
+        language="en",
+        formula=False,
+        table=False,
+        connect_timeout_seconds=3.0,
+        request_timeout_seconds=7.0,
+        upload_timeout_seconds=11.0,
+        poll_interval_seconds=0.5,
+        parse_timeout_seconds=13.0,
+        max_response_bytes=1024,
+        max_markdown_bytes=512,
+    )
+
+    extractor = build_mineru_extractor(config)
+    assert extractor is not None
+    assert extractor._backend == "vlm-http-client"  # noqa: SLF001
+    assert extractor._parse_method == "ocr"  # noqa: SLF001
+    assert extractor._language == "en"  # noqa: SLF001
+    assert extractor._formula is False  # noqa: SLF001
+    assert extractor._table is False  # noqa: SLF001
+    assert extractor._connect_timeout_seconds == 3.0  # noqa: SLF001
+    assert extractor._request_timeout_seconds == 7.0  # noqa: SLF001
+    assert extractor._upload_timeout_seconds == 11.0  # noqa: SLF001
+    assert extractor._poll_interval_seconds == 0.5  # noqa: SLF001
+    assert extractor._parse_timeout_seconds == 13.0  # noqa: SLF001
+    assert extractor._max_response_bytes == 1024  # noqa: SLF001
+    assert extractor._max_markdown_bytes == 512  # noqa: SLF001
+    await extractor.aclose()
+
+
+def test_enabled_mineru_propagates_pdf_task_context_limit(
+    embedding: FakeEmbedding,
+) -> None:
+    config = make_config()
+    enable_mineru(config, max_response_bytes=2048, max_markdown_bytes=1024)
+
+    context = build_context(
+        config,
+        embedding_model=embedding,
+        mineru_extractor=FakePdfExtractor(),
+    )
+
+    assert context.extracted_text_limits == {"pdf": 1024}
+    from comet_rag.tasks import get_runner
+
+    runner = get_runner("ingest")
+    assert isinstance(runner, IngestRunner)
+    assert runner._max_extracted_text_bytes_by_type == {"pdf": 1024}  # noqa: SLF001
+
+
 async def test_runner_registration_is_idempotent(embedding: FakeEmbedding) -> None:
     """应用重启（或测试反复装配）不该因重复注册而崩。"""
     first = build_context(make_config(), embedding_model=embedding)
@@ -308,6 +585,37 @@ async def test_aclose_closes_models(embedding: FakeEmbedding) -> None:
 
     assert embedding.closed is True
     assert reranker.closed is True
+
+
+async def test_aclose_stops_tasks_then_closes_mineru_before_downstream(
+    embedding: FakeEmbedding,
+) -> None:
+    order: list[str] = []
+
+    class RecordingStore(InMemoryVectorStore):
+        async def aclose(self) -> None:
+            order.append("vector_store")
+
+    config = make_config()
+    enable_mineru(config)
+    extractor = FakePdfExtractor(close_order=order)
+    context = build_context(
+        config,
+        embedding_model=embedding,
+        vector_store=RecordingStore(),
+        mineru_extractor=extractor,
+    )
+    original_shutdown = context.task_executor.shutdown
+
+    async def recording_shutdown(**kwargs):
+        order.append("executor")
+        await original_shutdown(**kwargs)
+
+    context.task_executor.shutdown = recording_shutdown  # type: ignore[method-assign]
+
+    await context.aclose()
+
+    assert order[:3] == ["executor", "mineru", "vector_store"]
 
 
 async def test_one_failing_resource_does_not_block_the_rest(
