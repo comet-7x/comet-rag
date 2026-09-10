@@ -1,27 +1,27 @@
 import asyncio
-import tempfile
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Any, final
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import httpx
-from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from comet_rag.engines.loaders.base_loader import DEFAULT_MAX_CONCURRENCY, BaseLoader
+from comet_rag.engines.loaders.base_loader import (
+    DEFAULT_MAX_CONCURRENCY,
+    BaseLoader,
+)
 from comet_rag.engines.loaders.data_type import (
     ContentTypeMismatch as _ContentTypeMismatch,
 )
-from comet_rag.engines.loaders.data_type import (
-    ParseConfig,
-    is_allowed_extension,
-    resolve_detected_extension,
+from comet_rag.engines.loaders.file_info import (
+    TemporaryFileRegistry,
+    build_file_metadata,
+    resolve_downloaded_extension,
 )
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
-from comet_rag.engines.utils.file_detector import detect_content_type_from_path
 
 DEFAULT_MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
 _STREAM_CHUNK_BYTES = 64 * 1024
@@ -83,7 +83,7 @@ class URLLoader(BaseLoader):
         if max_redirects < 0:
             raise ValueError("max_redirects cannot be negative")
         self.download_dir = Path(download_dir) if download_dir else None
-        self._temp_files: list[str] = []
+        self._temporary_files = TemporaryFileRegistry(self.download_dir)
         self._timeout = timeout
         self._follow_redirects = follow_redirects
         self._max_download_bytes = max_download_bytes
@@ -105,7 +105,7 @@ class URLLoader(BaseLoader):
 
     @property
     def temp_files(self) -> list[str]:
-        return self._temp_files.copy()
+        return self._temporary_files.paths
 
     def _shared_client(self) -> httpx.Client:
         """懒创建：只用异步路径的调用方不必平白多一个同步连接池。"""
@@ -180,25 +180,8 @@ class URLLoader(BaseLoader):
             self._lifecycle.notify_all()
 
     def _build_metadata(self, file_path: str, source: SourceContent) -> dict[str, Any]:
-        path = Path(file_path)
-        file_type = path.suffix.lstrip(".").lower()
-        file_size = path.stat().st_size
-        if file_size <= 0:
-            raise ValueError(
-                f"File is empty and cannot be loaded. Path: {path.resolve()}, type: {file_type}"
-            )
-        metadata = {
-            "source_type": source.source_type,
-            "file_name": path.name,
-            "file_type": file_type,
-            "file_size": file_size,
-        }
-        try:
-            metadata["parse_config"] = ParseConfig.from_extension(file_type)
-        except ValueError:
-            metadata["parse_config"] = None
-
-        return metadata
+        declared_name = Path(unquote(source.parsed_url.path)).name or Path(file_path).name
+        return build_file_metadata(file_path, source, file_name=declared_name)
 
     def _download(
         self,
@@ -323,35 +306,15 @@ class URLLoader(BaseLoader):
 
     def _new_temp_file(self):
         # 异步路径需要让文件跨多个 await 保持打开，不能使用词法 with 块。
-        tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
-            delete=False, dir=self.download_dir
-        )
-        self._temp_files.append(tmp.name)
-        return tmp
+        return self._temporary_files.create()
 
     def _discard_temp(self, path: str) -> None:
-        Path(path).unlink(missing_ok=True)
-        with suppress(ValueError):
-            self._temp_files.remove(path)
+        self._temporary_files.discard(path)
 
     def _finalize_temp(self, path: str, response_url: httpx.URL) -> str:
-        source_ext = Path(urlparse(str(response_url)).path).suffix.lstrip(".").lower()
-        source_allowed = is_allowed_extension(source_ext)
-        try:
-            detected = detect_content_type_from_path(path).lower().lstrip(".")
-        except Exception as exc:  # 探测器不可用时才允许退回 URL 后缀
-            if not source_allowed:
-                raise ValueError(
-                    f"Unable to determine downloaded content type for {response_url}"
-                ) from exc
-            logger.warning(f"内容探测失败，回退到 URL 后缀 {source_ext!r}: {exc!r}")
-            label = source_ext
-        else:
-            label = resolve_detected_extension(source_ext, detected)
-        target = str(Path(path).with_suffix(f".{label}"))
-        Path(path).replace(target)
-        self._temp_files[self._temp_files.index(path)] = target
-        return target
+        declared_name = Path(unquote(urlparse(str(response_url)).path)).name
+        label = resolve_downloaded_extension(path, declared_name)
+        return self._temporary_files.replace_suffix(path, label)
 
     def _stream_response(
         self, response: httpx.Response, config: DownloadRequestConfig
@@ -434,6 +397,7 @@ class URLLoader(BaseLoader):
             source=source,
             is_temp=True,
             metadata=self._build_metadata(file_path, source),
+            _release=lambda: self._temporary_files.release(file_path),
         )
 
     async def _aload(
@@ -470,7 +434,11 @@ class URLLoader(BaseLoader):
             None, self._build_metadata, file_path, source
         )
         return LoaderContent(
-            path=Path(file_path), source=source, is_temp=True, metadata=metadata
+            path=Path(file_path),
+            source=source,
+            is_temp=True,
+            metadata=metadata,
+            _release=lambda: self._temporary_files.release(file_path),
         )
 
     @final
@@ -552,9 +520,7 @@ class URLLoader(BaseLoader):
             self._end_cleanup()
 
     def _cleanup_sync_resources(self) -> None:
-        for path in self._temp_files:
-            Path(path).unlink(missing_ok=True)
-        self._temp_files.clear()
+        self._temporary_files.cleanup()
         with self._client_lock:
             if self._owns_client and self._client is not None:
                 self._client.close()

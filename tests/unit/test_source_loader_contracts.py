@@ -51,7 +51,7 @@ class TestURLLoaderContract(SourceLoaderContract):
             async_client=async_client,
         )
         monkeypatch.setattr(
-            "comet_rag.engines.loaders.url_loader.detect_content_type_from_path",
+            "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
             lambda path: "txt",
         )
         yield loader
@@ -126,7 +126,7 @@ class TestS3LoaderContract(SourceLoaderContract):
             async_client=async_client,
         )
         monkeypatch.setattr(
-            "comet_rag.infrastructure.loaders.s3_loader.detect_content_type_from_path",
+            "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
             lambda path: "txt",
         )
         yield loader
