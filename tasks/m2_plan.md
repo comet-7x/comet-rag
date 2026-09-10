@@ -23,8 +23,9 @@ M2 后 P1 已完成：DOCX/PDF 共用 `DocumentExtractorPort` 概念，来源加
 共享契约和 `comet_rag.loaders` 公共门面。下一项为 M3 单独冻结 BM25/RRF 规格。
 动态分道仍需长文档生产样本，不作为 M3 规格的顺手改动。
 
-Loader 统一和 DOCX 提取器迁移已记录为 M2 后 P1，不在此刻移动约 2,000 行 Loader
-代码。目录美化不能优先于一个可能无界轮询的外部服务调用。
+P1 实施后仍保留约 2,000 行 Loader 的物理分层：核心实现位于 `engines`，依赖可选
+SDK 的 S3 实现位于 `infrastructure`，仅通过公共门面统一用户入口。这是 core-only
+边界的长期决策，不是尚待执行的目录迁移。
 
 ## Architecture Decisions
 

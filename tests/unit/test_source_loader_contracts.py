@@ -8,8 +8,9 @@ import httpx
 import pytest
 
 from comet_rag.engines.loaders import LocalLoader, URLLoader
+from comet_rag.engines.loaders.file_info import TemporaryFileRegistry
 from comet_rag.infrastructure.loaders import S3Loader
-from comet_rag.ports import SourceLoaderPort
+from comet_rag.ports import LoadedResource, SourceContent, SourceLoaderPort
 from tests.contracts.source_loader import SourceLoaderContract
 
 PAYLOAD = b"shared loader contract"
@@ -172,3 +173,64 @@ def test_contract_guard_detects_a_leaked_temporary_file(tmp_path: Path) -> None:
 
     with pytest.raises(AssertionError):
         SourceLoaderContract._assert_released(leaked, temporary=True)
+
+
+def test_resource_keeps_release_callback_when_unlink_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "retry.txt"
+    path.write_bytes(PAYLOAD)
+    releases: list[None] = []
+    resource = LoadedResource(
+        path=path,
+        source=SourceContent(path),
+        is_temp=True,
+        _release=lambda: releases.append(None),
+    )
+    original_unlink = Path.unlink
+
+    def fail_target(target: Path, *, missing_ok: bool = False) -> None:
+        if target == path:
+            raise PermissionError("still in use")
+        original_unlink(target, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_target)
+    with pytest.raises(PermissionError, match="still in use"):
+        resource.cleanup()
+
+    assert releases == []
+    assert resource._release is not None  # noqa: SLF001
+
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    resource.cleanup()
+    assert releases == [None]
+
+
+def test_registry_retains_failed_paths_and_continues_cleanup(
+    tmp_path: Path, monkeypatch
+) -> None:
+    blocked = tmp_path / "blocked.txt"
+    removable = tmp_path / "removable.txt"
+    blocked.write_bytes(PAYLOAD)
+    removable.write_bytes(PAYLOAD)
+    registry = TemporaryFileRegistry()
+    registry.track(blocked)
+    registry.track(removable)
+    original_unlink = Path.unlink
+
+    def fail_blocked(target: Path, *, missing_ok: bool = False) -> None:
+        if target == blocked:
+            raise PermissionError("still in use")
+        original_unlink(target, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_blocked)
+    with pytest.raises(PermissionError, match="still in use"):
+        registry.cleanup()
+
+    assert blocked.exists()
+    assert not removable.exists(), "单个失败不应阻止其余路径清理"
+    assert registry.paths == [str(blocked)]
+
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    registry.cleanup()
+    assert registry.paths == []

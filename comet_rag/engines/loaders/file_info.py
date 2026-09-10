@@ -112,9 +112,19 @@ class TemporaryFileRegistry:
 
     def cleanup(self) -> None:
         with self._lock:
-            paths, self._paths = self._paths, []
+            paths = self._paths.copy()
+        first_error: OSError | None = None
         for path in paths:
-            path.unlink(missing_ok=True)
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                # 继续清理其余文件，但失败项仍留在账本供下一次 shutdown 重试。
+                if first_error is None:
+                    first_error = exc
+            else:
+                self.release(path)
+        if first_error is not None:
+            raise first_error
 
 
 __all__ = [

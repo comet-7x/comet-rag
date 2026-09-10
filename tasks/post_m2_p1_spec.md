@@ -46,16 +46,16 @@ DOCX 字段或 `**kwargs`。
 - [x] 文件类型确认与基础 metadata 只有一份规则来源。
 - [x] 默认单测、Ruff、Pyright 与分层守卫全部通过，默认单测仍小于 10 秒。
 
-## 5. 验收记录
-
-- 默认单测：1779 passed、19 skipped、1 xfailed，pytest 8.87s。
-- Loader/DOCX 定向：117 + 56 passed（DOCX 含 1 个可选真实文档 skip）。
-- MinIO 集成：6 passed、1 个可选用例 skip。
-- Ruff、Pyright、AST 分层守卫与隔离 core-only 导入均通过。
-
 ## 4. 非目标
 
 - 不移动约 2,000 行 Loader 实现来追求目录对称。
 - 不删除旧导入路径，不在本阶段承诺移除版本。
 - 不改变 Task、向量库 schema、MinerU wire contract 或 M3 检索接口。
 - 不因只有一个进程内 Parser 就顺手删除 `BaseParser`；在本阶段末单独记录结论。
+
+## 5. 验收记录
+
+- 默认单测：1781 passed、19 skipped、1 xfailed，pytest 8.67s。
+- Loader/DOCX 定向：117 + 56 passed（DOCX 含 1 个可选真实文档 skip）。
+- MinIO 集成：6 passed、1 个可选用例 skip。
+- Ruff、Pyright、AST 分层守卫与隔离 core-only 导入均通过。

@@ -90,14 +90,12 @@ class LoadedResource:
         return value if isinstance(value, str) else None
 
     def cleanup(self) -> None:
-        """释放消费端持有的临时文件，并且只通知所有者一次。"""
-        release, self._release = self._release, None
-        try:
-            if self.is_temp:
-                self.path.unlink(missing_ok=True)
-        finally:
-            if release is not None:
-                release()
+        """删除成功后才解除登记，让失败的临时文件仍可重试清理。"""
+        if self.is_temp:
+            self.path.unlink(missing_ok=True)
+        if self._release is not None:
+            self._release()
+            self._release = None
 
 
 @runtime_checkable
