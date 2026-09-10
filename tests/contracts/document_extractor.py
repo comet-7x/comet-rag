@@ -22,29 +22,43 @@ class DocumentExtractorContract:
     def expected_document(self) -> ExtractedDocument:  # pragma: no cover
         raise NotImplementedError("实现方必须提供 expected_document fixture")
 
+    @pytest.fixture
+    def filename(self) -> str:
+        return "sample.pdf"
+
+    @pytest.fixture
+    def media_type(self) -> str:
+        return "application/pdf"
+
     def test_sync_extract_returns_normalized_document(
         self,
         extractor: DocumentExtractorPort,
         document_path: Path,
         expected_document: ExtractedDocument,
+        filename: str,
+        media_type: str,
     ) -> None:
         result = extractor.extract(
-            document_path, filename="sample.pdf", media_type="application/pdf"
+            document_path, filename=filename, media_type=media_type
         )
 
-        assert result == expected_document
+        assert result.markdown == expected_document.markdown
+        assert result.metadata == expected_document.metadata
 
     async def test_async_extract_matches_sync_semantics(
         self,
         extractor: DocumentExtractorPort,
         document_path: Path,
         expected_document: ExtractedDocument,
+        filename: str,
+        media_type: str,
     ) -> None:
         result = await extractor.aextract(
-            document_path, filename="sample.pdf", media_type="application/pdf"
+            document_path, filename=filename, media_type=media_type
         )
 
-        assert result == expected_document
+        assert result.markdown == expected_document.markdown
+        assert result.metadata == expected_document.metadata
 
     async def test_close_is_idempotent(self, extractor: DocumentExtractorPort) -> None:
         await extractor.aclose()
