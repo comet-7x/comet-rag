@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import ClassVar, Protocol
 
 from comet_rag.engines.loaders.types import LoaderContent
 from comet_rag.engines.pipelines.types import PipelineConfig
@@ -25,6 +25,110 @@ class HooksState:
     async_extractors: dict[str, AsyncExtractHook] = field(default_factory=dict)
 
 
+class HookProvider(Protocol):
+    """Pipeline 实际需要的最小 Hook 查询面。"""
+
+    def snapshot(self) -> HooksState: ...
+
+    def restore(self, state: HooksState) -> None: ...
+
+    def extractor(self, *file_types: str) -> Callable[[ExtractHook], ExtractHook]: ...
+
+    def aextractor(
+        self, *file_types: str
+    ) -> Callable[[AsyncExtractHook], AsyncExtractHook]: ...
+
+    def get_extractor(self, file_type: str) -> ExtractHook: ...
+
+    def get_aextractor(self, file_type: str) -> AsyncExtractHook | None: ...
+
+    async def aextract(
+        self, file_type: str, loader_content: LoaderContent, config: PipelineConfig
+    ) -> str: ...
+
+    def get_chunker(self, file_type: str) -> ChunkHook: ...
+
+
+class HookRegistry:
+    """可按 Context 复制的 Hook 注册表，隔离带生命周期的适配器。"""
+
+    def __init__(self, state: HooksState | None = None) -> None:
+        state = state or HooksState({}, {})
+        self._extractors = dict(state.extractors)
+        self._async_extractors = dict(state.async_extractors)
+        self._chunkers = dict(state.chunkers)
+
+    def snapshot(self) -> HooksState:
+        return HooksState(
+            extractors=dict(self._extractors),
+            chunkers=dict(self._chunkers),
+            async_extractors=dict(self._async_extractors),
+        )
+
+    def restore(self, state: HooksState) -> None:
+        self._extractors = dict(state.extractors)
+        self._async_extractors = dict(state.async_extractors)
+        self._chunkers = dict(state.chunkers)
+
+    @contextmanager
+    def temporary(self) -> Iterator[None]:
+        state = self.snapshot()
+        try:
+            yield
+        finally:
+            self.restore(state)
+
+    def extractor(self, *file_types: str) -> Callable[[ExtractHook], ExtractHook]:
+        def decorator(fn: ExtractHook) -> ExtractHook:
+            for file_type in file_types:
+                self._extractors[file_type.lower()] = fn
+            return fn
+
+        return decorator
+
+    def aextractor(
+        self, *file_types: str
+    ) -> Callable[[AsyncExtractHook], AsyncExtractHook]:
+        def decorator(fn: AsyncExtractHook) -> AsyncExtractHook:
+            for file_type in file_types:
+                self._async_extractors[file_type.lower()] = fn
+            return fn
+
+        return decorator
+
+    def chunker(self, *file_types: str) -> Callable[[ChunkHook], ChunkHook]:
+        def decorator(fn: ChunkHook) -> ChunkHook:
+            for file_type in file_types:
+                self._chunkers[file_type.lower()] = fn
+            return fn
+
+        return decorator
+
+    def get_extractor(self, file_type: str) -> ExtractHook:
+        try:
+            return self._extractors[file_type]
+        except KeyError:
+            raise ValueError(
+                f"No extractor registered for {file_type!r}. "
+                f"Registered: {sorted(self._extractors)}"
+            ) from None
+
+    def get_aextractor(self, file_type: str) -> AsyncExtractHook | None:
+        return self._async_extractors.get(file_type)
+
+    async def aextract(
+        self, file_type: str, loader_content: LoaderContent, config: PipelineConfig
+    ) -> str:
+        if extractor := self.get_aextractor(file_type):
+            return await extractor(loader_content, config)
+        return await asyncio.to_thread(
+            self.get_extractor(file_type), loader_content, config
+        )
+
+    def get_chunker(self, file_type: str) -> ChunkHook:
+        return self._chunkers.get(file_type, _default_chunk)
+
+
 class PipelineHooks:
     """进程级格式钩子注册表；临时覆盖必须用 `temporary()` 隔离。"""
 
@@ -42,6 +146,11 @@ class PipelineHooks:
             chunkers=dict(cls._chunkers),
             async_extractors=dict(cls._async_extractors),
         )
+
+    @classmethod
+    def fork(cls) -> HookRegistry:
+        """复制内建/用户 Hook；之后的资源型注册只影响当前 Context。"""
+        return HookRegistry(cls.snapshot())
 
     @classmethod
     def restore(cls, state: HooksState) -> None:

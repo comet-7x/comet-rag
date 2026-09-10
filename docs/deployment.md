@@ -195,7 +195,7 @@ PDF 提取不是 Comet-RAG 进程内能力。先独立部署 `mineru-api` 或
 infrastructure_config:
   mineru:
     enabled: true
-    base_url: "http://mineru-router:8002"  # 或单实例 mineru-api
+    base_url: "https://mineru-router.example.internal"  # 或单实例 mineru-api
     backend: vlm-http-client               # 本地 pipeline 部署可改为 pipeline
     parse_method: auto
     language: ch

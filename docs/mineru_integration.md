@@ -80,6 +80,11 @@ Router 会维护 `task_id → worker` 的亲和关系；不能用普通轮询负
 mineru-router --host 0.0.0.0 --port 8002 --local-gpus auto
 ```
 
+绑定 `0.0.0.0` 只表示监听所有网卡，不代表接口已经受保护。Router 必须部署在
+私网，并至少由网络 ACL、防火墙或带身份认证的反向代理限制访问；对 Comet-RAG
+提供远程地址时还必须由代理终止 TLS。`--allow-public-http-client` 只解除 MinerU
+的 SSRF 防护限制，**不是身份认证或访问控制机制**。
+
 聚合已有 MinerU API 实例：
 
 ```bash
@@ -120,6 +125,9 @@ limits:
   mineru_queue: 16
   mineru_wait_timeout: 30.0
 ```
+
+Comet-RAG 仅允许 `localhost`、`127.0.0.0/8` 和 `::1` 使用明文 HTTP；任何非回环
+`base_url` 都必须使用 HTTPS，避免上传的原始 PDF 在网络路径中被读取或篡改。
 
 `enabled=false` 时不会创建 MinerU 客户端，也不会注册 PDF Hook。启用后，组合根
 为同步与异步 Pipeline 注册同一个 PDF 提取器，并在应用关停时释放连接池。

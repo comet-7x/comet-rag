@@ -13,7 +13,12 @@ from comet_rag.core.degradation import DegradationController, DegradationSetting
 from comet_rag.core.logging import logger
 from comet_rag.engines.loaders import AutoLoader, LoaderContent, LoaderRoute
 from comet_rag.engines.loaders.data_type import resolve_detected_extension
-from comet_rag.engines.pipelines import DocxConfig, PipelineConfig, PipelineHooks
+from comet_rag.engines.pipelines import (
+    DocxConfig,
+    HookProvider,
+    PipelineConfig,
+    PipelineHooks,
+)
 from comet_rag.engines.utils import detect_content_type_from_path
 from comet_rag.infrastructure.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
@@ -249,8 +254,12 @@ def build_mineru_extractor(config: APPConfig) -> MinerUDocumentExtractor | None:
     )
 
 
-def wire_pdf_extractor(extractor: DocumentExtractorPort) -> None:
+def wire_pdf_extractor(
+    extractor: DocumentExtractorPort, *, hooks: HookProvider | None = None
+) -> Callable[[], None]:
     """把 Port 适配到现有字符串 Hook；供应商字段不进入 engines。"""
+    registry = hooks or PipelineHooks
+    previous = registry.snapshot()
 
     def verify_content(content: LoaderContent) -> None:
         """Loader 路由只声明候选格式；外发前以实际字节为最终依据。"""
@@ -263,7 +272,7 @@ def wire_pdf_extractor(extractor: DocumentExtractorPort) -> None:
             return configured
         return content.path.name
 
-    @PipelineHooks.extractor("pdf")
+    @registry.extractor("pdf")
     def extract_pdf(content: LoaderContent, config: PipelineConfig) -> str:
         del config
         verify_content(content)
@@ -273,7 +282,7 @@ def wire_pdf_extractor(extractor: DocumentExtractorPort) -> None:
             media_type="application/pdf",
         ).markdown
 
-    @PipelineHooks.aextractor("pdf")
+    @registry.aextractor("pdf")
     async def aextract_pdf(content: LoaderContent, config: PipelineConfig) -> str:
         del config
         await asyncio.to_thread(verify_content, content)
@@ -283,6 +292,8 @@ def wire_pdf_extractor(extractor: DocumentExtractorPort) -> None:
             media_type="application/pdf",
         )
         return document.markdown
+
+    return lambda: registry.restore(previous)
 
 
 def build_model_gate(
@@ -472,6 +483,11 @@ def build_context(
         embedding_dim=embedding_settings.dim,
     )
 
+    pipeline_hooks = PipelineHooks.fork()
+    hook_cleanups: list[Callable[[], None]] = []
+    if mineru_extractor is not None:
+        hook_cleanups.append(wire_pdf_extractor(mineru_extractor, hooks=pipeline_hooks))
+
     context = Context(
         embedding_model=embedding_model,
         reranker=reranker,
@@ -491,6 +507,7 @@ def build_context(
         kb_repository=kb_repository,
         knowledge_base=knowledge_base,
         embedding_dim=embedding_settings.dim,
+        pipeline_hooks=pipeline_hooks,
         database=database,
         model_gate=gate,
         degradation=degradation,
@@ -506,6 +523,7 @@ def build_context(
             ingest_loader,
             *([mineru_extractor] if mineru_extractor is not None else []),
         ],
+        _hook_cleanups=hook_cleanups,
     )
     limits = config.limits
     configured_docx = DocxConfig(
@@ -547,8 +565,6 @@ def build_context(
         pipeline_config = pipeline_config.model_copy(
             update={"docx": DocxConfig(**docx_values), **concurrency_overrides}
         )
-    if mineru_extractor is not None:
-        wire_pdf_extractor(mineru_extractor)
     wire_runners(context, ingest_config=pipeline_config)
 
     logger.info(

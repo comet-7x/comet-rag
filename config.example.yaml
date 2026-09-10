@@ -69,6 +69,7 @@ infrastructure_config:
   mineru:
     enabled: false
     # 必须指向带 /health + /tasks 的 MinerU 文档服务，不能直接填 vLLM /v1 地址。
+    # 明文 HTTP 仅允许 localhost/回环 IP；远程 mineru-api/router 必须终止 TLS。
     base_url: http://127.0.0.1:8000
     # 远端 MinerU 2.5 vLLM 使用 vlm-http-client；模型地址配置在 mineru-api 进程侧。
     backend: pipeline

@@ -113,7 +113,7 @@ worker job 名额。按格式动态分道需要修改任务路由语义，先用
 ## 5. 配置草案
 
 ```yaml
-providers:
+infrastructure_config:
   mineru:
     enabled: false
     base_url: http://127.0.0.1:8000

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -366,6 +368,7 @@ async def test_internal_clients_are_closed_idempotently() -> None:
 @pytest.mark.parametrize(
     ("status_code", "error"),
     [
+        (408, RetryableDocumentUpstreamError),
         (429, RetryableDocumentUpstreamError),
         (500, RetryableDocumentUpstreamError),
         (503, RetryableDocumentUpstreamError),
@@ -373,10 +376,12 @@ async def test_internal_clients_are_closed_idempotently() -> None:
         (401, DocumentUpstreamError),
     ],
 )
-def test_http_statuses_are_mapped_at_the_adapter_boundary(
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_http_statuses_are_mapped_at_the_adapter_boundary(
     document_path: Path,
     status_code: int,
     error: type[DocumentUpstreamError],
+    asynchronous: bool,
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(status_code, json={"detail": "upstream rejected"})
@@ -384,9 +389,14 @@ def test_http_statuses_are_mapped_at_the_adapter_boundary(
     extractor = _extractor(handler)
 
     with pytest.raises(error, match=str(status_code)):
-        extractor.extract(
-            document_path, filename="sample.pdf", media_type="application/pdf"
-        )
+        if asynchronous:
+            await extractor.aextract(
+                document_path, filename="sample.pdf", media_type="application/pdf"
+            )
+        else:
+            extractor.extract(
+                document_path, filename="sample.pdf", media_type="application/pdf"
+            )
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -607,6 +617,109 @@ def test_phase_specific_timeouts_are_sent_to_httpx(document_path: Path) -> None:
     assert upload_timeout["write"] == 11.0
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_slow_upload_is_stopped_by_total_deadline(
+    document_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    asynchronous: bool,
+) -> None:
+    payload = document_path.read_bytes()
+    clock = FakeClock()
+    original_open = Path.open
+
+    class SlowReader(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            clock.now += 0.6
+            return super().read(size)
+
+    def open_with_slow_pdf(self: Path, *args: Any, **kwargs: Any):
+        if self == document_path:
+            return SlowReader(payload)
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_with_slow_pdf)
+    extractor = _extractor(
+        ScriptedMinerU(statuses=("completed",)),
+        clock=clock,
+        parse_timeout_seconds=0.5,
+    )
+
+    with pytest.raises(RetryableDocumentUpstreamError, match="总解析超时"):
+        if asynchronous:
+            await extractor.aextract(
+                document_path, filename="sample.pdf", media_type="application/pdf"
+            )
+        else:
+            extractor.extract(
+                document_path, filename="sample.pdf", media_type="application/pdf"
+            )
+
+
+class SlowSyncStream(httpx.SyncByteStream):
+    def __init__(self, payload: bytes, clock: FakeClock) -> None:
+        self.payload = payload
+        self.clock = clock
+        self.closed = False
+
+    def __iter__(self):
+        self.clock.now += 0.6
+        yield self.payload
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class SlowAsyncStream(httpx.AsyncByteStream):
+    def __init__(self, payload: bytes, clock: FakeClock) -> None:
+        self.payload = payload
+        self.clock = clock
+        self.closed = False
+
+    async def __aiter__(self):
+        self.clock.now += 0.6
+        yield self.payload
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_slow_response_is_stopped_and_closed_at_total_deadline(
+    document_path: Path, asynchronous: bool
+) -> None:
+    clock = FakeClock()
+    result = json.dumps({"results": {"sample": {"md_content": MARKDOWN}}}).encode()
+    stream = (
+        SlowAsyncStream(result, clock)
+        if asynchronous
+        else SlowSyncStream(result, clock)
+    )
+    server = ScriptedMinerU(statuses=("completed",))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/result"):
+            return httpx.Response(200, stream=stream)
+        return server(request)
+
+    extractor = _extractor(
+        handler,
+        clock=clock,
+        parse_timeout_seconds=0.5,
+    )
+
+    with pytest.raises(RetryableDocumentUpstreamError, match="总解析超时"):
+        if asynchronous:
+            await extractor.aextract(
+                document_path, filename="sample.pdf", media_type="application/pdf"
+            )
+        else:
+            extractor.extract(
+                document_path, filename="sample.pdf", media_type="application/pdf"
+            )
+
+    assert stream.closed
+
+
 class BlockingAsyncStream(httpx.AsyncByteStream):
     def __init__(self) -> None:
         self.started = asyncio.Event()
@@ -619,6 +732,73 @@ class BlockingAsyncStream(httpx.AsyncByteStream):
 
     async def aclose(self) -> None:
         self.closed.set()
+
+
+class BlockingUploadTransport(httpx.AsyncBaseTransport):
+    def __init__(self) -> None:
+        self.upload_started = asyncio.Event()
+        self.upload_cancelled = asyncio.Event()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/health"):
+            return httpx.Response(
+                200,
+                json={
+                    "status": "healthy",
+                    "version": "3.3.0",
+                    "protocol_version": MINERU_API_PROTOCOL_VERSION,
+                },
+            )
+        if request.method == "POST" and request.url.path.endswith("/tasks"):
+            stream = request.stream
+            assert isinstance(stream, httpx.AsyncByteStream)
+            async for _chunk in stream:
+                self.upload_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    self.upload_cancelled.set()
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+
+async def test_async_total_deadline_cancels_blocked_upload(
+    document_path: Path,
+) -> None:
+    transport = BlockingUploadTransport()
+    client = httpx.AsyncClient(transport=transport)
+    extractor = MinerUDocumentExtractor(
+        BASE_URL,
+        async_client=client,
+        parse_timeout_seconds=0.02,
+    )
+
+    with pytest.raises(RetryableDocumentUpstreamError, match="总解析超时"):
+        await extractor.aextract(
+            document_path, filename="sample.pdf", media_type="application/pdf"
+        )
+
+    assert transport.upload_started.is_set()
+    assert transport.upload_cancelled.is_set()
+    await client.aclose()
+
+
+async def test_async_total_deadline_cancels_blocked_response(
+    document_path: Path,
+) -> None:
+    stream = BlockingAsyncStream()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream)
+
+    extractor = _extractor(handler, parse_timeout_seconds=0.02)
+
+    with pytest.raises(RetryableDocumentUpstreamError, match="总解析超时"):
+        await extractor.aextract(
+            document_path, filename="sample.pdf", media_type="application/pdf"
+        )
+
+    assert stream.started.is_set()
+    assert stream.closed.is_set()
 
 
 async def test_cancellation_closes_the_active_response_stream(
@@ -730,3 +910,8 @@ def test_constructor_rejects_invalid_wire_configuration(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         MinerUDocumentExtractor(**kwargs)
+
+
+def test_constructor_rejects_remote_cleartext_endpoint() -> None:
+    with pytest.raises(ValueError, match="HTTPS"):
+        MinerUDocumentExtractor("http://mineru.internal:8989")

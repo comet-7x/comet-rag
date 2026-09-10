@@ -6,11 +6,12 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, final
-from urllib.parse import quote, urlsplit
+from typing import Any, BinaryIO, final
+from urllib.parse import quote
 
 import httpx
 
+from comet_rag.core.http_endpoint import validate_http_endpoint
 from comet_rag.ports import (
     DocumentProtocolError,
     DocumentResourceLimitExceeded,
@@ -65,6 +66,29 @@ class _RemoteTaskMissing(RuntimeError):
     """MinerU 的进程内任务状态已丢失，可以在本次预算内重提一次。"""
 
 
+class _DeadlineReader:
+    """让 multipart 编码每次取文件块时都重新检查总预算。"""
+
+    def __init__(self, stream: BinaryIO, remaining: Callable[[], float]) -> None:
+        self._stream = stream
+        self._remaining = remaining
+
+    def read(self, size: int = -1) -> bytes:
+        self._remaining()
+        chunk = self._stream.read(size)
+        self._remaining()
+        return chunk
+
+    def fileno(self) -> int:
+        return self._stream.fileno()
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self._stream.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._stream.tell()
+
+
 class MinerUDocumentExtractor(GatedResource):
     """外部 `mineru-api` / `mineru-router` 的有界 HTTP 适配器。"""
 
@@ -90,11 +114,7 @@ class MinerUDocumentExtractor(GatedResource):
         asleep: AsyncSleeper = asyncio.sleep,
         clock: Clock = time.monotonic,
     ) -> None:
-        parsed = urlsplit(base_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("MinerU base_url 必须是绝对 HTTP(S) URL")
-        if parsed.query or parsed.fragment:
-            raise ValueError("MinerU base_url 不能包含 query 或 fragment")
+        base_url = validate_http_endpoint(base_url, name="MinerU base_url")
         if not backend.strip():
             raise ValueError("MinerU backend 不能为空")
         if parse_method not in {"auto", "txt", "ocr"}:
@@ -110,7 +130,7 @@ class MinerUDocumentExtractor(GatedResource):
         self._require_positive("max_response_bytes", max_response_bytes)
         self._require_positive("max_markdown_bytes", max_markdown_bytes)
 
-        self._base_url = base_url.rstrip("/")
+        self._base_url = base_url
         self._backend = backend
         self._parse_method = parse_method
         self._language = language
@@ -171,7 +191,7 @@ class MinerUDocumentExtractor(GatedResource):
             return
         if status_code == 404 and task_may_be_missing:
             raise _RemoteTaskMissing(f"MinerU {operation} 返回 404")
-        if status_code == 429 or status_code >= 500:
+        if status_code in {408, 429} or status_code >= 500:
             raise RetryableDocumentUpstreamError(
                 f"MinerU {operation} 返回可重试 HTTP {status_code}"
             )
@@ -400,6 +420,7 @@ class MinerUDocumentExtractor(GatedResource):
         deadline: float,
     ) -> _SubmittedTask:
         with path.open("rb") as stream:
+            upload = _DeadlineReader(stream, lambda: self._remaining(deadline))
             response = self._request(
                 "POST",
                 "/tasks",
@@ -407,7 +428,7 @@ class MinerUDocumentExtractor(GatedResource):
                 deadline=deadline,
                 upload=True,
                 data=self._form_data(),
-                files={"files": (filename, stream, media_type)},
+                files={"files": (filename, upload, media_type)},
             )
         return self._submitted_task(response)
 
@@ -420,6 +441,7 @@ class MinerUDocumentExtractor(GatedResource):
         deadline: float,
     ) -> _SubmittedTask:
         with path.open("rb") as stream:
+            upload = _DeadlineReader(stream, lambda: self._remaining(deadline))
             response = await self._arequest(
                 "POST",
                 "/tasks",
@@ -427,7 +449,7 @@ class MinerUDocumentExtractor(GatedResource):
                 deadline=deadline,
                 upload=True,
                 data=self._form_data(),
-                files={"files": (filename, stream, media_type)},
+                files={"files": (filename, upload, media_type)},
             )
         return self._submitted_task(response)
 
@@ -518,29 +540,37 @@ class MinerUDocumentExtractor(GatedResource):
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument:
         deadline = self._clock() + self._parse_timeout_seconds
-        health = await self._arequest(
-            "GET", "/health", operation="health", deadline=deadline
-        )
-        server_info = self._server_info(health)
-        task = await self._asubmit(
-            path, filename=filename, media_type=media_type, deadline=deadline
-        )
-        for attempt in range(2):
-            try:
-                await self._await(task, deadline)
-                return await self._aresult(task, server_info, deadline)
-            except _RemoteTaskMissing as exc:
-                if attempt == 1:
-                    raise RetryableDocumentUpstreamError(
-                        "MinerU 远端任务连续丢失，已停止重提"
-                    ) from exc
-                self._remaining(deadline)
-                task = await self._asubmit(
-                    path,
-                    filename=filename,
-                    media_type=media_type,
-                    deadline=deadline,
+        try:
+            # HTTPX 的 read/write timeout 只限制相邻块的静默时间；外层 deadline
+            # 才能中断持续缓慢但一直有流量的上传或下载。
+            async with asyncio.timeout(self._parse_timeout_seconds):
+                health = await self._arequest(
+                    "GET", "/health", operation="health", deadline=deadline
                 )
+                server_info = self._server_info(health)
+                task = await self._asubmit(
+                    path, filename=filename, media_type=media_type, deadline=deadline
+                )
+                for attempt in range(2):
+                    try:
+                        await self._await(task, deadline)
+                        return await self._aresult(task, server_info, deadline)
+                    except _RemoteTaskMissing as exc:
+                        if attempt == 1:
+                            raise RetryableDocumentUpstreamError(
+                                "MinerU 远端任务连续丢失，已停止重提"
+                            ) from exc
+                        self._remaining(deadline)
+                        task = await self._asubmit(
+                            path,
+                            filename=filename,
+                            media_type=media_type,
+                            deadline=deadline,
+                        )
+        except TimeoutError as exc:
+            raise RetryableDocumentUpstreamError(
+                f"MinerU 总解析超时（{self._parse_timeout_seconds:g}s）"
+            ) from exc
         raise AssertionError("unreachable")
 
     @final

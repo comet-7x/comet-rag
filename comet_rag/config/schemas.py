@@ -12,6 +12,8 @@ from pydantic import (
     model_validator,
 )
 
+from comet_rag.core.http_endpoint import validate_http_endpoint
+
 SecretValue = SecretStr | str
 
 
@@ -243,22 +245,7 @@ class MinerUConfig(BaseModel):
     @field_validator("base_url")
     @classmethod
     def _validate_base_url(cls, value: str) -> str:
-        from urllib.parse import urlsplit  # noqa: PLC0415
-
-        parsed = urlsplit(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("base_url must be an absolute http/https URL")
-        if parsed.username is not None or parsed.password is not None:
-            raise ValueError("base_url must not contain credentials")
-        if parsed.query or parsed.fragment:
-            raise ValueError("base_url must not contain query or fragment")
-        try:
-            port = parsed.port
-        except ValueError as exc:
-            raise ValueError("base_url contains an invalid port") from exc
-        if port is not None and not 1 <= port <= 65535:
-            raise ValueError("base_url port must be between 1 and 65535")
-        return value.rstrip("/")
+        return validate_http_endpoint(value, name="base_url")
 
     @field_validator("backend", "language")
     @classmethod

@@ -16,7 +16,7 @@ from comet_rag.engines.embedding.batch import aembed_documents
 from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
-from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
+from comet_rag.engines.pipelines import HookProvider, PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
 from comet_rag.infrastructure.vectorstore import BaseVectorStore, VectorRecord
 from comet_rag.ports import (
@@ -123,6 +123,7 @@ class IngestRunner:
         knowledge_base: KnowledgeBaseService,
         loader: BaseLoader | None = None,
         config: PipelineConfig | None = None,
+        hooks: HookProvider | None = None,
         max_extracted_text_bytes_by_type: Mapping[str, int] | None = None,
     ) -> None:
         self._embedding_model = embedding_model
@@ -130,6 +131,7 @@ class IngestRunner:
         self._kb = knowledge_base
         self._loader = loader or AutoLoader.default()
         self._config = config or PipelineConfig()
+        self._hooks = hooks or PipelineHooks
         self._max_extracted_text_bytes_by_type = {
             file_type.lower(): limit
             for file_type, limit in (max_extracted_text_bytes_by_type or {}).items()
@@ -183,7 +185,7 @@ class IngestRunner:
             # 否则连接超时会绕过 _classify，第一次失败就把任务判死。
             loader_content = await self._loader.aload(SourceContent(request.source))
             file_type = str(loader_content.metadata.get("file_type", "")).lower()
-            text = await PipelineHooks.aextract(file_type, loader_content, self._config)
+            text = await self._hooks.aextract(file_type, loader_content, self._config)
             self._validate_extracted_text_size(text, file_type)
             extracted_text_bytes = len(text.encode("utf-8"))
 
@@ -221,7 +223,7 @@ class IngestRunner:
         text: str = task.context["text"]
         file_type: str = task.context["file_type"]
 
-        chunker = PipelineHooks.get_chunker(file_type)
+        chunker = self._hooks.get_chunker(file_type)
         chunks = await asyncio.to_thread(chunker, text, self._config)
 
         # 清掉原始文本：留着的话 context 会同时装文本和 chunk，体积翻倍，

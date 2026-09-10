@@ -103,22 +103,25 @@ class FakeReranker(BaseReranker):
 
 
 class FakePdfExtractor(GatedResource):
-    def __init__(self, *, close_order: list[str] | None = None) -> None:
+    def __init__(
+        self, *, markdown: str = "# PDF", close_order: list[str] | None = None
+    ) -> None:
         self.calls: list[tuple[Path, str, str]] = []
         self.closed = False
+        self.markdown = markdown
         self._close_order = close_order
 
     def extract(
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument:
         self.calls.append((path, filename, media_type))
-        return ExtractedDocument(markdown="# PDF")
+        return ExtractedDocument(markdown=self.markdown)
 
     async def aextract(
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument:
         self.calls.append((path, filename, media_type))
-        return ExtractedDocument(markdown="# PDF")
+        return ExtractedDocument(markdown=self.markdown)
 
     async def aclose(self) -> None:
         self.closed = True
@@ -319,8 +322,11 @@ async def test_enabled_mineru_binds_an_independent_gate_and_pdf_hooks(
         source=SourceContent(path),
         metadata={"file_name": "original.pdf", "file_type": "pdf"},
     )
-    assert PipelineHooks.get_extractor("pdf")(content, PipelineConfig()) == "# PDF"
-    async_hook = PipelineHooks.get_aextractor("pdf")
+    assert (
+        context.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        == "# PDF"
+    )
+    async_hook = context.pipeline_hooks.get_aextractor("pdf")
     assert async_hook is not None
     assert await async_hook(content, PipelineConfig()) == "# PDF"
     assert extractor.calls == [
@@ -330,6 +336,55 @@ async def test_enabled_mineru_binds_an_independent_gate_and_pdf_hooks(
 
     await context.aclose()
     assert extractor.closed
+    with pytest.raises(ValueError, match="No extractor registered"):
+        context.pipeline_hooks.get_extractor("pdf")
+
+
+async def test_mineru_hooks_are_isolated_between_contexts_and_disabled_restart(
+    embedding: FakeEmbedding,
+    tmp_path: Path,
+) -> None:
+    enabled = make_config()
+    enable_mineru(enabled)
+    first_extractor = FakePdfExtractor(markdown="# first")
+    second_extractor = FakePdfExtractor(markdown="# second")
+    first = build_context(
+        enabled, embedding_model=embedding, mineru_extractor=first_extractor
+    )
+    second = build_context(
+        enabled, embedding_model=embedding, mineru_extractor=second_extractor
+    )
+    path = build_minimal_pdf(tmp_path / "isolated.pdf")
+    content = LoaderContent(
+        path=path,
+        source=SourceContent(path),
+        metadata={"file_name": path.name, "file_type": "pdf"},
+    )
+
+    assert (
+        first.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        == "# first"
+    )
+    assert (
+        second.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        == "# second"
+    )
+    with pytest.raises(ValueError, match="No extractor registered"):
+        PipelineHooks.get_extractor("pdf")
+
+    await first.aclose()
+    disabled = build_context(make_config(), embedding_model=embedding)
+    assert first_extractor.closed
+    assert not second_extractor.closed
+    with pytest.raises(ValueError, match="No extractor registered"):
+        disabled.pipeline_hooks.get_extractor("pdf")
+    assert (
+        second.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        == "# second"
+    )
+
+    await second.aclose()
+    await disabled.aclose()
 
 
 async def test_pdf_pipeline_sync_and_async_use_the_document_extractor_port(

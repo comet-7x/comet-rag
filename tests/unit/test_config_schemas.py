@@ -155,6 +155,35 @@ def test_mineru_is_disabled_by_default_with_bounded_defaults() -> None:
 
 
 @pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://localhost:8989",
+        "http://127.0.0.1:8989",
+        "http://127.42.0.1:8989",
+        "http://[::1]:8989",
+        "https://mineru.internal/api",
+    ],
+)
+def test_mineru_endpoint_accepts_loopback_http_and_remote_https(
+    base_url: str,
+) -> None:
+    assert MinerUConfig(base_url=base_url).base_url == base_url
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://mineru.internal:8989",
+        "http://10.0.0.8:8989",
+        "http://0.0.0.0:8989",
+    ],
+)
+def test_mineru_endpoint_rejects_remote_cleartext_http(base_url: str) -> None:
+    with pytest.raises(ValueError, match="HTTPS"):
+        MinerUConfig(base_url=base_url)
+
+
+@pytest.mark.parametrize(
     "kwargs",
     [
         {"base_url": "mineru.internal"},

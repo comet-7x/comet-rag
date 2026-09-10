@@ -9,7 +9,7 @@ from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
 from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
-from comet_rag.engines.pipelines.hooks import PipelineHooks
+from comet_rag.engines.pipelines.hooks import HookProvider, PipelineHooks
 from comet_rag.engines.pipelines.types import Chunk, PipelineConfig, PipelineResult
 from comet_rag.engines.utils import compute_sha256
 
@@ -23,10 +23,12 @@ class Pipeline:
         config: PipelineConfig | None = None,
         loader: BaseLoader | None = None,
         embedding_model: EmbeddingPort | None = None,
+        hooks: HookProvider | None = None,
     ):
         self._config = config or PipelineConfig()
         self._loader = loader or AutoLoader.default()
         self._embedding_model = embedding_model
+        self._hooks = hooks or PipelineHooks
 
     def run(self, source: str | Path | SourceContent) -> PipelineResult:
         lc = self._load(source)
@@ -97,16 +99,16 @@ class Pipeline:
 
     def _extract(self, lc: LoaderContent) -> tuple[str, str]:
         file_type = str(lc.metadata.get("file_type", "")).lower()
-        text = PipelineHooks.get_extractor(file_type)(lc, self._config)
+        text = self._hooks.get_extractor(file_type)(lc, self._config)
         return file_type, text
 
     async def _aextract(self, lc: LoaderContent) -> tuple[str, str]:
         file_type = str(lc.metadata.get("file_type", "")).lower()
-        text = await PipelineHooks.aextract(file_type, lc, self._config)
+        text = await self._hooks.aextract(file_type, lc, self._config)
         return file_type, text
 
     def _chunk(self, lc: LoaderContent, file_type: str, text: str) -> list[Chunk]:
-        texts = PipelineHooks.get_chunker(file_type)(text, self._config)
+        texts = self._hooks.get_chunker(file_type)(text, self._config)
         source_id = lc.source.source_id
         base_meta = {
             "source": lc.source.source,
