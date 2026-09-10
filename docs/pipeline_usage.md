@@ -166,7 +166,7 @@ class PipelineResult:
     chunks: list[Chunk]  # chunk 列表
     metadata: dict[
         str, Any
-    ]  # 来自 LoaderContent（source_type, file_name, file_size...）
+    ]  # 来自 LoadedResource（source_type, file_name, file_size...）
 ```
 
 ### `Chunk`
@@ -196,26 +196,26 @@ class Chunk:
 
 Pipeline 内部通过 `PipelineHooks` 注册表分发处理逻辑。增加新格式只需注册两个 hook：
 
-- **extractor**：`(LoaderContent, PipelineConfig) → str`，负责将文件转换为清洁文本
+- **extractor**：`(LoadedResource, PipelineConfig) → str`，负责将文件转换为清洁文本
 - **chunker**（可选）：`(str, PipelineConfig) → list[str]`，自定义分块策略；不注册则回退到 `TextChunker`
 
 > 两个 hook 都接收完整的 `PipelineConfig`，而不是散装的 `chunk_size` / `chunk_overlap`。
 > 这样新增格式专属配置（如 `config.docx`）时无需改动 hook 签名。
 
 ```python
-from comet_rag.engines.loaders.types import LoaderContent
+from comet_rag.loaders import LoadedResource
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 
 
 # 注册纯文本 extractor
 @PipelineHooks.extractor("txt", "log")
-def extract_plaintext(loader_content: LoaderContent, config: PipelineConfig) -> str:
+def extract_plaintext(loader_content: LoadedResource, config: PipelineConfig) -> str:
     return loader_content.path.read_text(encoding="utf-8")
 
 
 # 注册 Markdown extractor（可复用 TextChunker）
 @PipelineHooks.extractor("md", "mdx")
-def extract_markdown(loader_content: LoaderContent, config: PipelineConfig) -> str:
+def extract_markdown(loader_content: LoadedResource, config: PipelineConfig) -> str:
     return loader_content.path.read_text(encoding="utf-8")
 
 
@@ -240,24 +240,25 @@ result = Pipeline().run("README.md")
 对已支持的格式，也可以通过重新注册 hook 覆盖默认行为：
 
 ```python
-from comet_rag.engines.cleaners.docx_cleaner import DocxCleaner
-from comet_rag.engines.converters.text_converter import DocxConverter
-from comet_rag.engines.loaders.types import LoaderContent
-from comet_rag.engines.parsers.docx_parser.docx_parser import DocxParser
+from comet_rag.engines.document import DocxDocumentExtractor
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
+from comet_rag.loaders import LoadedResource
 
 
 # 自定义 DOCX extractor：保留页眉页脚，不保留图片
 @PipelineHooks.extractor("docx")
 def extract_docx_with_headers(
-    loader_content: LoaderContent, config: PipelineConfig
+    loader_content: LoadedResource, config: PipelineConfig
 ) -> str:
-    doc = DocxConverter(loader_content).to_docx()
-    parsed = DocxParser().parse(doc)
-    return DocxCleaner(
+    extractor = DocxDocumentExtractor(
         include_headers_footers=True,
         include_images=False,
-    ).clean_to_markdown(parsed)
+    )
+    return extractor.extract(
+        loader_content.path,
+        filename=loader_content.metadata.get("file_name", loader_content.path.name),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ).markdown
 ```
 
 ---
@@ -269,13 +270,12 @@ def extract_docx_with_headers(
 ### Loader
 
 ```python
-from comet_rag.engines.loaders.auto_loader import AutoLoader
-from comet_rag.engines.loaders.types import SourceContent
+from comet_rag.loaders import AutoLoader, SourceContent
 
 loader = AutoLoader.default()
 lc = loader.load(SourceContent("document.docx"))
 print(lc.path, lc.metadata)
-lc.cleanup()  # URL 下载的临时文件需手动清理（或用 with 语句）
+lc.cleanup()  # URL/S3 下载的临时文件在消费后立即释放
 
 # with 语句自动 cleanup
 with AutoLoader.default() as loader:
@@ -293,7 +293,7 @@ with AutoLoader.default() as loader:
 `URLLoader`，避免把某个 Loader 的参数误传给混合批次中的其他 Loader：
 
 ```python
-from comet_rag.engines.loaders.url_loader import DownloadRequestConfig, URLLoader
+from comet_rag.loaders import DownloadRequestConfig, URLLoader
 
 loader = URLLoader()
 config = DownloadRequestConfig(timeout=30, follow_redirects=False)
@@ -307,12 +307,11 @@ finally:
 去比对真实签名。这条用法曾经在一次模板方法重构里悄悄失效（`load()` 只剩
 `source` 一个参数），而当时它只是一句散文，守卫看不见。
 
-MinIO/S3 等可选对象存储不需要修改 engines 中的闭合来源枚举或让 engines
-依赖 SDK；在基础设施层实现 `BaseLoader`，再通过 `LoaderRoute` 统一装配即可：
+MinIO/S3 适配器仍在基础设施层，但用户无需寻找第二个内部目录。只有实际创建客户端
+时才需要安装 `server`（或 `all`）extra：
 
 ```python
-from comet_rag.engines.loaders import AutoLoader, LoaderRoute
-from your_project.loaders import MinioLoader
+from comet_rag.loaders import AutoLoader, LoaderRoute, S3Loader
 
 
 async def load_from_object_storage():
@@ -320,14 +319,25 @@ async def load_from_object_storage():
     routes.insert(
         0,
         LoaderRoute.schemes(
-            "minio",
-            MinioLoader(...),
+            "object-storage",
+            S3Loader(
+                endpoint_url="http://127.0.0.1:9000",
+                access_key_id="minioadmin",
+                secret_access_key="minioadmin",
+            ),
             {"s3", "minio"},
         ),
     )
     async with AutoLoader(routes) as loader:
-        return await loader.aload("s3://documents/report.pdf")
+        content = await loader.aload("s3://documents/report.pdf")
+        try:
+            return content.path.read_bytes()
+        finally:
+            content.cleanup()
 ```
+
+`LoaderContent` 是 `LoadedResource` 的兼容别名，旧导入路径继续可用；新代码应优先
+使用 `comet_rag.loaders`，让公开入口与内部物理分层解耦。
 
 ### Converter + Parser + Cleaner
 

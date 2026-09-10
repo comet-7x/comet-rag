@@ -21,7 +21,7 @@ class TestDocxDocumentExtractor(DocumentExtractorContract):
         document = Document()
         document.add_heading("标题", level=1)
         document.add_paragraph("正文")
-        document.save(path)
+        document.save(str(path))
         return path
 
     @pytest.fixture

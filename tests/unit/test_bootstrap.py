@@ -797,7 +797,13 @@ def test_loader_gate_is_bound_to_the_leaves_not_the_router() -> None:
     assert isinstance(loader, AutoLoader)
 
     assert loader._gate is None, "路由器不该持有闸门"  # noqa: SLF001
-    leaf_gates = {route.loader._gate for route in loader.routes}  # noqa: SLF001
+    leaf_loaders = [route.loader for route in loader.routes]
+    assert all(isinstance(leaf, GatedResource) for leaf in leaf_loaders)
+    leaf_gates = {
+        leaf._gate  # noqa: SLF001
+        for leaf in leaf_loaders
+        if isinstance(leaf, GatedResource)
+    }
     assert len(leaf_gates) == 1 and None not in leaf_gates, (
         f"叶子 loader 的闸门不一致或没挂上：{leaf_gates}"
     )
@@ -822,7 +828,17 @@ def test_loader_and_model_gates_are_separate_budgets() -> None:
     loader = context.ingest_loader
     assert isinstance(loader, AutoLoader)
 
-    loader_gate = next(iter({route.loader._gate for route in loader.routes}))  # noqa: SLF001
+    leaf_loaders = [route.loader for route in loader.routes]
+    assert all(isinstance(leaf, GatedResource) for leaf in leaf_loaders)
+    loader_gate = next(
+        iter(
+            {
+                leaf._gate  # noqa: SLF001
+                for leaf in leaf_loaders
+                if isinstance(leaf, GatedResource)
+            }
+        )
+    )
     assert loader_gate is not context.model_gate, "两个闸门不该是同一个对象"
     assert isinstance(loader_gate, Gate)
     assert loader_gate.stats.limit == 3

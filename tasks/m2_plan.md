@@ -19,9 +19,9 @@ M2-T1～T9 已完成。Local、URL、S3 PDF 均通过外部 MinerU protocol v2 �
 任务、分块、向量化和检索链路；core-only 安装、DOCX 行为与默认单测耗时未回退。
 最终测试矩阵和真实 MinerU 指标见 `tasks/m2_todo.md`。
 
-下一项回到 `tasks/architecture_plan.md` 的 **M2 后 P1**：先统一 DOCX/PDF 的
-DocumentExtractor 使用入口与 Loader 公共门面，再为 M3 单独冻结 BM25/RRF 规格。
-动态分道仍需长文档生产样本，不作为 P1 的顺手改动。
+M2 后 P1 已完成：DOCX/PDF 共用 `DocumentExtractorPort` 概念，来源加载已有 Port、
+共享契约和 `comet_rag.loaders` 公共门面。下一项为 M3 单独冻结 BM25/RRF 规格。
+动态分道仍需长文档生产样本，不作为 M3 规格的顺手改动。
 
 Loader 统一和 DOCX 提取器迁移已记录为 M2 后 P1，不在此刻移动约 2,000 行 Loader
 代码。目录美化不能优先于一个可能无界轮询的外部服务调用。

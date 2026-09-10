@@ -1,8 +1,9 @@
 # Specification：M2 后 P1 公共入口收敛
 
-> 状态：执行中（v0.1）
+> 状态：已完成（v1.0）
 > 依据：`tasks/architecture_plan.md` P1
 > 范围：DocumentExtractor 与 Loader 公共概念、契约和入口；不包含 M3 检索设计
+> 完成日期：2026-09-10
 
 ## 1. 目标
 
@@ -37,12 +38,19 @@ DOCX 字段或 `**kwargs`。
 
 ## 3. 成功标准
 
-- [ ] `DocxDocumentExtractor` 通过通用提取器契约，现有 DOCX 快照不变。
-- [ ] `SourceLoaderPort` 不依赖第三方包，Local、URL、S3 均满足共享契约。
-- [ ] `LoadedResource.cleanup()` 幂等，消费者释放后 Loader 不再长期保留临时路径。
-- [ ] `from comet_rag.loaders import ...` 覆盖核心与可选 S3 API；core-only 导入通过。
-- [ ] 文件类型确认与基础 metadata 只有一份规则来源。
-- [ ] 默认单测、Ruff、Pyright 与分层守卫全部通过，默认单测仍小于 10 秒。
+- [x] `DocxDocumentExtractor` 通过通用提取器契约，现有 DOCX 快照不变。
+- [x] `SourceLoaderPort` 不依赖第三方包，Local、URL、S3 均满足共享契约。
+- [x] `LoadedResource.cleanup()` 幂等，消费者释放后 Loader 不再长期保留临时路径。
+- [x] `from comet_rag.loaders import ...` 覆盖核心与可选 S3 API；core-only 导入通过。
+- [x] 文件类型确认与基础 metadata 只有一份规则来源。
+- [x] 默认单测、Ruff、Pyright 与分层守卫全部通过，默认单测仍小于 10 秒。
+
+## 5. 验收记录
+
+- 默认单测：1779 passed、19 skipped、1 xfailed，pytest 8.87s。
+- Loader/DOCX 定向：117 + 56 passed（DOCX 含 1 个可选真实文档 skip）。
+- MinIO 集成：6 passed、1 个可选用例 skip。
+- Ruff、Pyright、AST 分层守卫与隔离 core-only 导入均通过。
 
 ## 4. 非目标
 

@@ -10,6 +10,7 @@
 
 ```text
 comet_rag/
+├── loaders/            Loader 公共门面（S3 惰性导出；不拥有实现）
 ├── api/                HTTP 入口（FastAPI）
 │   ├── routes/         ingest · search · kb · tasks · admin
 │   ├── deps.py         依赖注入：路由只从 Context 取，绝不自己 new
@@ -49,6 +50,7 @@ comet_rag/
 │   └── loaders/        S3
 ├── engines/            纯计算 ← 「库」就是这一层
 │   ├── loaders/        本地 · URL · 自动路由
+│   ├── document/       DocxDocumentExtractor（组合 converter/parser/cleaner）
 │   ├── parsers/        docx（含 OMML 公式）
 │   ├── cleaners/       docx → markdown / blocks
 │   ├── chunkers/       文本 · 结构化 · 代码
@@ -59,6 +61,7 @@ comet_rag/
 │   ├── embedding.py    EmbeddingPort · MultimodalEmbeddingPort
 │   ├── reranker.py     RerankerPort
 │   ├── document.py     DocumentExtractorPort · 提取错误词汇表
+│   ├── source.py       SourceLoaderPort · LoadedResource · SourceContent
 │   ├── gate.py         AsyncGate
 │   └── content.py      MediaResource · ContentInput · RerankDocument …
 ├── config/             YAML + 环境变量
@@ -150,8 +153,9 @@ flowchart TD
         E --> LG{{"加载闸门<br/>护本机 fd 与对外连接"}}
         LG --> F["AutoLoader<br/>Local / URL / S3 → 受管本地文件"]
         F --> T{"实际文件类型"}
-        T -->|DOCX| DOCX["engines<br/>converter → parser → cleaner"]
-        T -->|PDF| DP["DocumentExtractorPort"]
+        T -->|DOCX| DX["DocumentExtractorPort<br/>DocxDocumentExtractor"]
+        T -->|PDF| DP["DocumentExtractorPort<br/>MinerUDocumentExtractor"]
+        DX --> DOCX["engines<br/>converter → parser → cleaner"]
         DP --> MG{{"MinerU 独立闸门"}}
         MG --> MU["providers/document<br/>mineru-api / mineru-router"]
         DOCX --> G["chunking · CPU 道<br/>chunker"]
@@ -207,7 +211,8 @@ flowchart TD
 | 接一个新的 embedding 服务 | `infrastructure/providers/embedding/`，继承 `BaseEmbeddingModel`，在 `composition/bootstrap.py` 装配 |
 | 改「一次请求发几条、几个并发」 | `engines/embedding/batch.py` |
 | 改 embedding 契约本身 | `ports/embedding.py`（会波及所有适配器，pyright 会告诉你哪些） |
-| 加一种进程内文件格式 | `engines/parsers/` + `engines/pipelines/hooks.py` 注册 |
+| 加一种进程内文件格式 | `engines/document/` 实现 `DocumentExtractorPort` + `engines/pipelines/hooks.py` 注册 |
+| 加一种来源 Loader | 实现 `ports/source.py::SourceLoaderPort`，通过 `LoaderRoute` 装配；公开入口放 `comet_rag.loaders` |
 | 接一个外部文档解析服务 | 实现 `ports/document.py`，适配器放 `infrastructure/providers/document/`，只在 `composition/bootstrap.py` 装配 |
 | 改 MinerU 协议或资源上限 | `infrastructure/providers/document/mineru.py` + `config/schemas.py::MinerUConfig` |
 | 改切分策略 | `engines/chunkers/` |
