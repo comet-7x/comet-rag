@@ -189,6 +189,108 @@ class S3Config(_SecretsModel):
         return _secret_value(self.session_token)
 
 
+class MinerUParseMethod(StrEnum):
+    AUTO = "auto"
+    TXT = "txt"
+    OCR = "ocr"
+
+
+class MinerUConfig(BaseModel):
+    """外部 mineru-api / mineru-router 的连接与解析预算。"""
+
+    # 任意 headers/请求参数既没有脱敏契约，也可能绕过固定 wire contract。
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description="是否启用 PDF 的 MinerU HTTP 提取；默认关闭且不创建客户端",
+    )
+    base_url: str = Field(
+        default="http://127.0.0.1:8000",
+        description="由运维配置的 MinerU 根地址，不接受请求级覆盖",
+    )
+    backend: str = Field(default="pipeline", min_length=1)
+    parse_method: MinerUParseMethod = Field(default=MinerUParseMethod.AUTO)
+    language: str = Field(default="ch", min_length=1)
+    formula: bool = True
+    table: bool = True
+    connect_timeout_seconds: float = Field(
+        default=10.0, gt=0, description="单次建连允许等待的最长时间"
+    )
+    request_timeout_seconds: float = Field(
+        default=60.0, gt=0, description="非上传 HTTP 阶段及响应读取的单次超时"
+    )
+    upload_timeout_seconds: float = Field(
+        default=300.0, gt=0, description="PDF 请求体写入上游的单次超时"
+    )
+    poll_interval_seconds: float = Field(
+        default=1.0, gt=0, description="远端任务状态轮询间隔"
+    )
+    parse_timeout_seconds: float = Field(
+        default=900.0, gt=0, description="健康检查、上传、轮询与结果读取共享的总预算"
+    )
+    max_response_bytes: int = Field(
+        default=16 * 1024 * 1024,
+        gt=0,
+        description="任一 MinerU HTTP 成功响应允许读取的最大字节数",
+    )
+    max_markdown_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        gt=0,
+        description="提取结果及 PDF Task context 允许持有的 Markdown 字节数",
+    )
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, value: str) -> str:
+        from urllib.parse import urlsplit  # noqa: PLC0415
+
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("base_url must be an absolute http/https URL")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("base_url must not contain credentials")
+        if parsed.query or parsed.fragment:
+            raise ValueError("base_url must not contain query or fragment")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("base_url contains an invalid port") from exc
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError("base_url port must be between 1 and 65535")
+        return value.rstrip("/")
+
+    @field_validator("backend", "language")
+    @classmethod
+    def _reject_blank_strings(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def _budgets_are_reachable(self) -> Self:
+        total = self.parse_timeout_seconds
+        phase_timeouts = {
+            "connect_timeout_seconds": self.connect_timeout_seconds,
+            "request_timeout_seconds": self.request_timeout_seconds,
+            "upload_timeout_seconds": self.upload_timeout_seconds,
+        }
+        unreachable = {
+            name: value for name, value in phase_timeouts.items() if value > total
+        }
+        if unreachable:
+            raise ValueError(
+                f"phase timeouts must not exceed parse_timeout_seconds: {unreachable!r}"
+            )
+        if self.poll_interval_seconds >= total:
+            raise ValueError(
+                "poll_interval_seconds must be less than parse_timeout_seconds"
+            )
+        if self.max_markdown_bytes > self.max_response_bytes:
+            raise ValueError("max_markdown_bytes must not exceed max_response_bytes")
+        return self
+
+
 class VectorDatabaseConfig(_SecretsModel):
     """向量数据库配置 (如 Milvus, Pinecone)"""
 
@@ -301,6 +403,21 @@ class LimitsConfig(BaseModel):
         gt=0,
         description="单次批量加载的并发上限。护的是本机文件描述符与对外连接数，"
         "与模型侧不是同一种资源，所以是独立的一个数",
+    )
+    mineru_concurrency: int = Field(
+        default=2,
+        gt=0,
+        description="本进程同时占用 mineru-api / mineru-router 的解析任务数",
+    )
+    mineru_queue: int = Field(
+        default=16,
+        gt=0,
+        description="MinerU 闸门外的有界等待席位；满后明确拒绝而非无界排队",
+    )
+    mineru_wait_timeout: float = Field(
+        default=30.0,
+        gt=0,
+        description="等待 MinerU 并发许可的最长时间，超时按可重试过载处理",
     )
     model_image_max_bytes: int = Field(
         default=20 * 1024 * 1024,
@@ -423,6 +540,10 @@ class InfrastructureConfig(BaseModel):
     s3: S3Config | None = Field(
         default=None,
         description="S3/MinIO 对象存储连接；开放 s3 来源时必填",
+    )
+    mineru: MinerUConfig = Field(
+        default_factory=MinerUConfig,
+        description="PDF 外部提取服务；enabled=false 时不创建资源或注册 Hook",
     )
 
 

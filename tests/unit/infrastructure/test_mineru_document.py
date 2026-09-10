@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 import pytest
 
+from comet_rag.core.concurrency import Gate
 from comet_rag.infrastructure.providers.document import (
     MINERU_API_PROTOCOL_VERSION,
     MinerUDocumentExtractor,
@@ -641,6 +642,73 @@ async def test_cancellation_closes_the_active_response_stream(
         await task
 
     assert stream.closed.is_set()
+
+
+async def test_extractor_gate_limits_whole_async_parse_lifecycle(
+    document_path: Path,
+) -> None:
+    active = 0
+    peak = 0
+    submissions = 0
+    two_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active, peak, submissions
+        path = request.url.path
+        if path.endswith("/health"):
+            active += 1
+            peak = max(peak, active)
+            if active == 2:
+                two_started.set()
+            await release.wait()
+            return httpx.Response(
+                200,
+                json={
+                    "status": "healthy",
+                    "version": "3.3.0",
+                    "protocol_version": MINERU_API_PROTOCOL_VERSION,
+                },
+            )
+        if request.method == "POST" and path.endswith("/tasks"):
+            submissions += 1
+            return httpx.Response(202, json={"task_id": f"task-{submissions}"})
+        if path.endswith("/result"):
+            active -= 1
+            return httpx.Response(
+                200,
+                json={"results": {"sample": {"md_content": MARKDOWN}}},
+            )
+        task_id = path.rsplit("/", 1)[-1]
+        return httpx.Response(200, json={"task_id": task_id, "status": "completed"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    extractor = MinerUDocumentExtractor(BASE_URL, async_client=client)
+    gate = Gate(limit=2, max_waiting=5, acquire_timeout=1.0, name="mineru")
+    extractor.bind_gate(gate)
+    tasks = [
+        asyncio.create_task(
+            extractor.aextract(
+                document_path,
+                filename=f"sample-{index}.pdf",
+                media_type="application/pdf",
+            )
+        )
+        for index in range(5)
+    ]
+    await two_started.wait()
+
+    assert active == 2
+    assert gate.stats.in_flight == 2
+    release.set()
+    results = await asyncio.gather(*tasks)
+
+    assert [result.markdown for result in results] == [MARKDOWN] * 5
+    assert peak == 2
+    assert gate.stats.peak_in_flight == 2
+    assert gate.stats.in_flight == 0
+    await extractor.aclose()
+    await client.aclose()
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 # Spec: M2 PDF / MinerU
 
-> 状态：实施中（v0.4）
+> 状态：实施中（v0.5）
 > GitHub Issue：[#50](https://github.com/comet-7x/comet-rag/issues/50)
 > 开发分支：`feature/m2-pdf-mineru`
 > 最后更新：2026-09-10
@@ -143,7 +143,7 @@ limits:
 
 ### S1 — 分层与安装
 
-- [ ] `tests/unit/test_layering.py` 证明 `engines/` 不 import MinerU 或具体适配器。
+- [x] `tests/unit/test_layering.py` 证明 `engines/` 不 import MinerU 或具体适配器。
 - [ ] `uv sync --no-default-groups` 后 DOCX 全套测试仍通过。
 - [ ] 默认与 `all` 安装不下载 Torch、模型权重或 MinerU 本体。
 - [ ] `pyproject.toml` 与 `uv.lock` 不含 `mineru` 包或 `mineru` extra。
@@ -155,7 +155,7 @@ limits:
 - [x] 请求显式发送全部产物开关；JSON 结果必须恰好包含一个 `md_content`。
 - [x] 同步/异步入口对同一响应生成相同 Markdown 和稳定 metadata。
 - [x] 多次调用复用 client；`aclose()` 只关闭内部创建的资源。
-- [ ] 并发峰值不超过 `mineru_concurrency`，等待队列有界。
+- [x] 并发峰值不超过 `mineru_concurrency`，等待队列有界。
 
 ### S3 — Pipeline 与服务链路
 
@@ -170,7 +170,7 @@ limits:
 - [ ] 可用时对小型文本 PDF 跑真实 `POST /tasks` 全链路。
 - [ ] 重写 `docs/mineru_integration.md`，删除固定内网地址与旧版私有 API 示例。
 - [ ] 更新配置示例、部署说明、模型/流水线用法和 M2 状态。
-- [x] 默认 `uv run pytest` 仍小于 10 秒（1661 passed，8.63s）。
+- [x] 默认 `uv run pytest` 仍小于 10 秒（1684 passed，8.79s）。
 
 ## 7. 实施顺序
 

@@ -64,6 +64,24 @@ infrastructure_config:
   #   verify_ssl: true
   #   max_object_bytes: 104857600           # 100 MiB；HEAD 与实际流量双重校验
 
+  # PDF 通过外部 mineru-api / mineru-router 提取。关闭时不会创建 HTTP 客户端，
+  # 也不会注册 PDF Hook；Comet-RAG 不安装或管理 MinerU SDK/进程。
+  mineru:
+    enabled: false
+    base_url: http://127.0.0.1:8000
+    backend: pipeline
+    parse_method: auto                       # auto | txt | ocr
+    language: ch
+    formula: true
+    table: true
+    connect_timeout_seconds: 10.0
+    request_timeout_seconds: 60.0
+    upload_timeout_seconds: 300.0
+    poll_interval_seconds: 1.0
+    parse_timeout_seconds: 900.0
+    max_response_bytes: 16777216             # 16 MiB
+    max_markdown_bytes: 8388608              # 8 MiB，同时限制 PDF Task context
+
 # 各资源用哪个实现。全 memory 时零外部依赖，适合本地开发与测试。
 backends:
   vector_store: memory      # memory | milvus
@@ -94,6 +112,10 @@ limits:
   # 单次批量加载的并发上限。护的是本机文件描述符与对外连接数，
   # 与模型侧不是同一种资源，所以是独立的一个数。
   loader_concurrency: 10
+  # MinerU 是另一项外部资源：不能复用加载闸门或模型 GPU 闸门。
+  mineru_concurrency: 2
+  mineru_queue: 16
+  mineru_wait_timeout: 30.0
 
   # 分级降级（spec S4-5）：先关 rerank → 再降 top_k → 最后拒绝新任务。
   # 三个数分别对应这三级的触发阈值。

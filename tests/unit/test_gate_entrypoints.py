@@ -43,6 +43,7 @@ from comet_rag.engines.loaders.local_loader import LocalLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.loaders.url_loader import URLLoader
 from comet_rag.infrastructure.loaders.s3_loader import S3Loader
+from comet_rag.infrastructure.providers.document.mineru import MinerUDocumentExtractor
 from comet_rag.infrastructure.providers.embedding.base import (
     BaseEmbeddingModel,
     MultimodalEmbeddingMixin,
@@ -60,7 +61,7 @@ from comet_rag.infrastructure.providers.reranker.base import BaseReranker
 from comet_rag.infrastructure.providers.reranker.qwen3_vl_reranker import (
     Qwen3VLReranker,
 )
-from comet_rag.ports import MediaResource
+from comet_rag.ports import ExtractedDocument, MediaResource
 from comet_rag.ports.gate import GatedResource
 
 #: 四类的含义见模块文档。改动这张表时请连同理由一起写。
@@ -155,6 +156,13 @@ CLASSIFICATION: dict[type, dict[str, set[str]]] = {
     },
     Qwen3VLReranker: {
         "direct": set(),
+        "indirect": set(),
+        "delegated": set(),
+        "exempt": {"aclose"},
+    },
+    MinerUDocumentExtractor: {
+        # 一次许可覆盖 health、上传、轮询与结果读取的完整远端解析生命周期。
+        "direct": {"extract", "aextract"},
         "indirect": set(),
         "delegated": set(),
         "exempt": {"aclose"},
@@ -694,6 +702,23 @@ class _StubURLLoader(URLLoader):
         return LoaderContent(path=Path("/dev/null"), source=SourceContent("x"))
 
 
+class _StubMinerU(MinerUDocumentExtractor):
+    """绕开 HTTP 内核，只测 MinerU 公开模板方法的闸门记账。"""
+
+    def __init__(self) -> None:
+        pass
+
+    def _extract(
+        self, path: Path, /, *, filename: str, media_type: str
+    ) -> ExtractedDocument:
+        return ExtractedDocument(markdown="x")
+
+    async def _aextract(
+        self, path: Path, /, *, filename: str, media_type: str
+    ) -> ExtractedDocument:
+        return ExtractedDocument(markdown="x")
+
+
 def _stub_auto_loader() -> AutoLoader:
     return AutoLoader(
         [LoaderRoute(name="all", matcher=lambda _source: True, loader=_StubLoader())]
@@ -740,6 +765,13 @@ SYNC_INVOCATIONS: list[tuple[str, Any, int]] = [
         lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2),
         3,
     ),
+    (
+        "MinerUDocumentExtractor.extract",
+        lambda m: m.extract(
+            Path("/dev/null"), filename="x.pdf", media_type="application/pdf"
+        ),
+        1,
+    ),
 ]
 
 #: 异步入口同样要量。第一版把 `a` 开头的排除在完整性检查外，理由写的是
@@ -782,6 +814,13 @@ ASYNC_INVOCATIONS: list[tuple[str, Any, int]] = [
         lambda m: m.abatch_load(["a", "b", "c"], max_concurrency=2),
         3,
     ),
+    (
+        "MinerUDocumentExtractor.aextract",
+        lambda m: m.aextract(
+            Path("/dev/null"), filename="x.pdf", media_type="application/pdf"
+        ),
+        1,
+    ),
 ]
 
 _STUBS: dict[str, Any] = {
@@ -792,6 +831,7 @@ _STUBS: dict[str, Any] = {
     "Qwen3VLEmbeddingModel": _StubQwen,
     "URLLoader": _StubURLLoader,
     "AutoLoader": _stub_auto_loader,
+    "MinerUDocumentExtractor": _StubMinerU,
 }
 
 

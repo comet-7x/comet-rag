@@ -7,11 +7,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from comet_rag.config.schemas import (
     IngestPolicyConfig,
     LimitsConfig,
+    MinerUConfig,
     ModelConfig,
     RedisConfig,
     S3Config,
@@ -24,6 +27,14 @@ from comet_rag.engines.defaults import (
     DEFAULT_LOADER_CONCURRENCY,
 )
 from comet_rag.engines.pipelines.types import PipelineConfig
+from comet_rag.infrastructure.providers.document.mineru import (
+    DEFAULT_CONNECT_TIMEOUT_SECONDS,
+    DEFAULT_MAX_MARKDOWN_BYTES,
+    DEFAULT_MAX_RESPONSE_BYTES,
+    DEFAULT_PARSE_TIMEOUT_SECONDS,
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    DEFAULT_UPLOAD_TIMEOUT_SECONDS,
+)
 
 # ── DSN 编码（PR 评审 #7）──────────────────────────────────────────────────
 
@@ -128,6 +139,43 @@ def test_s3_credentials_are_masked_and_explicitly_unwrapped() -> None:
     assert config.access_key_id_value == "minio-access"
     assert config.secret_access_key_value == "minio-secret"  # noqa: S105
     assert config.session_token_value == "temporary-token"  # noqa: S105
+
+
+def test_mineru_is_disabled_by_default_with_bounded_defaults() -> None:
+    config = MinerUConfig()
+
+    assert config.enabled is False
+    assert config.connect_timeout_seconds == DEFAULT_CONNECT_TIMEOUT_SECONDS
+    assert config.request_timeout_seconds == DEFAULT_REQUEST_TIMEOUT_SECONDS
+    assert config.upload_timeout_seconds == DEFAULT_UPLOAD_TIMEOUT_SECONDS
+    assert config.poll_interval_seconds == 1.0
+    assert config.parse_timeout_seconds == DEFAULT_PARSE_TIMEOUT_SECONDS
+    assert config.max_response_bytes == DEFAULT_MAX_RESPONSE_BYTES
+    assert config.max_markdown_bytes == DEFAULT_MAX_MARKDOWN_BYTES
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"base_url": "mineru.internal"},
+        {"base_url": "http://user:secret@mineru.internal"},
+        {"poll_interval_seconds": 10.0, "parse_timeout_seconds": 10.0},
+        {"request_timeout_seconds": 901.0},
+        {"upload_timeout_seconds": 901.0},
+        {"connect_timeout_seconds": 901.0},
+        {"max_response_bytes": 10, "max_markdown_bytes": 11},
+    ],
+)
+def test_mineru_cross_field_and_endpoint_constraints(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        MinerUConfig(**kwargs)
+
+
+def test_mineru_rejects_unmanaged_request_headers() -> None:
+    secret = "must-not-enter-config-output"  # noqa: S105 - test sentinel
+
+    with pytest.raises(ValueError, match="headers"):
+        MinerUConfig(headers={"Authorization": f"Bearer {secret}"})  # type: ignore[call-arg]
 
 
 def test_secrets_are_masked_but_explicitly_unwrapped_for_connection_urls() -> None:

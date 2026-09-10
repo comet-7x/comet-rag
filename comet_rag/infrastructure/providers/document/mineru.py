@@ -6,7 +6,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, final
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -18,6 +18,7 @@ from comet_rag.ports import (
     ExtractedDocument,
     RetryableDocumentUpstreamError,
 )
+from comet_rag.ports.gate import GatedResource
 
 MINERU_API_PROTOCOL_VERSION = 2
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 10.0
@@ -64,7 +65,7 @@ class _RemoteTaskMissing(RuntimeError):
     """MinerU 的进程内任务状态已丢失，可以在本次预算内重提一次。"""
 
 
-class MinerUDocumentExtractor:
+class MinerUDocumentExtractor(GatedResource):
     """外部 `mineru-api` / `mineru-router` 的有界 HTTP 适配器。"""
 
     def __init__(
@@ -486,7 +487,7 @@ class MinerUDocumentExtractor:
         )
         return self._document(response, server_info)
 
-    def extract(
+    def _extract(
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument:
         deadline = self._clock() + self._parse_timeout_seconds
@@ -513,7 +514,7 @@ class MinerUDocumentExtractor:
                 )
         raise AssertionError("unreachable")
 
-    async def aextract(
+    async def _aextract(
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument:
         deadline = self._clock() + self._parse_timeout_seconds
@@ -541,6 +542,24 @@ class MinerUDocumentExtractor:
                     deadline=deadline,
                 )
         raise AssertionError("unreachable")
+
+    @final
+    def extract(
+        self, path: Path, /, *, filename: str, media_type: str
+    ) -> ExtractedDocument:
+        """同步提取入口；服务装配后与异步入口共用 MinerU 闸门。"""
+        return self._through_gate_sync(
+            lambda: self._extract(path, filename=filename, media_type=media_type)
+        )
+
+    @final
+    async def aextract(
+        self, path: Path, /, *, filename: str, media_type: str
+    ) -> ExtractedDocument:
+        """异步提取入口；等待许可期间取消不会泄漏闸门名额。"""
+        return await self._through_gate(
+            lambda: self._aextract(path, filename=filename, media_type=media_type)
+        )
 
     async def aclose(self) -> None:
         """只关闭当前适配器创建的客户端。"""

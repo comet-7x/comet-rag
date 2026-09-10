@@ -2,7 +2,7 @@
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
 > 当前里程碑：M2 PDF / MinerU HTTP
-> 当前唯一 P0：完成 M2-T6 配置、独立闸门、装配与逆序关闭
+> 当前唯一 P0：完成 M2-T7 三来源 PDF 入库链路
 > 最后更新：2026-09-10
 
 ## 1. 目的
@@ -319,9 +319,10 @@ comet_rag/
 
 1. **M2-T5（已完成）**：MinerU 主路径已具备总 deadline、请求超时、错误分类、
    404 单次重提、响应/Markdown 限长及取消清理。
-2. **M2-T6（当前）**：配置、独立 MinerU 闸门、组合根注册、Task context 二次限长
-   与逆序关闭。
-3. **M2-T7～T9**：三来源 PDF E2E、真实 MinerU 基准、文档与里程碑验收。
+2. **M2-T6（已完成）**：配置、独立 MinerU 闸门、组合根注册、Task context
+   二次限长与逆序关闭均已接通。
+3. **M2-T7（当前）**：三来源 PDF 入库、内容复验及 TaskStore 可观察行为。
+4. **M2-T8～T9**：真实 MinerU 基准、文档与里程碑验收。
 
 ### P1 — M2 完成后：统一公共概念与使用入口
 
@@ -369,4 +370,4 @@ comet_rag/
 | DOCX 是否最终实现同一提取 Port | 是；列为 M2 后 P1 |
 | Chunker 是否统一做页面、父子块和 Graph | 否；分别属于 Extraction、Strategy、Planner 与 Graph ingestion |
 | 是否现在定义 Search/Graph 全套 Port | 否；分别由 M3 和后续真实需求驱动 |
-| 当前下一项工作 | 只执行 M2-T6 |
+| 当前下一项工作 | 只执行 M2-T7 |

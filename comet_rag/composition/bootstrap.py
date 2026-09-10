@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from comet_rag.composition.context import Context, wire_runners
 from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.degradation import DegradationController, DegradationSettings
 from comet_rag.core.logging import logger
-from comet_rag.engines.loaders import AutoLoader, LoaderRoute
-from comet_rag.engines.pipelines import DocxConfig, PipelineConfig
+from comet_rag.engines.loaders import AutoLoader, LoaderContent, LoaderRoute
+from comet_rag.engines.pipelines import DocxConfig, PipelineConfig, PipelineHooks
 from comet_rag.infrastructure.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
     KnowledgeBaseRepository,
@@ -19,7 +20,7 @@ from comet_rag.infrastructure.vectorstore import (
     BaseVectorStore,
     InMemoryVectorStore,
 )
-from comet_rag.ports import EmbeddingPort, RerankerPort
+from comet_rag.ports import DocumentExtractorPort, EmbeddingPort, RerankerPort
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
 from comet_rag.services.source_policy import SourcePolicy, build_source_policy
@@ -31,6 +32,9 @@ from comet_rag.tasks import (
     TaskService,
     TaskStore,
 )
+
+if TYPE_CHECKING:
+    from comet_rag.infrastructure.providers.document import MinerUDocumentExtractor
 
 
 def build_vector_store(config: APPConfig) -> BaseVectorStore:
@@ -205,6 +209,72 @@ def build_loader_gate(config: APPConfig) -> Gate:
     )
 
 
+def build_mineru_gate(config: APPConfig) -> Gate:
+    """MinerU 解析占用的是外部文档服务，不与加载或模型请求共享预算。"""
+    limits = config.limits
+    return build_gate(
+        limit=limits.mineru_concurrency,
+        max_waiting=limits.mineru_queue,
+        acquire_timeout=limits.mineru_wait_timeout,
+        name="mineru",
+    )
+
+
+def build_mineru_extractor(config: APPConfig) -> MinerUDocumentExtractor | None:
+    settings = config.infrastructure_config.mineru
+    if not settings.enabled:
+        return None
+
+    from comet_rag.infrastructure.providers.document import (  # noqa: PLC0415
+        MinerUDocumentExtractor,
+    )
+
+    return MinerUDocumentExtractor(
+        settings.base_url,
+        backend=settings.backend,
+        parse_method=settings.parse_method.value,
+        language=settings.language,
+        formula=settings.formula,
+        table=settings.table,
+        connect_timeout_seconds=settings.connect_timeout_seconds,
+        request_timeout_seconds=settings.request_timeout_seconds,
+        upload_timeout_seconds=settings.upload_timeout_seconds,
+        poll_interval_seconds=settings.poll_interval_seconds,
+        parse_timeout_seconds=settings.parse_timeout_seconds,
+        max_response_bytes=settings.max_response_bytes,
+        max_markdown_bytes=settings.max_markdown_bytes,
+    )
+
+
+def wire_pdf_extractor(extractor: DocumentExtractorPort) -> None:
+    """把 Port 适配到现有字符串 Hook；供应商字段不进入 engines。"""
+
+    def filename(content: LoaderContent) -> str:
+        configured = content.metadata.get("file_name")
+        if isinstance(configured, str) and configured.strip():
+            return configured
+        return content.path.name
+
+    @PipelineHooks.extractor("pdf")
+    def extract_pdf(content: LoaderContent, config: PipelineConfig) -> str:
+        del config
+        return extractor.extract(
+            content.path,
+            filename=filename(content),
+            media_type="application/pdf",
+        ).markdown
+
+    @PipelineHooks.aextractor("pdf")
+    async def aextract_pdf(content: LoaderContent, config: PipelineConfig) -> str:
+        del config
+        document = await extractor.aextract(
+            content.path,
+            filename=filename(content),
+            media_type="application/pdf",
+        )
+        return document.markdown
+
+
 def build_model_gate(
     config: APPConfig, degradation: DegradationController | None = None
 ) -> Gate:
@@ -316,6 +386,7 @@ def build_context(
     task_executor: TaskExecutor | None = None,
     kb_repository: KnowledgeBaseRepository | None = None,
     pipeline_config: PipelineConfig | None = None,
+    mineru_extractor: DocumentExtractorPort | None = None,
     executor_lane: str | None = None,
 ) -> Context:
     """按配置装配全套资源。
@@ -360,6 +431,20 @@ def build_context(
     loader_gate = build_loader_gate(config)
     ingest_loader.bind_gate(loader_gate)
     _assert_gated(loader_gate, *_gated_routes(ingest_loader))
+
+    if mineru_extractor is None:
+        mineru_extractor = build_mineru_extractor(config)
+    mineru_gate: Gate | None = None
+    if mineru_extractor is not None:
+        bind_gate = getattr(mineru_extractor, "bind_gate", None)
+        if not callable(bind_gate):
+            raise RuntimeError(
+                f"{type(mineru_extractor).__name__} 不支持进程级 MinerU 闸门"
+            )
+        mineru_gate = build_mineru_gate(config)
+        bind_gate(mineru_gate)
+        _assert_gated(mineru_gate, mineru_extractor)
+
     vector_store = vector_store or build_vector_store(config)
     task_store = task_store or build_task_store(config, database)
     task_executor = task_executor or build_task_executor(
@@ -399,7 +484,16 @@ def build_context(
         degradation=degradation,
         source_policy=source_policy,
         ingest_loader=ingest_loader,
-        _extra_closers=[ingest_loader],
+        mineru_gate=mineru_gate,
+        extracted_text_limits=(
+            {"pdf": config.infrastructure_config.mineru.max_markdown_bytes}
+            if mineru_extractor is not None
+            else {}
+        ),
+        _extra_closers=[
+            ingest_loader,
+            *([mineru_extractor] if mineru_extractor is not None else []),
+        ],
     )
     limits = config.limits
     configured_docx = DocxConfig(
@@ -441,6 +535,8 @@ def build_context(
         pipeline_config = pipeline_config.model_copy(
             update={"docx": DocxConfig(**docx_values), **concurrency_overrides}
         )
+    if mineru_extractor is not None:
+        wire_pdf_extractor(mineru_extractor)
     wire_runners(context, ingest_config=pipeline_config)
 
     logger.info(
@@ -459,8 +555,11 @@ __all__ = [
     "build_degradation",
     "build_model_gate",
     "build_kb_repository",
+    "build_mineru_extractor",
+    "build_mineru_gate",
     "build_reranker",
     "build_task_executor",
     "build_task_store",
     "build_vector_store",
+    "wire_pdf_extractor",
 ]

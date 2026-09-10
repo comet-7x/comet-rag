@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M2（PDF / MinerU HTTP）
 
-> 状态：M2-T1～M2-T5 已完成；M2-T6 待执行。宏观排期见 `tasks/m2_plan.md`
+> 状态：M2-T1～M2-T6 已完成；M2-T7 待执行。宏观排期见 `tasks/m2_plan.md`
 > 规格：`tasks/m2_spec.md` v0.3
 > 长期架构：`tasks/architecture_plan.md`；其中 Loader/DOCX 重构不属于当前 M2 工作
 
@@ -84,12 +84,15 @@
 
 **日期：** 09-18　**依赖：** M2-T5
 
-- [ ] 新增 MinerU provider 配置与跨字段校验，`enabled=false` 为安全默认
-- [ ] 新增独立并发、队列和等待预算，不复用 loader/model 闸门
-- [ ] 组合根注册 PDF 同步/异步 Hook，具体适配器不泄漏到 services/engines
-- [ ] 将 PDF 的 Markdown 限制注入 IngestRunner，启用 Task context 写入前复验
-- [ ] Context 逆序关闭 MinerU 资源，重复关闭幂等
-- [ ] 配置打印不泄漏凭据或内部请求头
+- [x] 新增 MinerU provider 配置与跨字段校验，`enabled=false` 为安全默认
+- [x] 新增独立并发、队列和等待预算，不复用 loader/model 闸门
+- [x] 组合根注册 PDF 同步/异步 Hook，具体适配器不泄漏到 services/engines
+- [x] 将 PDF 的 Markdown 限制注入 IngestRunner，启用 Task context 写入前复验
+- [x] Context 逆序关闭 MinerU 资源，重复关闭幂等
+- [x] 配置禁止未托管 headers，输出不泄漏凭据或内部请求头
+
+**验收：** 全量 `1684 passed`、20 skipped、171 deselected、1 xfailed，8.79s；
+Ruff、格式、Pyright、闸门入口行为守卫与分层守卫通过。
 
 ## Phase 4：端到端与出口验收
 
