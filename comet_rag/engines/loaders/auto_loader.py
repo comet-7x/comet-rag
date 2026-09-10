@@ -11,7 +11,8 @@ from comet_rag.engines.loaders.base_loader import (
     BaseLoader,
 )
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
-from comet_rag.ports.gate import AsyncGate
+from comet_rag.ports.gate import AsyncGate, GatedResource
+from comet_rag.ports.source import SourceLoaderPort
 
 type LoaderMatcher = Callable[[SourceContent], bool]
 
@@ -26,21 +27,21 @@ class LoaderRoute:
 
     name: str
     matcher: LoaderMatcher
-    loader: BaseLoader
+    loader: SourceLoaderPort
 
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise ValueError("LoaderRoute.name must not be empty")
 
     @classmethod
-    def local(cls, loader: BaseLoader, *, name: str = "local") -> LoaderRoute:
+    def local(cls, loader: SourceLoaderPort, *, name: str = "local") -> LoaderRoute:
         return cls(name=name, loader=loader, matcher=lambda source: source.is_local)
 
     @classmethod
     def schemes(
         cls,
         name: str,
-        loader: BaseLoader,
+        loader: SourceLoaderPort,
         schemes: str | Iterable[str],
     ) -> LoaderRoute:
         values = (schemes,) if isinstance(schemes, str) else schemes
@@ -124,7 +125,8 @@ class AutoLoader(BaseLoader):
         直通路径，名额全部留给真正发请求的那一层。
         """
         for route in self._routes:
-            route.loader.bind_gate(gate)
+            if isinstance(route.loader, GatedResource):
+                route.loader.bind_gate(gate)
 
     @staticmethod
     def _validate_route_names(routes: Sequence[LoaderRoute]) -> None:
@@ -138,7 +140,7 @@ class AutoLoader(BaseLoader):
                 return route
         raise ValueError(f"No loader route matched source: {source.source!r}")
 
-    def _resolve(self, source: SourceContent) -> BaseLoader:
+    def _resolve(self, source: SourceContent) -> SourceLoaderPort:
         """Compatibility helper returning only the matched loader."""
 
         return self._resolve_route(source).loader
@@ -162,8 +164,10 @@ class AutoLoader(BaseLoader):
 
     def _group_sources(
         self, sources: list[SourceContent] | list[str]
-    ) -> list[tuple[BaseLoader, list[tuple[int, SourceContent]]]]:
-        groups: dict[int, tuple[BaseLoader, list[tuple[int, SourceContent]]]] = {}
+    ) -> list[tuple[SourceLoaderPort, list[tuple[int, SourceContent]]]]:
+        groups: dict[
+            int, tuple[SourceLoaderPort, list[tuple[int, SourceContent]]]
+        ] = {}
         for index, source in enumerate(sources):
             normalized = self._normalize_source(source)
             loader = self._resolve(normalized)
@@ -225,8 +229,8 @@ class AutoLoader(BaseLoader):
             grouped_results.append((indexed_sources, results))
         return self._restore_order(len(sources), grouped_results)
 
-    def _unique_loaders(self) -> list[BaseLoader]:
-        unique: dict[int, BaseLoader] = {}
+    def _unique_loaders(self) -> list[SourceLoaderPort]:
+        unique: dict[int, SourceLoaderPort] = {}
         for route in self._routes:
             unique.setdefault(id(route.loader), route.loader)
         return list(unique.values())

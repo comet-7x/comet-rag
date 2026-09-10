@@ -7,21 +7,20 @@ from typing import TYPE_CHECKING
 
 from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
 from comet_rag.engines.loaders.auto_loader import AutoLoader
-from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines.hooks import HookProvider, PipelineHooks
 from comet_rag.engines.pipelines.types import Chunk, PipelineConfig, PipelineResult
 from comet_rag.engines.utils import compute_sha256
 
 if TYPE_CHECKING:
-    from comet_rag.ports import EmbeddingPort
+    from comet_rag.ports import EmbeddingPort, SourceLoaderPort
 
 
 class Pipeline:
     def __init__(
         self,
         config: PipelineConfig | None = None,
-        loader: BaseLoader | None = None,
+        loader: SourceLoaderPort | None = None,
         embedding_model: EmbeddingPort | None = None,
         hooks: HookProvider | None = None,
     ):
