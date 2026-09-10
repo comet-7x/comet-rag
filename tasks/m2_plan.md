@@ -1,7 +1,7 @@
 # Implementation Plan: Comet-RAG M2（PDF / MinerU HTTP）
 
-> 状态：实施中（v0.5）
-> 依据：`tasks/m2_spec.md` v0.7、GitHub Issue #50
+> 状态：实施中（v0.6）
+> 依据：`tasks/m2_spec.md` v0.8、GitHub Issue #50
 > 目标完成：2026-09-22；评审缓冲至 2026-09-24
 > 范围：只连接外部 `mineru-api` / `mineru-router`，不嵌入 MinerU SDK
 
@@ -15,12 +15,13 @@ M2 在不改变 M1 任务、存储与检索契约的前提下，让本地、URL 
 
 ## Current Priority
 
-M2-T7 已完成。当前只执行 **M2-T8**：增加由 `COMET_TEST_MINERU_URL` 控制的真实
-服务集成出口，以文本与扫描 PDF 跑完整任务链路，并记录耗时、输出大小、峰值内存
-和 CPU lane 占用，用数据确认并发、超时与大小默认值。
+M2-T8 已完成：MinerU 3.4.5 `mineru-api` 连接远端 MinerU 2.5 vLLM，文本与扫描
+PDF 均通过真实 `/tasks` 链路完成入库和检索，测试 `1 passed in 3.50s`。原始指标
+通过 `--mineru-report` 生成，验收摘要见 `tasks/m2_todo.md`。
 
-集成与指标出口已经就绪；当前环境没有配置真实 MinerU，`127.0.0.1:8989` 也不可达。
-在取得服务地址前保持 T8 为执行中，不提前进入 T9，也不基于模拟数据调整默认值。
+下一项为 **M2-T9**，尚未开始：补全文档与配置示例，执行 core-only、unit、
+integration、e2e 和质量门，随后同步 Issue #50 与 PR 描述。T8 的小样本不足以估计
+长文档尾延迟，因此保留当前保守资源默认值，并把动态分道留作有生产样本后的独立设计。
 
 Loader 统一和 DOCX 提取器迁移已记录为 M2 后 P1，不在此刻移动约 2,000 行 Loader
 代码。目录美化不能优先于一个可能无界轮询的外部服务调用。
@@ -104,5 +105,4 @@ M2-T3 可在 M2-T2 后半段并行准备，但合入前必须基于同一提取�
 
 ## Open Questions
 
-- 真实 `mineru-api` / `mineru-router` 测试地址与可用时段。
 - 三 PR 策略是否确认；若改为单 PR，提交边界仍按三个 Checkpoint 保留。

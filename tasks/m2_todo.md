@@ -114,14 +114,18 @@ Ruff、格式、Pyright 与 414 条分层守卫均通过。
 **日期：** 09-21　**依赖：** M2-T7
 
 - [x] 未设置 `COMET_TEST_MINERU_URL` 或服务不可达时 skip
-- [ ] 文本 PDF 与扫描 PDF 各跑一次真实 `/tasks` 链路
-- [ ] 记录耗时、输出字节、峰值内存与 CPU lane 占用
-- [ ] 根据数据确认并发、超时和大小默认值
+- [x] 文本 PDF 与扫描 PDF 各跑一次真实 `/tasks` 链路
+- [x] 记录耗时、输出字节、峰值内存与 CPU lane 占用
+- [x] 根据数据确认并发、超时和大小默认值
 
-**当前进度：** 已生成带文本层与纯图片扫描样本，完成真实 ASGI/TaskStore 链路、
-检索断言和 `mineru-report.json` 指标出口；未设置地址与不可达地址均已反向验证为
-skip。当前环境未设置 `COMET_TEST_MINERU_URL`，本机旧 POC 端口 8989 也未运行，
-因此后三项必须等真实服务采样后再勾选，不能用 MockTransport 数据冒充。
+**验收：** 2026-09-10 使用 MinerU 3.4.5 `mineru-api`（protocol v2）连接远端
+`opendatalab/MinerU2.5-2509-1.2B` vLLM，真实测试 `1 passed in 3.50s`。文本 PDF
+584 B → Markdown 9 B，端到端 2.10s；扫描 PDF 1559 B → Markdown 14 B，端到端
+3.11s；两者均生成 1 个 chunk 并经 `/search` 命中。Comet-RAG 测试进程 Python
+堆峰值 1,450,128 B，本地 MinerU 闸门峰值 2；CPU lane 持有占端到端时间
+99.56% / 99.66%。样本仅用于打通边界而非估计长文档尾延迟，因此保留并发 2、
+总超时 900s、响应 16 MiB、Markdown 8 MiB 的保守默认值，不以小样本下调上限；
+生产部署按上游容量调整并发。完整原始数据由测试的 `--mineru-report` 出口生成。
 
 ### M2-T9 — 文档、全量验证与收尾（S）
 

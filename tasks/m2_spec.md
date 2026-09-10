@@ -1,6 +1,6 @@
 # Spec: M2 PDF / MinerU
 
-> 状态：实施中（v0.7）
+> 状态：实施中（v0.8）
 > GitHub Issue：[#50](https://github.com/comet-7x/comet-rag/issues/50)
 > 开发分支：`feature/m2-pdf-mineru`
 > 最后更新：2026-09-10
@@ -167,10 +167,15 @@ limits:
 ### S4 — 集成测试与文档
 
 - [x] `COMET_TEST_MINERU_URL` 未设置或服务不可达时集成测试 skip，不 fail。
-- [ ] 可用时对小型文本 PDF 跑真实 `POST /tasks` 全链路。
+- [x] 可用时对小型文本 PDF 与扫描 PDF 跑真实 `POST /tasks` 全链路。
 - [ ] 重写 `docs/mineru_integration.md`，删除固定内网地址与旧版私有 API 示例。
 - [ ] 更新配置示例、部署说明、模型/流水线用法和 M2 状态。
 - [x] 默认 `uv run pytest` 仍小于 10 秒（1686 passed，8.66s）。
+
+T8 于 2026-09-10 使用 MinerU 3.4.5 / protocol v2 和远端 MinerU 2.5 vLLM 验证：
+文本与扫描样本端到端分别为 2.10s / 3.11s，Markdown 9 B / 14 B，Comet-RAG
+测试进程 Python 堆峰值约 1.45 MB。样本过小，不据此收紧面向真实长文档的超时或
+大小上限；并发 2、总超时 900s、响应 16 MiB、Markdown 8 MiB 暂保持不变。
 
 ## 7. 实施顺序
 
