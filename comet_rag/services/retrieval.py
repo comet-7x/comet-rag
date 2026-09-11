@@ -9,8 +9,13 @@ from pydantic import BaseModel, Field
 
 from comet_rag.core.degradation import DegradationController
 from comet_rag.core.logging import logger
-from comet_rag.infrastructure.vectorstore import BaseVectorStore, Filter
-from comet_rag.ports import EmbeddingPort, RerankDocument, RerankerPort
+from comet_rag.ports import (
+    EmbeddingPort,
+    Filter,
+    RerankDocument,
+    RerankerPort,
+    VectorSearchPort,
+)
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 
 
@@ -81,7 +86,7 @@ class RetrievalService:
         self,
         *,
         embedding_model: EmbeddingPort,
-        vector_store: BaseVectorStore,
+        vector_store: VectorSearchPort,
         knowledge_base: KnowledgeBaseService | None = None,
         reranker: RerankerPort | None = None,
         degradation: DegradationController | None = None,

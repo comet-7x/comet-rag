@@ -241,6 +241,53 @@ def test_business_code_depends_on_model_ports(module: Path) -> None:
     )
 
 
+# ── Service 依赖向量存储 Port，而不是适配器包（M3-T2）──────────────────────
+
+VECTORSTORE_ADAPTER_PACKAGE = "comet_rag.infrastructure.vectorstore"
+
+
+def _service_vectorstore_violations(
+    tree: ast.AST, module: Path | None = None
+) -> set[str]:
+    return {
+        name
+        for name in _imported_full(tree, module)
+        if name.startswith(VECTORSTORE_ADAPTER_PACKAGE)
+    }
+
+
+def _service_modules() -> list[Path]:
+    return sorted(
+        path
+        for path in (PROJECT_ROOT / "comet_rag" / "services").rglob("*.py")
+        if "__pycache__" not in path.parts
+    )
+
+
+@pytest.mark.parametrize("module", _service_modules(), ids=lambda p: p.name)
+def test_services_depend_on_vectorstore_ports(module: Path) -> None:
+    """Service 只描述业务能力，具体向量后端必须由组合根注入。"""
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    violations = _service_vectorstore_violations(tree, module)
+    assert not violations, (
+        f"{module.relative_to(PROJECT_ROOT)} 直接依赖了向量存储适配器："
+        f"{sorted(violations)}。请依赖 comet_rag.ports，并在组合根注入实现。"
+    )
+
+
+def test_vectorstore_port_guard_detects_absolute_and_relative_imports() -> None:
+    """用故意违规的源码证明守卫不会静默放过两种导入写法。"""
+    module = PROJECT_ROOT / "comet_rag" / "services" / "retrieval.py"
+    tree = ast.parse(
+        "from comet_rag.infrastructure.vectorstore import BaseVectorStore\n"
+        "from ..infrastructure.vectorstore.milvus import MilvusStore\n"
+    )
+    assert _service_vectorstore_violations(tree, module) == {
+        "comet_rag.infrastructure.vectorstore",
+        "comet_rag.infrastructure.vectorstore.milvus",
+    }
+
+
 # ── 单进程模式不得挂上租约回收（T24）────────────────────────────────────────
 
 #: 除了 workers/ 自己，谁都不该 import 它。写成路径前缀，子模块一并覆盖。

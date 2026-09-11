@@ -7,7 +7,7 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
-from comet_rag.infrastructure.vectorstore.base import (
+from comet_rag.ports import (
     BaseVectorStore,
     CollectionNotFound,
     DimensionMismatch,

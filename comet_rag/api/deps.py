@@ -11,7 +11,7 @@ from fastapi import Depends, Request
 from ..composition.context import Context
 from ..core.concurrency import Overloaded
 from ..core.degradation import Level
-from ..infrastructure.vectorstore import BaseVectorStore
+from ..ports import BaseVectorStore
 from ..services.knowledge_base import KnowledgeBaseService
 from ..services.retrieval import RetrievalService
 from ..services.source_policy import SourcePolicy

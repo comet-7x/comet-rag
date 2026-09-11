@@ -72,8 +72,9 @@ collection 当作 hybrid-ready。
 `infrastructure.vectorstore.base` 下沉到 `ports/`。旧路径保留同一运行时对象的兼容
 导出；本阶段不改变 `BaseVectorStore` 已有方法签名，也不增加第三个实现。
 
-`RetrievalService` 使用窄的 `VectorSearchPort` 与 `KeywordSearchPort`；入库、删除和
-计数仍使用完整 `BaseVectorStore`。这样 Service 不再依赖 infrastructure，且读路径
+`RetrievalService` 先在 M3-T2 使用窄的 `VectorSearchPort`；`KeywordSearchPort` 在
+M3-T4 与两个实现及契约测试同时引入，避免出现没有调用者或实现的空抽象。入库、删除
+和计数仍使用完整 `BaseVectorStore`。这样 Service 不再依赖 infrastructure，且读路径
 不会获得不需要的写入能力。
 
 ### D5 — RRF 是纯计算 Strategy
@@ -117,14 +118,24 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 在 Milvus adapter 内构造。每路 `fetch_k <= 500`，融合输入有界；M3 不增加新的模型
 并发闸门，因为 BM25 是同一 Milvus 后端上的检索请求，不调用外部推理服务。
 
+### D9 — 真实 Milvus 验证限定测试数据库
+
+本开发环境允许复用 `.env` 中的 Milvus URI，但所有真实连接必须显式传入数据库
+`zhihao_test_database`。不得读取或沿用 `.env` 当前的 `MILVUS_DB`，不得依赖 SDK 的
+默认 database，也不得在尚未完成 `db_name` 配置和组合根装配前运行真实 Milvus 测试。
+
+集成测试的 collection 使用测试专属前缀与随机后缀，并且只清理本次创建的 collection；
+若目标 database 不是 `zhihao_test_database`，测试必须在建立连接前拒绝执行。模型配置
+也可从 `.env` 读取，但密钥不得进入日志、测试快照、提交或失败信息。
+
 ## 4. 成功标准
 
 ### S1 — 分层与兼容
 
-- [ ] `services/` 不再 import `infrastructure.vectorstore`，AST 分层守卫覆盖该规则。
-- [ ] 旧 vectorstore import 路径仍可用，且指向同一契约对象。
-- [ ] core-only 安装可导入 RRF 与检索 Port，不加载 `pymilvus`。
-- [ ] `SearchQuery` 默认 dense，既有检索测试和 API 响应字段不回退。
+- [x] `services/` 不再 import `infrastructure.vectorstore`，AST 分层守卫覆盖该规则。
+- [x] 旧 vectorstore import 路径仍可用，且指向同一契约对象。
+- [x] core-only 路径可导入当前检索 Port，不加载 `pymilvus`；RRF 待 M3-T5 验收。
+- [x] `SearchQuery` 当前默认 dense，既有检索测试和 API 响应字段未回退。
 
 ### S2 — BM25 与 schema
 
@@ -150,14 +161,15 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 
 - [ ] E2E 覆盖“精确术语靠 BM25、语义改写靠 dense、hybrid 合并两者”。
 - [ ] 集成环境不可用时 skip，不 fail；真实 Milvus 可用时验证 analyzer 与混合链路。
+- [ ] 真实 Milvus 验证只访问 `zhihao_test_database`，且不会清理非本次创建的数据。
 - [ ] 记录 dense/keyword/hybrid 的命中、延迟和候选规模，不用单个样本宣称质量提升。
 - [ ] 默认 `uv run pytest` 仍小于 10 秒，Ruff、Pyright、core-only、integration、e2e 全绿。
 
 ## 5. 实施顺序
 
-1. 检索值对象与 Port 下沉，建立兼容导出和契约测试。
+1. 检索值对象与 `VectorSearchPort` 下沉，建立兼容导出和契约测试。
 2. 对齐 Milvus/PyMilvus 版本，实现并验证 BM25 schema v2。
-3. 实现 InMemory/Milvus keyword search。
+3. 同时引入 `KeywordSearchPort` 及 InMemory/Milvus keyword search。
 4. 实现纯 RRF Strategy。
 5. 改造 RetrievalService、API、配置与组合根。
 6. 完成降级、真实集成、E2E、基准和文档验收。
@@ -171,7 +183,16 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 - 本地 PyMilvus 3.0.1 可离线构造 analyzer、BM25 Function 与 BM25 index 参数。
 - Docker daemon 未运行，未执行真实 Milvus 2.5.4 验证；版本对齐后的真实验证是 T3 硬门槛。
 
-## 7. 官方依据
+## 7. M3-T2 验证记录
+
+- `BaseVectorStore`、检索值对象及错误已下沉 `ports/vector_store.py`，旧路径保持对象身份。
+- `RetrievalService` 仅依赖 `VectorSearchPort`；AST 守卫用绝对、相对违规样本完成反向验证。
+- 独立进程导入 Port 未加载 `pymilvus`；现有向量库契约全部通过。
+- 全量结果：`1799 passed, 19 skipped, 177 deselected, 1 xfailed`，pytest 9.03s；
+  Ruff 与 Pyright 通过，Pyright 为 `0 errors`。
+- 未连接 Milvus；M3-T3 必须先显式装配 database name，再在 `zhihao_test_database` 验证。
+
+## 8. 官方依据
 
 - [Milvus Full Text Search](https://milvus.io/docs/full-text-search.md)
 - [Milvus BM25 Function](https://milvus.io/docs/bm25-function.md)

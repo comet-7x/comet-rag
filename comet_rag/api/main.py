@@ -21,7 +21,7 @@ from comet_rag.infrastructure.knowledge_base import (
     KnowledgeBaseExists,
     KnowledgeBaseNotFound,
 )
-from comet_rag.infrastructure.vectorstore import CollectionNotFound, DimensionMismatch
+from comet_rag.ports import CollectionNotFound, DimensionMismatch
 from comet_rag.services.source_policy import SourceNotAllowed
 from comet_rag.tasks import TaskBusy, TaskNotFound, VersionConflict
 from comet_rag.tasks.service import Backlogged

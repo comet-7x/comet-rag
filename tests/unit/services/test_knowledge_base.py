@@ -16,11 +16,8 @@ from comet_rag.infrastructure.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
     KnowledgeBaseNotFound,
 )
-from comet_rag.infrastructure.vectorstore import (
-    CollectionNotFound,
-    InMemoryVectorStore,
-    VectorRecord,
-)
+from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.ports import CollectionNotFound, VectorRecord
 from comet_rag.services.knowledge_base import KnowledgeBaseService, KnowledgeBaseSpec
 
 MODEL = "Qwen/Qwen3-VL-Embedding-8B"

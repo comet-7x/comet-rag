@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from comet_rag.infrastructure.vectorstore import BaseVectorStore
+from comet_rag.ports import BaseVectorStore
 from tests.contracts.vector_store import VectorStoreContract
 
 pytestmark = pytest.mark.integration

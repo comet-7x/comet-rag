@@ -13,8 +13,9 @@ M3 在现有 dense 检索和 reranker 之间增加独立 BM25 召回与纯 RRF �
 
 ## Current Priority
 
-M3-T1 已冻结后端、版本线、schema 迁移边界、Port、RRF 和降级语义。下一项为
-M3-T2：先把后端无关检索契约下沉 `ports/` 并建立兼容导出，不同时修改 Milvus schema。
+M3-T2 已完成 Port 下沉、兼容导出与分层守卫。下一项 M3-T3 必须先打通显式
+database name，再连接真实 Milvus；本环境只允许访问
+`zhihao_test_database`，不得沿用 `.env` 当前的 `MILVUS_DB` 或 SDK 默认库。
 
 ## Dependency Graph
 
@@ -84,6 +85,7 @@ T2～T8 分开。schema 变更只有在 T2 契约稳定并完成真实 Milvus �
 | dense 与 BM25 原始分数不可比 | 高 | RRF 只用排名，不混加原始分数 |
 | hybrid 局部故障拖垮读路径 | 中 | 通道级降级、实际通道与原因写入响应和日志 |
 | 新测试突破 10 秒 | 中 | 单元测试全 fake；真实 Milvus 测试保持 integration marker |
+| 配置遗漏 database 导致访问默认库 | 高 | 连接前强制显式 `db_name`；本环境仅允许 `zhihao_test_database` |
 
 ## Completion Record
 

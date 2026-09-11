@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from comet_rag.infrastructure.vectorstore import (
+from comet_rag.ports import (
     BaseVectorStore,
     CollectionNotFound,
     DimensionMismatch,

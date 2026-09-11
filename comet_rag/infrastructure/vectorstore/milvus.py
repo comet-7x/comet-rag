@@ -11,7 +11,7 @@ from typing import Any, cast
 from pymilvus import AsyncMilvusClient, DataType, MilvusClient
 
 from comet_rag.core.logging import logger
-from comet_rag.infrastructure.vectorstore.base import (
+from comet_rag.ports import (
     BaseVectorStore,
     CollectionNotFound,
     DimensionMismatch,

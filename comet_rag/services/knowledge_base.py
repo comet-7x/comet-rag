@@ -13,7 +13,7 @@ from comet_rag.infrastructure.knowledge_base import (
     KnowledgeBaseExists,
     KnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.vectorstore import BaseVectorStore
+from comet_rag.ports import BaseVectorStore
 
 
 class KnowledgeBaseSpec(BaseModel):

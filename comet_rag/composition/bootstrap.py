@@ -24,11 +24,13 @@ from comet_rag.infrastructure.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
     KnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.vectorstore import (
+from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.ports import (
     BaseVectorStore,
-    InMemoryVectorStore,
+    DocumentExtractorPort,
+    EmbeddingPort,
+    RerankerPort,
 )
-from comet_rag.ports import DocumentExtractorPort, EmbeddingPort, RerankerPort
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
 from comet_rag.services.source_policy import SourcePolicy, build_source_policy

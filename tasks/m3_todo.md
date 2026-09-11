@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M3（BM25 + RRF）
 
-> 状态：M3-T1 已完成，下一项 M3-T2
+> 状态：M3-T2 已完成，下一项 M3-T3
 > 规格：`tasks/m3_spec.md` v1.0
 > 计划：`tasks/m3_plan.md` v1.0
 > GitHub Issue：[#54](https://github.com/comet-7x/comet-rag/issues/54)
@@ -26,13 +26,14 @@
 
 ### M3-T2 — 检索 Port 下沉与兼容层（M）
 
-**日期：** 09-14　**依赖：** M3-T1
+**完成日期：** 09-11　**依赖：** M3-T1
 
-- [ ] 新增后端无关的 `VectorSearchPort`、`KeywordSearchPort` 与检索值对象
-- [ ] 将 `BaseVectorStore` 及写入词汇表下沉 `ports/`，已有签名保持不变
-- [ ] `infrastructure.vectorstore.base` 保留同一对象的兼容导出
-- [ ] RetrievalService 不再 import infrastructure
-- [ ] 增加 AST 分层守卫、兼容导入测试与反向验证
+- [x] 新增后端无关的 `VectorSearchPort` 与检索值对象
+- [x] `KeywordSearchPort` 延后到 M3-T4，与调用者、两个实现和契约测试同时引入
+- [x] 将 `BaseVectorStore` 及写入词汇表下沉 `ports/`，已有签名保持不变
+- [x] `infrastructure.vectorstore.base` 保留同一对象的兼容导出
+- [x] RetrievalService 不再 import infrastructure
+- [x] 增加 AST 分层守卫、兼容导入测试与反向验证
 
 **验收：** core-only 可导入全部契约且不加载 PyMilvus；现有 27 条向量库契约不回退。
 
@@ -41,6 +42,8 @@
 **日期：** 09-15　**依赖：** M3-T2
 
 - [ ] Compose 固定 Milvus 2.6.23，PyMilvus 固定 `>=2.6.17,<2.7`
+- [ ] 配置、组合根与 Milvus client 显式传递 database name，不允许回落默认库
+- [ ] 本环境真实验证只使用 `.env` 的 URI，并强制 database=`zhihao_test_database`
 - [ ] text 启用 chinese analyzer，注册 BM25 Function
 - [ ] sparse index metric 改为 BM25，写入不再提供空 sparse dict
 - [ ] 检测旧 schema 并抛 `CollectionSchemaMismatch`，绝不自动 drop
@@ -52,6 +55,7 @@
 
 **日期：** 09-16　**依赖：** M3-T3
 
+- [ ] 引入 `KeywordSearchPort`，并由 RetrievalService 作为明确调用者
 - [ ] InMemoryVectorStore 实现确定性关键词召回
 - [ ] MilvusStore 使用原始 query text 检索 sparse field
 - [ ] 两个实现共享知识库隔离、top_k、filter、空结果、排序和错误契约
@@ -100,7 +104,8 @@
 
 **日期：** 09-22～09-23　**依赖：** M3-T7
 
-- [ ] 真实 Milvus 覆盖中文术语、英文标识符、过滤与旧 schema 拒绝
+- [ ] 真实 Milvus 仅在 `zhihao_test_database` 覆盖中文术语、英文标识符、过滤与旧 schema 拒绝
+- [ ] collection 使用测试专属名称且只清理本次创建的数据
 - [ ] E2E 覆盖 dense/keyword/hybrid 与 reranker 降级
 - [ ] 对固定样本记录命中、延迟、候选数，不夸大质量结论
 - [ ] 更新 README、architecture、structure、deployment 和 API 示例
