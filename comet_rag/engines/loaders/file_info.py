@@ -97,9 +97,16 @@ class TemporaryFileRegistry:
     def replace_suffix(self, path: str | Path, extension: str) -> str:
         current = Path(path)
         target = current.with_suffix(f".{extension}")
-        current.replace(target)
         with self._lock:
-            self._paths[self._paths.index(current)] = target
+            try:
+                index = self._paths.index(current)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Temporary file is no longer tracked: {current}"
+                ) from exc
+            # 转名与账本更新必须同锁，避免并发 release 留下已转名的孤儿文件。
+            current.replace(target)
+            self._paths[index] = target
         return str(target)
 
     def release(self, path: str | Path) -> None:

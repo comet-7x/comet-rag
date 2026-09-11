@@ -37,6 +37,18 @@ DOCX 字段或 `**kwargs`。
 `comet_rag.loaders` 直接导出核心 Loader，惰性导出 S3 Loader。导入门面本身不得要求
 安装 `server` extra，不得把 boto3/aioboto3 引入 `engines`。
 
+### P1-D5：URL 文件名采用最终响应事实
+
+URL 经重定向后，metadata 的 `file_name` 优先取最终响应 URL 的 basename；最终 URL
+没有文件名时再回退到原始请求 URL，最后才使用临时文件名。来源标识仍保留原始 URL，
+两者分别表达“从哪里请求”和“实际下载了什么”。
+
+### P1-D6：Loader 关闭不因临时文件残留而中断
+
+显式调用 `LoadedResource.cleanup()` 删除失败时抛出错误并保留登记，便于调用方立即处理；
+Loader 的 `cleanup()` / `acleanup()` 属于整体 shutdown，删除失败时记录 warning、保留账本
+供重试，但仍继续关闭自建连接池，避免 context manager 退出时用清理错误覆盖业务异常。
+
 ## 3. 成功标准
 
 - [x] `DocxDocumentExtractor` 通过通用提取器契约，现有 DOCX 快照不变。
@@ -55,7 +67,7 @@ DOCX 字段或 `**kwargs`。
 
 ## 5. 验收记录
 
-- 默认单测：1781 passed、19 skipped、1 xfailed，pytest 8.67s。
+- 默认单测：1786 passed、19 skipped、177 deselected、1 xfailed，pytest 9.18s。
 - Loader/DOCX 定向：117 + 56 passed（DOCX 含 1 个可选真实文档 skip）。
 - MinIO 集成：6 passed、1 个可选用例 skip。
 - Ruff、Pyright、AST 分层守卫与隔离 core-only 导入均通过。

@@ -7,6 +7,7 @@ from typing import Any, final
 from urllib.parse import unquote, urlparse
 
 import httpx
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from comet_rag.engines.loaders.base_loader import (
@@ -179,8 +180,15 @@ class URLLoader(BaseLoader):
             self._cleanup_in_progress = False
             self._lifecycle.notify_all()
 
-    def _build_metadata(self, file_path: str, source: SourceContent) -> dict[str, Any]:
-        declared_name = Path(unquote(source.parsed_url.path)).name or Path(file_path).name
+    def _build_metadata(
+        self,
+        file_path: str,
+        source: SourceContent,
+        response_url: httpx.URL,
+    ) -> dict[str, Any]:
+        response_name = Path(unquote(urlparse(str(response_url)).path)).name
+        source_name = Path(unquote(source.parsed_url.path)).name
+        declared_name = response_name or source_name or Path(file_path).name
         return build_file_metadata(file_path, source, file_name=declared_name)
 
     def _download(
@@ -188,12 +196,12 @@ class URLLoader(BaseLoader):
         url: str,
         config: DownloadRequestConfig,
         client: httpx.Client | None = None,
-    ) -> str:
+    ) -> tuple[str, httpx.URL]:
         headers = config.headers or {
             "User-Agent": f"Mozilla/5.0 (compatible; comet-rag {type(self).__name__})"
         }
 
-        def _do_request(c: httpx.Client) -> str:
+        def _do_request(c: httpx.Client) -> tuple[str, httpx.URL]:
             method = "POST" if (config.content or config.data) else "GET"
             request = c.build_request(
                 method,
@@ -226,7 +234,7 @@ class URLLoader(BaseLoader):
                     continue
                 try:
                     response.raise_for_status()
-                    return self._stream_response(response, config)
+                    return self._stream_response(response, config), response.url
                 finally:
                     response.close()
 
@@ -237,12 +245,12 @@ class URLLoader(BaseLoader):
         url: str,
         config: DownloadRequestConfig,
         client: httpx.AsyncClient | None = None,
-    ) -> str:
+    ) -> tuple[str, httpx.URL]:
         headers = config.headers or {
             "User-Agent": f"Mozilla/5.0 (compatible; comet-rag {type(self).__name__})"
         }
 
-        async def _do_request(c: httpx.AsyncClient) -> str:
+        async def _do_request(c: httpx.AsyncClient) -> tuple[str, httpx.URL]:
             method = "POST" if (config.content or config.data) else "GET"
             request = c.build_request(
                 method,
@@ -277,7 +285,7 @@ class URLLoader(BaseLoader):
                     continue
                 try:
                     response.raise_for_status()
-                    return await self._astream_response(response, config)
+                    return await self._astream_response(response, config), response.url
                 finally:
                     await response.aclose()
 
@@ -391,12 +399,12 @@ class URLLoader(BaseLoader):
         config = download_config or DownloadRequestConfig(
             timeout=self._timeout, follow_redirects=self._follow_redirects
         )
-        file_path = self._download(source.source, config, client)
+        file_path, response_url = self._download(source.source, config, client)
         return LoaderContent(
             path=Path(file_path),
             source=source,
             is_temp=True,
-            metadata=self._build_metadata(file_path, source),
+            metadata=self._build_metadata(file_path, source, response_url),
             _release=lambda: self._temporary_files.release(file_path),
         )
 
@@ -428,10 +436,10 @@ class URLLoader(BaseLoader):
         config = download_config or DownloadRequestConfig(
             timeout=self._timeout, follow_redirects=self._follow_redirects
         )
-        file_path = await self._adownload(source.source, config, client)
+        file_path, response_url = await self._adownload(source.source, config, client)
         loop = asyncio.get_running_loop()
         metadata = await loop.run_in_executor(
-            None, self._build_metadata, file_path, source
+            None, self._build_metadata, file_path, source, response_url
         )
         return LoaderContent(
             path=Path(file_path),
@@ -520,7 +528,11 @@ class URLLoader(BaseLoader):
             self._end_cleanup()
 
     def _cleanup_sync_resources(self) -> None:
-        self._temporary_files.cleanup()
+        try:
+            self._temporary_files.cleanup()
+        except OSError as exc:
+            # shutdown 是 best-effort：账本已保留失败路径，但不能因此漏关连接池。
+            logger.warning(f"临时文件清理失败，已保留登记以便重试: {exc!r}")
         with self._client_lock:
             if self._owns_client and self._client is not None:
                 self._client.close()

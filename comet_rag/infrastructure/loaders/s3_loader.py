@@ -446,7 +446,11 @@ class S3Loader(BaseLoader):
                 raise
 
     def _cleanup_sync_resources(self) -> None:
-        self._temporary_files.cleanup()
+        try:
+            self._temporary_files.cleanup()
+        except OSError as exc:
+            # shutdown 是 best-effort：账本已保留失败路径，但不能因此漏关连接池。
+            logger.warning(f"临时文件清理失败，已保留登记以便重试: {exc!r}")
         with self._sync_client_lock:
             if self._owns_client and self._client is not None:
                 self._client.close()

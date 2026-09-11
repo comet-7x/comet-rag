@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from comet_rag.ports import SourceLoaderPort
+from comet_rag.ports import LoadedResource, SourceLoaderPort
 
 
 class SourceLoaderContract:
@@ -32,7 +32,7 @@ class SourceLoaderContract:
 
     @staticmethod
     def _assert_loaded(
-        resource,
+        resource: LoadedResource,
         *,
         source: str,
         payload: bytes,

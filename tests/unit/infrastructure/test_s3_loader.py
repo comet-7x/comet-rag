@@ -294,6 +294,33 @@ def test_owned_sync_client_is_lazy_reused_and_closed(
     assert loader._client is None
 
 
+def test_cleanup_closes_owned_client_when_temp_file_removal_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = SyncClient()
+    loader = S3Loader(download_dir=tmp_path)
+    monkeypatch.setattr(loader, "_new_sync_client", lambda: client)
+    content = loader.load(URI)
+    original_unlink = Path.unlink
+
+    def fail_download(target: Path, *, missing_ok: bool = False) -> None:
+        if target == content.path:
+            raise PermissionError("still in use")
+        original_unlink(target, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_download)
+    loader.cleanup()
+
+    assert client.closed
+    assert loader._client is None
+    assert loader.temp_files == [str(content.path)]
+
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    loader.cleanup()
+    assert loader.temp_files == []
+    assert not content.path.exists()
+
+
 async def test_owned_async_client_context_is_reused_and_closed(
     tmp_path: Path, monkeypatch
 ) -> None:
