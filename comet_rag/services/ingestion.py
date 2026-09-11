@@ -14,7 +14,6 @@ from comet_rag.core.concurrency import Overloaded
 from comet_rag.core.logging import logger
 from comet_rag.engines.embedding.batch import aembed_documents
 from comet_rag.engines.loaders.auto_loader import AutoLoader
-from comet_rag.engines.loaders.base_loader import BaseLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import HookProvider, PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
@@ -23,6 +22,7 @@ from comet_rag.ports import (
     DocumentResourceLimitExceeded,
     EmbeddingPort,
     RetryableDocumentUpstreamError,
+    SourceLoaderPort,
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.tasks import (
@@ -121,7 +121,7 @@ class IngestRunner:
         embedding_model: EmbeddingPort,
         vector_store: BaseVectorStore,
         knowledge_base: KnowledgeBaseService,
-        loader: BaseLoader | None = None,
+        loader: SourceLoaderPort | None = None,
         config: PipelineConfig | None = None,
         hooks: HookProvider | None = None,
         max_extracted_text_bytes_by_type: Mapping[str, int] | None = None,

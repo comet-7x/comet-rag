@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import tempfile
 import threading
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager, suppress
@@ -21,14 +20,13 @@ from urllib.parse import unquote, urlparse
 from loguru import logger
 
 from comet_rag.engines.loaders.base_loader import BaseLoader
-from comet_rag.engines.loaders.data_type import (
-    ContentTypeMismatch,
-    ParseConfig,
-    is_allowed_extension,
-    resolve_detected_extension,
+from comet_rag.engines.loaders.data_type import ContentTypeMismatch
+from comet_rag.engines.loaders.file_info import (
+    TemporaryFileRegistry,
+    build_file_metadata,
+    resolve_downloaded_extension,
 )
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
-from comet_rag.engines.utils.file_detector import detect_content_type_from_path
 
 DEFAULT_MAX_OBJECT_BYTES = 100 * 1024 * 1024
 _STREAM_CHUNK_BYTES = 64 * 1024
@@ -121,8 +119,7 @@ class S3Loader(BaseLoader):
         self._async_client_context: Any = None
         self._sync_client_lock = threading.Lock()
         self._async_client_lock = asyncio.Lock()
-        self._temp_files_lock = threading.Lock()
-        self._temp_files: list[str] = []
+        self._temporary_files = TemporaryFileRegistry(self._download_dir)
 
         # A single counter spans sync and async work. This matters because a service
         # shutdown can call async cleanup while a sync batch is still in a worker.
@@ -133,8 +130,7 @@ class S3Loader(BaseLoader):
 
     @property
     def temp_files(self) -> list[str]:
-        with self._temp_files_lock:
-            return self._temp_files.copy()
+        return self._temporary_files.paths
 
     def _client_kwargs(self) -> dict[str, Any]:
         from botocore.config import Config  # noqa: PLC0415
@@ -154,12 +150,23 @@ class S3Loader(BaseLoader):
         return kwargs
 
     def _new_sync_client(self) -> Any:
-        import boto3  # noqa: PLC0415
+        try:
+            import boto3  # noqa: PLC0415
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "S3Loader 需要可选依赖，请安装 comet-rag[server] 或 comet-rag[all]"
+            ) from exc
 
         return boto3.client("s3", **self._client_kwargs())
 
     def _new_async_client_context(self) -> Any:
-        import aioboto3  # noqa: PLC0415
+        try:
+            import aioboto3  # noqa: PLC0415
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "S3Loader 异步入口需要可选依赖，请安装 "
+                "comet-rag[server] 或 comet-rag[all]"
+            ) from exc
 
         return aioboto3.Session().client("s3", **self._client_kwargs())
 
@@ -303,40 +310,17 @@ class S3Loader(BaseLoader):
             )
 
     def _new_temp_file(self):
-        tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
-            delete=False, dir=self._download_dir
-        )
-        with self._temp_files_lock:
-            self._temp_files.append(tmp.name)
-        return tmp
+        return self._temporary_files.create()
 
     def _release_temp(self, path: str) -> None:
-        with self._temp_files_lock, suppress(ValueError):
-            self._temp_files.remove(path)
+        self._temporary_files.release(path)
 
     def _discard_temp(self, path: str) -> None:
-        Path(path).unlink(missing_ok=True)
-        self._release_temp(path)
+        self._temporary_files.discard(path)
 
     def _finalize_temp(self, path: str, key: str) -> str:
-        source_ext = PurePosixPath(key).suffix.lstrip(".").lower()
-        source_allowed = is_allowed_extension(source_ext)
-        try:
-            detected = detect_content_type_from_path(path).lower().lstrip(".")
-        except Exception as exc:
-            if not source_allowed:
-                raise ValueError(
-                    f"Unable to determine object content type for key {key!r}"
-                ) from exc
-            logger.warning(f"对象内容探测失败，回退到 key 后缀 {source_ext!r}: {exc!r}")
-            label = source_ext
-        else:
-            label = resolve_detected_extension(source_ext, detected)
-        target = str(Path(path).with_suffix(f".{label}"))
-        Path(path).replace(target)
-        with self._temp_files_lock:
-            self._temp_files[self._temp_files.index(path)] = target
-        return target
+        label = resolve_downloaded_extension(path, PurePosixPath(key).name)
+        return self._temporary_files.replace_suffix(path, label)
 
     def _stream_object(self, response: dict[str, Any], key: str) -> str:
         body = response["Body"]
@@ -407,20 +391,16 @@ class S3Loader(BaseLoader):
         head: dict[str, Any],
     ) -> LoaderContent:
         file_path = Path(path)
-        file_type = file_path.suffix.lstrip(".").lower()
-        metadata: dict[str, Any] = {
-            "source_type": location.scheme,
-            "bucket": location.bucket,
-            "object_key": location.key,
-            "file_name": PurePosixPath(location.key).name,
-            "file_type": file_type,
-            "file_size": file_path.stat().st_size,
-            "etag": str(head.get("ETag", "")).strip('"') or None,
-        }
-        try:
-            metadata["parse_config"] = ParseConfig.from_extension(file_type)
-        except ValueError:
-            metadata["parse_config"] = None
+        metadata = build_file_metadata(
+            file_path,
+            source,
+            file_name=PurePosixPath(location.key).name,
+            extra={
+                "bucket": location.bucket,
+                "object_key": location.key,
+                "etag": str(head.get("ETag", "")).strip('"') or None,
+            },
+        )
         return LoaderContent(
             path=file_path,
             source=source,
@@ -466,11 +446,11 @@ class S3Loader(BaseLoader):
                 raise
 
     def _cleanup_sync_resources(self) -> None:
-        with self._temp_files_lock:
-            paths = self._temp_files.copy()
-            self._temp_files.clear()
-        for path in paths:
-            Path(path).unlink(missing_ok=True)
+        try:
+            self._temporary_files.cleanup()
+        except OSError as exc:
+            # shutdown 是 best-effort：账本已保留失败路径，但不能因此漏关连接池。
+            logger.warning(f"临时文件清理失败，已保留登记以便重试: {exc!r}")
         with self._sync_client_lock:
             if self._owns_client and self._client is not None:
                 self._client.close()

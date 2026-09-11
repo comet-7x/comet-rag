@@ -126,7 +126,7 @@ class AsyncClientContext:
 @pytest.fixture(autouse=True)
 def _detect_text(monkeypatch) -> None:
     monkeypatch.setattr(
-        "comet_rag.infrastructure.loaders.s3_loader.detect_content_type_from_path",
+        "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
         lambda path: "txt",
     )
 
@@ -250,7 +250,7 @@ def test_content_mismatch_is_rejected_and_temp_removed(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "comet_rag.infrastructure.loaders.s3_loader.detect_content_type_from_path",
+        "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
         lambda path: "html",
     )
     loader = S3Loader(download_dir=tmp_path, client=SyncClient())
@@ -266,7 +266,7 @@ def test_unsupported_detected_type_is_rejected_even_with_allowed_suffix(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "comet_rag.infrastructure.loaders.s3_loader.detect_content_type_from_path",
+        "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
         lambda path: "executable",
     )
     loader = S3Loader(download_dir=tmp_path, client=SyncClient())
@@ -292,6 +292,33 @@ def test_owned_sync_client_is_lazy_reused_and_closed(
     assert client.head_calls == 2
     assert client.closed
     assert loader._client is None
+
+
+def test_cleanup_closes_owned_client_when_temp_file_removal_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = SyncClient()
+    loader = S3Loader(download_dir=tmp_path)
+    monkeypatch.setattr(loader, "_new_sync_client", lambda: client)
+    content = loader.load(URI)
+    original_unlink = Path.unlink
+
+    def fail_download(target: Path, *, missing_ok: bool = False) -> None:
+        if target == content.path:
+            raise PermissionError("still in use")
+        original_unlink(target, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_download)
+    loader.cleanup()
+
+    assert client.closed
+    assert loader._client is None
+    assert loader.temp_files == [str(content.path)]
+
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    loader.cleanup()
+    assert loader.temp_files == []
+    assert not content.path.exists()
 
 
 async def test_owned_async_client_context_is_reused_and_closed(

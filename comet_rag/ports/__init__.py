@@ -25,6 +25,7 @@ from .embedding import (
 )
 from .gate import AsyncGate
 from .reranker import RerankerPort
+from .source import LoadedResource, SourceContent, SourceLoaderPort
 
 __all__ = [
     "AsyncGate",
@@ -39,11 +40,14 @@ __all__ = [
     "EmbeddingTask",
     "ExtractedDocument",
     "ImageContent",
+    "LoadedResource",
     "MediaResource",
     "MultimodalEmbeddingPort",
     "RankedDocument",
     "RerankDocument",
     "RerankerPort",
     "RetryableDocumentUpstreamError",
+    "SourceContent",
+    "SourceLoaderPort",
     "TextContent",
 ]

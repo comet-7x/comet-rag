@@ -2,7 +2,7 @@
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
 > 当前状态：M2 PDF / MinerU HTTP 已完成
-> 当前优先级：执行 M2 后 P1，先统一 DocumentExtractor 与 Loader 公共入口
+> 当前优先级：P1 已完成；下一步为 M3 单独冻结 BM25 / RRF 规格
 > 最后更新：2026-09-10
 
 ## 1. 目的
@@ -315,7 +315,7 @@ comet_rag/
 
 ## 10. 优先级与执行顺序
 
-### P0 — 当前必须完成：M2 安全闭环
+### P0 — 历史记录：M2 安全闭环（已完成）
 
 1. **M2-T5（已完成）**：MinerU 主路径已具备总 deadline、请求超时、错误分类、
    404 单次重提、响应/Markdown 限长及取消清理。
@@ -324,14 +324,14 @@ comet_rag/
 3. **M2-T7（已完成）**：三来源 PDF 入库、内容复验及 TaskStore 可观察行为。
 4. **M2-T8～T9（已完成）**：真实 MinerU 基准、文档与里程碑验收。
 
-### P1 — M2 完成后：统一公共概念与使用入口
+### P1 — M2 完成后：统一公共概念与使用入口（已完成）
 
-1. 建立 `DocxDocumentExtractor`，让 DOCX 与 MinerU 在高层共同实现
+1. **已完成**：建立 `DocxDocumentExtractor`，让 DOCX 与 MinerU 在高层共同实现
    `DocumentExtractorPort`；保留现有 DOCX 快照。
-2. 评审 `SourceLoaderPort` / `LoadedResource`，补 Local、URL、S3 共享契约测试。
-3. 增加 `comet_rag.loaders` 统一门面和旧导入兼容期。
-4. 收敛 Local/URL/S3 重复的类型检测、metadata 和临时文件生命周期代码。
-5. 再决定 `BaseParser` 是否保留，不以目录实现数量作为判断依据。
+2. **已完成**：建立 `SourceLoaderPort` / `LoadedResource`，Local、URL、S3 运行共享契约。
+3. **已完成**：增加 `comet_rag.loaders` 惰性统一门面并保留旧导入。
+4. **已完成**：收敛 Local/URL/S3 的类型检测、metadata 和临时文件生命周期代码。
+5. **已决策**：`BaseParser` 暂作兼容 ABC，不视为 Port，也不为对称增加实现。
 
 ### P2 — M3：由真实混合检索需求驱动
 
@@ -367,7 +367,8 @@ comet_rag/
 | Loader 是否提供一个用户入口 | 是；M2 后增加 `comet_rag.loaders` 惰性门面 |
 | 是否现在重构全部 Loader | 否；不阻塞 M2 安全闭环 |
 | MinerU 是否移入 `engines/parsers` | 否；它是外部 `DocumentExtractorPort` 适配器 |
-| DOCX 是否最终实现同一提取 Port | 是；列为 M2 后 P1 |
+| DOCX 是否最终实现同一提取 Port | 是；M2 后 P1 已完成 |
 | Chunker 是否统一做页面、父子块和 Graph | 否；分别属于 Extraction、Strategy、Planner 与 Graph ingestion |
 | 是否现在定义 Search/Graph 全套 Port | 否；分别由 M3 和后续真实需求驱动 |
-| 当前下一项工作 | 执行 M2 后 P1；先评审 `DocxDocumentExtractor` 与统一 Loader 门面 |
+| `BaseParser` 是否删除 | 暂不；保留兼容 ABC，不把单一实现数量当作删除或扩展依据 |
+| 当前下一项工作 | 为 M3 单独冻结 BM25 后端、`KeywordSearchPort` 与 RRF 成功标准 |

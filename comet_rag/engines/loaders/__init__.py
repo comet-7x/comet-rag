@@ -21,7 +21,7 @@ from .data_type import (
     resolve_detected_extension,
 )
 from .local_loader import LocalLoader
-from .types import LoaderContent, SourceContent
+from .types import LoadedResource, LoaderContent, SourceContent
 from .url_loader import DownloadRequestConfig, URLLoader
 
 Loader = AutoLoader
@@ -47,6 +47,7 @@ __all__ = [
     "ParseConfig",
     "SourceContent",
     "DownloadRequestConfig",
+    "LoadedResource",
     "LoaderContent",
     "BaseLoader",
     "DEFAULT_MAX_CONCURRENCY",

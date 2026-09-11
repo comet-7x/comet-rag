@@ -75,6 +75,7 @@ def test_download_writes_temp_file(tmp_path: Path) -> None:
         assert lc.path.read_bytes() == BODY
         assert lc.is_temp is True
         assert lc.metadata["file_type"] == "txt"
+        assert lc.metadata["file_name"] == "doc.txt"
     finally:
         ld.cleanup()
 
@@ -87,6 +88,68 @@ async def test_async_download_writes_temp_file(tmp_path: Path) -> None:
     try:
         lc = await ld.aload(URL)
         assert lc.path.read_bytes() == BODY
+    finally:
+        await ld.aclose()
+
+
+def test_redirect_uses_final_response_file_name(tmp_path: Path) -> None:
+    original_url = "https://example.invalid/?download=document"
+    final_url = "https://cdn.example.invalid/files/report.txt"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == original_url:
+            return httpx.Response(302, headers={"Location": final_url})
+        return httpx.Response(200, content=BODY)
+
+    ld = URLLoader(
+        download_dir=tmp_path,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        content = ld.load(original_url)
+        assert content.metadata["file_name"] == "report.txt"
+        assert content.source.source == original_url
+    finally:
+        ld.cleanup()
+
+
+def test_redirect_without_final_name_falls_back_to_original_name(tmp_path: Path) -> None:
+    original_url = "https://example.invalid/original.txt"
+    final_url = "https://cdn.example.invalid/"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == original_url:
+            return httpx.Response(302, headers={"Location": final_url})
+        return httpx.Response(200, content=BODY)
+
+    ld = URLLoader(
+        download_dir=tmp_path,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        content = ld.load(original_url)
+        assert content.metadata["file_name"] == "original.txt"
+    finally:
+        ld.cleanup()
+
+
+async def test_async_redirect_uses_final_response_file_name(tmp_path: Path) -> None:
+    original_url = "https://example.invalid/?download=document"
+    final_url = "https://cdn.example.invalid/files/report.txt"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == original_url:
+            return httpx.Response(302, headers={"Location": final_url})
+        return httpx.Response(200, content=BODY)
+
+    ld = URLLoader(
+        download_dir=tmp_path,
+        async_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        content = await ld.aload(original_url)
+        assert content.metadata["file_name"] == "report.txt"
+        assert content.source.source == original_url
     finally:
         await ld.aclose()
 
@@ -222,6 +285,44 @@ def test_cleanup_removes_temp_files(tmp_path: Path) -> None:
     assert ld.temp_files == []
 
 
+def test_cleanup_closes_owned_client_when_temp_file_removal_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = httpx.Client(transport=_transport())
+    ld = URLLoader(download_dir=tmp_path, client=client)
+    ld._owns_client = True
+    content = ld.load(URL)
+    original_unlink = Path.unlink
+
+    def fail_download(target: Path, *, missing_ok: bool = False) -> None:
+        if target == content.path:
+            raise PermissionError("still in use")
+        original_unlink(target, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_download)
+    ld.cleanup()
+
+    assert client.is_closed
+    assert ld._client is None
+    assert ld.temp_files == [str(content.path)]
+    assert content.path.exists()
+
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    ld.cleanup()
+    assert ld.temp_files == []
+    assert not content.path.exists()
+
+
+def test_resource_cleanup_releases_loader_registration(tmp_path: Path) -> None:
+    ld = URLLoader(download_dir=tmp_path, client=httpx.Client(transport=_transport()))
+    content = ld.load(URL)
+
+    content.cleanup()
+
+    assert ld.temp_files == []
+    ld.cleanup()
+
+
 # ── 批量 ───────────────────────────────────────────────────────────────────
 
 
@@ -306,7 +407,7 @@ async def test_cleanup_waits_for_active_async_load(tmp_path: Path, monkeypatch) 
         client: httpx.AsyncClient | None = None,
     ) -> LoaderContent:
         active_path.write_bytes(BODY)
-        ld._temp_files.append(str(active_path))
+        ld._temporary_files.track(active_path)
         started.set()
         await release.wait()
         assert active_path.exists()
@@ -400,7 +501,7 @@ def test_cleanup_waits_for_active_sync_load(
         client: httpx.Client | None = None,
     ) -> LoaderContent:
         active_path.write_bytes(BODY)
-        ld._temp_files.append(str(active_path))
+        ld._temporary_files.track(active_path)
         started.set()
         assert release.wait(timeout=2)
         assert active_path.exists()
@@ -581,7 +682,7 @@ def test_content_probe_rejects_html_body_behind_docx_suffix(
         return httpx.Response(200, content=b"<html>login required</html>")
 
     monkeypatch.setattr(
-        "comet_rag.engines.loaders.url_loader.detect_content_type_from_path",
+        "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
         lambda path: "html",
     )
     ld = URLLoader(
@@ -606,7 +707,7 @@ def test_content_probe_rejects_archive_behind_allowed_suffix(
         return httpx.Response(200, content=b"archive payload")
 
     monkeypatch.setattr(
-        "comet_rag.engines.loaders.url_loader.detect_content_type_from_path",
+        "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
         lambda path: detected,
     )
     ld = URLLoader(

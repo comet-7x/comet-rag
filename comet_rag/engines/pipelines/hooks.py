@@ -8,6 +8,7 @@ from typing import ClassVar, Protocol
 
 from comet_rag.engines.loaders.types import LoaderContent
 from comet_rag.engines.pipelines.types import PipelineConfig
+from comet_rag.ports.document import DocumentExtractorPort
 
 # Hook type aliases
 ExtractHook = Callable[[LoaderContent, PipelineConfig], str]
@@ -231,15 +232,15 @@ class PipelineHooks:
 # ── Built-in extractors ─────────────────────────────────────────────────────
 
 
-@PipelineHooks.extractor("docx", "doc")
-def _extract_docx(loader_content: LoaderContent, config: PipelineConfig) -> str:
-    from comet_rag.engines.cleaners.docx_cleaner import DocxCleaner
+def _docx_extractor(config: PipelineConfig) -> DocumentExtractorPort:
     from comet_rag.engines.converters.archive_guard import ArchiveLimits
-    from comet_rag.engines.converters.text_converter import DocxConverter
-    from comet_rag.engines.parsers.docx_parser.docx_parser import DocxParser
+    from comet_rag.engines.document.docx import DocxDocumentExtractor
 
-    doc = DocxConverter(
-        loader_content,
+    return DocxDocumentExtractor(
+        heading_numbers=config.docx.heading_numbers,
+        include_images=config.docx.include_images,
+        include_headers_footers=config.docx.include_headers_footers,
+        vision_model=config.docx.vision_model,
         archive_limits=ArchiveLimits(
             max_members=config.docx.max_archive_members,
             max_member_uncompressed_bytes=config.docx.max_archive_member_bytes,
@@ -248,13 +249,45 @@ def _extract_docx(loader_content: LoaderContent, config: PipelineConfig) -> str:
             max_xml_elements=config.docx.max_archive_xml_elements,
             max_xml_text_chars=config.docx.max_archive_xml_text_chars,
         ),
-    ).to_docx()
-    parsed = DocxParser(heading_numbers=config.docx.heading_numbers).parse(doc)
-    return DocxCleaner(
-        include_images=config.docx.include_images,
-        include_headers_footers=config.docx.include_headers_footers,
-        vision_model=config.docx.vision_model,
-    ).clean_to_markdown(parsed)
+    )
+
+
+def _docx_input(loader_content: LoaderContent) -> tuple[str, str]:
+    file_type = str(loader_content.metadata.get("file_type", "docx")).lower()
+    media_type = (
+        "application/msword"
+        if file_type == "doc"
+        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    filename = loader_content.metadata.get("file_name")
+    return (
+        filename if isinstance(filename, str) else loader_content.path.name,
+        media_type,
+    )
+
+
+@PipelineHooks.extractor("docx", "doc")
+def _extract_docx(loader_content: LoaderContent, config: PipelineConfig) -> str:
+    filename, media_type = _docx_input(loader_content)
+    return _docx_extractor(config).extract(
+        loader_content.path,
+        filename=filename,
+        media_type=media_type,
+    ).markdown
+
+
+@PipelineHooks.aextractor("docx", "doc")
+async def _aextract_docx(
+    loader_content: LoaderContent, config: PipelineConfig
+) -> str:
+    filename, media_type = _docx_input(loader_content)
+    return (
+        await _docx_extractor(config).aextract(
+            loader_content.path,
+            filename=filename,
+            media_type=media_type,
+        )
+    ).markdown
 
 
 # ── Built-in chunkers ───────────────────────────────────────────────────────
