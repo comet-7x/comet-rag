@@ -182,6 +182,7 @@ async def test_memory_backends_need_no_middleware(context) -> None:
     assert isinstance(context.vector_store, InMemoryVectorStore)
     assert context.task_service is not None
     assert context.retrieval is not None
+    assert context.retrieval._keyword_search is context.vector_store  # noqa: SLF001
     assert context.embedding_dim == DIM
 
     await context.aclose()

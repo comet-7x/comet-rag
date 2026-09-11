@@ -12,6 +12,7 @@ from comet_rag.core.logging import logger
 from comet_rag.ports import (
     EmbeddingPort,
     Filter,
+    KeywordSearchPort,
     RerankDocument,
     RerankerPort,
     VectorSearchPort,
@@ -87,12 +88,14 @@ class RetrievalService:
         *,
         embedding_model: EmbeddingPort,
         vector_store: VectorSearchPort,
+        keyword_search: KeywordSearchPort | None = None,
         knowledge_base: KnowledgeBaseService | None = None,
         reranker: RerankerPort | None = None,
         degradation: DegradationController | None = None,
     ) -> None:
         self._embedding_model = embedding_model
         self._vector_store = vector_store
+        self._keyword_search = keyword_search
         self._knowledge_base = knowledge_base
         self._reranker = reranker
         #: 分级降级（S4-5）。None = 不降级（当库用、单测）。

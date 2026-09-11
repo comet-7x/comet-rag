@@ -29,6 +29,7 @@ from comet_rag.ports import (
     BaseVectorStore,
     DocumentExtractorPort,
     EmbeddingPort,
+    KeywordSearchPort,
     RerankerPort,
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
@@ -505,6 +506,11 @@ def build_context(
         retrieval=RetrievalService(
             embedding_model=embedding_model,
             vector_store=vector_store,
+            keyword_search=(
+                vector_store
+                if isinstance(vector_store, KeywordSearchPort)
+                else None
+            ),
             knowledge_base=knowledge_base,
             reranker=reranker,
             degradation=degradation,

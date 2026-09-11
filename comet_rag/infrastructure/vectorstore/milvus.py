@@ -416,6 +416,41 @@ class MilvusStore(BaseVectorStore):
         hits.sort(key=lambda h: (-h.score, h.id))
         return hits
 
+    async def asearch_keywords(
+        self,
+        kb_id: str,
+        query: str,
+        *,
+        top_k: int = 5,
+        filter: Filter | None = None,
+    ) -> list[SearchHit]:
+        if top_k <= 0:
+            raise ValueError(f"top_k 必须为正整数，收到 {top_k}")
+        await self._dim_of(kb_id)
+        if not query.strip():
+            return []
+
+        results = await self._async.search(
+            self._name(kb_id),
+            data=[query],
+            anns_field=_SPARSE,
+            search_params={"metric_type": "BM25"},
+            limit=top_k,
+            filter=build_expression(filter),
+            output_fields=[_TEXT, _METADATA],
+        )
+        hits = [
+            SearchHit(
+                id=row["id"],
+                text=row["entity"].get(_TEXT, ""),
+                score=float(row["distance"]),
+                metadata=row["entity"].get(_METADATA) or {},
+            )
+            for row in (results[0] if results else [])
+        ]
+        hits.sort(key=lambda hit: (-hit.score, hit.id))
+        return hits
+
     async def acount(self, kb_id: str, *, filter: Filter | None = None) -> int:
         await self._dim_of(kb_id)
         rows = await self._async.query(

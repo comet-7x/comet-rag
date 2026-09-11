@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import AsyncIterator
+from typing import cast
 from uuid import uuid4
 
 import pytest
 
 from comet_rag.ports import BaseVectorStore, VectorRecord
+from tests.contracts.keyword_search import KeywordSearchContract, KeywordSearchStore
 from tests.contracts.vector_store import VectorStoreContract
 
 pytestmark = pytest.mark.integration
@@ -47,6 +49,14 @@ class TestMilvusVectorStore(VectorStoreContract):
     @pytest.fixture
     async def store(self, store: BaseVectorStore) -> BaseVectorStore:  # noqa: PT004
         return store
+
+
+class TestMilvusKeywordSearch(KeywordSearchContract):
+    @pytest.fixture
+    async def store(  # noqa: PT004
+        self, store: BaseVectorStore
+    ) -> KeywordSearchStore:
+        return cast("KeywordSearchStore", store)
 
 
 async def test_bm25_schema_handles_chinese_and_english_terms(

@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M3（BM25 + RRF）
 
-> 状态：M3-T3 已完成，下一项 M3-T4
+> 状态：M3-T4 已完成，下一项 M3-T5
 > 规格：`tasks/m3_spec.md` v1.0
 > 计划：`tasks/m3_plan.md` v1.0
 > GitHub Issue：[#54](https://github.com/comet-7x/comet-rag/issues/54)
@@ -53,13 +53,13 @@
 
 ### M3-T4 — KeywordSearchPort 实现与契约（M）
 
-**日期：** 09-16　**依赖：** M3-T3
+**完成日期：** 09-11　**依赖：** M3-T3
 
-- [ ] 引入 `KeywordSearchPort`，并由 RetrievalService 作为明确调用者
-- [ ] InMemoryVectorStore 实现确定性关键词召回
-- [ ] MilvusStore 使用原始 query text 检索 sparse field
-- [ ] 两个实现共享知识库隔离、top_k、filter、空结果、排序和错误契约
-- [ ] 契约期望值独立手写，并反向注入跨库/过滤缺陷验证
+- [x] 引入 `KeywordSearchPort`，并由组合根显式注入 RetrievalService
+- [x] InMemoryVectorStore 实现确定性关键词召回
+- [x] MilvusStore 使用原始 query text 检索 sparse field
+- [x] 两个实现共享知识库隔离、top_k、filter、空结果、排序和错误契约
+- [x] 契约期望值独立手写，并反向注入过滤缺陷验证
 
 **验收：** 替换实现不改变 Port 行为，Milvus 专有参数不穿透接口。
 

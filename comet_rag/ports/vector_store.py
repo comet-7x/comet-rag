@@ -100,6 +100,20 @@ class VectorSearchPort(Protocol):
     ) -> list[SearchHit]: ...
 
 
+@runtime_checkable
+class KeywordSearchPort(Protocol):
+    """后端无关的关键词召回能力。"""
+
+    async def asearch_keywords(
+        self,
+        kb_id: str,
+        query: str,
+        *,
+        top_k: int = 5,
+        filter: Filter | None = None,
+    ) -> list[SearchHit]: ...
+
+
 class BaseVectorStore(ABC):
     """完整向量存储契约；实现必须通过统一契约测试。"""
 
@@ -151,6 +165,7 @@ __all__ = [
     "CollectionSchemaMismatch",
     "DimensionMismatch",
     "Filter",
+    "KeywordSearchPort",
     "SearchHit",
     "VectorRecord",
     "VectorSearchPort",

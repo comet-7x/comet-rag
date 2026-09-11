@@ -146,9 +146,10 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 
 ### S3 — Port 与融合
 
-- [ ] InMemory 与 Milvus 通过同一 KeywordSearchPort 契约。
+- [x] InMemory 与 Milvus 通过同一 KeywordSearchPort 契约。
 - [ ] RRF 覆盖去重、单路缺失、并列排序、输入不变性与非法参数。
-- [ ] 反向注入错误实现，确认契约和 RRF 测试确实会失败。
+- [x] 反向注入过滤错误实现，确认 KeywordSearchPort 契约确实会失败。
+- [ ] 反向注入错误 RRF 实现，确认性质测试确实会失败。
 - [ ] dense、keyword、hybrid 三种模式的候选数和分数语义稳定。
 
 ### S4 — 降级与装配
@@ -207,7 +208,20 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 - 全量单测：`1810 passed, 19 skipped, 178 deselected, 1 xfailed`，pytest 8.62s；
   Ruff 与 Pyright 通过，Pyright 为 `0 errors`。
 
-## 9. 官方依据
+## 9. M3-T4 验证记录
+
+- `KeywordSearchPort` 与 `BaseVectorStore` 保持独立；组合根只在实现具备关键词能力时
+  将该窄 Port 注入 `RetrievalService`，三模式调用语义留到 M3-T6。
+- InMemory 使用标准库实现确定性 BM25 参考语义；Milvus 使用原始 query text 与原生
+  BM25 sparse field，供应商参数未穿透 Port。
+- 两个实现共享 12 项契约；真实 Milvus 测试在 `zhihao_test_database` 全部通过
+  （`12 passed in 60.74s`），覆盖中英文、隔离、过滤、top_k、空查询与错误语义。
+- 验收后测试前缀 collection 残留为 0，数据库原有 collection 总数仍为 1。
+- 过滤缺陷反向注入测试通过；全量单测为
+  `1823 passed, 19 skipped, 190 deselected, 1 xfailed`，pytest 8.85s；Ruff 与 Pyright
+  通过，Pyright 为 `0 errors`。
+
+## 10. 官方依据
 
 - [Milvus Full Text Search](https://milvus.io/docs/full-text-search.md)
 - [Milvus BM25 Function](https://milvus.io/docs/bm25-function.md)

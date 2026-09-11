@@ -15,6 +15,7 @@ from comet_rag.ports import (
     CollectionSchemaMismatch,
     DimensionMismatch,
     Filter,
+    KeywordSearchPort,
     SearchHit,
     VectorRecord,
     VectorSearchPort,
@@ -31,6 +32,7 @@ def test_legacy_imports_keep_the_same_runtime_objects() -> None:
         "CollectionSchemaMismatch": CollectionSchemaMismatch,
         "DimensionMismatch": DimensionMismatch,
         "Filter": Filter,
+        "KeywordSearchPort": KeywordSearchPort,
         "SearchHit": SearchHit,
         "VectorRecord": VectorRecord,
         "VectorSearchPort": VectorSearchPort,
@@ -55,7 +57,9 @@ def test_ports_import_does_not_load_pymilvus() -> None:
 
 
 def test_full_store_structurally_satisfies_narrow_search_port() -> None:
-    assert isinstance(InMemoryVectorStore(), VectorSearchPort)
+    store = InMemoryVectorStore()
+    assert isinstance(store, VectorSearchPort)
+    assert isinstance(store, KeywordSearchPort)
 
 
 class _SearchOnly:
