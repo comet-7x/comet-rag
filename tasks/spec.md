@@ -58,8 +58,8 @@
 | **M3** | **混合检索（Milvus BM25 + RRF）** | 两路召回、纯 RRF、通道降级与真实 Milvus 链路全绿（执行中） |
 
 M1、M2 与 M2 后 P1 已完成并具备单元、契约、集成、端到端和基准测试保护。
-M3-T5 已完成纯计算 RRF Strategy、通道贡献诊断、性质测试与反向验证。当前下一项为
-RetrievalService 与 API 的 dense、keyword、hybrid 三种显式模式（M3-T6）。
+M3-T6 已完成 RetrievalService 与 API 的 dense、keyword、hybrid 三种显式模式、
+统一候选预算和诊断字段。当前下一项为 hybrid 通道级降级与错误分类（M3-T7）。
 
 ### 非目标（明确不做）
 

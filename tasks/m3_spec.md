@@ -150,7 +150,7 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 - [x] RRF 覆盖去重、单路缺失、并列排序、输入不变性与非法参数。
 - [x] 反向注入过滤错误实现，确认 KeywordSearchPort 契约确实会失败。
 - [x] 反向注入零基 rank 的错误 RRF 实现，确认性质测试确实会失败。
-- [ ] dense、keyword、hybrid 三种模式的候选数和分数语义稳定。
+- [x] dense、keyword、hybrid 三种模式的候选数和分数语义稳定。
 
 ### S4 — 降级与装配
 
@@ -233,7 +233,19 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 - 全量单测为 `1849 passed, 19 skipped, 190 deselected, 1 xfailed`，pytest 9.26s；
   Ruff 与 Pyright 通过，Pyright 为 `0 errors`。
 
-## 11. 官方依据
+## 11. M3-T6 验证记录
+
+- `SearchQuery.mode` 与 HTTP `SearchRequest.mode` 支持 dense、keyword、hybrid，默认
+  dense；既有请求无需增加字段，原响应字段全部保留。
+- keyword 模式不调用 embedding；hybrid 对两路并发召回，每路使用同一有界
+  `fetch_k` 和结构化 filter，并在进入可选 reranker 前完成 RRF。
+- 响应暴露实际 mode、channels，以及 vector/keyword/fusion 的原始分数和一基排名；
+  `score` 仍表示当前最终排序分数，重排后保留此前诊断字段。
+- 34 项服务/API 定向测试、719 项组合根/导入/分层/文档守卫测试通过。
+- 全量单测为 `1860 passed, 19 skipped, 190 deselected, 1 xfailed`，pytest 8.84s；
+  Ruff 与 Pyright 通过，Pyright 为 `0 errors`。
+
+## 12. 官方依据
 
 - [Milvus Full Text Search](https://milvus.io/docs/full-text-search.md)
 - [Milvus BM25 Function](https://milvus.io/docs/bm25-function.md)

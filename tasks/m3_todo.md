@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M3（BM25 + RRF）
 
-> 状态：M3-T5 已完成，下一项 M3-T6
+> 状态：M3-T6 已完成，下一项 M3-T7
 > 规格：`tasks/m3_spec.md` v1.0
 > 计划：`tasks/m3_plan.md` v1.0
 > GitHub Issue：[#54](https://github.com/comet-7x/comet-rag/issues/54)
@@ -78,12 +78,12 @@
 
 ### M3-T6 — RetrievalService 与 API 三模式（M）
 
-**日期：** 09-18　**依赖：** M3-T5
+**完成日期：** 09-11　**依赖：** M3-T5
 
-- [ ] `SearchQuery.mode` 支持 dense/keyword/hybrid，默认 dense
-- [ ] 每路使用同一有界 `fetch_k`，hybrid 先融合再 rerank
-- [ ] 响应增加实际模式、通道和分项分数，旧字段不删除
-- [ ] API、服务单测覆盖三模式和默认兼容
+- [x] `SearchQuery.mode` 支持 dense/keyword/hybrid，默认 dense
+- [x] 每路使用同一有界 `fetch_k`，hybrid 先融合再 rerank
+- [x] 响应增加实际模式、通道和分项分数，旧字段不删除
+- [x] API、服务单测覆盖三模式和默认兼容
 
 **验收：** 精确术语与语义改写样本可由显式模式稳定检索。
 

@@ -13,9 +13,9 @@ M3 在现有 dense 检索和 reranker 之间增加独立 BM25 召回与纯 RRF �
 
 ## Current Priority
 
-M3-T5 已完成纯计算 RRF Strategy、通道贡献诊断、性质测试与零基 rank 反向验证。
-下一项 M3-T6 在保持默认 dense 兼容的前提下，为 RetrievalService 与 API 增加
-dense、keyword、hybrid 三种显式模式。
+M3-T6 已完成 RetrievalService 与 API 的 dense、keyword、hybrid 三种显式模式、
+统一候选预算、融合前后诊断字段及默认 dense 兼容验证。下一项 M3-T7 完成 hybrid
+通道级降级、错误分类和可观察诊断。
 
 ## Dependency Graph
 
@@ -89,4 +89,4 @@ T2～T8 分开。schema 变更只有在 T2 契约稳定并完成真实 Milvus �
 
 ## Completion Record
 
-M3-T1～T5 的决策与验证结果见 `tasks/m3_spec.md` §6～§10；M3-T8 补最终记录。
+M3-T1～T6 的决策与验证结果见 `tasks/m3_spec.md` §6～§11；M3-T8 补最终记录。

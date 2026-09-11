@@ -2,22 +2,41 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from comet_rag.core.degradation import DegradationController
 from comet_rag.core.logging import logger
+from comet_rag.engines.retrieval import FusedHit, reciprocal_rank_fusion
 from comet_rag.ports import (
     EmbeddingPort,
     Filter,
     KeywordSearchPort,
     RerankDocument,
     RerankerPort,
+    SearchHit,
     VectorSearchPort,
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
+
+
+class SearchMode(StrEnum):
+    DENSE = "dense"
+    KEYWORD = "keyword"
+    HYBRID = "hybrid"
+
+
+class RecallChannel(StrEnum):
+    DENSE = "dense"
+    KEYWORD = "keyword"
+
+
+class KeywordSearchUnavailable(RuntimeError):
+    """请求需要关键词召回，但组合根没有提供对应能力。"""
 
 
 class SearchQuery(BaseModel):
@@ -32,6 +51,10 @@ class SearchQuery(BaseModel):
     )
     filter: dict[str, Any] | None = None
     rerank: bool = Field(default=True, description="是否重排（未配置时自动跳过）")
+    mode: SearchMode = Field(
+        default=SearchMode.DENSE,
+        description="召回模式；默认 dense 保持既有行为。",
+    )
 
     def effective_fetch_k(self) -> int:
         if self.fetch_k is not None:
@@ -47,6 +70,10 @@ class RetrievedChunk:
     metadata: dict[str, Any] = field(default_factory=dict)
     #: 重排前的向量相似度。重排发生时保留它，便于对比两者差异、调参。
     vector_score: float | None = None
+    keyword_score: float | None = None
+    fusion_score: float | None = None
+    vector_rank: int | None = None
+    keyword_rank: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -55,6 +82,10 @@ class RetrievedChunk:
             "score": self.score,
             "metadata": self.metadata,
             "vector_score": self.vector_score,
+            "keyword_score": self.keyword_score,
+            "fusion_score": self.fusion_score,
+            "vector_rank": self.vector_rank,
+            "keyword_rank": self.keyword_rank,
         }
 
 
@@ -71,6 +102,9 @@ class RetrievalResult:
     effective_top_k: int = 0
     #: 当前降级级别（NORMAL / NO_RERANK / …）。NORMAL 时为 None。
     degraded: str | None = None
+    #: 实际执行的模式与召回通道。M3-T7 单路降级时二者可能不同于请求值。
+    mode: SearchMode = SearchMode.DENSE
+    channels: tuple[RecallChannel, ...] = (RecallChannel.DENSE,)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,7 +113,16 @@ class RetrievalResult:
             "fetched": self.fetched,
             "effective_top_k": self.effective_top_k,
             "degraded": self.degraded,
+            "mode": self.mode,
+            "channels": list(self.channels),
         }
+
+
+@dataclass(slots=True)
+class _RecallResult:
+    chunks: list[RetrievedChunk]
+    mode: SearchMode
+    channels: tuple[RecallChannel, ...]
 
 
 class RetrievalService:
@@ -115,7 +158,8 @@ class RetrievalService:
         if level == "NORMAL":
             level = None
 
-        candidates = await self._recall(query)
+        recall = await self._recall(query)
+        candidates = recall.chunks
         if not candidates:
             return RetrievalResult(
                 chunks=[],
@@ -123,6 +167,8 @@ class RetrievalService:
                 fetched=0,
                 effective_top_k=top_k,
                 degraded=level,
+                mode=recall.mode,
+                channels=recall.channels,
             )
 
         # 写成"先取出再判 None"而不是布尔标志：标志变量会把"reranker 不是
@@ -135,6 +181,8 @@ class RetrievalService:
                 fetched=len(candidates),
                 effective_top_k=top_k,
                 degraded=level,
+                mode=recall.mode,
+                channels=recall.channels,
             )
 
         chunks, did_rerank = await self._rerank(reranker, query.query, candidates)
@@ -144,20 +192,84 @@ class RetrievalService:
             fetched=len(candidates),
             effective_top_k=top_k,
             degraded=level,
+            mode=recall.mode,
+            channels=recall.channels,
         )
 
-    async def _recall(self, query: SearchQuery) -> list[RetrievedChunk]:
+    async def _recall(self, query: SearchQuery) -> _RecallResult:
         # 与入库路径使用同一条 A12 模型守卫。同维度的不同模型不会触发向量库
         # 报错，却会在不兼容的语义空间中比较向量，结果只会静默变差。
         if self._knowledge_base is not None:
             await self._knowledge_base.resolve_for_search(query.kb_id)
+        filter = _normalize_filter(query.filter)
+        fetch_k = query.effective_fetch_k()
+
+        if query.mode is SearchMode.DENSE:
+            hits = await self._dense_hits(query, fetch_k=fetch_k, filter=filter)
+            return _RecallResult(
+                chunks=self._dense_chunks(hits),
+                mode=SearchMode.DENSE,
+                channels=(RecallChannel.DENSE,),
+            )
+
+        keyword_search = self._keyword_search
+        if keyword_search is None:
+            raise KeywordSearchUnavailable(
+                f"mode={query.mode.value} 需要 KeywordSearchPort，"
+                "请在组合根装配关键词检索实现"
+            )
+
+        if query.mode is SearchMode.KEYWORD:
+            hits = await keyword_search.asearch_keywords(
+                query.kb_id,
+                query.query,
+                top_k=fetch_k,
+                filter=filter,
+            )
+            return _RecallResult(
+                chunks=self._keyword_chunks(hits),
+                mode=SearchMode.KEYWORD,
+                channels=(RecallChannel.KEYWORD,),
+            )
+
+        dense_hits, keyword_hits = await asyncio.gather(
+            self._dense_hits(query, fetch_k=fetch_k, filter=filter),
+            keyword_search.asearch_keywords(
+                query.kb_id,
+                query.query,
+                top_k=fetch_k,
+                filter=filter,
+            ),
+        )
+        fused = reciprocal_rank_fusion(
+            {
+                RecallChannel.DENSE.value: dense_hits,
+                RecallChannel.KEYWORD.value: keyword_hits,
+            }
+        )
+        return _RecallResult(
+            chunks=[self._fused_chunk(hit) for hit in fused],
+            mode=SearchMode.HYBRID,
+            channels=(RecallChannel.DENSE, RecallChannel.KEYWORD),
+        )
+
+    async def _dense_hits(
+        self,
+        query: SearchQuery,
+        *,
+        fetch_k: int,
+        filter: Filter | None,
+    ) -> list[SearchHit]:
         embedding = await self._embedding_model.aembed_query(query.query)
-        hits = await self._vector_store.asearch(
+        return await self._vector_store.asearch(
             query.kb_id,
             embedding,
-            top_k=query.effective_fetch_k(),
-            filter=_normalize_filter(query.filter),
+            top_k=fetch_k,
+            filter=filter,
         )
+
+    @staticmethod
+    def _dense_chunks(hits: list[SearchHit]) -> list[RetrievedChunk]:
         return [
             RetrievedChunk(
                 id=hit.id,
@@ -165,9 +277,40 @@ class RetrievalService:
                 score=hit.score,
                 metadata=hit.metadata,
                 vector_score=hit.score,
+                vector_rank=rank,
             )
-            for hit in hits
+            for rank, hit in enumerate(hits, start=1)
         ]
+
+    @staticmethod
+    def _keyword_chunks(hits: list[SearchHit]) -> list[RetrievedChunk]:
+        return [
+            RetrievedChunk(
+                id=hit.id,
+                text=hit.text,
+                score=hit.score,
+                metadata=hit.metadata,
+                keyword_score=hit.score,
+                keyword_rank=rank,
+            )
+            for rank, hit in enumerate(hits, start=1)
+        ]
+
+    @staticmethod
+    def _fused_chunk(hit: FusedHit) -> RetrievedChunk:
+        dense = hit.contributions.get(RecallChannel.DENSE.value)
+        keyword = hit.contributions.get(RecallChannel.KEYWORD.value)
+        return RetrievedChunk(
+            id=hit.id,
+            text=hit.text,
+            score=hit.score,
+            metadata=dict(hit.metadata),
+            vector_score=dense.score if dense is not None else None,
+            keyword_score=keyword.score if keyword is not None else None,
+            fusion_score=hit.score,
+            vector_rank=dense.rank if dense is not None else None,
+            keyword_rank=keyword.rank if keyword is not None else None,
+        )
 
     @staticmethod
     async def _rerank(
@@ -175,7 +318,7 @@ class RetrievalService:
     ) -> tuple[list[RetrievedChunk], bool]:
         """重排并返回 `(结果, 是否真的重排了)`。
 
-        重排失败时**降级返回向量召回结果**，而不是让整个查询失败 ——
+        重排失败时**降级返回原始召回结果**，而不是让整个查询失败 ——
         检索是读路径，给出稍差的结果远好过给不出结果。降级必须留下日志，
         否则线上质量下滑无人察觉（spec S4-5）。
 
@@ -195,13 +338,13 @@ class RetrievalService:
                 ],
             )
         except Exception as exc:  # noqa: BLE001 —— 任何重排故障都降级
-            logger.warning(f"重排失败，降级为向量召回结果：{exc!r}")
+            logger.warning(f"重排失败，降级为原始召回结果：{exc!r}")
             return candidates, False
 
         if len(ranked) != len(candidates):
             logger.warning(
                 f"重排返回 {len(ranked)} 个结果但候选有 {len(candidates)} 个，"
-                f"结果不可对齐，降级为向量召回结果"
+                f"结果不可对齐，降级为原始召回结果"
             )
             return candidates, False
 
@@ -209,7 +352,7 @@ class RetrievalService:
         if sorted(indexes) != list(range(len(candidates))):
             logger.warning(
                 f"重排结果索引 {indexes} 无法与 {len(candidates)} 个候选对齐，"
-                "降级为向量召回结果"
+                "降级为原始召回结果"
             )
             return candidates, False
 
@@ -220,6 +363,10 @@ class RetrievalService:
                 score=item.score,
                 metadata=candidates[item.index].metadata,
                 vector_score=candidates[item.index].vector_score,
+                keyword_score=candidates[item.index].keyword_score,
+                fusion_score=candidates[item.index].fusion_score,
+                vector_rank=candidates[item.index].vector_rank,
+                keyword_rank=candidates[item.index].keyword_rank,
             )
             for item in ranked
         ]
@@ -232,8 +379,11 @@ def _normalize_filter(filter: dict[str, Any] | None) -> Filter | None:
 
 
 __all__ = [
+    "KeywordSearchUnavailable",
+    "RecallChannel",
     "RetrievalResult",
     "RetrievalService",
     "RetrievedChunk",
     "SearchQuery",
+    "SearchMode",
 ]

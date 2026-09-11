@@ -19,7 +19,13 @@ from comet_rag.infrastructure.providers.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
 from comet_rag.ports import VectorRecord
 from comet_rag.services.knowledge_base import KnowledgeBaseService, KnowledgeBaseSpec
-from comet_rag.services.retrieval import RetrievalService, SearchQuery
+from comet_rag.services.retrieval import (
+    KeywordSearchUnavailable,
+    RecallChannel,
+    RetrievalService,
+    SearchMode,
+    SearchQuery,
+)
 
 DIM = 3
 KB = "kb-search"
@@ -35,6 +41,9 @@ class KeywordEmbeddingModel(BaseEmbeddingModel):
     维度含义：[包含"苹果", 包含"香蕉", 常数]
     """
 
+    def __init__(self) -> None:
+        self.calls = 0
+
     def _vector(self, text: str) -> list[float]:
         return [
             1.0 if "苹果" in text else 0.0,
@@ -43,9 +52,11 @@ class KeywordEmbeddingModel(BaseEmbeddingModel):
         ]
 
     def _embed(self, data, **kwargs) -> list[float]:
+        self.calls += 1
         return self._vector(str(data))
 
     async def _aembed(self, data, **kwargs) -> list[float]:
+        self.calls += 1
         return self._vector(str(data))
 
     async def close_client(self) -> None:  # pragma: no cover
@@ -115,7 +126,10 @@ async def store(model: KeywordEmbeddingModel) -> InMemoryVectorStore:
 
 def service(model, store, reranker=None) -> RetrievalService:
     return RetrievalService(
-        embedding_model=model, vector_store=store, reranker=reranker
+        embedding_model=model,
+        vector_store=store,
+        keyword_search=store,
+        reranker=reranker,
     )
 
 
@@ -215,6 +229,127 @@ async def test_empty_filter_is_treated_as_no_filter(model, store) -> None:
     )
 
     assert len(result.chunks) == 3
+
+
+# ── 检索模式 ───────────────────────────────────────────────────────────────
+
+
+async def test_default_mode_remains_dense(model, store, monkeypatch) -> None:
+    async def unexpected_keyword_call(*args, **kwargs):
+        raise AssertionError("默认 dense 不应调用关键词通道")
+
+    monkeypatch.setattr(store, "asearch_keywords", unexpected_keyword_call)
+
+    result = await service(model, store).search(
+        SearchQuery(kb_id=KB, query="苹果", top_k=3)
+    )
+
+    assert result.mode is SearchMode.DENSE
+    assert result.channels == (RecallChannel.DENSE,)
+    assert all(chunk.vector_score is not None for chunk in result.chunks)
+    assert all(chunk.keyword_score is None for chunk in result.chunks)
+    assert all(chunk.fusion_score is None for chunk in result.chunks)
+
+
+async def test_keyword_mode_skips_embedding_and_exposes_keyword_scores(
+    model, store
+) -> None:
+    model.calls = 0
+
+    result = await service(model, store).search(
+        SearchQuery(kb_id=KB, query="苹果", top_k=3, mode=SearchMode.KEYWORD)
+    )
+
+    assert model.calls == 0
+    assert result.mode is SearchMode.KEYWORD
+    assert result.channels == (RecallChannel.KEYWORD,)
+    assert {chunk.id for chunk in result.chunks} == {"apple", "both"}
+    assert all(chunk.score == chunk.keyword_score for chunk in result.chunks)
+    assert [chunk.keyword_rank for chunk in result.chunks] == list(
+        range(1, len(result.chunks) + 1)
+    )
+    assert all(chunk.vector_score is None for chunk in result.chunks)
+
+
+async def test_hybrid_mode_fuses_both_channels_before_top_k(model, store) -> None:
+    result = await service(model, store).search(
+        SearchQuery(
+            kb_id=KB,
+            query="苹果",
+            top_k=3,
+            fetch_k=3,
+            mode=SearchMode.HYBRID,
+        )
+    )
+
+    assert result.mode is SearchMode.HYBRID
+    assert result.channels == (RecallChannel.DENSE, RecallChannel.KEYWORD)
+    assert {chunk.id for chunk in result.chunks} == {"apple", "both", "banana"}
+    assert all(chunk.score == chunk.fusion_score for chunk in result.chunks)
+    shared = [chunk for chunk in result.chunks if chunk.id in {"apple", "both"}]
+    assert all(chunk.vector_score is not None for chunk in shared)
+    assert all(chunk.keyword_score is not None for chunk in shared)
+
+
+async def test_hybrid_rerank_preserves_channel_and_fusion_diagnostics(
+    model, store, reranker
+) -> None:
+    result = await service(model, store, reranker).search(
+        SearchQuery(kb_id=KB, query="苹果", top_k=3, mode=SearchMode.HYBRID)
+    )
+
+    assert result.reranked is True
+    assert all(chunk.fusion_score is not None for chunk in result.chunks)
+    assert any(chunk.score != chunk.fusion_score for chunk in result.chunks)
+    assert any(chunk.keyword_rank is not None for chunk in result.chunks)
+
+
+@pytest.mark.parametrize("mode", [SearchMode.KEYWORD, SearchMode.HYBRID])
+async def test_keyword_capability_is_required_only_by_modes_that_use_it(
+    model, store, mode
+) -> None:
+    without_keyword = RetrievalService(
+        embedding_model=model,
+        vector_store=store,
+    )
+
+    with pytest.raises(KeywordSearchUnavailable, match="KeywordSearchPort"):
+        await without_keyword.search(SearchQuery(kb_id=KB, query="苹果", mode=mode))
+
+
+async def test_hybrid_uses_same_fetch_k_and_filter_for_each_channel(
+    model, store, monkeypatch
+) -> None:
+    calls: dict[str, tuple[int, object]] = {}
+    dense_search = store.asearch
+    keyword_search = store.asearch_keywords
+
+    async def recording_dense(*args, top_k=5, filter=None, **kwargs):
+        calls["dense"] = (top_k, filter)
+        return await dense_search(*args, top_k=top_k, filter=filter, **kwargs)
+
+    async def recording_keyword(*args, top_k=5, filter=None, **kwargs):
+        calls["keyword"] = (top_k, filter)
+        return await keyword_search(*args, top_k=top_k, filter=filter, **kwargs)
+
+    monkeypatch.setattr(store, "asearch", recording_dense)
+    monkeypatch.setattr(store, "asearch_keywords", recording_keyword)
+
+    await service(model, store).search(
+        SearchQuery(
+            kb_id=KB,
+            query="苹果",
+            top_k=1,
+            fetch_k=2,
+            filter={"lang": "zh"},
+            mode=SearchMode.HYBRID,
+        )
+    )
+
+    assert calls == {
+        "dense": (2, {"lang": "zh"}),
+        "keyword": (2, {"lang": "zh"}),
+    }
 
 
 # ── fetch_k 与 top_k ───────────────────────────────────────────────────────
@@ -335,6 +470,7 @@ async def test_rerank_is_skipped_when_nothing_recalled(model, store, reranker) -
         {"kb_id": "k", "query": ""},
         {"kb_id": "k", "query": "q", "top_k": 0},
         {"kb_id": "k", "query": "q", "top_k": 101},
+        {"kb_id": "k", "query": "q", "mode": "semantic"},
     ],
 )
 def test_invalid_query_is_rejected(kwargs: dict[str, Any]) -> None:

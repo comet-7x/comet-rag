@@ -19,6 +19,7 @@ async def search(payload: SearchRequest, retrieval: RetrievalDep) -> SearchRespo
             fetch_k=payload.fetch_k,
             filter=payload.filter,
             rerank=payload.rerank,
+            mode=payload.mode,
         )
     )
     return SearchResponse(
@@ -27,4 +28,6 @@ async def search(payload: SearchRequest, retrieval: RetrievalDep) -> SearchRespo
         fetched=result.fetched,
         effective_top_k=result.effective_top_k,
         degraded=result.degraded,
+        mode=result.mode,
+        channels=list(result.channels),
     )

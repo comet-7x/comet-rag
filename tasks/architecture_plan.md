@@ -2,7 +2,7 @@
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
 > 当前状态：M2 与 P1 已完成；M3 规格已冻结并开始执行
-> 当前优先级：M3-T6 RetrievalService 与 API 三种显式检索模式
+> 当前优先级：M3-T7 hybrid 通道级降级、错误分类与可观察诊断
 > 最后更新：2026-09-11
 
 ## 1. 目的
@@ -376,4 +376,4 @@ M3 规格已冻结：Milvus 原生 BM25 位于 `KeywordSearchPort` 后，RRF 是
 | Worker 是否收入 `tasks/` | 否；workers 是独立进程入口，必须与单进程会加载的通用任务框架隔离 |
 | DOCX 是否立即改为垂直目录 | 否；当前 extractor 组合可复用的 converter/parser/cleaner，出现第二个进程内原生格式后再以真实变化复评 |
 | Provider 私有辅助模块是否整理 | M3 后处理；embedding 专属 wire 可内聚，跨 embedding/reranker 的图片引用不能误放到 embedding 子包 |
-| 当前下一项工作 | M3-T6：RetrievalService 与 API 三种显式检索模式 |
+| 当前下一项工作 | M3-T7：hybrid 通道级降级、错误分类与可观察诊断 |
