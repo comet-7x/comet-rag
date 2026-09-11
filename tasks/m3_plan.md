@@ -13,9 +13,9 @@ M3 在现有 dense 检索和 reranker 之间增加独立 BM25 召回与纯 RRF �
 
 ## Current Priority
 
-M3-T2 已完成 Port 下沉、兼容导出与分层守卫。下一项 M3-T3 必须先打通显式
-database name，再连接真实 Milvus；本环境只允许访问
-`zhihao_test_database`，不得沿用 `.env` 当前的 `MILVUS_DB` 或 SDK 默认库。
+M3-T3 已完成显式 database 装配、Milvus/PyMilvus 2.6 对齐、BM25 schema v2、
+旧 schema 非破坏性拒绝和真实服务验证。下一项 M3-T4 将同时引入
+`KeywordSearchPort`、InMemory/Milvus 实现与统一契约。
 
 ## Dependency Graph
 
@@ -89,4 +89,4 @@ T2～T8 分开。schema 变更只有在 T2 契约稳定并完成真实 Milvus �
 
 ## Completion Record
 
-待 M3-T8 填写。M3-T1 基线与离线技术验证见 `tasks/m3_spec.md` §6。
+M3-T1～T3 的决策与验证结果见 `tasks/m3_spec.md` §6～§8；M3-T8 补最终记录。

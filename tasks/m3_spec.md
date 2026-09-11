@@ -139,10 +139,10 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 
 ### S2 — BM25 与 schema
 
-- [ ] Compose 与 PyMilvus 使用匹配的 2.6 版本线。
-- [ ] 新 collection 包含 analyzer、BM25 function 和 BM25 sparse index。
-- [ ] 旧 schema 被明确拒绝，测试证明不会自动删除已有 collection。
-- [ ] 中文术语、英文标识符和 metadata filter 的真实 Milvus 查询均命中。
+- [x] Compose 与 PyMilvus 使用匹配的 2.6 版本线。
+- [x] 新 collection 包含 analyzer、BM25 function 和 BM25 sparse index。
+- [x] 旧 schema 被明确拒绝，测试证明不会自动删除已有 collection。
+- [x] 中文术语、英文标识符和 metadata filter 的真实 Milvus 查询均命中。
 
 ### S3 — Port 与融合
 
@@ -161,7 +161,7 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 
 - [ ] E2E 覆盖“精确术语靠 BM25、语义改写靠 dense、hybrid 合并两者”。
 - [ ] 集成环境不可用时 skip，不 fail；真实 Milvus 可用时验证 analyzer 与混合链路。
-- [ ] 真实 Milvus 验证只访问 `zhihao_test_database`，且不会清理非本次创建的数据。
+- [x] 真实 Milvus 验证只访问 `zhihao_test_database`，且不会清理非本次创建的数据。
 - [ ] 记录 dense/keyword/hybrid 的命中、延迟和候选规模，不用单个样本宣称质量提升。
 - [ ] 默认 `uv run pytest` 仍小于 10 秒，Ruff、Pyright、core-only、integration、e2e 全绿。
 
@@ -192,7 +192,22 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
   Ruff 与 Pyright 通过，Pyright 为 `0 errors`。
 - 未连接 Milvus；M3-T3 必须先显式装配 database name，再在 `zhihao_test_database` 验证。
 
-## 8. 官方依据
+## 8. M3-T3 验证记录
+
+- Compose 固定 Milvus 2.6.23；锁文件与本地环境均为 PyMilvus 2.6.17。
+- `.env` 目标的真实服务为 Milvus 2.6.22；所有连接显式使用
+  `zhihao_test_database`，未读取 `.env` 中不同值的 `MILVUS_DB`。
+- 27 条 Milvus 向量存储契约全部通过（171.53s）；中文“量子纠缠”和英文
+  `TraitObject` 的原生 BM25 查询均命中，独立验证 12.73s。
+- 所有测试使用随机 `cttest_*` 前缀；验收后残留测试 collection 为 0，数据库原有
+  collection 数量仍为 1。首次失败遗留的两个临时 collection 已按完整名称清理。
+- 远端仅有 1 个 streaming node，因此 collection 改为分步建 schema/index，并显式以
+  `replica_number=1` 加载；新建失败只回滚本调用创建的空 collection，已有旧 schema
+  仍只报错、不删除。
+- 全量单测：`1810 passed, 19 skipped, 178 deselected, 1 xfailed`，pytest 8.62s；
+  Ruff 与 Pyright 通过，Pyright 为 `0 errors`。
+
+## 9. 官方依据
 
 - [Milvus Full Text Search](https://milvus.io/docs/full-text-search.md)
 - [Milvus BM25 Function](https://milvus.io/docs/bm25-function.md)

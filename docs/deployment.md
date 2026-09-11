@@ -61,7 +61,7 @@ infrastructure_config:
     model_name: qwen3-vl-reranker
   database: { host: localhost, port: 5432, username: comet, password: ***, database: comet_rag }
   redis:    { host: localhost, port: 6379, db_index: 0 }
-  vector_database: { endpoint: "http://localhost:19530", collection_name: unused }
+  vector_database: { endpoint: "http://localhost:19530", database_name: comet_rag, collection_prefix: comet, replica_number: 1 }
 backends:
   vector_store: milvus
   task_store: postgres

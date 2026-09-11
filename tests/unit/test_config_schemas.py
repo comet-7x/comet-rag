@@ -223,7 +223,7 @@ def test_secrets_are_masked_but_explicitly_unwrapped_for_connection_urls() -> No
     vector = VectorDatabaseConfig(
         endpoint="https://vector.invalid",
         api_key=secret,
-        collection_name="chunks",
+        database_name="comet_rag",
     )
 
     for config in (database, redis, model, vector):
@@ -234,6 +234,30 @@ def test_secrets_are_masked_but_explicitly_unwrapped_for_connection_urls() -> No
     assert secret in redis.url
     assert model.api_key_value == secret
     assert vector.api_key_value == secret
+
+
+def test_vector_database_requires_an_explicit_safe_database_and_prefix() -> None:
+    with pytest.raises(ValueError, match="database_name"):
+        VectorDatabaseConfig(
+            endpoint="http://milvus.invalid:19530",
+            collection_name="legacy-unused-field",  # type: ignore[call-arg]
+        )
+    with pytest.raises(ValueError, match="database_name"):
+        VectorDatabaseConfig(
+            endpoint="http://milvus.invalid:19530", database_name="   "
+        )
+    with pytest.raises(ValueError, match="collection_prefix"):
+        VectorDatabaseConfig(
+            endpoint="http://milvus.invalid:19530",
+            database_name="test",
+            collection_prefix="invalid-prefix",
+        )
+    with pytest.raises(ValueError, match="replica_number"):
+        VectorDatabaseConfig(
+            endpoint="http://milvus.invalid:19530",
+            database_name="test",
+            replica_number=0,
+        )
 
 
 # ── 并发默认值：一处定义，不许漂移 ─────────────────────────────────────────

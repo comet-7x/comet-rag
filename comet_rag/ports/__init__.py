@@ -29,6 +29,7 @@ from .source import LoadedResource, SourceContent, SourceLoaderPort
 from .vector_store import (
     BaseVectorStore,
     CollectionNotFound,
+    CollectionSchemaMismatch,
     DimensionMismatch,
     Filter,
     SearchHit,
@@ -42,6 +43,7 @@ __all__ = [
     "AsyncGate",
     "BaseVectorStore",
     "CollectionNotFound",
+    "CollectionSchemaMismatch",
     "ContentInput",
     "ContentPart",
     "DocumentExtractionError",

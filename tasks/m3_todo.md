@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M3（BM25 + RRF）
 
-> 状态：M3-T2 已完成，下一项 M3-T3
+> 状态：M3-T3 已完成，下一项 M3-T4
 > 规格：`tasks/m3_spec.md` v1.0
 > 计划：`tasks/m3_plan.md` v1.0
 > GitHub Issue：[#54](https://github.com/comet-7x/comet-rag/issues/54)
@@ -39,15 +39,15 @@
 
 ### M3-T3 — Milvus 2.6 与 BM25 schema v2（M）
 
-**日期：** 09-15　**依赖：** M3-T2
+**完成日期：** 09-11　**依赖：** M3-T2
 
-- [ ] Compose 固定 Milvus 2.6.23，PyMilvus 固定 `>=2.6.17,<2.7`
-- [ ] 配置、组合根与 Milvus client 显式传递 database name，不允许回落默认库
-- [ ] 本环境真实验证只使用 `.env` 的 URI，并强制 database=`zhihao_test_database`
-- [ ] text 启用 chinese analyzer，注册 BM25 Function
-- [ ] sparse index metric 改为 BM25，写入不再提供空 sparse dict
-- [ ] 检测旧 schema 并抛 `CollectionSchemaMismatch`，绝不自动 drop
-- [ ] 启动 Docker 后真实验证版本、analyzer、建库、写入和 BM25 查询
+- [x] Compose 固定 Milvus 2.6.23，PyMilvus 固定 `>=2.6.17,<2.7`
+- [x] 配置、组合根与 Milvus client 显式传递 database name，不允许回落默认库
+- [x] 本环境真实验证只使用 `.env` 的 URI，并强制 database=`zhihao_test_database`
+- [x] text 启用 chinese analyzer，注册 BM25 Function
+- [x] sparse index metric 改为 BM25，写入不再提供空 sparse dict
+- [x] 检测旧 schema 并抛 `CollectionSchemaMismatch`，绝不自动 drop
+- [x] 在真实 Milvus 2.6 服务验证版本、analyzer、建库、写入和 BM25 查询
 
 **验收：** 中文词、英文标识符均可命中；故意注入旧 schema 时明确失败且数据仍存在。
 

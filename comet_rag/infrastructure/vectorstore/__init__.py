@@ -12,6 +12,7 @@ from comet_rag.infrastructure.vectorstore.memory import (
 from comet_rag.ports import (
     BaseVectorStore,
     CollectionNotFound,
+    CollectionSchemaMismatch,
     DimensionMismatch,
     Filter,
     SearchHit,
@@ -24,6 +25,7 @@ from comet_rag.ports import (
 __all__ = [
     "BaseVectorStore",
     "CollectionNotFound",
+    "CollectionSchemaMismatch",
     "DimensionMismatch",
     "Filter",
     "InMemoryVectorStore",

@@ -9,25 +9,34 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import AsyncIterator
+from uuid import uuid4
 
 import pytest
 
-from comet_rag.ports import BaseVectorStore
+from comet_rag.ports import BaseVectorStore, VectorRecord
 from tests.contracts.vector_store import VectorStoreContract
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-async def store(milvus_uri: str) -> AsyncIterator[BaseVectorStore]:
+async def store(
+    milvus_uri: str, milvus_database: str
+) -> AsyncIterator[BaseVectorStore]:
     from comet_rag.infrastructure.vectorstore.milvus import MilvusStore
 
-    # 每轮用独立前缀，避免上一轮残留的 collection 影响断言
-    vs = MilvusStore(endpoint=milvus_uri, prefix="cttest")
+    # 随机前缀让清理范围能被精确证明，不会碰到其他测试或业务 collection。
+    vs = MilvusStore(
+        endpoint=milvus_uri,
+        database_name=milvus_database,
+        prefix=f"cttest_{uuid4().hex[:12]}",
+    )
     try:
         yield vs
     finally:
-        for kb in ("kb-contract", "kb-idem", "kb-dim", "kb-other", "kb-empty"):
+        # 只清理本 fixture 实际接触过的 collection；随机前缀已隔离其他数据。
+        touched = set(vs._dims) | vs._created  # noqa: SLF001
+        for kb in touched:
             # 清理尽力而为：某个 collection 删不掉不该让整轮测试红掉
             with contextlib.suppress(Exception):
                 await vs.adrop_collection(kb)
@@ -38,3 +47,39 @@ class TestMilvusVectorStore(VectorStoreContract):
     @pytest.fixture
     async def store(self, store: BaseVectorStore) -> BaseVectorStore:  # noqa: PT004
         return store
+
+
+async def test_bm25_schema_handles_chinese_and_english_terms(
+    store: BaseVectorStore,
+) -> None:
+    """T3 直接验证服务端 analyzer/function/index；Port 行为在 T4 定义。"""
+    await store.aensure_collection("kb-bm25-schema", dim=4)
+    await store.aupsert(
+        "kb-bm25-schema",
+        [
+            VectorRecord(
+                id="zh",
+                text="星际量子纠缠实验报告",
+                embedding=[1.0, 0.0, 0.0, 0.0],
+            ),
+            VectorRecord(
+                id="en",
+                text="Rust TraitObject memory layout",
+                embedding=[0.0, 1.0, 0.0, 0.0],
+            ),
+        ],
+    )
+
+    client = store._async  # type: ignore[attr-defined]  # noqa: SLF001
+    name = store._name("kb-bm25-schema")  # type: ignore[attr-defined]  # noqa: SLF001
+    for query, expected in (("量子纠缠", "zh"), ("TraitObject", "en")):
+        results = await client.search(
+            name,
+            data=[query],
+            anns_field="sparse_vector",
+            search_params={"metric_type": "BM25"},
+            limit=2,
+            output_fields=["text"],
+        )
+        assert results and results[0]
+        assert results[0][0]["id"] == expected

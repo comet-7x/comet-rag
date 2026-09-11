@@ -86,7 +86,7 @@ services:
       retries: 20
 
   milvus:
-    image: milvusdb/milvus:v2.5.4
+    image: milvusdb/milvus:v2.6.23
     container_name: comet-rag-milvus
     command: ["milvus", "run", "standalone"]
     security_opt:

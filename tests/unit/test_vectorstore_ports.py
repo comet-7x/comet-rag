@@ -12,6 +12,7 @@ from comet_rag.infrastructure.vectorstore import base as legacy
 from comet_rag.ports import (
     BaseVectorStore,
     CollectionNotFound,
+    CollectionSchemaMismatch,
     DimensionMismatch,
     Filter,
     SearchHit,
@@ -27,6 +28,7 @@ def test_legacy_imports_keep_the_same_runtime_objects() -> None:
     exports = {
         "BaseVectorStore": BaseVectorStore,
         "CollectionNotFound": CollectionNotFound,
+        "CollectionSchemaMismatch": CollectionSchemaMismatch,
         "DimensionMismatch": DimensionMismatch,
         "Filter": Filter,
         "SearchHit": SearchHit,

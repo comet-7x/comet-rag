@@ -25,6 +25,7 @@ import contextlib
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -93,7 +94,9 @@ def hooks() -> Any:
     yield
 
 
-def make_config(milvus_uri: str) -> APPConfig:
+def make_config(
+    milvus_uri: str, milvus_database: str, collection_prefix: str
+) -> APPConfig:
     """**全真后端 + arq 执行器**。与全内存版的差别就是 backends 这一段。"""
     return APPConfig(
         server_config=ServerConfig(
@@ -111,7 +114,9 @@ def make_config(milvus_uri: str) -> APPConfig:
                 database="comet_rag",
             ),
             vector_database=VectorDatabaseConfig(
-                endpoint=milvus_uri, collection_name="unused"
+                endpoint=milvus_uri,
+                database_name=milvus_database,
+                collection_prefix=collection_prefix,
             ),
             # 队列名必须是生产那两个（本用例用的就是生产 PROFILE），所以改用
             # **独立的 redis db** 来隔离：否则 `_drain_queues` 会把开发机上
@@ -221,9 +226,12 @@ async def deployment(
     postgres_dsn: str,
     redis_url: str,  # noqa: ARG001 —— 只为触发"Redis 没起就跳过"的探测
     milvus_uri: str,
+    milvus_database: str,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, list[Worker]]]:
     await _clean(postgres_dsn)
-    config = make_config(milvus_uri)
+    config = make_config(
+        milvus_uri, milvus_database, f"ctworker_{uuid4().hex[:12]}"
+    )
     # 用 config 里那份连接（db=15），不是 fixture 的 db=0 —— 否则清的是别人的队列
     redis_config = config.infrastructure_config.redis
     assert redis_config is not None, "make_config 必须配好 redis，否则本用例无从跑起"

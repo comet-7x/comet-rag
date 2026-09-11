@@ -58,9 +58,9 @@
 | **M3** | **混合检索（Milvus BM25 + RRF）** | 两路召回、纯 RRF、通道降级与真实 Milvus 链路全绿（执行中） |
 
 M1、M2 与 M2 后 P1 已完成并具备单元、契约、集成、端到端和基准测试保护。
-M3-T2 检索 Port 下沉与兼容层已完成；当前下一项为显式 database 装配、Milvus 2.6
-版本对齐与 BM25 schema v2（M3-T3）。本环境真实连接只允许访问
-`zhihao_test_database`。
+M3-T3 已完成显式 database 装配、Milvus 2.6 版本对齐与 BM25 schema v2，并在
+`zhihao_test_database` 通过真实契约。当前下一项为 KeywordSearchPort 及其
+InMemory/Milvus 实现与统一契约（M3-T4）。
 
 ### 非目标（明确不做）
 

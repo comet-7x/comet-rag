@@ -9,6 +9,7 @@ from __future__ import annotations
 from comet_rag.ports.vector_store import (
     BaseVectorStore,
     CollectionNotFound,
+    CollectionSchemaMismatch,
     DimensionMismatch,
     Filter,
     SearchHit,
@@ -21,6 +22,7 @@ from comet_rag.ports.vector_store import (
 __all__ = [
     "BaseVectorStore",
     "CollectionNotFound",
+    "CollectionSchemaMismatch",
     "DimensionMismatch",
     "Filter",
     "SearchHit",

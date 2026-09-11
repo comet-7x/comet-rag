@@ -66,6 +66,9 @@ def build_vector_store(config: APPConfig) -> BaseVectorStore:
         return MilvusStore(
             endpoint=settings.endpoint,
             api_key=settings.api_key_value,
+            database_name=settings.database_name,
+            prefix=settings.collection_prefix,
+            replica_number=settings.replica_number,
         )
     raise ValueError(f"不支持的 vector_store 后端：{backend}")
 

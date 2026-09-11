@@ -33,6 +33,20 @@ class DimensionMismatch(VectorStoreError):
         self.kb_id, self.expected, self.actual = kb_id, expected, actual
 
 
+class CollectionSchemaMismatch(VectorStoreError):
+    """已有 collection 无法满足当前存储契约，需要显式重建。"""
+
+    def __init__(self, kb_id: str, reasons: Sequence[str]) -> None:
+        self.kb_id = kb_id
+        self.reasons = tuple(reasons)
+        detail = "；".join(self.reasons) or "schema 不兼容"
+        super().__init__(
+            f"知识库 {kb_id!r} 的 collection 不兼容当前 schema：{detail}。"
+            "请先导出或确认原数据可重建，再显式删除 collection 并重新入库；"
+            "系统不会自动删除现有数据。"
+        )
+
+
 @dataclass(slots=True)
 class VectorRecord:
     """一条待写入的向量。
@@ -134,6 +148,7 @@ class BaseVectorStore(ABC):
 __all__ = [
     "BaseVectorStore",
     "CollectionNotFound",
+    "CollectionSchemaMismatch",
     "DimensionMismatch",
     "Filter",
     "SearchHit",

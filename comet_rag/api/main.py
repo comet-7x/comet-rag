@@ -21,7 +21,11 @@ from comet_rag.infrastructure.knowledge_base import (
     KnowledgeBaseExists,
     KnowledgeBaseNotFound,
 )
-from comet_rag.ports import CollectionNotFound, DimensionMismatch
+from comet_rag.ports import (
+    CollectionNotFound,
+    CollectionSchemaMismatch,
+    DimensionMismatch,
+)
 from comet_rag.services.source_policy import SourceNotAllowed
 from comet_rag.tasks import TaskBusy, TaskNotFound, VersionConflict
 from comet_rag.tasks.service import Backlogged
@@ -55,6 +59,12 @@ def _install_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(DimensionMismatch)
     async def _dim(request: Request, exc: DimensionMismatch) -> JSONResponse:  # noqa: RUF029
         """409 而非 400：请求本身没错，是知识库已有的维度与当前模型对不上。"""
+        return _problem(request, status.HTTP_409_CONFLICT, str(exc))
+
+    @app.exception_handler(CollectionSchemaMismatch)
+    async def _schema(
+        request: Request, exc: CollectionSchemaMismatch
+    ) -> JSONResponse:  # noqa: RUF029
         return _problem(request, status.HTTP_409_CONFLICT, str(exc))
 
     @app.exception_handler(KnowledgeBaseNotFound)

@@ -2,7 +2,7 @@
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
 > 当前状态：M2 与 P1 已完成；M3 规格已冻结并开始执行
-> 当前优先级：M3-T3 显式 database 装配、Milvus 2.6 与 BM25 schema v2
+> 当前优先级：M3-T4 KeywordSearchPort、双实现与统一契约
 > 最后更新：2026-09-11
 
 ## 1. 目的
@@ -372,4 +372,4 @@ M3 规格已冻结：Milvus 原生 BM25 位于 `KeywordSearchPort` 后，RRF 是
 | Chunker 是否统一做页面、父子块和 Graph | 否；分别属于 Extraction、Strategy、Planner 与 Graph ingestion |
 | 是否定义 Search/Graph 全套 Port | M3 只定义 Vector/Keyword Search；Graph 仍由后续需求驱动 |
 | `BaseParser` 是否删除 | 暂不；保留兼容 ABC，不把单一实现数量当作删除或扩展依据 |
-| 当前下一项工作 | M3-T3：显式 database 装配、Milvus 2.6 与 BM25 schema v2 |
+| 当前下一项工作 | M3-T4：KeywordSearchPort、InMemory/Milvus 双实现与统一契约 |
