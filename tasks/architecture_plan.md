@@ -1,9 +1,9 @@
 # Architecture Evolution Plan：能力边界与统一入口
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
-> 当前状态：M2 PDF / MinerU HTTP 已完成
-> 当前优先级：P1 已完成；下一步为 M3 单独冻结 BM25 / RRF 规格
-> 最后更新：2026-09-10
+> 当前状态：M2 与 P1 已完成；M3 规格已冻结并开始执行
+> 当前优先级：M3-T2 检索 Port 下沉与兼容层
+> 最后更新：2026-09-11
 
 ## 1. 目的
 
@@ -335,9 +335,10 @@ comet_rag/
 
 ### P2 — M3：由真实混合检索需求驱动
 
-根据选定的 BM25 后端和过滤需求定义 `KeywordSearchPort`、`FusionStrategy`，评审
-现有 `BaseVectorStore` 是否下沉 ports。该接口是项目 §7 的 Ask-first 边界，必须
-新规格、新契约、独立 PR。
+M3 规格已冻结：Milvus 原生 BM25 位于 `KeywordSearchPort` 后，RRF 是 engines 内的
+纯计算 Strategy，Hybrid 由 RetrievalService 编排。`BaseVectorStore` 下沉 ports 并
+保留旧导入兼容；schema v2 不自动删除旧 collection。详细边界与成功标准见
+`tasks/m3_spec.md`，实施清单见 `tasks/m3_todo.md`。
 
 ### P3 — 后续里程碑：Hierarchy 与 Graph
 
@@ -369,6 +370,6 @@ comet_rag/
 | MinerU 是否移入 `engines/parsers` | 否；它是外部 `DocumentExtractorPort` 适配器 |
 | DOCX 是否最终实现同一提取 Port | 是；M2 后 P1 已完成 |
 | Chunker 是否统一做页面、父子块和 Graph | 否；分别属于 Extraction、Strategy、Planner 与 Graph ingestion |
-| 是否现在定义 Search/Graph 全套 Port | 否；分别由 M3 和后续真实需求驱动 |
+| 是否定义 Search/Graph 全套 Port | M3 只定义 Vector/Keyword Search；Graph 仍由后续需求驱动 |
 | `BaseParser` 是否删除 | 暂不；保留兼容 ABC，不把单一实现数量当作删除或扩展依据 |
-| 当前下一项工作 | 为 M3 单独冻结 BM25 后端、`KeywordSearchPort` 与 RRF 成功标准 |
+| 当前下一项工作 | M3-T2：检索 Port 下沉、兼容导出与分层守卫 |

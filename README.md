@@ -9,7 +9,7 @@
 **在安装期强制**，并由 AST 层级守卫在 CI 里盯着（`tests/unit/test_layering.py`）。
 
 > 当前进度：M1、M2（PDF / 外部 MinerU）与公共 Loader/Extractor 入口收敛已完成；
-> 下一里程碑是 M3（BM25 + RRF 混合检索）。
+> M3（Milvus BM25 + RRF 混合检索）规格已冻结并开始执行。
 
 ---
 
