@@ -134,7 +134,7 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 
 - [x] `services/` 不再 import `infrastructure.vectorstore`，AST 分层守卫覆盖该规则。
 - [x] 旧 vectorstore import 路径仍可用，且指向同一契约对象。
-- [x] core-only 路径可导入当前检索 Port，不加载 `pymilvus`；RRF 待 M3-T5 验收。
+- [x] core-only 路径可导入检索 Port 与 RRF，不加载 `pymilvus`。
 - [x] `SearchQuery` 当前默认 dense，既有检索测试和 API 响应字段未回退。
 
 ### S2 — BM25 与 schema
@@ -147,9 +147,9 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 ### S3 — Port 与融合
 
 - [x] InMemory 与 Milvus 通过同一 KeywordSearchPort 契约。
-- [ ] RRF 覆盖去重、单路缺失、并列排序、输入不变性与非法参数。
+- [x] RRF 覆盖去重、单路缺失、并列排序、输入不变性与非法参数。
 - [x] 反向注入过滤错误实现，确认 KeywordSearchPort 契约确实会失败。
-- [ ] 反向注入错误 RRF 实现，确认性质测试确实会失败。
+- [x] 反向注入零基 rank 的错误 RRF 实现，确认性质测试确实会失败。
 - [ ] dense、keyword、hybrid 三种模式的候选数和分数语义稳定。
 
 ### S4 — 降级与装配
@@ -221,7 +221,19 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
   `1823 passed, 19 skipped, 190 deselected, 1 xfailed`，pytest 8.85s；Ruff 与 Pyright
   通过，Pyright 为 `0 errors`。
 
-## 10. 官方依据
+## 10. M3-T5 验证记录
+
+- `engines/retrieval/fusion.py` 只依赖 `ports.SearchHit` 与标准库；独立进程导入
+  `comet_rag.engines.retrieval` 不会加载 `pymilvus`。
+- RRF 使用默认 `rrf_k=60` 和一基 rank，按 chunk id 跨通道去重；同一通道的重复 id
+  只取首次排名，避免重复记录人为抬高融合分数。
+- 输出保留每个通道的原始 rank/score；融合只使用排名，同分以 chunk id 稳定排序，
+  不修改输入候选或共享 metadata。
+- 临时把 rank 改成从 0 开始后，精确公式测试按预期失败；恢复后 12 项 RRF 单测通过。
+- 全量单测为 `1849 passed, 19 skipped, 190 deselected, 1 xfailed`，pytest 9.26s；
+  Ruff 与 Pyright 通过，Pyright 为 `0 errors`。
+
+## 11. 官方依据
 
 - [Milvus Full Text Search](https://milvus.io/docs/full-text-search.md)
 - [Milvus BM25 Function](https://milvus.io/docs/bm25-function.md)

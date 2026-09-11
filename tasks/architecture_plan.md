@@ -2,7 +2,7 @@
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
 > 当前状态：M2 与 P1 已完成；M3 规格已冻结并开始执行
-> 当前优先级：M3-T5 纯计算 RRF Strategy 与性质测试
+> 当前优先级：M3-T6 RetrievalService 与 API 三种显式检索模式
 > 最后更新：2026-09-11
 
 ## 1. 目的
@@ -372,4 +372,8 @@ M3 规格已冻结：Milvus 原生 BM25 位于 `KeywordSearchPort` 后，RRF 是
 | Chunker 是否统一做页面、父子块和 Graph | 否；分别属于 Extraction、Strategy、Planner 与 Graph ingestion |
 | 是否定义 Search/Graph 全套 Port | M3 只定义 Vector/Keyword Search；Graph 仍由后续需求驱动 |
 | `BaseParser` 是否删除 | 暂不；保留兼容 ABC，不把单一实现数量当作删除或扩展依据 |
-| 当前下一项工作 | M3-T5：纯计算 RRF Strategy、稳定排序与性质测试 |
+| Loader 是否按物理目录强行合并 | 否；`ports/source.py` 是契约，`comet_rag.loaders` 是惰性公共门面，engines/infrastructure 按依赖重量分层 |
+| Worker 是否收入 `tasks/` | 否；workers 是独立进程入口，必须与单进程会加载的通用任务框架隔离 |
+| DOCX 是否立即改为垂直目录 | 否；当前 extractor 组合可复用的 converter/parser/cleaner，出现第二个进程内原生格式后再以真实变化复评 |
+| Provider 私有辅助模块是否整理 | M3 后处理；embedding 专属 wire 可内聚，跨 embedding/reranker 的图片引用不能误放到 embedding 子包 |
+| 当前下一项工作 | M3-T6：RetrievalService 与 API 三种显式检索模式 |

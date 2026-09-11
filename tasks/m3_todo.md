@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M3（BM25 + RRF）
 
-> 状态：M3-T4 已完成，下一项 M3-T5
+> 状态：M3-T5 已完成，下一项 M3-T6
 > 规格：`tasks/m3_spec.md` v1.0
 > 计划：`tasks/m3_plan.md` v1.0
 > GitHub Issue：[#54](https://github.com/comet-7x/comet-rag/issues/54)
@@ -67,12 +67,12 @@
 
 ### M3-T5 — RRF Strategy（S）
 
-**日期：** 09-17　**依赖：** M3-T4
+**完成日期：** 09-11　**依赖：** M3-T4
 
-- [ ] 实现默认 `rrf_k=60`、rank 从 1 开始的 RRF
-- [ ] 覆盖去重、缺失通道、并列、输入不变和非法参数
-- [ ] 保留各通道 rank/score，融合排序同分时以 id 稳定化
-- [ ] 反向修改公式或去重键，确认测试会红
+- [x] 实现默认 `rrf_k=60`、rank 从 1 开始的 RRF
+- [x] 覆盖去重、缺失通道、并列、输入不变和非法参数
+- [x] 保留各通道 rank/score，融合排序同分时以 id 稳定化
+- [x] 反向将 rank 改为从 0 开始，确认精确公式测试会红
 
 **验收：** Strategy 为纯计算，core-only 可用，不依赖 Milvus。
 

@@ -13,9 +13,9 @@ M3 在现有 dense 检索和 reranker 之间增加独立 BM25 召回与纯 RRF �
 
 ## Current Priority
 
-M3-T4 已完成独立 `KeywordSearchPort`、InMemory/Milvus 双实现、统一契约、
-反向验证与组合根装配。下一项 M3-T5 实现纯计算 RRF Strategy，并以性质测试锁定
-融合、去重与稳定排序语义。
+M3-T5 已完成纯计算 RRF Strategy、通道贡献诊断、性质测试与零基 rank 反向验证。
+下一项 M3-T6 在保持默认 dense 兼容的前提下，为 RetrievalService 与 API 增加
+dense、keyword、hybrid 三种显式模式。
 
 ## Dependency Graph
 
@@ -89,4 +89,4 @@ T2～T8 分开。schema 变更只有在 T2 契约稳定并完成真实 Milvus �
 
 ## Completion Record
 
-M3-T1～T4 的决策与验证结果见 `tasks/m3_spec.md` §6～§9；M3-T8 补最终记录。
+M3-T1～T5 的决策与验证结果见 `tasks/m3_spec.md` §6～§10；M3-T8 补最终记录。
