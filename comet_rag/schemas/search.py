@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from comet_rag.services.retrieval import RecallChannel, SearchMode
+from comet_rag.services.retrieval import RecallChannel, RetrievalStage, SearchMode
 
 
 class SearchRequest(BaseModel):
@@ -40,6 +40,12 @@ class SearchResultItem(BaseModel):
     keyword_rank: int | None = None
 
 
+class RetrievalDegradationItem(BaseModel):
+    stage: RetrievalStage
+    reason: str
+    error_type: str | None = None
+
+
 class SearchResponse(BaseModel):
     chunks: list[SearchResultItem]
     #: 重排是否真的执行了。false 可能意味着未配置、被显式关闭，**或已降级** ——
@@ -55,3 +61,4 @@ class SearchResponse(BaseModel):
     #: 实际执行的模式与召回通道；hybrid 单路降级后可与请求模式不同。
     mode: SearchMode = SearchMode.DENSE
     channels: list[RecallChannel] = Field(default_factory=lambda: [RecallChannel.DENSE])
+    degradations: list[RetrievalDegradationItem] = Field(default_factory=list)

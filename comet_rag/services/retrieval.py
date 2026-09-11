@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field
 
@@ -13,6 +13,9 @@ from comet_rag.core.degradation import DegradationController
 from comet_rag.core.logging import logger
 from comet_rag.engines.retrieval import FusedHit, reciprocal_rank_fusion
 from comet_rag.ports import (
+    CollectionNotFound,
+    CollectionSchemaMismatch,
+    DimensionMismatch,
     EmbeddingPort,
     Filter,
     KeywordSearchPort,
@@ -35,8 +38,42 @@ class RecallChannel(StrEnum):
     KEYWORD = "keyword"
 
 
+class RetrievalStage(StrEnum):
+    DENSE = "dense"
+    KEYWORD = "keyword"
+    RERANKER = "reranker"
+
+
 class KeywordSearchUnavailable(RuntimeError):
     """请求需要关键词召回，但组合根没有提供对应能力。"""
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalDegradation:
+    """不暴露异常消息的安全降级诊断。"""
+
+    stage: RetrievalStage
+    reason: str
+    error_type: str | None = None
+
+    def to_dict(self) -> dict[str, str | None]:
+        return {
+            "stage": self.stage,
+            "reason": self.reason,
+            "error_type": self.error_type,
+        }
+
+
+class HybridRecallFailed(RuntimeError):
+    """hybrid 的两个召回通道均不可用。"""
+
+    def __init__(self, degradations: tuple[RetrievalDegradation, ...]) -> None:
+        self.degradations = degradations
+        summary = ", ".join(
+            f"{item.stage.value}:{item.error_type or item.reason}"
+            for item in degradations
+        )
+        super().__init__(f"hybrid 召回的所有通道均失败（{summary}）")
 
 
 class SearchQuery(BaseModel):
@@ -105,6 +142,8 @@ class RetrievalResult:
     #: 实际执行的模式与召回通道。M3-T7 单路降级时二者可能不同于请求值。
     mode: SearchMode = SearchMode.DENSE
     channels: tuple[RecallChannel, ...] = (RecallChannel.DENSE,)
+    #: 与系统负载级别 `degraded` 分开，避免客户端混淆两种完全不同的降级。
+    degradations: tuple[RetrievalDegradation, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +154,7 @@ class RetrievalResult:
             "degraded": self.degraded,
             "mode": self.mode,
             "channels": list(self.channels),
+            "degradations": [item.to_dict() for item in self.degradations],
         }
 
 
@@ -123,6 +163,7 @@ class _RecallResult:
     chunks: list[RetrievedChunk]
     mode: SearchMode
     channels: tuple[RecallChannel, ...]
+    degradations: tuple[RetrievalDegradation, ...] = ()
 
 
 class RetrievalService:
@@ -169,6 +210,7 @@ class RetrievalService:
                 degraded=level,
                 mode=recall.mode,
                 channels=recall.channels,
+                degradations=recall.degradations,
             )
 
         # 写成"先取出再判 None"而不是布尔标志：标志变量会把"reranker 不是
@@ -183,9 +225,15 @@ class RetrievalService:
                 degraded=level,
                 mode=recall.mode,
                 channels=recall.channels,
+                degradations=recall.degradations,
             )
 
-        chunks, did_rerank = await self._rerank(reranker, query.query, candidates)
+        chunks, did_rerank, rerank_degradation = await self._rerank(
+            reranker, query.query, candidates
+        )
+        degradations = recall.degradations
+        if rerank_degradation is not None:
+            degradations = (*degradations, rerank_degradation)
         return RetrievalResult(
             chunks=chunks[:top_k],
             reranked=did_rerank,
@@ -194,6 +242,7 @@ class RetrievalService:
             degraded=level,
             mode=recall.mode,
             channels=recall.channels,
+            degradations=degradations,
         )
 
     async def _recall(self, query: SearchQuery) -> _RecallResult:
@@ -232,7 +281,22 @@ class RetrievalService:
                 channels=(RecallChannel.KEYWORD,),
             )
 
-        dense_hits, keyword_hits = await asyncio.gather(
+        return await self._hybrid_recall(
+            query,
+            keyword_search=keyword_search,
+            fetch_k=fetch_k,
+            filter=filter,
+        )
+
+    async def _hybrid_recall(
+        self,
+        query: SearchQuery,
+        *,
+        keyword_search: KeywordSearchPort,
+        fetch_k: int,
+        filter: Filter | None,
+    ) -> _RecallResult:
+        dense_result, keyword_result = await asyncio.gather(
             self._dense_hits(query, fetch_k=fetch_k, filter=filter),
             keyword_search.asearch_keywords(
                 query.kb_id,
@@ -240,7 +304,48 @@ class RetrievalService:
                 top_k=fetch_k,
                 filter=filter,
             ),
+            return_exceptions=True,
         )
+
+        for result in (dense_result, keyword_result):
+            if isinstance(result, BaseException) and _must_propagate(result):
+                raise result
+
+        dense_error = dense_result if isinstance(dense_result, BaseException) else None
+        keyword_error = (
+            keyword_result if isinstance(keyword_result, BaseException) else None
+        )
+        if dense_error is not None and keyword_error is not None:
+            failures = (
+                _channel_degradation(RetrievalStage.DENSE, dense_error),
+                _channel_degradation(RetrievalStage.KEYWORD, keyword_error),
+            )
+            _log_channel_failure(failures[0], dense_error)
+            _log_channel_failure(failures[1], keyword_error)
+            raise HybridRecallFailed(failures)
+
+        if dense_error is not None:
+            failure = _channel_degradation(RetrievalStage.DENSE, dense_error)
+            _log_channel_failure(failure, dense_error)
+            return _RecallResult(
+                chunks=self._keyword_chunks(cast("list[SearchHit]", keyword_result)),
+                mode=SearchMode.KEYWORD,
+                channels=(RecallChannel.KEYWORD,),
+                degradations=(failure,),
+            )
+
+        if keyword_error is not None:
+            failure = _channel_degradation(RetrievalStage.KEYWORD, keyword_error)
+            _log_channel_failure(failure, keyword_error)
+            return _RecallResult(
+                chunks=self._dense_chunks(cast("list[SearchHit]", dense_result)),
+                mode=SearchMode.DENSE,
+                channels=(RecallChannel.DENSE,),
+                degradations=(failure,),
+            )
+
+        dense_hits = cast("list[SearchHit]", dense_result)
+        keyword_hits = cast("list[SearchHit]", keyword_result)
         fused = reciprocal_rank_fusion(
             {
                 RecallChannel.DENSE.value: dense_hits,
@@ -315,8 +420,8 @@ class RetrievalService:
     @staticmethod
     async def _rerank(
         reranker: RerankerPort, query: str, candidates: list[RetrievedChunk]
-    ) -> tuple[list[RetrievedChunk], bool]:
-        """重排并返回 `(结果, 是否真的重排了)`。
+    ) -> tuple[list[RetrievedChunk], bool, RetrievalDegradation | None]:
+        """重排并返回结果、执行状态及安全降级诊断。
 
         重排失败时**降级返回原始召回结果**，而不是让整个查询失败 ——
         检索是读路径，给出稍差的结果远好过给不出结果。降级必须留下日志，
@@ -339,14 +444,29 @@ class RetrievalService:
             )
         except Exception as exc:  # noqa: BLE001 —— 任何重排故障都降级
             logger.warning(f"重排失败，降级为原始召回结果：{exc!r}")
-            return candidates, False
+            return (
+                candidates,
+                False,
+                RetrievalDegradation(
+                    stage=RetrievalStage.RERANKER,
+                    reason="request_failed",
+                    error_type=type(exc).__name__,
+                ),
+            )
 
         if len(ranked) != len(candidates):
             logger.warning(
                 f"重排返回 {len(ranked)} 个结果但候选有 {len(candidates)} 个，"
                 f"结果不可对齐，降级为原始召回结果"
             )
-            return candidates, False
+            return (
+                candidates,
+                False,
+                RetrievalDegradation(
+                    stage=RetrievalStage.RERANKER,
+                    reason="result_count_mismatch",
+                ),
+            )
 
         indexes = [item.index for item in ranked]
         if sorted(indexes) != list(range(len(candidates))):
@@ -354,7 +474,14 @@ class RetrievalService:
                 f"重排结果索引 {indexes} 无法与 {len(candidates)} 个候选对齐，"
                 "降级为原始召回结果"
             )
-            return candidates, False
+            return (
+                candidates,
+                False,
+                RetrievalDegradation(
+                    stage=RetrievalStage.RERANKER,
+                    reason="result_index_mismatch",
+                ),
+            )
 
         rescored = [
             RetrievedChunk(
@@ -370,7 +497,46 @@ class RetrievalService:
             )
             for item in ranked
         ]
-        return rescored, True
+        return rescored, True, None
+
+
+_NON_DEGRADABLE_RECALL_ERRORS = (
+    AssertionError,
+    AttributeError,
+    CollectionNotFound,
+    CollectionSchemaMismatch,
+    DimensionMismatch,
+    KeyError,
+    MemoryError,
+    NotImplementedError,
+    TypeError,
+    ValueError,
+)
+
+
+def _must_propagate(exc: BaseException) -> bool:
+    """请求、数据与编程错误不能伪装成一次可恢复的通道抖动。"""
+    return not isinstance(exc, Exception) or isinstance(
+        exc, _NON_DEGRADABLE_RECALL_ERRORS
+    )
+
+
+def _channel_degradation(
+    stage: RetrievalStage, exc: BaseException
+) -> RetrievalDegradation:
+    return RetrievalDegradation(
+        stage=stage,
+        reason="channel_unavailable",
+        error_type=type(exc).__name__,
+    )
+
+
+def _log_channel_failure(degradation: RetrievalDegradation, exc: BaseException) -> None:
+    # API 只返回错误类型，完整异常链仅进入服务日志，避免把连接信息带给调用方。
+    logger.opt(exception=exc).warning(
+        f"hybrid 召回通道失败，降级继续 stage={degradation.stage.value} "
+        f"error_type={degradation.error_type}"
+    )
 
 
 def _normalize_filter(filter: dict[str, Any] | None) -> Filter | None:
@@ -379,10 +545,13 @@ def _normalize_filter(filter: dict[str, Any] | None) -> Filter | None:
 
 
 __all__ = [
+    "HybridRecallFailed",
     "KeywordSearchUnavailable",
     "RecallChannel",
+    "RetrievalDegradation",
     "RetrievalResult",
     "RetrievalService",
+    "RetrievalStage",
     "RetrievedChunk",
     "SearchQuery",
     "SearchMode",

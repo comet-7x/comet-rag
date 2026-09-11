@@ -26,6 +26,7 @@ from comet_rag.ports import (
     CollectionSchemaMismatch,
     DimensionMismatch,
 )
+from comet_rag.services.retrieval import HybridRecallFailed, KeywordSearchUnavailable
 from comet_rag.services.source_policy import SourceNotAllowed
 from comet_rag.tasks import TaskBusy, TaskNotFound, VersionConflict
 from comet_rag.tasks.service import Backlogged
@@ -62,9 +63,7 @@ def _install_exception_handlers(app: FastAPI) -> None:
         return _problem(request, status.HTTP_409_CONFLICT, str(exc))
 
     @app.exception_handler(CollectionSchemaMismatch)
-    async def _schema(
-        request: Request, exc: CollectionSchemaMismatch
-    ) -> JSONResponse:  # noqa: RUF029
+    async def _schema(request: Request, exc: CollectionSchemaMismatch) -> JSONResponse:  # noqa: RUF029
         return _problem(request, status.HTTP_409_CONFLICT, str(exc))
 
     @app.exception_handler(KnowledgeBaseNotFound)
@@ -108,6 +107,18 @@ def _install_exception_handlers(app: FastAPI) -> None:
     async def _backlogged(request: Request, exc: Backlogged) -> JSONResponse:  # noqa: RUF029
         """429：待执行任务已堆到上限，收下也只是让它排得更久。"""
         return _problem(request, status.HTTP_429_TOO_MANY_REQUESTS, str(exc))
+
+    @app.exception_handler(HybridRecallFailed)
+    async def _hybrid_unavailable(
+        request: Request, exc: HybridRecallFailed
+    ) -> JSONResponse:  # noqa: RUF029
+        return _problem(request, status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+
+    @app.exception_handler(KeywordSearchUnavailable)
+    async def _keyword_unavailable(
+        request: Request, exc: KeywordSearchUnavailable
+    ) -> JSONResponse:  # noqa: RUF029
+        return _problem(request, status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
 
     @app.exception_handler(ValueError)
     async def _bad_request(request: Request, exc: ValueError) -> JSONResponse:  # noqa: RUF029

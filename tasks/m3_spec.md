@@ -154,9 +154,9 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 
 ### S4 — 降级与装配
 
-- [ ] 单路失败只降级该路，两路失败才使 hybrid 查询失败。
-- [ ] reranker 失败返回融合结果，并记录日志与响应诊断信息。
-- [ ] 配置、组合根、API schema 和关闭顺序完成，路由不自行 new 资源。
+- [x] 单路失败只降级该路，两路失败才使 hybrid 查询失败。
+- [x] reranker 失败返回融合结果，并记录日志与响应诊断信息。
+- [x] 配置、组合根、API schema 和关闭顺序完成，路由不自行 new 资源。
 
 ### S5 — 真实链路与质量
 
@@ -245,7 +245,21 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 - 全量单测为 `1860 passed, 19 skipped, 190 deselected, 1 xfailed`，pytest 8.84s；
   Ruff 与 Pyright 通过，Pyright 为 `0 errors`。
 
-## 12. 官方依据
+## 12. M3-T7 验证记录
+
+- hybrid 并发收集两路结果：dense 单路失败时返回 keyword，keyword 单路失败时返回
+  dense；两路都失败时抛 `HybridRecallFailed`，HTTP 映射为 503。
+- `CollectionNotFound`、schema/维度、请求参数和明显编程错误直接传播；知识库与模型
+  一致性守卫在启动通道前执行，不会被当作一次可恢复抖动。
+- 显式 dense/keyword 模式不切换通道；缺少 `KeywordSearchPort` 返回安全的 503 配置错误。
+- 新增结构化 `degradations`，与系统负载级别 `degraded` 分离；API 只返回 stage、
+  reason 和异常类型，原始异常消息不出现在响应，完整异常链进入 warning 日志。
+- hybrid 的 reranker 失败返回融合候选并保留 fusion 诊断；组合根复用同一窄 Port，
+  既有生命周期测试证明 vector store 只关闭一次。
+- 43 项服务/API 故障矩阵测试、665 项组合根/生命周期/分层保护测试通过；全量单测为
+  `1869 passed, 19 skipped, 190 deselected, 1 xfailed`，pytest 9.02s。
+
+## 13. 官方依据
 
 - [Milvus Full Text Search](https://milvus.io/docs/full-text-search.md)
 - [Milvus BM25 Function](https://milvus.io/docs/bm25-function.md)

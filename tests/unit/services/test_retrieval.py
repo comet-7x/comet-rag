@@ -17,12 +17,15 @@ from comet_rag.infrastructure.knowledge_base import (
 from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.providers.reranker.base import BaseReranker
 from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
-from comet_rag.ports import VectorRecord
+from comet_rag.ports import CollectionSchemaMismatch, VectorRecord
+from comet_rag.services import retrieval as retrieval_module
 from comet_rag.services.knowledge_base import KnowledgeBaseService, KnowledgeBaseSpec
 from comet_rag.services.retrieval import (
+    HybridRecallFailed,
     KeywordSearchUnavailable,
     RecallChannel,
     RetrievalService,
+    RetrievalStage,
     SearchMode,
     SearchQuery,
 )
@@ -201,11 +204,14 @@ async def test_search_rejects_same_dimension_from_different_model(model, store) 
     guarded = RetrievalService(
         embedding_model=model,
         vector_store=store,
+        keyword_search=store,
         knowledge_base=reopened,
     )
 
     with pytest.raises(EmbeddingModelChanged):
-        await guarded.search(SearchQuery(kb_id=KB, query="苹果"))
+        await guarded.search(
+            SearchQuery(kb_id=KB, query="苹果", mode=SearchMode.HYBRID)
+        )
 
 
 async def test_results_carry_metadata(model, store) -> None:
@@ -352,6 +358,156 @@ async def test_hybrid_uses_same_fetch_k_and_filter_for_each_channel(
     }
 
 
+# ── hybrid 通道降级 ────────────────────────────────────────────────────────
+
+
+async def test_hybrid_dense_failure_degrades_to_keyword_and_logs(
+    model, store, monkeypatch
+) -> None:
+    class RecordingLogger:
+        def __init__(self) -> None:
+            self.exceptions: list[BaseException] = []
+            self.messages: list[str] = []
+
+        def opt(self, *, exception):
+            self.exceptions.append(exception)
+            return self
+
+        def warning(self, message: str) -> None:
+            self.messages.append(message)
+
+    log = RecordingLogger()
+
+    async def fail_dense(*args, **kwargs):
+        raise TimeoutError("embedding timeout with private endpoint")
+
+    monkeypatch.setattr(store, "asearch", fail_dense)
+    monkeypatch.setattr(retrieval_module, "logger", log)
+
+    result = await service(model, store).search(
+        SearchQuery(kb_id=KB, query="苹果", mode=SearchMode.HYBRID)
+    )
+
+    assert result.mode is SearchMode.KEYWORD
+    assert result.channels == (RecallChannel.KEYWORD,)
+    assert result.chunks
+    assert result.degradations[0].stage is RetrievalStage.DENSE
+    assert result.degradations[0].reason == "channel_unavailable"
+    assert result.degradations[0].error_type == "TimeoutError"
+    assert len(log.exceptions) == 1
+    assert "stage=dense" in log.messages[0]
+    assert "private endpoint" not in result.degradations[0].to_dict().values()
+
+
+async def test_hybrid_keyword_failure_degrades_to_dense(
+    model, store, monkeypatch
+) -> None:
+    async def fail_keyword(*args, **kwargs):
+        raise ConnectionError("keyword backend unavailable")
+
+    monkeypatch.setattr(store, "asearch_keywords", fail_keyword)
+
+    result = await service(model, store).search(
+        SearchQuery(kb_id=KB, query="苹果", mode=SearchMode.HYBRID)
+    )
+
+    assert result.mode is SearchMode.DENSE
+    assert result.channels == (RecallChannel.DENSE,)
+    assert result.chunks
+    assert result.degradations[0].stage is RetrievalStage.KEYWORD
+    assert all(chunk.keyword_score is None for chunk in result.chunks)
+
+
+async def test_hybrid_raises_one_error_when_both_channels_fail(
+    model, store, monkeypatch
+) -> None:
+    async def fail_dense(*args, **kwargs):
+        raise TimeoutError("dense timeout")
+
+    async def fail_keyword(*args, **kwargs):
+        raise ConnectionError("keyword connection reset")
+
+    monkeypatch.setattr(store, "asearch", fail_dense)
+    monkeypatch.setattr(store, "asearch_keywords", fail_keyword)
+
+    with pytest.raises(HybridRecallFailed) as caught:
+        await service(model, store).search(
+            SearchQuery(kb_id=KB, query="苹果", mode=SearchMode.HYBRID)
+        )
+
+    assert [item.stage for item in caught.value.degradations] == [
+        RetrievalStage.DENSE,
+        RetrievalStage.KEYWORD,
+    ]
+    assert "dense timeout" not in str(caught.value)
+    assert "keyword connection reset" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        CollectionSchemaMismatch(KB, ["缺少 BM25 function"]),
+        ValueError("invalid filter"),
+    ],
+)
+async def test_hybrid_does_not_hide_schema_or_parameter_errors(
+    model, store, monkeypatch, failure
+) -> None:
+    async def fail_keyword(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(store, "asearch_keywords", fail_keyword)
+
+    with pytest.raises(type(failure)) as caught:
+        await service(model, store).search(
+            SearchQuery(kb_id=KB, query="苹果", mode=SearchMode.HYBRID)
+        )
+
+    assert caught.value is failure
+
+
+async def test_explicit_keyword_mode_never_falls_back_to_dense(
+    model, store, monkeypatch
+) -> None:
+    model.calls = 0
+
+    async def fail_keyword(*args, **kwargs):
+        raise TimeoutError("keyword timeout")
+
+    monkeypatch.setattr(store, "asearch_keywords", fail_keyword)
+
+    with pytest.raises(TimeoutError, match="keyword timeout"):
+        await service(model, store).search(
+            SearchQuery(kb_id=KB, query="苹果", mode=SearchMode.KEYWORD)
+        )
+
+    assert model.calls == 0
+
+
+async def test_explicit_dense_mode_never_falls_back_to_keyword(
+    model, store, monkeypatch
+) -> None:
+    keyword_called = False
+
+    async def fail_dense(*args, **kwargs):
+        raise TimeoutError("dense timeout")
+
+    async def record_keyword(*args, **kwargs):
+        nonlocal keyword_called
+        keyword_called = True
+        return []
+
+    monkeypatch.setattr(store, "asearch", fail_dense)
+    monkeypatch.setattr(store, "asearch_keywords", record_keyword)
+
+    with pytest.raises(TimeoutError, match="dense timeout"):
+        await service(model, store).search(
+            SearchQuery(kb_id=KB, query="苹果", mode=SearchMode.DENSE)
+        )
+
+    assert keyword_called is False
+
+
 # ── fetch_k 与 top_k ───────────────────────────────────────────────────────
 
 
@@ -430,11 +586,14 @@ async def test_rerank_failure_degrades_instead_of_raising(
     reranker.failure = TimeoutError("重排服务超时")
 
     result = await service(model, store, reranker).search(
-        SearchQuery(kb_id=KB, query="苹果", top_k=3)
+        SearchQuery(kb_id=KB, query="苹果", top_k=3, mode=SearchMode.HYBRID)
     )
 
     assert result.reranked is False, "降级必须在结果里可见"
     assert result.chunks, "降级后仍要返回向量召回结果"
+    assert result.degradations[-1].stage is RetrievalStage.RERANKER
+    assert result.degradations[-1].reason == "request_failed"
+    assert all(chunk.fusion_score is not None for chunk in result.chunks)
 
 
 async def test_misaligned_rerank_scores_degrade(model, store, reranker) -> None:
@@ -448,6 +607,8 @@ async def test_misaligned_rerank_scores_degrade(model, store, reranker) -> None:
 
     assert result.reranked is False
     assert len(result.chunks) == 3
+    # BaseReranker 在返回给 Service 前就拒绝数量不一致，因此表现为请求失败。
+    assert result.degradations[-1].reason == "request_failed"
 
 
 async def test_rerank_is_skipped_when_nothing_recalled(model, store, reranker) -> None:
