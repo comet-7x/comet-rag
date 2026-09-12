@@ -12,11 +12,11 @@ from collections.abc import AsyncIterator
 import pytest
 from sqlalchemy import text
 
-from comet_rag.infrastructure.database import Database
-from comet_rag.infrastructure.database.kb_repository import (
+from comet_rag.infrastructure.persistence.knowledge_base.postgres import (
     PostgresKnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.knowledge_base import KnowledgeBaseRepository
+from comet_rag.infrastructure.persistence.sql import Database
+from comet_rag.ports.knowledge_base import KnowledgeBaseRepository
 from tests.contracts.knowledge_base import KnowledgeBaseRepositoryContract
 from tests.integration.conftest import truncate_tables
 

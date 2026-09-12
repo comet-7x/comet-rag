@@ -2,7 +2,45 @@
 
 from __future__ import annotations
 
+import ast
+from importlib import import_module
+from pathlib import Path
+
 import pytest
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+LEGACY_IMPLEMENTATION_MODULES = (
+    "comet_rag/engines/loaders/auto_loader.py",
+    "comet_rag/engines/loaders/base_loader.py",
+    "comet_rag/engines/loaders/data_type.py",
+    "comet_rag/engines/loaders/file_info.py",
+    "comet_rag/engines/loaders/local_loader.py",
+    "comet_rag/engines/loaders/url_loader.py",
+    "comet_rag/engines/cleaners/docx_cleaner.py",
+    "comet_rag/engines/document/docx/extractor.py",
+    "comet_rag/engines/parsers/docx_parser/docx_parser.py",
+    "comet_rag/engines/parsers/docx_parser/latex_dict.py",
+    "comet_rag/engines/parsers/docx_parser/omml.py",
+    "comet_rag/infrastructure/loaders/s3_loader.py",
+    "comet_rag/infrastructure/providers/base.py",
+    "comet_rag/infrastructure/providers/_embedding_wire.py",
+    "comet_rag/infrastructure/providers/_image_reference.py",
+    "comet_rag/infrastructure/providers/document/mineru.py",
+    "comet_rag/infrastructure/providers/embedding/base.py",
+    "comet_rag/infrastructure/providers/embedding/openai_embedding_model.py",
+    "comet_rag/infrastructure/providers/embedding/qwen3_vl_embedding.py",
+    "comet_rag/infrastructure/providers/reranker/base.py",
+    "comet_rag/infrastructure/providers/reranker/qwen3_vl_reranker.py",
+    "comet_rag/infrastructure/providers/vision/openai_vision_model.py",
+    "comet_rag/infrastructure/vectorstore/memory.py",
+    "comet_rag/infrastructure/vectorstore/milvus.py",
+    "comet_rag/tasks/executor_arq.py",
+    "comet_rag/schemas/ingest.py",
+    "comet_rag/schemas/kb.py",
+    "comet_rag/schemas/search.py",
+    "comet_rag/schemas/task.py",
+)
 
 
 def test_knowledge_base_old_path_preserves_object_identity() -> None:
@@ -103,13 +141,15 @@ def test_arq_executor_old_path_preserves_object_identity() -> None:
     pytest.importorskip("arq")
 
     from comet_rag.infrastructure.task_execution.arq import ArqExecutor
-    from comet_rag.tasks.executor_arq import ArqExecutor as LegacyArqExecutor
+
+    LegacyArqExecutor = import_module(
+        "comet_rag.tasks.executor_arq"
+    ).ArqExecutor
 
     assert LegacyArqExecutor is ArqExecutor
 
 
 def test_docx_old_paths_preserve_object_identity() -> None:
-    from comet_rag.engines.cleaners.docx_cleaner import DocxCleaner as LegacyCleaner
     from comet_rag.engines.converters.text_converter import (
         DocxConverter as LegacyConverter,
     )
@@ -122,9 +162,13 @@ def test_docx_old_paths_preserve_object_identity() -> None:
         DocxDocumentExtractor,
         DocxParser,
     )
-    from comet_rag.engines.parsers.docx_parser.docx_parser import (
-        DocxParser as LegacyParser,
-    )
+
+    LegacyCleaner = import_module(
+        "comet_rag.engines.cleaners.docx_cleaner"
+    ).DocxCleaner
+    LegacyParser = import_module(
+        "comet_rag.engines.parsers.docx_parser.docx_parser"
+    ).DocxParser
 
     assert LegacyCleaner is DocxCleaner
     assert LegacyConverter is DocxConverter
@@ -160,3 +204,14 @@ def test_document_provider_old_path_preserves_object_identity() -> None:
     )
 
     assert LegacyMinerU is MinerUDocumentExtractor
+
+
+@pytest.mark.parametrize("relative_path", LEGACY_IMPLEMENTATION_MODULES)
+def test_legacy_implementation_module_defines_no_classes(relative_path: str) -> None:
+    """旧路径只能转发；重新出现类定义意味着实现又分叉成两份。"""
+    path = PROJECT_ROOT / relative_path
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+    classes = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+
+    assert classes == [], f"兼容模块 {relative_path} 重新定义了实现：{classes}"

@@ -33,10 +33,7 @@ from comet_rag.config.schemas import (
     VectorDatabaseConfig,
 )
 from comet_rag.core.concurrency import Gate
-from comet_rag.engines.loaders.auto_loader import AutoLoader
-from comet_rag.engines.loaders.data_type import ContentTypeMismatch
-from comet_rag.engines.loaders.local_loader import LocalLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
+from comet_rag.engines.documents.formats import ContentTypeMismatch
 from comet_rag.engines.pipelines import (
     DocxConfig,
     Pipeline,
@@ -44,10 +41,16 @@ from comet_rag.engines.pipelines import (
     PipelineHooks,
 )
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.loaders import S3Loader
-from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.providers.reranker.base import BaseReranker
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.sources import (
+    AutoLoader,
+    LoaderContent,
+    LocalLoader,
+    SourceContent,
+)
+from comet_rag.infrastructure.sources.s3 import S3Loader
 from comet_rag.ports import ExtractedDocument, MediaResource, MultimodalEmbeddingPort
 from comet_rag.ports.gate import GatedResource
 from comet_rag.services.ingestion import IngestRunner

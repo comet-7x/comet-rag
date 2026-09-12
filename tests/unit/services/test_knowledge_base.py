@@ -11,13 +11,15 @@ import asyncio
 
 import pytest
 
-from comet_rag.infrastructure.knowledge_base import (
-    EmbeddingModelChanged,
+from comet_rag.infrastructure.persistence.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
+)
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.ports import CollectionNotFound, VectorRecord
+from comet_rag.ports.knowledge_base import (
+    EmbeddingModelChanged,
     KnowledgeBaseNotFound,
 )
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
-from comet_rag.ports import CollectionNotFound, VectorRecord
 from comet_rag.services.knowledge_base import KnowledgeBaseService, KnowledgeBaseSpec
 
 MODEL = "Qwen/Qwen3-VL-Embedding-8B"

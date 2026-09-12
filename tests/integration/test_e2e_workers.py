@@ -48,7 +48,7 @@ from comet_rag.config.schemas import (
     VectorDatabaseConfig,
 )
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.database import Database
+from comet_rag.infrastructure.persistence.sql import Database
 from comet_rag.infrastructure.task_execution.arq import LANE_QUEUES
 from comet_rag.workers import build_settings
 from comet_rag.workers.embedder import PROFILE as EMBEDDER

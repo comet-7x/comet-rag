@@ -7,7 +7,7 @@ import sys
 from collections.abc import Sequence
 
 from comet_rag.infrastructure import vectorstore as legacy_package
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
 from comet_rag.infrastructure.vectorstore import base as legacy
 from comet_rag.ports import (
     BaseVectorStore,

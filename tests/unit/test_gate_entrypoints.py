@@ -37,30 +37,34 @@ from typing import Any
 import pytest
 
 from comet_rag.core.concurrency import Gate
-from comet_rag.engines.loaders.auto_loader import AutoLoader, LoaderRoute
-from comet_rag.engines.loaders.base_loader import BaseLoader
-from comet_rag.engines.loaders.local_loader import LocalLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
-from comet_rag.engines.loaders.url_loader import URLLoader
-from comet_rag.infrastructure.loaders.s3_loader import S3Loader
-from comet_rag.infrastructure.providers.document.mineru import MinerUDocumentExtractor
-from comet_rag.infrastructure.providers.embedding.base import (
+from comet_rag.infrastructure.extractors.mineru import MinerUDocumentExtractor
+from comet_rag.infrastructure.models.embedding.base import (
     BaseEmbeddingModel,
     MultimodalEmbeddingMixin,
 )
-from comet_rag.infrastructure.providers.embedding.openai_embedding_model import (
+from comet_rag.infrastructure.models.embedding.openai import (
     OpenAIEmbeddingModel,
 )
-from comet_rag.infrastructure.providers.embedding.qwen3_vl_embedding import (
+from comet_rag.infrastructure.models.embedding.qwen3_vl import (
     DetokenizeResponse,
     EmbeddingData,
     Qwen3VLEmbeddingModel,
     TokenizeResponse,
 )
-from comet_rag.infrastructure.providers.reranker.base import BaseReranker
-from comet_rag.infrastructure.providers.reranker.qwen3_vl_reranker import (
+from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.models.reranker.qwen3_vl import (
     Qwen3VLReranker,
 )
+from comet_rag.infrastructure.sources import (
+    AutoLoader,
+    BaseLoader,
+    LoaderContent,
+    LoaderRoute,
+    LocalLoader,
+    SourceContent,
+    URLLoader,
+)
+from comet_rag.infrastructure.sources.s3 import S3Loader
 from comet_rag.ports import ExtractedDocument, MediaResource
 from comet_rag.ports.gate import GatedResource
 

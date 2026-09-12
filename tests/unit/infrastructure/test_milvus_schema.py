@@ -10,7 +10,7 @@ import pytest
 from pymilvus import DataType, Function, FunctionType, MilvusClient
 from pymilvus.client.types import LoadState
 
-from comet_rag.infrastructure.vectorstore import milvus as target
+from comet_rag.infrastructure.persistence.vector_store import milvus as target
 from comet_rag.ports import CollectionNotFound, CollectionSchemaMismatch, VectorRecord
 
 

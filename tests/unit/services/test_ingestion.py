@@ -14,12 +14,13 @@ from typing import Any
 import httpx
 import pytest
 
-from comet_rag.engines.loaders.base_loader import BaseLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.knowledge_base import InMemoryKnowledgeBaseRepository
-from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.persistence.knowledge_base import (
+    InMemoryKnowledgeBaseRepository,
+)
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.sources import BaseLoader, LoaderContent, SourceContent
 from comet_rag.ports import RetryableDocumentUpstreamError
 from comet_rag.services.ingestion import (
     INGEST_KIND,

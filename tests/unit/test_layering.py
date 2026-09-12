@@ -258,6 +258,29 @@ def test_business_code_depends_on_model_ports(module: Path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "module",
+    sorted(
+        path
+        for path in (PROJECT_ROOT / "comet_rag" / "services").rglob("*.py")
+        if "__pycache__" not in path.parts
+    ),
+    ids=lambda p: p.name,
+)
+def test_services_do_not_import_infrastructure(module: Path) -> None:
+    """Service 只编排 Port/Strategy；具体适配器必须由组合根注入。"""
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    hits = {
+        name
+        for name in _imported_full(tree, module)
+        if name.startswith("comet_rag.infrastructure")
+    }
+    assert not hits, (
+        f"{module.relative_to(PROJECT_ROOT)} 直接依赖了基础设施：{sorted(hits)}。"
+        "请改为 Port，并在 composition/bootstrap.py 装配。"
+    )
+
+
 # ── Service 依赖向量存储 Port，而不是适配器包（M3-T2）──────────────────────
 
 VECTORSTORE_ADAPTER_PACKAGES = (

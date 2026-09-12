@@ -5,6 +5,8 @@ from typing import Any
 from .base_cleaner import BaseCleaner
 from .vision_model import VisionModel
 
+DocxCleaner: Any
+
 
 def __getattr__(name: str) -> Any:
     if name != "DocxCleaner":

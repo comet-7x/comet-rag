@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from comet_rag.infrastructure.vectorstore.milvus import build_expression
+from comet_rag.infrastructure.persistence.vector_store.milvus import build_expression
 
 #: 能改变表达式结构的字符
 HOSTILE = [

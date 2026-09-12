@@ -22,7 +22,7 @@
 ### D1 — 只接 HTTP 服务，不嵌入官方 Python SDK
 
 MinerU 3.x 已提供 `mineru-api` 与接口兼容的 `mineru-router`。Comet-RAG 通过
-`httpx` 适配它们，适配器放在 `infrastructure/providers/document/`；`engines/`
+`httpx` 适配它们，适配器现位于 `infrastructure/extractors/`；`engines/`
 只依赖 Port 和规范化结果。这样默认安装、CPU worker 与 API 进程都不会带入
 MinerU 的重依赖，本地或多 GPU 部署也能在 Comet-RAG 之外独立扩容。
 

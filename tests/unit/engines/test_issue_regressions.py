@@ -12,21 +12,23 @@ from docx import Document
 from comet_rag.engines.chunkers.base_chunker import RecursiveCharacterTextSplitter
 from comet_rag.engines.chunkers.separators import SEPARATORS_MDX
 from comet_rag.engines.chunkers.text_chunker import MdxChunker
-from comet_rag.engines.cleaners.docx_cleaner import DocxCleaner
 from comet_rag.engines.converters.archive_guard import (
     ArchiveLimits,
     ArchiveResourceLimitExceeded,
     validate_zip_archive,
 )
-from comet_rag.engines.converters.text_converter import DocxConverter
 from comet_rag.engines.converters.types import DocxDocument
-from comet_rag.engines.loaders.auto_loader import AutoLoader, LoaderRoute
-from comet_rag.engines.loaders.base_loader import BaseLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
-from comet_rag.engines.loaders.url_loader import URLLoader
+from comet_rag.engines.documents.docx import DocxCleaner, DocxConverter, DocxParser
 from comet_rag.engines.parsers.base_parser import BaseParser
-from comet_rag.engines.parsers.docx_parser.docx_parser import DocxParser
 from comet_rag.engines.parsers.types import DocxParsedContent
+from comet_rag.infrastructure.sources import (
+    AutoLoader,
+    BaseLoader,
+    LoaderContent,
+    LoaderRoute,
+    SourceContent,
+    URLLoader,
+)
 
 
 def test_heading_numbering_tracks_each_num_id_independently(monkeypatch) -> None:

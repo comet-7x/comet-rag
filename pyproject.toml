@@ -19,8 +19,8 @@ dependencies = [
     "openai>=2.30.0",       # infrastructure/models/* 的 OpenAI 兼容客户端
     "loguru>=0.7.3",
     "magika>=1.0.2",        # engines/utils/file_detector.py
-    "python-docx>=1.2.0",   # engines/converters, engines/parsers/docx_parser
-    "lxml>=6.1.0",          # engines/parsers/docx_parser (含 omml.py)
+    "python-docx>=1.2.0",   # engines/documents/docx
+    "lxml>=6.1.0",          # engines/documents/docx (含 omml.py)
     "pyyaml>=6.0",          # config/settings.py —— 此前漏声明，靠传递依赖侥幸可用
 ]
 

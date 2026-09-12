@@ -10,64 +10,43 @@
 
 ```text
 comet_rag/
-├── loaders/            Loader 公共门面（S3 惰性导出；不拥有实现）
-├── api/                HTTP 入口（FastAPI）
+├── pipeline.py         库用户便捷入口；只在这里装配默认 Loader
+├── loaders/            Loader 稳定公共门面（S3 惰性导出）
+├── api/                FastAPI 入口
 │   ├── routes/         ingest · search · kb · tasks · admin
-│   ├── deps.py         依赖注入：路由只从 Context 取，绝不自己 new
-│   └── lifespan.py     启动装配 / 优雅关停
-├── workers/            跨进程部署的消费端（arq）
-│   ├── embedder.py     IO 道次：调模型服务
-│   ├── preprocessor.py CPU 道次：解析、切分
-│   └── maintenance.py  租约回收（**单进程模式绝不能加载**）
-├── composition/        组合根 —— 依赖所有人，只有进程入口该 import 它
-│   ├── bootstrap.py    按配置装配全套资源；模型只在这里被 new
-│   └── context.py      长生命周期资源的唯一持有者，逆序关停
-├── core/               零依赖内核 —— 被所有人依赖
-│   ├── concurrency.py  进程级并发闸门 Gate
-│   ├── degradation.py  分级降级控制器
-│   ├── logging.py      日志
-│   ├── tracing.py      追踪
-│   └── time.py         带时区的时间工厂
-├── services/           用例编排
-│   ├── ingestion.py    IngestRunner：extracting → chunking → indexing
-│   ├── retrieval.py    RetrievalService：召回 → 重排
-│   ├── knowledge_base.py
-│   └── source_policy.py 入库来源准入（SSRF、本地路径、大小上限）
-├── schemas/            HTTP 请求/响应 DTO
-├── tasks/              通用任务框架（与 RAG 无关，可单独复用）
-│   ├── store.py        TaskStore 契约（ABC + 模板方法）
-│   ├── store_memory.py / store_postgres.py   两个实现，同跑一套契约测试
-│   ├── executor.py / executor_arq.py   执行与重试
-│   └── runner.py       StagePipeline：分阶段、可移交道次、可断点续跑
-├── infrastructure/     外部世界的适配器
-│   ├── providers/      供应商服务客户端
-│   │   ├── embedding/  OpenAI 兼容 · Qwen3-VL
-│   │   ├── reranker/   Qwen3-VL
-│   │   ├── vision/     OpenAI 兼容（图片描述，docx 可选启用）
-│   │   └── document/   MinerU HTTP 文档提取
-│   ├── vectorstore/    Milvus · 内存
-│   ├── database/       SQLAlchemy 会话与 ORM 表
-│   └── loaders/        S3
-├── engines/            纯计算 ← 「库」就是这一层
-│   ├── loaders/        本地 · URL · 自动路由
-│   ├── document/       DocxDocumentExtractor（组合 converter/parser/cleaner）
-│   ├── parsers/        docx（含 OMML 公式）
-│   ├── cleaners/       docx → markdown / blocks
+│   └── schemas/        仅 HTTP 请求/响应 DTO
+├── workers/            arq 消费进程；按 CPU / IO 负载分道
+├── composition/        服务组合根与长生命周期 Context
+├── services/           用例、策略编排与 Pipeline
+├── tasks/              通用任务内核、契约与无外部依赖参考实现
+├── infrastructure/     所有外部适配器
+│   ├── sources/        Local · HTTP · S3 · AutoLoader
+│   ├── extractors/     MinerU HTTP 文档提取
+│   ├── models/         embedding · reranker · vision
+│   ├── persistence/
+│   │   ├── sql/        SQLAlchemy 会话与 ORM
+│   │   ├── vector_store/ Milvus · 内存
+│   │   ├── task_store/ PostgreSQL TaskStore
+│   │   └── knowledge_base/ PostgreSQL · 内存 Repository
+│   └── task_execution/ ARQ / Redis 执行适配器
+├── engines/            纯计算算法
+│   ├── documents/
+│   │   ├── formats.py  文件格式与解析配置
+│   │   └── docx/       converter · parser · cleaner · extractor · OMML
 │   ├── chunkers/       文本 · 结构化 · 代码
-│   ├── converters/     编码探测 · 压缩包防护
-│   ├── pipelines/      Pipeline：串起上面几步，四种运行入口
-│   └── embedding/      批量排程（切块 + 限流），不含任何 IO
-├── ports/              契约与词汇表 ← 零依赖地基
-│   ├── embedding.py    EmbeddingPort · MultimodalEmbeddingPort
-│   ├── reranker.py     RerankerPort
-│   ├── vector_store.py VectorSearchPort · KeywordSearchPort · 存储值对象
-│   ├── document.py     DocumentExtractorPort · 提取错误词汇表
-│   ├── source.py       SourceLoaderPort · LoadedResource · SourceContent
-│   ├── gate.py         AsyncGate
-│   └── content.py      MediaResource · ContentInput · RerankDocument …
+│   ├── embedding/      批量排程，不发模型请求
+│   ├── retrieval/      RRF 等纯计算算法
+│   ├── pipelines/      Hook 与 Pipeline 值对象，不做外部装配
+│   └── converters/     多格式可复用的基础转换与压缩包防护
+├── ports/              契约和值对象（只依赖标准库）
+├── core/               闸门、降级、日志、追踪、时间
 ├── config/             YAML + 环境变量
 └── exceptions/
 ```
+
+`engines/loaders`、`infrastructure/providers`、`infrastructure/database`、
+`infrastructure/vectorstore`、顶层 `schemas` 等旧路径暂留为无业务逻辑的兼容转发；
+新代码不得再从这些路径导入。
 
 ## 模块依赖
 
@@ -81,15 +60,15 @@ flowchart TD
 
     subgraph UC["用例编排"]
         svc["services/<br/>ingestion · retrieval · kb"]
-        sch["schemas/<br/>HTTP DTO"]
+        sch["api/schemas<br/>HTTP DTO"]
     end
 
     subgraph EXT["外部世界 · 通用框架"]
-        infra["infrastructure/<br/>providers · vectorstore · database"]
-        tsk["tasks/<br/>store · executor · runner"]
+        infra["infrastructure/<br/>sources · models · extractors<br/>persistence · task_execution"]
+        tsk["tasks/<br/>模型 · 状态机 · 契约 · 参考实现"]
     end
 
-    lib["engines/<br/>loaders · parsers · cleaners · chunkers<br/>pipelines · embedding 排程"]
+    lib["engines/<br/>documents · chunkers · retrieval<br/>Hook · embedding 排程"]
 
     subgraph BASE["零依赖地基"]
         ports["ports/<br/>Protocol 契约 + 值对象"]
@@ -108,12 +87,10 @@ flowchart TD
     wrk --> tsk
     wrk --> boot
     svc --> lib
-    svc --> infra
     svc --> tsk
     svc --> ports
     infra --> lib
     infra --> ports
-    tsk --> infra
     lib --> ports
 
     svc -.-> kernel
@@ -131,7 +108,7 @@ flowchart TD
 |---|------|-----------|
 | 1 | `engines/` 不得 import redis / pymilvus / sqlalchemy / arq / fastapi … | 装一个 docx 解析器要拖进一整套中间件，「库」那一半作废 |
 | 2 | `engines/` 只能 import `engines` 和 `ports`（**白名单**） | 底层反向依赖上层，`ports/` 存在的意义消失 |
-| 3 | `services/` 与 `engines/` 不得 import `infrastructure.providers` | 供应商细节泄漏到用例，换模型要改业务代码 |
+| 3 | `services/` 与 `engines/` 不得 import `infrastructure.models` 或旧 `providers` | 供应商细节泄漏到用例，换模型要改业务代码 |
 | 4 | `core/` 不得 import 本项目任何其他包 | 人人依赖的内核回头依赖上层，立刻出环 |
 | 5 | 顶层包之间不得成环 | 环里的包无法被单独理解或单独拿走 |
 
@@ -158,7 +135,7 @@ flowchart TD
         T -->|PDF| DP["DocumentExtractorPort<br/>MinerUDocumentExtractor"]
         DX --> DOCX["engines<br/>converter → parser → cleaner"]
         DP --> MG{{"MinerU 独立闸门"}}
-        MG --> MU["providers/document<br/>mineru-api / mineru-router"]
+        MG --> MU["infrastructure/extractors<br/>mineru-api / mineru-router"]
         DOCX --> G["chunking · CPU 道<br/>chunker"]
         MU --> G
         G -.->|"Handoff 移交道次"| H["indexing · IO 道"]
@@ -169,8 +146,8 @@ flowchart TD
     KB -->|是| I["engines/embedding/batch<br/>按 batch_limit 切块<br/>max_concurrency 控并发"]
     I --> GATE{{"进程级闸门 Gate"}}
     GATE --> J["EmbeddingPort.aembed_batch"]
-    J --> K["providers/embedding<br/>Qwen · OpenAI 兼容"]
-    K --> L[("VectorStore.aupsert<br/>Milvus / 内存")]
+    J --> K["infrastructure/models<br/>Qwen · OpenAI 兼容"]
+    K --> L[("persistence/vector_store<br/>Milvus / 内存")]
     L --> M["Done：写入条数、chunk 数"]
 ```
 
@@ -225,19 +202,19 @@ flowchart TD
 
 | 想做的事 | 位置 |
 |---|---|
-| 接一个新的 embedding 服务 | `infrastructure/providers/embedding/`，继承 `BaseEmbeddingModel`，在 `composition/bootstrap.py` 装配 |
+| 接一个新的 embedding 服务 | `infrastructure/models/embedding/`，继承 `BaseEmbeddingModel`，在 `composition/bootstrap.py` 装配 |
 | 改「一次请求发几条、几个并发」 | `engines/embedding/batch.py` |
 | 改 embedding 契约本身 | `ports/embedding.py`（会波及所有适配器，pyright 会告诉你哪些） |
-| 加一种进程内文件格式 | `engines/document/` 实现 `DocumentExtractorPort` + `engines/pipelines/hooks.py` 注册 |
+| 加一种进程内文件格式 | `engines/documents/<format>/` 实现 `DocumentExtractorPort` + `engines/pipelines/hooks.py` 注册 |
 | 加一种来源 Loader | 实现 `ports/source.py::SourceLoaderPort`，通过 `LoaderRoute` 装配；公开入口放 `comet_rag.loaders` |
-| 接一个外部文档解析服务 | 实现 `ports/document.py`，适配器放 `infrastructure/providers/document/`，只在 `composition/bootstrap.py` 装配 |
-| 改 MinerU 协议或资源上限 | `infrastructure/providers/document/mineru.py` + `config/schemas.py::MinerUConfig` |
+| 接一个外部文档解析服务 | 实现 `ports/document.py`，适配器放 `infrastructure/extractors/`，只在 `composition/bootstrap.py` 装配 |
+| 改 MinerU 协议或资源上限 | `infrastructure/extractors/mineru.py` + `config/schemas.py::MinerUConfig` |
 | 改切分策略 | `engines/chunkers/` |
-| 改 dense / keyword 检索契约 | `ports/vector_store.py`；Milvus 语法只留在 `infrastructure/vectorstore/` |
+| 改 dense / keyword 检索契约 | `ports/vector_store.py`；Milvus 语法只留在 `infrastructure/persistence/vector_store/` |
 | 改 hybrid 融合算法 | `engines/retrieval/fusion.py`；通道编排在 `services/retrieval.py` |
 | 改并发上限 / 背压 | `core/concurrency.py`（同步异步共用一份预算）；数字在 `LimitsConfig`，库兜底在 `engines/defaults.py` |
 | 改降级策略 | `core/degradation.py` |
-| 加一个 HTTP 端点 | `api/routes/` + `schemas/` |
+| 加一个 HTTP 端点 | `api/routes/` + `api/schemas/` |
 | 改任务重试 / 断点续跑 | `tasks/runner.py`、`tasks/executor.py` |
 
 ## 两条已经修掉的接缝
@@ -260,9 +237,9 @@ flowchart TD
 单独拿走**。`Time` 是个只依赖标准库的时间工具，跟"任务"毫无关系，挪进
 `core/time.py` 环就断了。第 5 条守卫盯着它不再回来。
 
-## 仍在的接缝
+## 迁移期兼容层
 
-**`tasks/` 依赖 `infrastructure/database`。** `store_postgres.py` 需要会话与
-ORM 表。这是单向的、不成环，但确实让「任务框架可单独复用」打了折 —— 复用时
-得连 `infrastructure/database` 一起拿。要收干净得给任务框架定义自己的存储
-Port，目前记为已知债务。
+旧目录只负责转发，不再拥有实现。它们暂时存在是为了让已发布的导入路径继续可用，
+不是新代码的候选位置。`tests/unit/test_repository_structure.py` 验证新旧入口指向同一
+运行时对象；分层守卫同时禁止业务代码重新依赖旧 Provider/VectorStore 路径。兼容层
+的删除版本必须另行发布迁移说明，不能在普通重构中顺手删除。

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from comet_rag.infrastructure.knowledge_base import (
+from comet_rag.ports.knowledge_base import (
     KnowledgeBase,
     KnowledgeBaseExists,
     KnowledgeBaseNotFound,

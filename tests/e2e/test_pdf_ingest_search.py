@@ -20,13 +20,16 @@ from comet_rag.config.schemas import (
     MinerUConfig,
     ServerConfig,
 )
-from comet_rag.engines.loaders import AutoLoader, LoaderRoute
-from comet_rag.engines.loaders.local_loader import LocalLoader
-from comet_rag.engines.loaders.url_loader import URLLoader
 from comet_rag.engines.pipelines import PipelineConfig
-from comet_rag.infrastructure.loaders import S3Loader
-from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.sources import (
+    AutoLoader,
+    LoaderRoute,
+    LocalLoader,
+    URLLoader,
+)
+from comet_rag.infrastructure.sources.s3 import S3Loader
 from comet_rag.ports import ExtractedDocument, RetryableDocumentUpstreamError
 from comet_rag.ports.gate import GatedResource
 from comet_rag.tasks import InMemoryTaskStore, InProcessExecutor, TaskStatus

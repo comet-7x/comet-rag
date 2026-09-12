@@ -1,8 +1,8 @@
 # Architecture Evolution Plan：能力边界与统一入口
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
-> 当前状态：M2 与 P1 已完成；M3 规格已冻结并开始执行
-> 当前优先级：M3-T8 PR #55 已创建，完成 AI Bot 增量评审
+> 当前状态：M1～M3 已完成；仓库结构归一化实施中，M4 结论已冻结待启动
+> 当前优先级：完成结构验收，再进入 M4 Chunking 规格
 > 最后更新：2026-09-12
 
 ## 1. 目的
@@ -112,8 +112,8 @@ Graph 不得提前塞进 M2。
 | Local / URL / S3 来源加载 | `SourceLoaderPort` | `ports` 契约；各层实现 | 输入来源，输出受管本地资源；统一释放语义 |
 | 来源选择 | `LoaderRoute` / Loader router | `engines` 或组合层 | 只匹配来源，不执行 I/O，不持有第二份闸门 |
 | DOCX、PDF 文档提取 | `DocumentExtractorPort` | `ports` | 本地文件转标准文档；不出现 MinerU URL/响应字段 |
-| DOCX 提取 | `DocxDocumentExtractor` | `engines/document` | 纯本地实现，内部组合 converter/parser/cleaner |
-| MinerU 提取 | `MinerUDocumentExtractor` | `infrastructure/providers/document` | 外部 HTTP 适配器，负责协议、重试、连接和关闭 |
+| DOCX 提取 | `DocxDocumentExtractor` | `engines/documents/docx` | 纯本地实现，内部组合 converter/parser/cleaner |
+| MinerU 提取 | `MinerUDocumentExtractor` | `infrastructure/extractors` | 外部 HTTP 适配器，负责协议、重试、连接和关闭 |
 | 固定、递归、按页、语义切分 | `ChunkingStrategy` | `engines/chunking` | 纯计算；消费文档块，生成 Chunk |
 | 父子块、邻接关系、索引记录 | `IndexPlanner` / `HierarchyBuilder` | `engines/indexing` | 生成 `IndexPlan`，不直接写后端 |
 | 外部 LLM 实体关系抽取 | `KnowledgeExtractorPort` | `ports` + provider | 外部模型调用、错误和资源生命周期 |
@@ -129,22 +129,20 @@ Graph 不得提前塞进 M2。
 
 ## 5. Loader 的统一决策
 
-### 5.1 当前为何分布在两个目录
+### 5.1 最终落位
 
-当前 Loader 共约 2,000 行：
+Local、HTTP 与 S3 都读取进程外资源并持有生命周期，现已统一到
+`infrastructure/sources/`。格式词汇与内容类型决策是纯规则，单独位于
+`engines/documents/formats.py`。S3 SDK 在具体方法内惰性导入，因此统一物理目录
+不会破坏 core-only 安装。
 
-- `engines/loaders/`：`LocalLoader`、`URLLoader`、`AutoLoader`、路由、格式词汇表和
-  默认库使用路径；只使用核心安装已有依赖。
-- `infrastructure/loaders/`：`S3Loader`；需要 server extra 中的 `boto3` /
-  `aioboto3`，并承担对象存储凭据、客户端与生命周期。
-
-这种物理分层保护了 `pip install comet-rag` 的核心安装边界。把 S3 移进 `engines`
-会破坏 AST 分层守卫和 core-only CI；把全部 Loader 移进 infrastructure 又会让
-默认 `Pipeline` 反向依赖服务适配器。因此“不分层、全塞进一个内部目录”不成立。
+`services/pipeline.py` 只接收 `SourceLoaderPort`；面向库用户的
+`comet_rag/pipeline.py` 才负责装配默认 Local/HTTP Loader。这样 service 不依赖
+具体适配器，`Pipeline()` 的易用性也不丢失。
 
 ### 5.2 真正需要统一的是使用入口
 
-目标是增加一个轻量、稳定的公共门面：
+已经提供轻量、稳定的公共门面：
 
 ```python
 from comet_rag.loaders import (
@@ -158,23 +156,23 @@ from comet_rag.loaders import (
 
 `comet_rag.loaders` 只负责发现性与兼容导出，不拥有实现：
 
-- 核心 Loader 可直接导出；
+- Local、HTTP 与 AutoLoader 直接导出；
 - `S3Loader` 必须惰性导入，只有真正使用它时才要求包含 S3 SDK 的可选依赖组
   （当前为 `server`；是否拆成独立 `s3` extra 另行评审）；
-- 内部代码仍按依赖层放置，组合根仍是唯一装配全部实现的地方；
+- 服务内部仍由组合根装配全部实现；
 - 旧导入路径先保留并给迁移期，不能一次删除。
 
 这样使用者只看一个入口，维护者仍能从目录位置判断依赖方向。公共 API 与物理目录
 不必一一对应。
 
-### 5.3 Loader 契约的长期收敛
+### 5.3 Loader 契约
 
-M2 完成后评审是否新增 `ports/source.py`：
+`ports/source.py` 已提供：
 
 ```text
 SourceLoaderPort
 ├── load / aload
-├── batch_load / abatch_load（是否属于最小 Port，迁移前再确认）
+├── batch_load / abatch_load（显式并发预算）
 └── cleanup / acleanup
 
 LoadedResource
@@ -184,15 +182,13 @@ LoadedResource
 └── cleanup（幂等）
 ```
 
-迁移目标：
+已完成约束：
 
 1. `LoaderRoute.loader` 面向 `SourceLoaderPort`，而不是要求继承 `BaseLoader`；
 2. `BaseLoader` 保留为批量回退、闸门和生命周期的模板实现，不再充当唯一契约；
 3. `LoaderContent` 是否改名 `LoadedResource` 必须提供兼容别名，不能直接破坏库 API；
 4. Local、URL、S3 跑同一套来源加载契约；供应商专有选项只留在具体实现；
-5. 文件类型检测和 metadata 构造从三份 Loader 实现中收敛为共享纯函数。
-
-该迁移涉及公开 API、组合根和全部 Loader 契约测试，必须单独立项，不并入 M2-T5。
+5. 文件类型检测和 metadata 构造从三份 Loader 实现中收敛为共享函数。
 
 ## 6. DocumentExtractor 与 Parser 的边界
 
@@ -200,11 +196,11 @@ LoadedResource
 
 ```text
 DocumentExtractorPort
-├── DocxDocumentExtractor                 engines/document/docx/
+├── DocxDocumentExtractor                 engines/documents/docx/
 │   ├── DocxConverter
 │   ├── DocxParser
 │   └── DocxCleaner
-└── MinerUDocumentExtractor               infrastructure/providers/document/
+└── MinerUDocumentExtractor               infrastructure/extractors/
     └── mineru-api / mineru-router
 ```
 
@@ -267,22 +263,20 @@ comet_rag/
 ├── loaders/                         # 用户统一入口；门面与兼容导出
 │   └── __init__.py
 ├── ports/
-│   ├── source.py                    # M2 后评审
+│   ├── source.py                    # 已建立：来源契约与受管资源
 │   ├── document.py                  # 已建立
 │   ├── embedding.py
 │   ├── reranker.py
-│   ├── vector_store.py              # 长期目标，迁移需单独评审
-│   ├── keyword_search.py            # M3
+│   ├── vector_store.py              # dense / keyword 契约与存储值对象
 │   └── graph_store.py               # 后续里程碑
 ├── engines/
-│   ├── loaders/                     # 核心 Local/URL/Router 实现
-│   ├── document/
+│   ├── documents/
 │   │   └── docx/
 │   │       ├── extractor.py
 │   │       ├── converter.py
 │   │       ├── parser.py
 │   │       └── cleaner.py
-│   ├── chunking/
+│   ├── chunkers/
 │   │   ├── protocol.py
 │   │   ├── fixed.py
 │   │   ├── page.py
@@ -294,24 +288,30 @@ comet_rag/
 │       ├── hybrid.py
 │       └── fusion.py
 ├── infrastructure/
-│   ├── loaders/
-│   │   └── s3_loader.py
-│   ├── providers/
-│   │   └── document/
-│   │       └── mineru.py
-│   ├── vectorstore/
-│   │   └── milvus.py
-│   └── search/
-│       └── keyword.py
+│   ├── sources/                    # Local · HTTP · S3 · AutoLoader
+│   ├── extractors/
+│   │   └── mineru.py
+│   ├── models/                     # embedding · reranker · vision
+│   ├── persistence/
+│   │   ├── sql/
+│   │   ├── vector_store/
+│   │   ├── task_store/
+│   │   └── knowledge_base/
+│   └── task_execution/
+│       └── arq.py
 ├── services/
 │   ├── ingestion.py
+│   ├── pipeline.py
 │   └── retrieval.py
+├── api/
+│   ├── routes/
+│   └── schemas/
 └── composition/
     └── bootstrap.py                  # 唯一跨层装配点
 ```
 
-该目录图表达的是依赖归属，不要求一次移动现有文件。移动模块只有在对应契约和兼容
-导入准备完成后才能执行。
+上图中 M4 的 `chunkers/indexing` 细节仍是目标形态；其余结构归一化已按
+`repository_structure_spec.md` 执行，旧路径只保留兼容转发。
 
 ## 10. 优先级与执行顺序
 

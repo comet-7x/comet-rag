@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
 from comet_rag.ports import BaseVectorStore
 from tests.contracts.vector_store import VectorStoreContract
 

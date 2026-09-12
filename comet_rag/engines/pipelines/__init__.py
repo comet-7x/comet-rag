@@ -6,6 +6,8 @@ from typing import Any
 from .hooks import HookProvider, HookRegistry, HooksState, PipelineHooks
 from .types import Chunk, DocxConfig, PipelineConfig, PipelineResult
 
+Pipeline: Any
+
 
 def __getattr__(name: str) -> Any:
     if name != "Pipeline":

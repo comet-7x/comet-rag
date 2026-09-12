@@ -5,6 +5,8 @@ from typing import Any
 from .base_parser import BaseParser
 from .types import BaseParsedContent, DocxParsedContent
 
+DocxParser: Any
+
 
 def __getattr__(name: str) -> Any:
     if name != "DocxParser":

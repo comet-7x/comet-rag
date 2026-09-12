@@ -6,12 +6,7 @@ from typing import Any
 
 import pytest
 
-from comet_rag.engines.loaders.auto_loader import AutoLoader, LoaderRoute
-from comet_rag.engines.loaders.base_loader import (
-    DEFAULT_MAX_CONCURRENCY,
-    BaseLoader,
-)
-from comet_rag.engines.loaders.data_type import (
+from comet_rag.engines.documents.formats import (
     AllowExt,
     BaseFileFormat,
     CodeFormat,
@@ -22,8 +17,14 @@ from comet_rag.engines.loaders.data_type import (
     is_allowed_extension,
     resolve_detected_extension,
 )
-from comet_rag.engines.loaders.local_loader import LocalLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
+from comet_rag.infrastructure.sources import AutoLoader, LoaderRoute, LocalLoader
+from comet_rag.infrastructure.sources.base import (
+    DEFAULT_MAX_CONCURRENCY,
+    BaseLoader,
+)
+from comet_rag.ports.source import LoadedResource, SourceContent
+
+LoaderContent = LoadedResource
 
 
 class RecordingLoader(BaseLoader):

@@ -158,7 +158,7 @@ async def truncate_tables(target: Any, *tables: str) -> None:
 
     `target` 可以是 DSN 字符串（自建自弃一个引擎），也可以是现成的 `Database`。
     """
-    from comet_rag.infrastructure.database import Database
+    from comet_rag.infrastructure.persistence.sql import Database
 
     own = isinstance(target, str)
     db = Database(target) if own else target
@@ -192,7 +192,7 @@ async def database(postgres_dsn: str) -> AsyncIterator:
     每个用例一个引擎有点浪费，但集成测试量不大，而共享引擎会让"某个用例
     没关干净事务"变成后续用例的随机失败 —— 那种问题排查成本极高。
     """
-    from comet_rag.infrastructure.database import Database
+    from comet_rag.infrastructure.persistence.sql import Database
 
     db = Database(postgres_dsn)
     try:

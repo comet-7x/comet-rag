@@ -24,7 +24,7 @@ import pytest
 from docx import Document
 
 from comet_rag.engines.converters.types import DocxDocument
-from comet_rag.engines.parsers.docx_parser.docx_parser import DocxParser
+from comet_rag.engines.documents.docx import DocxParser
 from tests.fixtures.docx.build import BUILDERS, build_all
 
 SNAPSHOT_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "docx" / "snapshots"

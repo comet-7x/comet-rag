@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from lxml import etree
 
-from comet_rag.engines.parsers.docx_parser.omml import escape_latex, oMath2Latex
+from comet_rag.engines.documents.docx.omml import escape_latex, oMath2Latex
 
 MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 

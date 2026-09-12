@@ -6,6 +6,9 @@ from .archive_guard import ArchiveLimits, ArchiveResourceLimitExceeded
 from .base_converter import BaseConverter
 from .types import BaseDocument, ByteDocument, DocxDocument
 
+DocxConverter: Any
+TextConverter: Any
+
 
 def __getattr__(name: str) -> Any:
     if name == "DocxConverter":

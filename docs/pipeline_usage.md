@@ -86,7 +86,7 @@ config = PipelineConfig(
 
 ```python
 from comet_rag.engines.pipelines import Pipeline, PipelineConfig
-from comet_rag.infrastructure.providers.embedding.qwen3_vl_embedding import (
+from comet_rag.infrastructure.models.embedding.qwen3_vl import (
     Qwen3VLEmbeddingModel,
 )
 
@@ -342,9 +342,7 @@ async def load_from_object_storage():
 ### Converter + Parser + Cleaner
 
 ```python
-from comet_rag.engines.converters.text_converter import DocxConverter
-from comet_rag.engines.parsers.docx_parser.docx_parser import DocxParser
-from comet_rag.engines.cleaners.docx_cleaner import DocxCleaner
+from comet_rag.engines.documents.docx import DocxCleaner, DocxConverter, DocxParser
 
 # lc 来自 Loader
 doc = DocxConverter(lc).to_docx()
@@ -421,7 +419,7 @@ import asyncio
 
 from comet_rag.composition.bootstrap import wire_pdf_extractor
 from comet_rag.engines.pipelines import Pipeline, PipelineHooks
-from comet_rag.infrastructure.providers.document import MinerUDocumentExtractor
+from comet_rag.infrastructure.extractors import MinerUDocumentExtractor
 
 
 async def parse_pdf():

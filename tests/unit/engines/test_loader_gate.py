@@ -17,9 +17,10 @@ from typing import Any
 import pytest
 
 from comet_rag.core.concurrency import Gate
-from comet_rag.engines.loaders.auto_loader import AutoLoader, LoaderRoute
-from comet_rag.engines.loaders.base_loader import BaseLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
+from comet_rag.infrastructure.sources import AutoLoader, BaseLoader, LoaderRoute
+from comet_rag.ports.source import LoadedResource, SourceContent
+
+LoaderContent = LoadedResource
 
 
 class CountingLoader(BaseLoader):
@@ -149,7 +150,7 @@ async def test_url_batch_workers_also_go_through_the_gate() -> None:
     `AutoLoader.batch_load` 一路下来，`max_concurrency` 个 worker 能同时打到
     下游，哪怕闸门配得更小。
     """
-    from comet_rag.engines.loaders.url_loader import URLLoader
+    from comet_rag.infrastructure.sources.http import URLLoader
 
     gate = Gate(limit=2)
     loader = URLLoader()
@@ -194,7 +195,7 @@ async def test_loader_specific_options_survive_the_template_method(entry: str) -
     `BaseLoader.load() got an unexpected keyword argument 'download_config'`。
     闸门是加在中间的，不该把参数吃掉。
     """
-    from comet_rag.engines.loaders.url_loader import DownloadRequestConfig, URLLoader
+    from comet_rag.infrastructure.sources.http import DownloadRequestConfig, URLLoader
 
     loader = URLLoader()
     seen: list[Any] = []
@@ -223,7 +224,7 @@ async def test_loader_specific_options_survive_the_template_method(entry: str) -
 @pytest.mark.parametrize("entry", ["load", "aload"])
 async def test_unknown_options_are_still_rejected(entry: str) -> None:
     """转发不等于放行：拼错的参数名必须当场报错，不能悄悄忽略。"""
-    from comet_rag.engines.loaders.url_loader import URLLoader
+    from comet_rag.infrastructure.sources.http import URLLoader
 
     loader = URLLoader()
     try:
@@ -244,7 +245,7 @@ async def test_local_loader_takes_exactly_one_permit_per_load() -> None:
     当场死锁。这与 `AutoLoader.bind_gate` 里说的是同一个失效模式，只是发生在
     另一个 loader 上。
     """
-    from comet_rag.engines.loaders.local_loader import LocalLoader
+    from comet_rag.infrastructure.sources.local import LocalLoader
 
     with tempfile.TemporaryDirectory() as tmp:
         target = Path(tmp) / "a.txt"

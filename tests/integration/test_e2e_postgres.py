@@ -27,7 +27,7 @@ from comet_rag.config.schemas import (
     SqlDatabaseConfig,
 )
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
 from tests.e2e.test_ingest_search import (  # 复用替身，不重写
     DIM,
     KB,

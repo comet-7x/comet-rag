@@ -19,17 +19,19 @@ from pathlib import Path
 import httpx
 import pytest
 
-from comet_rag.engines.loaders import url_loader
-from comet_rag.engines.loaders.data_type import (
+from comet_rag.engines.documents.formats import (
     ContentTypeMismatch,
     UnsupportedContentType,
 )
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
-from comet_rag.engines.loaders.url_loader import (
+from comet_rag.infrastructure.sources import http as url_loader
+from comet_rag.infrastructure.sources.http import (
     DownloadRequestConfig,
     DownloadTooLarge,
     URLLoader,
 )
+from comet_rag.ports.source import LoadedResource, SourceContent
+
+LoaderContent = LoadedResource
 
 URL = "https://example.invalid/doc.txt"
 BODY = b"hello from the network"
@@ -682,7 +684,7 @@ def test_content_probe_rejects_html_body_behind_docx_suffix(
         return httpx.Response(200, content=b"<html>login required</html>")
 
     monkeypatch.setattr(
-        "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
+        "comet_rag.infrastructure.sources.file_info.detect_content_type_from_path",
         lambda path: "html",
     )
     ld = URLLoader(
@@ -707,7 +709,7 @@ def test_content_probe_rejects_archive_behind_allowed_suffix(
         return httpx.Response(200, content=b"archive payload")
 
     monkeypatch.setattr(
-        "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
+        "comet_rag.infrastructure.sources.file_info.detect_content_type_from_path",
         lambda path: detected,
     )
     ld = URLLoader(

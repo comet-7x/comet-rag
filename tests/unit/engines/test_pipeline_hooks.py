@@ -12,8 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import HooksState, PipelineConfig, PipelineHooks
+from comet_rag.ports.source import LoadedResource, SourceContent
+
+LoaderContent = LoadedResource
 
 
 def _stub_extractor(lc: LoaderContent, config: PipelineConfig) -> str:

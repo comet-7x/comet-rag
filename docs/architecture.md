@@ -13,13 +13,13 @@ pydantic/httpx/lxml 一类的纯计算包；服务那一半在它之上加了任
     api/            HTTP 入口（FastAPI）          ├─ 参考服务
     workers/        消费端进程（arq）             ┘
         ↓
-    services/       用例编排（入库、检索、知识库）
-    schemas/        HTTP 请求/响应 DTO
+    services/       用例编排（Pipeline、入库、检索、知识库）
+    api/schemas/    HTTP 请求/响应 DTO
         ↓
-    tasks/          通用任务框架（与 RAG 无关）
-    infrastructure/ 向量库、供应商客户端、数据库
+    tasks/          通用任务框架、契约与参考实现
+    infrastructure/ 来源、模型、提取、持久化与队列适配器
         ↓
-    engines/        纯计算：加载、解析、清洗、切分、排程   ← 「库」就是这一层
+    engines/        纯计算：文档处理、切分、融合、排程
         ↓
     ports/          契约（Protocol）与其词汇表（值对象）   ┐
     core/           闸门、降级、日志、时间 —— 人人依赖       ├─ 零依赖地基
@@ -32,7 +32,8 @@ pydantic/httpx/lxml 一类的纯计算包；服务那一半在它之上加了任
    arq / fastapi …）。破了这条，用户为了跑一个 docx 解析器就得装一整套中间件，
    "库"这一半当场作废（spec A1）。
 2. `engines/` 只能 import `engines` 与 `ports`（**白名单**）。
-3. `services/` 与 `engines/` 不得直接 import `infrastructure.providers` ——
+3. `services/` 与 `engines/` 不得直接 import `infrastructure.models` 或旧
+   `infrastructure.providers` ——
    具体供应商只在组合根选择。
 4. `core/` 不得 import 本项目任何其他包。它是人人依赖的零依赖内核，
    一旦回头依赖上层就出环。
@@ -59,7 +60,7 @@ pydantic/httpx/lxml 一类的纯计算包；服务那一半在它之上加了任
 
 M2 的 `DocumentExtractorPort` 也遵循这条规则：它只接收 Loader 已经落地的受管
 本地文件，返回 Markdown 与稳定 metadata，不认识 URL、S3 凭据、MinerU backend
-或 HTTP 响应。`MinerUDocumentExtractor` 是 `infrastructure/providers/document/`
+或 HTTP 响应。`MinerUDocumentExtractor` 是 `infrastructure/extractors/`
 中的外部适配器，只有 `composition/` 能把它注册成 PDF Pipeline Hook。
 
 ## 核心抽象
@@ -190,7 +191,7 @@ GPU）；加载另配一个（护本机文件描述符与对外连接）；Miner
 之所以不用"包一层 wrapper 再让大家都走 wrapper"：那只是**约定**，谁直接调
 底层都能绕过去，而且不报错 —— 闸门是静默失效型的保护，约定挡不住它。
 
-`services/` 只依赖 Port 和共享值对象，不再直接依赖 `infrastructure.providers`。
+`services/` 只依赖 Port 和共享值对象，不再直接依赖 `infrastructure.models`。
 具体的 Qwen/OpenAI 类只在组合根中选择并装配；这让模型实现可以替换，而查询、
 入库和重排用例不需要认识供应商请求字段。
 
