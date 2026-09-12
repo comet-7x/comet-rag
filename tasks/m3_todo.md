@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M3（BM25 + RRF）
 
-> 状态：M3-T7 已完成，下一项 M3-T8
+> 状态：M3-T8 实现与本地验收已完成，下一项为 PR 与 AI Bot 增量评审
 > 规格：`tasks/m3_spec.md` v1.0
 > 计划：`tasks/m3_plan.md` v1.0
 > GitHub Issue：[#54](https://github.com/comet-7x/comet-rag/issues/54)
@@ -102,14 +102,14 @@
 
 ### M3-T8 — 集成、E2E、基准、文档与 PR（M）
 
-**日期：** 09-22～09-23　**依赖：** M3-T7
+**完成日期：** 09-12　**依赖：** M3-T7
 
-- [ ] 真实 Milvus 仅在 `zhihao_test_database` 覆盖中文术语、英文标识符、过滤与旧 schema 拒绝
-- [ ] collection 使用测试专属名称且只清理本次创建的数据
-- [ ] E2E 覆盖 dense/keyword/hybrid 与 reranker 降级
-- [ ] 对固定样本记录命中、延迟、候选数，不夸大质量结论
-- [ ] 更新 README、architecture、structure、deployment 和 API 示例
-- [ ] unit < 10s，core-only、integration、e2e、Ruff、Pyright 全绿
+- [x] 真实 Milvus 仅在 `zhihao_test_database` 覆盖中文术语、英文标识符、过滤与旧 schema 拒绝
+- [x] collection 使用测试专属名称且只清理本次创建的数据
+- [x] E2E 覆盖 dense/keyword/hybrid 与 reranker 降级
+- [x] 对固定样本记录命中、延迟、候选数，不夸大质量结论
+- [x] 更新 README、architecture、structure、deployment 和 API 示例
+- [x] unit < 10s，core-only、integration、e2e、Ruff、Pyright 全绿
 - [ ] 创建面向 `develop` 的 PR，完成 AI Bot 增量评审
 
 **验收：** `tasks/m3_spec.md` S1～S5 全部完成，Issue 与文档状态一致。

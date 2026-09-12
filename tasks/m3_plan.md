@@ -13,8 +13,8 @@ M3 在现有 dense 检索和 reranker 之间增加独立 BM25 召回与纯 RRF �
 
 ## Current Priority
 
-M3-T7 已完成 hybrid 通道级降级、非降级错误分类、结构化诊断和安全 HTTP 503 映射。
-下一项 M3-T8 完成真实 Milvus 混合链路、E2E、固定样本基准、文档和 PR 出口验收。
+M3-T8 的真实 Milvus 混合链路、E2E、固定样本基准、文档和本地出口质量门均已完成。
+下一项为创建面向 `develop` 的 PR，并完成 AI Bot 增量评审。
 
 ## Dependency Graph
 
@@ -88,4 +88,6 @@ T2～T8 分开。schema 变更只有在 T2 契约稳定并完成真实 Milvus �
 
 ## Completion Record
 
-M3-T1～T7 的决策与验证结果见 `tasks/m3_spec.md` §6～§12；M3-T8 补最终记录。
+M3-T1～T8 的决策与验证结果见 `tasks/m3_spec.md` §6～§13。M3-T8 完整 integration
+为 49 passed / 108 skipped，默认单测 9.14s，测试 collection 无残留；PR 与 AI Bot
+状态继续以 `tasks/m3_todo.md` 为准。

@@ -7,14 +7,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from collections.abc import AsyncIterator
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
 
-from comet_rag.ports import BaseVectorStore, VectorRecord
+from comet_rag.ports import BaseVectorStore, CollectionSchemaMismatch, VectorRecord
+from comet_rag.services.retrieval import RetrievalService, SearchMode, SearchQuery
 from tests.contracts.keyword_search import KeywordSearchContract, KeywordSearchStore
 from tests.contracts.vector_store import VectorStoreContract
 
@@ -93,3 +95,118 @@ async def test_bm25_schema_handles_chinese_and_english_terms(
         )
         assert results and results[0]
         assert results[0][0]["id"] == expected
+
+
+class _FixedQueryEmbedding:
+    """把语义改写稳定映射到固定向量，隔离真实 embedding 服务的波动。"""
+
+    async def aembed_query(self, text: str) -> list[float]:
+        if "弯月形" in text:
+            return [1.0, 0.0, 0.0, 0.0]
+        return [0.0, 0.0, 1.0, 0.0]
+
+
+async def test_retrieval_service_runs_all_modes_against_real_milvus(
+    store: BaseVectorStore,
+) -> None:
+    """真实 analyzer、两路召回、RRF 和结构化过滤必须在同一链路工作。"""
+    kb = "kb-real-hybrid"
+    await store.aensure_collection(kb, dim=4)
+    await store.aupsert(
+        kb,
+        [
+            VectorRecord(
+                id="semantic",
+                text="香蕉适合温暖气候种植",
+                embedding=[1.0, 0.0, 0.0, 0.0],
+                metadata={"language": "zh", "kind": "fruit"},
+            ),
+            VectorRecord(
+                id="exact",
+                text="Rust TraitObject memory layout",
+                embedding=[0.0, 1.0, 0.0, 0.0],
+                metadata={"language": "en", "kind": "code"},
+            ),
+            VectorRecord(
+                id="noise",
+                text="数据库连接池容量规划",
+                embedding=[0.0, 0.0, 1.0, 0.0],
+                metadata={"language": "zh", "kind": "ops"},
+            ),
+        ],
+    )
+    service = RetrievalService(
+        # 测试替身只实现本链路实际消费的查询能力；完整模型契约另有独立测试。
+        embedding_model=cast("Any", _FixedQueryEmbedding()),
+        vector_store=store,
+        keyword_search=cast("Any", store),
+    )
+
+    dense = await service.search(
+        SearchQuery(
+            kb_id=kb,
+            query="弯月形水果如何栽培",
+            mode=SearchMode.DENSE,
+            rerank=False,
+            top_k=1,
+        )
+    )
+    assert [chunk.id for chunk in dense.chunks] == ["semantic"]
+    assert dense.chunks[0].vector_score is not None
+
+    keyword = await service.search(
+        SearchQuery(
+            kb_id=kb,
+            query="TraitObject",
+            mode=SearchMode.KEYWORD,
+            filter={"language": "en"},
+            rerank=False,
+            top_k=1,
+        )
+    )
+    assert [chunk.id for chunk in keyword.chunks] == ["exact"]
+    assert keyword.chunks[0].keyword_score is not None
+
+    hybrid = await service.search(
+        SearchQuery(
+            kb_id=kb,
+            query="TraitObject 弯月形",
+            mode=SearchMode.HYBRID,
+            rerank=False,
+            top_k=3,
+        )
+    )
+    assert {chunk.id for chunk in hybrid.chunks} >= {"semantic", "exact"}
+    assert hybrid.mode is SearchMode.HYBRID
+    assert hybrid.chunks[0].fusion_score is not None
+
+
+async def test_real_legacy_schema_is_rejected_without_deletion(
+    store: BaseVectorStore,
+) -> None:
+    """旧 collection 属于用户数据；兼容检查失败也绝不能自动迁移或删除。"""
+    from pymilvus import DataType
+
+    kb = "kb-real-legacy-schema"
+    raw: Any = store
+    name = raw._name(kb)  # noqa: SLF001
+    schema = raw._sync.create_schema(  # noqa: SLF001
+        auto_id=False, enable_dynamic_field=False
+    )
+    schema.add_field("id", DataType.VARCHAR, is_primary=True, max_length=128)
+    schema.add_field("text", DataType.VARCHAR, max_length=65535)
+    schema.add_field("metadata", DataType.JSON)
+    schema.add_field("dense_vector", DataType.FLOAT_VECTOR, dim=4)
+    schema.add_field("sparse_vector", DataType.SPARSE_FLOAT_VECTOR)
+    await asyncio.to_thread(
+        raw._sync.create_collection,
+        name,
+        schema=schema,  # noqa: SLF001
+    )
+    # fixture 只回收本次测试明确登记的 collection。
+    raw._created.add(kb)  # noqa: SLF001
+
+    with pytest.raises(CollectionSchemaMismatch, match="显式删除"):
+        await store.aensure_collection(kb, dim=4)
+
+    assert await asyncio.to_thread(raw._sync.has_collection, name)  # noqa: SLF001

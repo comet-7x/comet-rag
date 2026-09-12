@@ -29,26 +29,42 @@ uv run pytest -m benchmark --bench-baseline before.json   # 打印增减
 
 ## 当前基线
 
-采集环境：Python 3.12 / Linux x86_64 / 全内存后端（`memory` vector store +
+采集环境：Python 3.12 / macOS / 全内存后端（`memory` vector store +
 `memory` task store + `inprocess` executor）。文档 200 段，`embed_batch_size=32`、
 `max_concurrency=16`。
 
 | 用例 | 指标 | P50 | P95 | 说明 |
 |---|---|---:|---:|---|
-| 单文档入库 | `ingest_e2e` | **19.2 ms** | 23.1 ms | 200 段，含轮询间隔 |
-| 批量入库 | `throughput_docs` | **85 doc/s** | — | 20 份并发 |
-| 批量入库 | `throughput_chunks` | **17 043 chunk/s** | — | 同上 |
-| 检索（无重排） | `search_no_rerank` | **3.21 ms** | 3.39 ms | 500 段库，top_k=5 |
-| 检索（含重排） | `search_rerank` | **3.22 ms** | 3.46 ms | 替身重排，量的是框架开销 |
-| 检索 top_k=50 | `search_top_k_50` | **3.74 ms** | 4.10 ms | 降级 L2 的收益来源 |
-| 并发重叠 | `overlap_speedup` | **10.95×** | — | 见下 |
+| 单文档入库 | `ingest_e2e` | **15.74 ms** | 16.23 ms | 200 段，含轮询间隔 |
+| 批量入库 | `throughput_docs` | **254.36 doc/s** | — | 20 份并发 |
+| 批量入库 | `throughput_chunks` | **50 872.84 chunk/s** | — | 同上 |
+| 检索（无重排） | `search_no_rerank` | **1.03 ms** | 1.34 ms | 500 段库，top_k=5 |
+| 检索（含重排） | `search_rerank` | **1.10 ms** | 1.18 ms | 替身重排，量的是框架开销 |
+| 检索 top_k=50 | `search_top_k_50` | **1.43 ms** | 1.56 ms | 降级 L2 的收益来源 |
+| 并发重叠 | `overlap_speedup` | **11.65×** | — | 见下 |
+
+### M3 三模式固定样本（2026-09-12）
+
+本次在 macOS / Python 3.12、全内存后端、500 段固定合成语料上各采样 100 次。
+查询为“香蕉”，每种模式都记录 top-1 是否命中、实际候选数和 API 端到端延迟：
+
+| 模式 | top-1 命中 | 候选数 | P50 | P95 | P99 |
+|---|---:|---:|---:|---:|---:|
+| dense | 1/1 | 20 | 1.03 ms | 1.15 ms | 17.83 ms |
+| keyword | 1/1 | 20 | 2.05 ms | 2.18 ms | 2.27 ms |
+| hybrid | 1/1 | 20 | 2.50 ms | 2.66 ms | 2.69 ms |
+
+这是**回归样本，不是质量评测**：语料小、查询单一、embedding 与 reranker 都是
+确定性替身，不能据此声称 hybrid 比某一路更准。它只证明三个公开模式在同一固定
+输入上保持可用，并让后续提交能比较命中信号、候选规模和框架延迟。真实语料质量
+需要独立数据集、多查询与相关性标注。
 
 ### 关于 `overlap_speedup`
 
 这是唯一**带断言**的基准，因为它的判据是结构性的而非计时性的。
 
 给替身模型加 5 ms 固定延迟，200 段若逐条串行光等待就是 1000 ms；
-窗口化并发下实测 92 ms（≈ 70 ms 等待 + 21 ms 框架），加速比 10.95×。
+窗口化并发下实测 88.05 ms，加速比 11.65×。
 断言阈值取 `serial / 4`，离实测值很远，换机器也不会假红。
 
 守的是 T9 修好的那件事（修复前 `astream_run` 并发峰值恒为 1）。
@@ -56,7 +72,7 @@ uv run pytest -m benchmark --bench-baseline before.json   # 打印增减
 
 ### 关于重排的耗时
 
-表里"含重排"与"无重排"几乎一样（3.22 vs 3.21 ms），因为替身重排是纯计算。
+表里"含重排"与"无重排"几乎一样（1.10 vs 1.03 ms），因为替身重排是纯计算。
 **真实模型下这两行会差一到两个数量级** —— 交叉编码器要给几十个候选逐个打分。
 分级降级（S4-5）第一步就砍它，理由正在于此；这张表只能证明框架侧没有额外浪费。
 

@@ -229,6 +229,60 @@ CPU lane 持有比例都超过 99%，因此不要仅靠提高 preprocessor 并�
 
 ---
 
+## dense、keyword 与 hybrid 检索
+
+`POST /search` 默认 `mode=dense`，所以旧调用无需修改。精确术语可选 `keyword`，
+希望合并语义与关键词候选时选 `hybrid`：
+
+```bash
+curl -X POST localhost:8000/search \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "kb_id": "demo",
+    "query": "TraitObject 内存布局",
+    "mode": "hybrid",
+    "top_k": 5,
+    "fetch_k": 20,
+    "filter": {"language": ["zh", "en"]},
+    "rerank": true
+  }'
+```
+
+`fetch_k` 是每路进入融合/重排前的候选上限，范围 1～500，且不会小于 `top_k`；
+缺省为 `max(top_k × 4, 20)`。hybrid 并发召回 dense 与 BM25，用 RRF 按排名融合，
+不直接相加不可比的原始分数。
+
+响应重点字段：
+
+```json
+{
+  "mode": "hybrid",
+  "channels": ["dense", "keyword"],
+  "reranked": true,
+  "fetched": 20,
+  "degraded": null,
+  "degradations": [],
+  "chunks": [{
+    "id": "...",
+    "vector_score": 0.82,
+    "keyword_score": 6.31,
+    "fusion_score": 0.0325,
+    "vector_rank": 2,
+    "keyword_rank": 1
+  }]
+}
+```
+
+`mode` 与 `channels` 描述实际执行结果：hybrid 某一路暂时不可用时，服务返回另一路，
+并在 `degradations` 标明失败阶段和异常类型；两路都失败才返回 503。`degraded` 是
+系统负载降级级别，与请求级通道故障不是一回事。原始异常消息只写日志，不回给客户端。
+
+Milvus 必须使用 2.6 版本线的新 BM25 schema。旧 collection 缺少 chinese analyzer、
+BM25 function 或 sparse index 时会返回 `CollectionSchemaMismatch`；服务不会自动删除或
+改写已有数据。确认数据可重建后，由操作者显式删除旧 collection 并重新入库。
+
+---
+
 ## 运维
 
 ### 看限流与降级

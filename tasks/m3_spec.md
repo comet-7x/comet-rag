@@ -160,11 +160,11 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 
 ### S5 — 真实链路与质量
 
-- [ ] E2E 覆盖“精确术语靠 BM25、语义改写靠 dense、hybrid 合并两者”。
-- [ ] 集成环境不可用时 skip，不 fail；真实 Milvus 可用时验证 analyzer 与混合链路。
+- [x] E2E 覆盖“精确术语靠 BM25、语义改写靠 dense、hybrid 合并两者”。
+- [x] 集成环境不可用时 skip，不 fail；真实 Milvus 可用时验证 analyzer 与混合链路。
 - [x] 真实 Milvus 验证只访问 `zhihao_test_database`，且不会清理非本次创建的数据。
-- [ ] 记录 dense/keyword/hybrid 的命中、延迟和候选规模，不用单个样本宣称质量提升。
-- [ ] 默认 `uv run pytest` 仍小于 10 秒，Ruff、Pyright、core-only、integration、e2e 全绿。
+- [x] 记录 dense/keyword/hybrid 的命中、延迟和候选规模，不用单个样本宣称质量提升。
+- [x] 默认 `uv run pytest` 仍小于 10 秒，Ruff、Pyright、core-only、integration、e2e 全绿。
 
 ## 5. 实施顺序
 
@@ -259,7 +259,23 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
 - 43 项服务/API 故障矩阵测试、665 项组合根/生命周期/分层保护测试通过；全量单测为
   `1869 passed, 19 skipped, 190 deselected, 1 xfailed`，pytest 9.02s。
 
-## 13. 官方依据
+## 13. M3-T8 验证记录
+
+- 真实 Milvus 仅连接 `zhihao_test_database`：关键词契约验证中文术语、英文标识符与
+  metadata filter；新增 `RetrievalService` 真实链路验证 dense 语义改写、keyword
+  精确术语与 hybrid RRF 合并。真实构造旧 schema 后得到 `CollectionSchemaMismatch`，
+  collection 仍存在，证明不会自动删除用户数据。
+- 所有 Milvus fixture 使用随机 `cttest_*` 前缀并仅回收本实例登记的 collection；
+  完整 integration 结束后的只读检查为 `cttest_residual_count=0`。
+- API E2E 覆盖三模式、实际 channels 与融合诊断；hybrid 下 reranker 超时仍返回融合
+  候选，请求级 `degradations` 与系统级 `degraded` 保持分离。完整 E2E 为 30 项通过。
+- 500 段固定合成语料记录三模式 top-1 命中、20 个候选和 P50/P95/P99；结果仅作为
+  回归信号，不用于宣称真实质量提升，数值见 `docs/benchmark.md`。
+- 默认单测为 `1869 passed, 19 skipped, 194 deselected, 1 xfailed`，pytest 9.14s；
+  core-only 隔离安装通过；完整 integration 为 `49 passed, 108 skipped`，pytest
+  317.52s；Ruff 与 Pyright 通过，Pyright 为 `0 errors`。
+
+## 14. 官方依据
 
 - [Milvus Full Text Search](https://milvus.io/docs/full-text-search.md)
 - [Milvus BM25 Function](https://milvus.io/docs/bm25-function.md)
