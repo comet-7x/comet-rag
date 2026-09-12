@@ -63,6 +63,13 @@ PostgreSQL TaskStore 进入 persistence，依赖 Redis 的 ARQ 实现进入
 当前 `schemas/` 仅包含 HTTP 请求与响应模型，迁入 `api/schemas/`。领域对象和任务
 模型不得移入 API。
 
+### RS-D7：Pipeline 编排与公共便捷装配分离
+
+可测试、可注入的 Pipeline 用例进入 `services/pipeline.py`，只依赖 Port 与 Engine；
+`comet_rag/pipeline.py` 作为库用户入口，负责缺省 Local/HTTP Loader 的便捷装配。
+旧 `engines.pipelines.Pipeline` 继续指向公共入口，但 `engines` 内部实现不再反向依赖
+基础设施。
+
 ## 4. 兼容策略
 
 - 旧公开导入路径保留对象别名，类身份必须保持一致。

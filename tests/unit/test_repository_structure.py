@@ -130,3 +130,10 @@ def test_docx_old_paths_preserve_object_identity() -> None:
     assert LegacyConverter is DocxConverter
     assert LegacyExtractor is DocxDocumentExtractor
     assert LegacyParser is DocxParser
+
+
+def test_pipeline_old_path_preserves_public_facade_identity() -> None:
+    from comet_rag.engines.pipelines import Pipeline as LegacyPipeline
+    from comet_rag.pipeline import Pipeline
+
+    assert LegacyPipeline is Pipeline
