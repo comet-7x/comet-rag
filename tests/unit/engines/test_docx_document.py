@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from docx import Document
 
-from comet_rag.engines.document import DocxDocumentExtractor
+from comet_rag.engines.documents.docx import DocxDocumentExtractor
 from comet_rag.ports import DocumentExtractorPort, ExtractedDocument
 from tests.contracts.document_extractor import DocumentExtractorContract
 

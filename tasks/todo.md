@@ -40,7 +40,7 @@
 
 **验证：**
 - [x] `grep -rE "import (redis|pymilvus|sqlalchemy|arq|fastapi|aioboto3)" comet_rag/engines/` 无输出
-- [x] 干净 venv 中 `pip install -e .` 后 `python -c "from comet_rag.engines.pipelines import Pipeline"` 成功
+- [x] 干净 venv 中 `pip install -e .` 后 `python -c "from comet_rag.pipeline import Pipeline"` 成功
 
 **依赖：** T1
 **文件：** `pyproject.toml`、`.github/workflows/ci.yml`

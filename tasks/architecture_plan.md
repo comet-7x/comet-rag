@@ -154,13 +154,13 @@ from comet_rag.loaders import (
 )
 ```
 
-`comet_rag.loaders` 只负责发现性与兼容导出，不拥有实现：
+`comet_rag.loaders` 只负责发现性与稳定导出，不拥有实现：
 
 - Local、HTTP 与 AutoLoader 直接导出；
 - `S3Loader` 必须惰性导入，只有真正使用它时才要求包含 S3 SDK 的可选依赖组
   （当前为 `server`；是否拆成独立 `s3` extra 另行评审）；
 - 服务内部仍由组合根装配全部实现；
-- 旧导入路径先保留并给迁移期，不能一次删除。
+- 重构前的内部导入路径已在 `0.1.0` 阶段删除，不保留影子目录。
 
 这样使用者只看一个入口，维护者仍能从目录位置判断依赖方向。公共 API 与物理目录
 不必一一对应。
@@ -260,7 +260,7 @@ RetrievalService
 
 ```text
 comet_rag/
-├── loaders/                         # 用户统一入口；门面与兼容导出
+├── loaders/                         # 用户统一入口；稳定门面
 │   └── __init__.py
 ├── ports/
 │   ├── source.py                    # 已建立：来源契约与受管资源
@@ -311,7 +311,7 @@ comet_rag/
 ```
 
 上图中 M4 的 `chunkers/indexing` 细节仍是目标形态；其余结构归一化已按
-`repository_structure_spec.md` 执行，旧路径只保留兼容转发。
+`repository_structure_spec.md` 执行，重构前的内部路径已删除。
 
 ## 10. 优先级与执行顺序
 

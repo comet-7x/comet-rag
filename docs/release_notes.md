@@ -5,6 +5,14 @@
 M3 新增 Milvus BM25 关键词召回、RRF 混合召回与单通道降级。以下两项属于部署兼容性
 变更，升级前必须处理。
 
+### Python 导入路径收敛
+
+项目仍处于 `0.1.0`，目录归一化分支尚未发布，因此本次直接删除只做转发的历史内部
+目录。Loader 与 Pipeline 的稳定入口分别是 `comet_rag.loaders` 和
+`comet_rag.pipeline`；具体实现只存在于 `infrastructure/sources`、
+`infrastructure/persistence`、`infrastructure/models`、`infrastructure/extractors`
+及 `engines/documents` 等规范目录。HTTP DTO 位于 `comet_rag.api.schemas`。
+
 ### 配置变更
 
 `infrastructure_config.vector_database.collection_name` 已移除，改为：

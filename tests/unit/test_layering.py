@@ -214,23 +214,20 @@ def test_ports_dependency_guard_detects_upper_and_third_party_imports() -> None:
     tree = ast.parse(
         "from pathlib import Path\n"
         "import httpx\n"
-        "from comet_rag.engines.loaders import AutoLoader\n"
+        "from comet_rag.infrastructure.sources import AutoLoader\n"
         "from comet_rag.ports.content import MediaResource\n"
     )
 
     assert _port_dependency_violations(tree) == {
-        "comet_rag.engines.loaders",
-        "comet_rag.engines.loaders.AutoLoader",
+        "comet_rag.infrastructure.sources",
+        "comet_rag.infrastructure.sources.AutoLoader",
         "httpx",
     }
 
 
 # ── 业务/引擎依赖模型 Port，而不是供应商适配器 ─────────────────────────────
 
-MODEL_ADAPTER_PACKAGES = (
-    "comet_rag.infrastructure.models",
-    "comet_rag.infrastructure.providers",  # 迁移期旧路径
-)
+MODEL_ADAPTER_PACKAGE = "comet_rag.infrastructure.models"
 
 
 def _model_port_consumers() -> list[Path]:
@@ -250,7 +247,7 @@ def test_business_code_depends_on_model_ports(module: Path) -> None:
     hits = {
         name
         for name in _imported_full(tree, module)
-        if name.startswith(MODEL_ADAPTER_PACKAGES)
+        if name.startswith(MODEL_ADAPTER_PACKAGE)
     }
     assert not hits, (
         f"{module.relative_to(PROJECT_ROOT)} 直接依赖了模型适配器：{sorted(hits)}。"
@@ -283,10 +280,7 @@ def test_services_do_not_import_infrastructure(module: Path) -> None:
 
 # ── Service 依赖向量存储 Port，而不是适配器包（M3-T2）──────────────────────
 
-VECTORSTORE_ADAPTER_PACKAGES = (
-    "comet_rag.infrastructure.persistence.vector_store",
-    "comet_rag.infrastructure.vectorstore",  # 迁移期旧路径
-)
+VECTORSTORE_ADAPTER_PACKAGE = "comet_rag.infrastructure.persistence.vector_store"
 
 
 def _service_vectorstore_violations(
@@ -295,7 +289,7 @@ def _service_vectorstore_violations(
     return {
         name
         for name in _imported_full(tree, module)
-        if name.startswith(VECTORSTORE_ADAPTER_PACKAGES)
+        if name.startswith(VECTORSTORE_ADAPTER_PACKAGE)
     }
 
 
@@ -322,19 +316,16 @@ def test_vectorstore_port_guard_detects_absolute_and_relative_imports() -> None:
     """用故意违规的源码证明守卫不会静默放过两种导入写法。"""
     module = PROJECT_ROOT / "comet_rag" / "services" / "retrieval.py"
     tree = ast.parse(
-        "from comet_rag.infrastructure.vectorstore import BaseVectorStore\n"
         "from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore\n"
-        "from ..infrastructure.vectorstore.milvus import MilvusStore\n"
-        "from comet_rag.infrastructure import vectorstore\n"
-        "from ..infrastructure import vectorstore\n"
+        "from ..infrastructure.persistence.vector_store.milvus import MilvusStore\n"
+        "from comet_rag.infrastructure.persistence import vector_store\n"
+        "from ..infrastructure.persistence import vector_store\n"
     )
     assert _service_vectorstore_violations(tree, module) == {
         "comet_rag.infrastructure.persistence.vector_store",
         "comet_rag.infrastructure.persistence.vector_store.InMemoryVectorStore",
-        "comet_rag.infrastructure.vectorstore.BaseVectorStore",
-        "comet_rag.infrastructure.vectorstore",
-        "comet_rag.infrastructure.vectorstore.milvus",
-        "comet_rag.infrastructure.vectorstore.milvus.MilvusStore",
+        "comet_rag.infrastructure.persistence.vector_store.milvus",
+        "comet_rag.infrastructure.persistence.vector_store.milvus.MilvusStore",
     }
 
 
@@ -440,7 +431,7 @@ def test_models_are_only_constructed_by_the_composition_root(module: Path) -> No
     易错的约定，就把它变成够不着的结构。
     """
     relative = module.relative_to(PROJECT_ROOT / "comet_rag").as_posix()
-    if relative.startswith(("infrastructure/models/", "infrastructure/providers/")):
+    if relative.startswith("infrastructure/models/"):
         return  # 定义处自己不算
     if any(relative.endswith(allowed) for allowed in MAY_CONSTRUCT_MODELS):
         return
@@ -594,10 +585,10 @@ def test_relative_imports_are_resolved_to_absolute_names() -> None:
     仓库当前的相对导入恰好都在包内，所以没有真实违规 —— 但那是巧合。
     这条用例把解析本身钉死。
     """
-    module = PROJECT_ROOT / "comet_rag" / "engines" / "pipelines" / "pipeline.py"
+    module = PROJECT_ROOT / "comet_rag" / "engines" / "pipelines" / "hooks.py"
     tree = ast.parse(
         "from .types import Chunk\n"  # level=1 → 同包
-        "from ..loaders import Auto\n"  # level=2 → comet_rag.engines.loaders
+        "from ..documents import DocxConfig\n"  # level=2 → comet_rag.engines.documents
         "from ...services import Foo\n"  # level=3 → comet_rag.services（违规）
         "from ...ports import EmbeddingPort\n"
     )
@@ -605,8 +596,8 @@ def test_relative_imports_are_resolved_to_absolute_names() -> None:
     assert _imported_full(tree, module) == {
         "comet_rag.engines.pipelines.types",
         "comet_rag.engines.pipelines.types.Chunk",
-        "comet_rag.engines.loaders",
-        "comet_rag.engines.loaders.Auto",
+        "comet_rag.engines.documents",
+        "comet_rag.engines.documents.DocxConfig",
         "comet_rag.services",
         "comet_rag.services.Foo",
         "comet_rag.ports",
@@ -628,13 +619,13 @@ def test_bare_relative_import_resolves_each_imported_name() -> None:
 
     上一轮补相对导入解析时漏了这个形式，评审指出。
     """
-    module = PROJECT_ROOT / "comet_rag" / "engines" / "pipelines" / "pipeline.py"
-    tree = ast.parse("from ... import services, tasks\nfrom .. import loaders\n")
+    module = PROJECT_ROOT / "comet_rag" / "engines" / "pipelines" / "hooks.py"
+    tree = ast.parse("from ... import services, tasks\nfrom .. import documents\n")
 
     assert _imported_full(tree, module) == {
         "comet_rag.services",
         "comet_rag.tasks",
-        "comet_rag.engines.loaders",
+        "comet_rag.engines.documents",
     }
     assert _engine_internal_violations(tree, module) == {
         "comet_rag.services",
@@ -645,7 +636,7 @@ def test_bare_relative_import_resolves_each_imported_name() -> None:
 def test_package_parts_handles_both_module_and_package_init() -> None:
     """`__init__.py` 的"所在包"是它自己的目录，普通模块是它的父目录。"""
     root = PROJECT_ROOT / "comet_rag"
-    assert _package_parts(root / "engines" / "pipelines" / "pipeline.py") == [
+    assert _package_parts(root / "engines" / "pipelines" / "hooks.py") == [
         "comet_rag",
         "engines",
         "pipelines",
@@ -659,8 +650,15 @@ def test_package_parts_handles_both_module_and_package_init() -> None:
 
 def test_cycle_detector_sees_relative_imports() -> None:
     """环检测同样不能被相对导入绕过。"""
-    module = PROJECT_ROOT / "comet_rag" / "infrastructure" / "knowledge_base.py"
-    tree = ast.parse("from ..tasks.models import Time\n")
+    module = (
+        PROJECT_ROOT
+        / "comet_rag"
+        / "infrastructure"
+        / "persistence"
+        / "knowledge_base"
+        / "memory.py"
+    )
+    tree = ast.parse("from ....tasks.models import Time\n")
     assert _imported_full(tree, module) == {
         "comet_rag.tasks.models",
         "comet_rag.tasks.models.Time",

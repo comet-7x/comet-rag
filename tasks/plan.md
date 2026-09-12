@@ -87,7 +87,7 @@ T1 测试基建 ──┬─► T2 依赖分组(A1)
 - [X] `uv run pytest` 可运行 —— 145 passed / 1.06s
 - [X] `uv run ruff check` 与 `ruff format --check` 通过
 - [X] A1 由 `tests/unit/test_layering.py` 自动守卫（AST 检查，非 grep）
-- [X] 仅核心依赖环境下 `from comet_rag.engines.pipelines import Pipeline` 成功；
+- [X] 仅核心依赖环境下 `from comet_rag.pipeline import Pipeline` 成功；
   `import comet_rag.api.main` 如预期失败（证明隔离是真的）
 - [X] 两个守卫经过反向验证：注入违规后确实变红
 

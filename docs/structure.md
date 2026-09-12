@@ -44,9 +44,9 @@ comet_rag/
 └── exceptions/
 ```
 
-`engines/loaders`、`infrastructure/providers`、`infrastructure/database`、
-`infrastructure/vectorstore`、顶层 `schemas` 等旧路径暂留为无业务逻辑的兼容转发；
-新代码不得再从这些路径导入。
+重构前的 `engines/loaders`、泛化 `infrastructure/providers`、宽泛 `database`、
+`vectorstore` 以及顶层 HTTP `schemas` 已删除。内部能力只有一个规范位置；库用户从
+`comet_rag.loaders` 与 `comet_rag.pipeline` 两个稳定门面进入。
 
 ## 模块依赖
 
@@ -108,7 +108,7 @@ flowchart TD
 |---|------|-----------|
 | 1 | `engines/` 不得 import redis / pymilvus / sqlalchemy / arq / fastapi … | 装一个 docx 解析器要拖进一整套中间件，「库」那一半作废 |
 | 2 | `engines/` 只能 import `engines` 和 `ports`（**白名单**） | 底层反向依赖上层，`ports/` 存在的意义消失 |
-| 3 | `services/` 与 `engines/` 不得 import `infrastructure.models` 或旧 `providers` | 供应商细节泄漏到用例，换模型要改业务代码 |
+| 3 | `services/` 与 `engines/` 不得 import `infrastructure.models` | 供应商细节泄漏到用例，换模型要改业务代码 |
 | 4 | `core/` 不得 import 本项目任何其他包 | 人人依赖的内核回头依赖上层，立刻出环 |
 | 5 | 顶层包之间不得成环 | 环里的包无法被单独理解或单独拿走 |
 
@@ -237,9 +237,9 @@ flowchart TD
 单独拿走**。`Time` 是个只依赖标准库的时间工具，跟"任务"毫无关系，挪进
 `core/time.py` 环就断了。第 5 条守卫盯着它不再回来。
 
-## 迁移期兼容层
+## 公共入口与内部路径
 
-旧目录只负责转发，不再拥有实现。它们暂时存在是为了让已发布的导入路径继续可用，
-不是新代码的候选位置。`tests/unit/test_repository_structure.py` 验证新旧入口指向同一
-运行时对象；分层守卫同时禁止业务代码重新依赖旧 Provider/VectorStore 路径。兼容层
-的删除版本必须另行发布迁移说明，不能在普通重构中顺手删除。
+`comet_rag.loaders` 与 `comet_rag.pipeline` 是面向库用户的稳定入口；它们负责发现性
+和默认装配，不拥有第二份业务实现。其他路径属于内部结构，可随架构演进调整。
+`tests/unit/test_repository_structure.py` 同时验证公共门面指向规范实现，并阻止废弃目录
+重新出现。项目正式发布稳定版本后，任何公共入口迁移都必须附带迁移说明和过渡期。

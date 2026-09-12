@@ -1,5 +1,0 @@
-from __future__ import annotations
-
-from comet_rag.infrastructure.models.vision import OpenAIVisionModel
-
-__all__ = ["OpenAIVisionModel"]

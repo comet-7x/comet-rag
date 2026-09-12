@@ -333,14 +333,14 @@ def fake_embedding_model() -> BaseEmbeddingModel:
 
 ### S1 — 库与服务真正分离（对应 A1）
 
-- [x] 在干净虚拟环境里 `pip install comet-rag`（不带 extras），`from comet_rag.engines.pipelines import Pipeline` 能成功导入并解析一个 docx
+- [x] 在干净虚拟环境里 `pip install comet-rag`（不带 extras），`from comet_rag.pipeline import Pipeline` 能成功导入并解析一个 docx
 - [x] CI 中有一个 job 只装基础依赖验证库可独立导入和解析，通过
 - [x] AST 分层守卫确认 `engines/` 不依赖任何基础设施包
 
 ### S2 — 任务框架落地
 
 - [x] `poc/task_demo/task/` 提升为 `comet_rag/tasks/`，`Pipeline` 更名 `StagePipeline`（避开与 `engines/pipelines` 撞名）
-- [x] 旧任务领域 schema 已删除；`comet_rag/schemas/task.py` 现为新的 HTTP DTO
+- [x] 旧任务领域 schema 已删除；任务 HTTP DTO 位于 `comet_rag/api/schemas/task.py`
 - [x] 确认门已按 A10 移除，且 `resume_stage` / `context` 续跑仍工作：
       *验证*：让 runner 在第 3 阶段抛 `RetriableError`，重试后应从第 3 阶段开始，而非第 1 阶段
 - [x] Postgres 中 `tasks.status` 为 **varchar** 而非 PG 原生 enum（保留将来加状态值的零成本可逆性）

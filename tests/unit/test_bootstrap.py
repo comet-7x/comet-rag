@@ -36,7 +36,6 @@ from comet_rag.core.concurrency import Gate
 from comet_rag.engines.documents.formats import ContentTypeMismatch
 from comet_rag.engines.pipelines import (
     DocxConfig,
-    Pipeline,
     PipelineConfig,
     PipelineHooks,
 )
@@ -51,6 +50,7 @@ from comet_rag.infrastructure.sources import (
     SourceContent,
 )
 from comet_rag.infrastructure.sources.s3 import S3Loader
+from comet_rag.pipeline import Pipeline
 from comet_rag.ports import ExtractedDocument, MediaResource, MultimodalEmbeddingPort
 from comet_rag.ports.gate import GatedResource
 from comet_rag.services.ingestion import IngestRunner

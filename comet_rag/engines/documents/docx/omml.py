@@ -19,7 +19,7 @@ Public API
 ----------
 ::
 
-    from comet_rag.engines.parsers.docx_parser.omml import oMath2Latex
+    from comet_rag.engines.documents.docx.omml import oMath2Latex
 
     latex_str: str = str(oMath2Latex(omath_element))
 """

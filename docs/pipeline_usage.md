@@ -1,6 +1,6 @@
 # Pipeline 使用笔记
 
-本文档记录 `comet_rag.engines.pipelines` 模块的用法，涵盖基本使用、配置、流式输出、批量处理、自定义 Hook 扩展，以及底层模块的独立使用方式。DOCX 是纯库内置能力；PDF 需要外部 MinerU，并由服务组合根或库调用方显式注册。
+本文档记录公共入口 `comet_rag.pipeline` 及其配置的用法，涵盖基本使用、流式输出、批量处理、自定义 Hook 扩展，以及底层模块的独立使用方式。DOCX 是纯库内置能力；PDF 需要外部 MinerU，并由服务组合根或库调用方显式注册。
 
 ---
 
@@ -22,7 +22,7 @@
 ## 1. 快速开始
 
 ```python
-from comet_rag.engines.pipelines import Pipeline
+from comet_rag.pipeline import Pipeline
 
 # 使用默认配置（chunk_size=2000, chunk_overlap=200）
 pipeline = Pipeline()
@@ -37,7 +37,7 @@ for chunk in result.chunks:
 
 ```python
 import asyncio
-from comet_rag.engines.pipelines import Pipeline
+from comet_rag.pipeline import Pipeline
 
 
 async def main():
@@ -54,7 +54,8 @@ asyncio.run(main())
 ## 2. PipelineConfig 配置项
 
 ```python
-from comet_rag.engines.pipelines import Pipeline, PipelineConfig
+from comet_rag.engines.pipelines import PipelineConfig
+from comet_rag.pipeline import Pipeline
 
 config = PipelineConfig(
     chunk_size=1500,  # 每个 chunk 的最大字符数，默认 2000
@@ -85,7 +86,8 @@ config = PipelineConfig(
 启用 Embedding（需要提供 `embedding_model`）：
 
 ```python
-from comet_rag.engines.pipelines import Pipeline, PipelineConfig
+from comet_rag.engines.pipelines import PipelineConfig
+from comet_rag.pipeline import Pipeline
 from comet_rag.infrastructure.models.embedding.qwen3_vl import (
     Qwen3VLEmbeddingModel,
 )
@@ -240,7 +242,7 @@ result = Pipeline().run("README.md")
 对已支持的格式，也可以通过重新注册 hook 覆盖默认行为：
 
 ```python
-from comet_rag.engines.document import DocxDocumentExtractor
+from comet_rag.engines.documents.docx import DocxDocumentExtractor
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.loaders import LoadedResource
 
@@ -418,8 +420,9 @@ chunks = DocxChunker(chunk_size=1500, chunk_overlap=150).chunk(text)
 import asyncio
 
 from comet_rag.composition.bootstrap import wire_pdf_extractor
-from comet_rag.engines.pipelines import Pipeline, PipelineHooks
+from comet_rag.engines.pipelines import PipelineHooks
 from comet_rag.infrastructure.extractors import MinerUDocumentExtractor
+from comet_rag.pipeline import Pipeline
 
 
 async def parse_pdf():

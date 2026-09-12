@@ -1,4 +1,4 @@
-"""向量存储 Port 的分层与迁移兼容测试。"""
+"""向量存储 Port 的分层测试。"""
 
 from __future__ import annotations
 
@@ -6,42 +6,18 @@ import subprocess
 import sys
 from collections.abc import Sequence
 
-from comet_rag.infrastructure import vectorstore as legacy_package
 from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
-from comet_rag.infrastructure.vectorstore import base as legacy
 from comet_rag.ports import (
     BaseVectorStore,
-    CollectionNotFound,
-    CollectionSchemaMismatch,
-    DimensionMismatch,
     Filter,
     KeywordSearchPort,
     SearchHit,
-    VectorRecord,
     VectorSearchPort,
-    VectorStoreError,
-    matches_filter,
 )
 
 
-def test_legacy_imports_keep_the_same_runtime_objects() -> None:
-    """兼容层必须是别名；复制类会让旧路径捕获不到新路径抛出的异常。"""
-    exports = {
-        "BaseVectorStore": BaseVectorStore,
-        "CollectionNotFound": CollectionNotFound,
-        "CollectionSchemaMismatch": CollectionSchemaMismatch,
-        "DimensionMismatch": DimensionMismatch,
-        "Filter": Filter,
-        "KeywordSearchPort": KeywordSearchPort,
-        "SearchHit": SearchHit,
-        "VectorRecord": VectorRecord,
-        "VectorSearchPort": VectorSearchPort,
-        "VectorStoreError": VectorStoreError,
-        "matches_filter": matches_filter,
-    }
-    for name, current in exports.items():
-        assert getattr(legacy, name) is current
-        assert getattr(legacy_package, name) is current
+def test_concrete_store_satisfies_vector_store_port() -> None:
+    assert isinstance(InMemoryVectorStore(), BaseVectorStore)
 
 
 def test_ports_import_does_not_load_pymilvus() -> None:

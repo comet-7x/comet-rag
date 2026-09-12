@@ -26,9 +26,9 @@ jobs:
       - name: 库可独立使用
         run: |
           uv run python -c "
-          from comet_rag.engines.pipelines import Pipeline
           from comet_rag.engines.chunkers import TextChunker
           from comet_rag.loaders import AutoLoader, LocalLoader
+          from comet_rag.pipeline import Pipeline
           import sys
           chunks = TextChunker(chunk_size=50, chunk_overlap=10).chunk('x' * 300)
           assert len(chunks) > 1, f'300 字符按 50 切却只得到 {len(chunks)} 块'
