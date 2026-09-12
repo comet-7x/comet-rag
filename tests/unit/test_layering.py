@@ -257,7 +257,10 @@ def test_business_code_depends_on_model_ports(module: Path) -> None:
 
 # ── Service 依赖向量存储 Port，而不是适配器包（M3-T2）──────────────────────
 
-VECTORSTORE_ADAPTER_PACKAGE = "comet_rag.infrastructure.vectorstore"
+VECTORSTORE_ADAPTER_PACKAGES = (
+    "comet_rag.infrastructure.persistence.vector_store",
+    "comet_rag.infrastructure.vectorstore",  # 迁移期旧路径
+)
 
 
 def _service_vectorstore_violations(
@@ -266,7 +269,7 @@ def _service_vectorstore_violations(
     return {
         name
         for name in _imported_full(tree, module)
-        if name.startswith(VECTORSTORE_ADAPTER_PACKAGE)
+        if name.startswith(VECTORSTORE_ADAPTER_PACKAGES)
     }
 
 
@@ -294,11 +297,14 @@ def test_vectorstore_port_guard_detects_absolute_and_relative_imports() -> None:
     module = PROJECT_ROOT / "comet_rag" / "services" / "retrieval.py"
     tree = ast.parse(
         "from comet_rag.infrastructure.vectorstore import BaseVectorStore\n"
+        "from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore\n"
         "from ..infrastructure.vectorstore.milvus import MilvusStore\n"
         "from comet_rag.infrastructure import vectorstore\n"
         "from ..infrastructure import vectorstore\n"
     )
     assert _service_vectorstore_violations(tree, module) == {
+        "comet_rag.infrastructure.persistence.vector_store",
+        "comet_rag.infrastructure.persistence.vector_store.InMemoryVectorStore",
         "comet_rag.infrastructure.vectorstore.BaseVectorStore",
         "comet_rag.infrastructure.vectorstore",
         "comet_rag.infrastructure.vectorstore.milvus",

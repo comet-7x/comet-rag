@@ -20,17 +20,19 @@ from comet_rag.engines.pipelines import (
     PipelineHooks,
 )
 from comet_rag.engines.utils import detect_content_type_from_path
-from comet_rag.infrastructure.knowledge_base import (
+from comet_rag.infrastructure.persistence.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
-    KnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
 from comet_rag.ports import (
     BaseVectorStore,
     DocumentExtractorPort,
     EmbeddingPort,
     KeywordSearchPort,
     RerankerPort,
+)
+from comet_rag.ports.knowledge_base import (
+    KnowledgeBaseRepository,
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
@@ -54,7 +56,7 @@ def build_vector_store(config: APPConfig) -> BaseVectorStore:
         return InMemoryVectorStore()
     if backend is Backend.MILVUS:
         # pymilvus 在 `milvus` extra 里，函数内 import 才不会拖累未安装的用户
-        from comet_rag.infrastructure.vectorstore.milvus import (  # noqa: PLC0415
+        from comet_rag.infrastructure.persistence.vector_store.milvus import (  # noqa: PLC0415
             MilvusStore,
         )
 
@@ -76,7 +78,7 @@ def build_vector_store(config: APPConfig) -> BaseVectorStore:
 
 def build_database(config: APPConfig):
     """关系库引擎。只在真的需要时创建 —— 全 memory 的部署不该被迫连库。"""
-    from comet_rag.infrastructure.database import Database  # noqa: PLC0415
+    from comet_rag.infrastructure.persistence.sql import Database  # noqa: PLC0415
 
     settings = config.infrastructure_config.database
     if settings is None:
@@ -97,7 +99,7 @@ def build_kb_repository(config: APPConfig, database=None) -> KnowledgeBaseReposi
     """
     if config.backends.task_store is Backend.MEMORY:
         return InMemoryKnowledgeBaseRepository()
-    from comet_rag.infrastructure.database.kb_repository import (  # noqa: PLC0415
+    from comet_rag.infrastructure.persistence.knowledge_base.postgres import (  # noqa: PLC0415
         PostgresKnowledgeBaseRepository,
     )
 
@@ -111,7 +113,7 @@ def build_task_store(config: APPConfig, database=None) -> TaskStore:
     if backend is Backend.MEMORY:
         return InMemoryTaskStore()
     if backend is Backend.POSTGRES:
-        from comet_rag.tasks.store_postgres import (  # noqa: PLC0415
+        from comet_rag.infrastructure.persistence.task_store.postgres import (  # noqa: PLC0415
             PostgresTaskStore,
         )
 

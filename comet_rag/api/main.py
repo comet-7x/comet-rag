@@ -16,15 +16,15 @@ from comet_rag.api.routes import admin, ingest, kb, search, tasks
 from comet_rag.config.schemas import APPConfig
 from comet_rag.config.settings import get_config
 from comet_rag.core.concurrency import Overloaded
-from comet_rag.infrastructure.knowledge_base import (
-    EmbeddingModelChanged,
-    KnowledgeBaseExists,
-    KnowledgeBaseNotFound,
-)
 from comet_rag.ports import (
     CollectionNotFound,
     CollectionSchemaMismatch,
     DimensionMismatch,
+)
+from comet_rag.ports.knowledge_base import (
+    EmbeddingModelChanged,
+    KnowledgeBaseExists,
+    KnowledgeBaseNotFound,
 )
 from comet_rag.services.retrieval import HybridRecallFailed, KeywordSearchUnavailable
 from comet_rag.services.source_policy import SourceNotAllowed

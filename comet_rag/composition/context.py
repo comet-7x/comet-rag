@@ -10,8 +10,8 @@ from typing import Any
 from comet_rag.core.logging import logger
 from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.pipelines import HookProvider
-from comet_rag.infrastructure.knowledge_base import KnowledgeBaseRepository
 from comet_rag.ports import BaseVectorStore, EmbeddingPort, RerankerPort
+from comet_rag.ports.knowledge_base import KnowledgeBaseRepository
 from comet_rag.services.ingestion import IngestRunner, register_ingest_runner
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService

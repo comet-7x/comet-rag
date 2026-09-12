@@ -3,14 +3,14 @@
 ## RS-T0：规格与保护网
 
 - [x] 冻结目录判定规则、迁移边界和兼容策略。
-- [ ] 补充新目录依赖守卫与旧导入身份测试。
+- [x] 补充新目录依赖守卫与旧导入身份测试。
 
 ## RS-T1：Persistence
 
-- [ ] 建立 `infrastructure/persistence/sql/`。
-- [ ] 建立 vector/task/knowledge-base store 子包。
-- [ ] 将 KnowledgeBase 领域对象与契约迁入 ports。
-- [ ] 保留 database/vectorstore/knowledge_base 旧路径兼容。
+- [x] 建立 `infrastructure/persistence/sql/`。
+- [x] 建立 vector/task/knowledge-base store 子包。
+- [x] 将 KnowledgeBase 领域对象与契约迁入 ports。
+- [x] 保留 database/vectorstore/knowledge_base 旧路径兼容。
 
 ## RS-T2：Sources
 

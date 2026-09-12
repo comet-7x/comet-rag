@@ -551,7 +551,7 @@ def test_milvus_backend_requires_connection_settings(
 def test_milvus_database_and_prefix_are_forwarded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from comet_rag.infrastructure.vectorstore import milvus
+    from comet_rag.infrastructure.persistence.vector_store import milvus
 
     captured: dict[str, Any] = {}
 

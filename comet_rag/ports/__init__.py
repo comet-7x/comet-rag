@@ -24,6 +24,14 @@ from .embedding import (
     MultimodalEmbeddingPort,
 )
 from .gate import AsyncGate
+from .knowledge_base import (
+    EmbeddingModelChanged,
+    KnowledgeBase,
+    KnowledgeBaseError,
+    KnowledgeBaseExists,
+    KnowledgeBaseNotFound,
+    KnowledgeBaseRepository,
+)
 from .reranker import RerankerPort
 from .source import LoadedResource, SourceContent, SourceLoaderPort
 from .vector_store import (
@@ -55,10 +63,16 @@ __all__ = [
     "DimensionMismatch",
     "EmbeddingPort",
     "EmbeddingTask",
+    "EmbeddingModelChanged",
     "ExtractedDocument",
     "Filter",
     "ImageContent",
     "KeywordSearchPort",
+    "KnowledgeBase",
+    "KnowledgeBaseError",
+    "KnowledgeBaseExists",
+    "KnowledgeBaseNotFound",
+    "KnowledgeBaseRepository",
     "LoadedResource",
     "MediaResource",
     "MultimodalEmbeddingPort",
