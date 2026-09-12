@@ -30,6 +30,7 @@ OPTIONAL = {
     "comet_rag.infrastructure.vectorstore.milvus": "pymilvus",
     "comet_rag.tasks.store_postgres": "sqlalchemy",
     "comet_rag.tasks.executor_arq": "arq",
+    "comet_rag.infrastructure.task_execution.arq": "arq",
 }
 
 

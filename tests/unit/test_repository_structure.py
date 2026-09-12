@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 
 def test_knowledge_base_old_path_preserves_object_identity() -> None:
     from comet_rag.infrastructure.knowledge_base import (
@@ -95,3 +97,12 @@ def test_api_schema_old_path_preserves_object_identity() -> None:
     from comet_rag.schemas import SearchRequest as LegacySearchRequest
 
     assert LegacySearchRequest is SearchRequest
+
+
+def test_arq_executor_old_path_preserves_object_identity() -> None:
+    pytest.importorskip("arq")
+
+    from comet_rag.infrastructure.task_execution.arq import ArqExecutor
+    from comet_rag.tasks.executor_arq import ArqExecutor as LegacyArqExecutor
+
+    assert LegacyArqExecutor is ArqExecutor

@@ -48,8 +48,9 @@ PostgreSQL 实现分别进入 persistence；services 不再 import infrastructur
 
 ### RS-D4：任务内核与执行适配器分离
 
-`tasks/` 保留模型、状态机、Store/Executor 契约、Runner 与通用 TaskService。
-PostgreSQL TaskStore 进入 persistence，ARQ 与 InProcess 执行实现进入
+`tasks/` 保留模型、状态机、Store/Executor 契约、Runner、通用 TaskService，
+以及不依赖外部系统的 InMemoryTaskStore / InProcessExecutor 参考实现。
+PostgreSQL TaskStore 进入 persistence，依赖 Redis 的 ARQ 实现进入
 `infrastructure/task_execution/`。
 
 ### RS-D5：DOCX 专属逻辑垂直收拢

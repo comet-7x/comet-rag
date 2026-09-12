@@ -27,8 +27,12 @@ from arq.connections import RedisSettings
 from arq.worker import Worker
 
 from comet_rag.infrastructure.database import Database
+from comet_rag.infrastructure.task_execution.arq import (
+    LANE_QUEUES,
+    ArqExecutor,
+    run_task,
+)
 from comet_rag.tasks import TaskStatus
-from comet_rag.tasks.executor_arq import LANE_QUEUES, ArqExecutor, run_task
 from comet_rag.tasks.store_postgres import PostgresTaskStore
 from comet_rag.workers.maintenance import sweep_stale_tasks
 from tests.contracts.support import wait_for_terminal, wait_until

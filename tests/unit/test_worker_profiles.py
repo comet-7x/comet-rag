@@ -16,9 +16,9 @@ from comet_rag.config.schemas import (
     RedisConfig,
     ServerConfig,
 )
+from comet_rag.infrastructure.task_execution.arq import LANE_QUEUES
 from comet_rag.services.ingestion import IngestRunner
 from comet_rag.tasks import LANE_CPU, LANE_IO, TaskContext
-from comet_rag.tasks.executor_arq import LANE_QUEUES
 from comet_rag.workers.base import build_settings
 from comet_rag.workers.embedder import PROFILE as EMBEDDER
 from comet_rag.workers.maintenance import DEFAULT_LEASE, sweep_cron

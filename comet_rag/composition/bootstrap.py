@@ -137,7 +137,7 @@ def build_task_executor(
         # 而且 InProcessExecutor 压根没有"另一条队列"可投。
         return InProcessExecutor(store, max_concurrency=config.backends.max_concurrency)
     if backend is Backend.ARQ:
-        from comet_rag.tasks.executor_arq import (  # noqa: PLC0415
+        from comet_rag.infrastructure.task_execution.arq import (  # noqa: PLC0415
             LANE_QUEUES,
             ArqExecutor,
         )
