@@ -396,7 +396,10 @@ async def test_hybrid_dense_failure_degrades_to_keyword_and_logs(
     assert result.degradations[0].error_type == "TimeoutError"
     assert len(log.exceptions) == 1
     assert "stage=dense" in log.messages[0]
-    assert "private endpoint" not in result.degradations[0].to_dict().values()
+    assert all(
+        "private endpoint" not in (value or "")
+        for value in result.degradations[0].to_dict().values()
+    )
 
 
 async def test_hybrid_keyword_failure_degrades_to_dense(

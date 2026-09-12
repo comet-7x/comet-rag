@@ -271,7 +271,7 @@ score(document) = Σ 1 / (rrf_k + rank_in_channel)
   候选，请求级 `degradations` 与系统级 `degraded` 保持分离。完整 E2E 为 30 项通过。
 - 500 段固定合成语料记录三模式 top-1 命中、20 个候选和 P50/P95/P99；结果仅作为
   回归信号，不用于宣称真实质量提升，数值见 `docs/benchmark.md`。
-- 默认单测为 `1869 passed, 19 skipped, 194 deselected, 1 xfailed`，pytest 9.14s；
+- 默认单测为 `1872 passed, 19 skipped, 194 deselected, 1 xfailed`，pytest 8.79s；
   core-only 隔离安装通过；完整 integration 为 `49 passed, 108 skipped`，pytest
   317.52s；Ruff 与 Pyright 通过，Pyright 为 `0 errors`。
 

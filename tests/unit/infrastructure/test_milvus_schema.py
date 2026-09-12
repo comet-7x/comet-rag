@@ -60,6 +60,7 @@ def test_v2_schema_is_accepted() -> None:
             ),
             "不是 chinese",
         ),
+        (lambda schema: schema["fields"].pop(), "缺少 sparse_vector 字段"),
         (lambda schema: schema.update({"functions": []}), "BM25 function"),
     ],
 )
@@ -196,6 +197,26 @@ async def test_old_schema_is_rejected_without_create_or_drop(
         await store.aensure_collection("existing-kb", dim=4)
 
     assert sync.created is None
+    assert sync.dropped is False
+
+
+@pytest.mark.parametrize("mode", ["dense", "keyword"])
+async def test_direct_search_after_restart_rejects_old_schema(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """进程重启后的空缓存不能让读路径绕过 schema v2 校验。"""
+    old_schema = _v2_schema()
+    old_schema["functions"] = []
+    sync = _FakeSync(exists=True, description=old_schema)
+    store, _, _ = _store(monkeypatch, sync)
+
+    with pytest.raises(CollectionSchemaMismatch, match="BM25 function"):
+        if mode == "dense":
+            await store.asearch("existing-kb", [1.0, 0.0, 0.0, 0.0])
+        else:
+            await store.asearch_keywords("existing-kb", "量子")
+
+    assert store._dims == {}  # noqa: SLF001
     assert sync.dropped is False
 
 

@@ -183,9 +183,13 @@ async def test_retrieval_service_runs_all_modes_against_real_milvus(
 
 async def test_real_legacy_schema_is_rejected_without_deletion(
     store: BaseVectorStore,
+    milvus_uri: str,
+    milvus_database: str,
 ) -> None:
     """旧 collection 属于用户数据；兼容检查失败也绝不能自动迁移或删除。"""
     from pymilvus import DataType
+
+    from comet_rag.infrastructure.vectorstore.milvus import MilvusStore
 
     kb = "kb-real-legacy-schema"
     raw: Any = store
@@ -208,5 +212,20 @@ async def test_real_legacy_schema_is_rejected_without_deletion(
 
     with pytest.raises(CollectionSchemaMismatch, match="显式删除"):
         await store.aensure_collection(kb, dim=4)
+
+    # 模拟服务重启：新实例没有 _dims 缓存，直接走读路径也必须得到同一个
+    # 可操作的 schema 错误，而不是泄漏 Milvus 异常或被 hybrid 当成通道抖动。
+    restarted = MilvusStore(
+        endpoint=milvus_uri,
+        database_name=milvus_database,
+        prefix=raw._prefix,  # noqa: SLF001
+    )
+    try:
+        with pytest.raises(CollectionSchemaMismatch, match="显式删除"):
+            await restarted.asearch(kb, [1.0, 0.0, 0.0, 0.0])
+        with pytest.raises(CollectionSchemaMismatch, match="显式删除"):
+            await restarted.asearch_keywords(kb, "量子")
+    finally:
+        await restarted.aclose()
 
     assert await asyncio.to_thread(raw._sync.has_collection, name)  # noqa: SLF001

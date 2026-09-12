@@ -119,12 +119,16 @@ def _schema_mismatches(
     if text_field is None:
         return [f"缺少 {_TEXT} 字段"]
 
+    sparse_field = fields.get(_SPARSE)
+
     params = text_field.get("params") or {}
     analyzer_enabled = params.get("enable_analyzer")
     if analyzer_enabled not in (True, "true", "True"):
         problems = [f"{_TEXT} 未启用 analyzer"]
     else:
         problems = []
+    if sparse_field is None:
+        problems.append(f"缺少 {_SPARSE} 字段")
 
     analyzer = params.get("analyzer_params")
     if isinstance(analyzer, str):
@@ -207,9 +211,7 @@ class MilvusStore(BaseVectorStore):
     async def _sparse_indexes(self, name: str) -> list[dict[str, Any]]:
         index_names = cast(
             "list[str]",
-            await asyncio.to_thread(
-                self._sync.list_indexes, name, field_name=_SPARSE
-            ),
+            await asyncio.to_thread(self._sync.list_indexes, name, field_name=_SPARSE),
         )
         return [
             cast(
@@ -227,7 +229,7 @@ class MilvusStore(BaseVectorStore):
         raise CollectionSchemaMismatch(kb_id, [f"缺少 {_DENSE} 字段"])
 
     async def _dim_of(self, kb_id: str) -> int:
-        """读回已有 collection 的向量维度。不存在则抛 `CollectionNotFound`。
+        """校验已有 collection 并读回向量维度。
 
         同步客户端的调用一律放在线程中：`has_collection` /
         `describe_collection` 都是真网络请求，直接在事件循环上调，Milvus 一慢
@@ -241,9 +243,25 @@ class MilvusStore(BaseVectorStore):
         name = self._name(kb_id)
         if not await asyncio.to_thread(self._sync.has_collection, name):
             raise CollectionNotFound(kb_id)
-        desc = await self._describe(name)
-        dim = self._dense_dim(desc, kb_id)
+        dim = await self._validated_dim(name, kb_id)
         self._dims[kb_id] = dim
+        return dim
+
+    async def _validated_dim(self, name: str, kb_id: str) -> int:
+        """返回通过 schema v2 校验的维度，且不缓存失败结果。"""
+        description = await self._describe(name)
+        dim = self._dense_dim(description, kb_id)
+        fields = {
+            field.get("name")
+            for field in description.get("fields", [])
+            if isinstance(field, dict)
+        }
+        # 缺少 sparse 字段时按契约报告 schema 错误，不让 SDK 的 list_indexes
+        # 先因未知字段抛出供应商异常。
+        indexes = await self._sparse_indexes(name) if _SPARSE in fields else []
+        problems = _schema_mismatches(description, indexes)
+        if problems:
+            raise CollectionSchemaMismatch(kb_id, problems)
         return dim
 
     async def aensure_collection(self, kb_id: str, *, dim: int) -> None:
@@ -252,15 +270,9 @@ class MilvusStore(BaseVectorStore):
         name = self._name(kb_id)
 
         if await asyncio.to_thread(self._sync.has_collection, name):
-            description = await self._describe(name)
-            existing = self._dense_dim(description, kb_id)
+            existing = await self._validated_dim(name, kb_id)
             if existing != dim:
                 raise DimensionMismatch(kb_id, existing, dim)
-            problems = _schema_mismatches(
-                description, await self._sparse_indexes(name)
-            )
-            if problems:
-                raise CollectionSchemaMismatch(kb_id, problems)
             self._dims[kb_id] = existing
             return
 
