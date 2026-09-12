@@ -42,3 +42,49 @@ def test_postgres_task_store_old_path_is_lazy_and_compatible() -> None:
     from comet_rag.tasks.store_postgres import PostgresTaskStore as LegacyTaskStore
 
     assert LegacyTaskStore is PostgresTaskStore
+
+
+def test_source_loader_old_paths_preserve_object_identity() -> None:
+    from comet_rag.engines.loaders import (
+        AutoLoader as LegacyAutoLoader,
+    )
+    from comet_rag.engines.loaders import (
+        LocalLoader as LegacyLocalLoader,
+    )
+    from comet_rag.engines.loaders import (
+        URLLoader as LegacyURLLoader,
+    )
+    from comet_rag.infrastructure.sources import AutoLoader, LocalLoader, URLLoader
+
+    assert LegacyAutoLoader is AutoLoader
+    assert LegacyLocalLoader is LocalLoader
+    assert LegacyURLLoader is URLLoader
+
+
+def test_s3_loader_old_path_preserves_object_identity() -> None:
+    from comet_rag.infrastructure.loaders import S3Loader as LegacyS3Loader
+    from comet_rag.infrastructure.sources.s3 import S3Loader
+
+    assert LegacyS3Loader is S3Loader
+
+
+def test_loader_facade_exports_canonical_implementations() -> None:
+    from comet_rag.infrastructure.sources import AutoLoader, LocalLoader, URLLoader
+    from comet_rag.infrastructure.sources.s3 import S3Loader
+    from comet_rag.loaders import (
+        AutoLoader as PublicAutoLoader,
+    )
+    from comet_rag.loaders import (
+        LocalLoader as PublicLocalLoader,
+    )
+    from comet_rag.loaders import (
+        S3Loader as PublicS3Loader,
+    )
+    from comet_rag.loaders import (
+        URLLoader as PublicURLLoader,
+    )
+
+    assert PublicAutoLoader is AutoLoader
+    assert PublicLocalLoader is LocalLoader
+    assert PublicURLLoader is URLLoader
+    assert PublicS3Loader is S3Loader

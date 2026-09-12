@@ -6,9 +6,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import ClassVar, Protocol
 
-from comet_rag.engines.loaders.types import LoaderContent
 from comet_rag.engines.pipelines.types import PipelineConfig
 from comet_rag.ports.document import DocumentExtractorPort
+from comet_rag.ports.source import LoadedResource
+
+LoaderContent = LoadedResource
 
 # Hook type aliases
 ExtractHook = Callable[[LoaderContent, PipelineConfig], str]

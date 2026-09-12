@@ -6,9 +6,11 @@ from comet_rag.engines.cleaners.docx_cleaner import DocxCleaner
 from comet_rag.engines.cleaners.vision_model import VisionModel
 from comet_rag.engines.converters.archive_guard import ArchiveLimits
 from comet_rag.engines.converters.text_converter import DocxConverter
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.parsers.docx_parser.docx_parser import DocxParser
 from comet_rag.ports.document import ExtractedDocument
+from comet_rag.ports.source import LoadedResource, SourceContent
+
+LoaderContent = LoadedResource
 
 
 class DocxDocumentExtractor:

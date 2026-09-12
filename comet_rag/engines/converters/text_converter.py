@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 
 from docx import Document
@@ -8,7 +10,9 @@ from comet_rag.engines.converters.archive_guard import (
 )
 from comet_rag.engines.converters.base_converter import BaseConverter
 from comet_rag.engines.converters.types import DocxDocument
-from comet_rag.engines.loaders.types import LoaderContent
+from comet_rag.ports.source import LoadedResource
+
+LoaderContent = LoadedResource
 
 
 class TextConverter(BaseConverter):

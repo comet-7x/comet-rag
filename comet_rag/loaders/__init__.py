@@ -1,14 +1,10 @@
-"""来源加载的统一公共入口。
-
-实现仍按依赖归属分布在 engines 与 infrastructure；这个门面只解决使用者发现性。
-S3 名称通过模块级 ``__getattr__`` 惰性加载，核心 Loader 的导入不触碰可选 SDK。
-"""
-
 from __future__ import annotations
 
+# 来源加载的稳定公共入口。具体实现统一位于 infrastructure.sources；S3 保持
+# 惰性加载，导入本门面不会触发可选 SDK。
 from typing import TYPE_CHECKING, Any
 
-from comet_rag.engines.loaders import (
+from comet_rag.infrastructure.sources import (
     AutoLoader,
     BaseLoader,
     DownloadRequestConfig,
@@ -22,7 +18,7 @@ from comet_rag.engines.loaders import (
 from comet_rag.ports import SourceLoaderPort
 
 if TYPE_CHECKING:
-    from comet_rag.infrastructure.loaders import (
+    from comet_rag.infrastructure.sources.s3 import (
         MinioLoader,
         ObjectTooLarge,
         S3Loader,
@@ -34,7 +30,7 @@ _S3_EXPORTS = frozenset({"MinioLoader", "ObjectTooLarge", "S3Loader"})
 def __getattr__(name: str) -> Any:
     if name not in _S3_EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    from comet_rag.infrastructure import loaders as s3_loaders
+    from comet_rag.infrastructure.sources import s3 as s3_loaders
 
     value = getattr(s3_loaders, name)
     globals()[name] = value

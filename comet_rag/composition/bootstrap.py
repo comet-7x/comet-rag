@@ -11,8 +11,7 @@ from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.degradation import DegradationController, DegradationSettings
 from comet_rag.core.logging import logger
-from comet_rag.engines.loaders import AutoLoader, LoaderContent, LoaderRoute
-from comet_rag.engines.loaders.data_type import resolve_detected_extension
+from comet_rag.engines.documents.formats import resolve_detected_extension
 from comet_rag.engines.pipelines import (
     DocxConfig,
     HookProvider,
@@ -24,6 +23,7 @@ from comet_rag.infrastructure.persistence.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
 )
 from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.sources import AutoLoader, LoaderContent, LoaderRoute
 from comet_rag.ports import (
     BaseVectorStore,
     DocumentExtractorPort,
@@ -188,7 +188,7 @@ def build_ingest_loader(config: APPConfig, policy: SourcePolicy) -> AutoLoader:
             )
         return AutoLoader(routes)
 
-    from comet_rag.infrastructure.loaders import S3Loader  # noqa: PLC0415
+    from comet_rag.infrastructure.sources.s3 import S3Loader  # noqa: PLC0415
 
     object_loader = S3Loader(
         endpoint_url=settings.endpoint_url,

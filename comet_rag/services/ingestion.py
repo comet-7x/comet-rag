@@ -13,15 +13,15 @@ from pydantic import BaseModel, Field
 from comet_rag.core.concurrency import Overloaded
 from comet_rag.core.logging import logger
 from comet_rag.engines.embedding.batch import aembed_documents
-from comet_rag.engines.loaders.auto_loader import AutoLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import HookProvider, PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
 from comet_rag.ports import (
     BaseVectorStore,
     DocumentResourceLimitExceeded,
     EmbeddingPort,
+    LoadedResource,
     RetryableDocumentUpstreamError,
+    SourceContent,
     SourceLoaderPort,
     VectorRecord,
 )
@@ -122,7 +122,7 @@ class IngestRunner:
         embedding_model: EmbeddingPort,
         vector_store: BaseVectorStore,
         knowledge_base: KnowledgeBaseService,
-        loader: SourceLoaderPort | None = None,
+        loader: SourceLoaderPort,
         config: PipelineConfig | None = None,
         hooks: HookProvider | None = None,
         max_extracted_text_bytes_by_type: Mapping[str, int] | None = None,
@@ -130,7 +130,7 @@ class IngestRunner:
         self._embedding_model = embedding_model
         self._vector_store = vector_store
         self._kb = knowledge_base
-        self._loader = loader or AutoLoader.default()
+        self._loader = loader
         self._config = config or PipelineConfig()
         self._hooks = hooks or PipelineHooks
         self._max_extracted_text_bytes_by_type = {
@@ -180,7 +180,7 @@ class IngestRunner:
         task = await ctx.snapshot()
         request = IngestRequest.model_validate(task.request)
 
-        loader_content: LoaderContent | None = None
+        loader_content: LoadedResource | None = None
         try:
             # 下载也属于 extracting 阶段，必须位于同一个异常分类边界内。
             # 否则连接超时会绕过 _classify，第一次失败就把任务判死。

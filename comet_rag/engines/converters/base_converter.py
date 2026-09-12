@@ -1,7 +1,11 @@
+from __future__ import annotations
+
 import asyncio
 
 from comet_rag.engines.converters.types import BaseDocument, ByteDocument
-from comet_rag.engines.loaders.base_loader import LoaderContent
+from comet_rag.ports.source import LoadedResource
+
+LoaderContent = LoadedResource
 
 
 class BaseConverter:

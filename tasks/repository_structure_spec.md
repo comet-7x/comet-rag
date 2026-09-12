@@ -30,8 +30,8 @@
 ### RS-D1：来源加载统一为基础设施适配器
 
 Local、HTTP 与 S3 都访问进程外资源，统一进入 `infrastructure/sources/`。
-`SourceLoaderPort` 留在 `ports/source.py`；来源选择和调用编排进入 services。
-`comet_rag.loaders` 仅保留稳定公共入口。
+`SourceLoaderPort` 留在 `ports/source.py`；纯路由组合 `AutoLoader` 与适配器同包，
+准入策略和业务调用编排留在 services。`comet_rag.loaders` 仅保留稳定公共入口。
 
 ### RS-D2：持久化使用统一父目录
 

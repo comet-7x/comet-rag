@@ -7,10 +7,12 @@ from typing import TYPE_CHECKING
 
 from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
 from comet_rag.engines.loaders.auto_loader import AutoLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines.hooks import HookProvider, PipelineHooks
 from comet_rag.engines.pipelines.types import Chunk, PipelineConfig, PipelineResult
 from comet_rag.engines.utils import compute_sha256
+from comet_rag.ports.source import LoadedResource, SourceContent
+
+LoaderContent = LoadedResource
 
 if TYPE_CHECKING:
     from comet_rag.ports import EmbeddingPort, SourceLoaderPort
