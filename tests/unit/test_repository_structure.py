@@ -106,3 +106,27 @@ def test_arq_executor_old_path_preserves_object_identity() -> None:
     from comet_rag.tasks.executor_arq import ArqExecutor as LegacyArqExecutor
 
     assert LegacyArqExecutor is ArqExecutor
+
+
+def test_docx_old_paths_preserve_object_identity() -> None:
+    from comet_rag.engines.cleaners.docx_cleaner import DocxCleaner as LegacyCleaner
+    from comet_rag.engines.converters.text_converter import (
+        DocxConverter as LegacyConverter,
+    )
+    from comet_rag.engines.document.docx import (
+        DocxDocumentExtractor as LegacyExtractor,
+    )
+    from comet_rag.engines.documents.docx import (
+        DocxCleaner,
+        DocxConverter,
+        DocxDocumentExtractor,
+        DocxParser,
+    )
+    from comet_rag.engines.parsers.docx_parser.docx_parser import (
+        DocxParser as LegacyParser,
+    )
+
+    assert LegacyCleaner is DocxCleaner
+    assert LegacyConverter is DocxConverter
+    assert LegacyExtractor is DocxDocumentExtractor
+    assert LegacyParser is DocxParser

@@ -1,5 +1,5 @@
 from __future__ import annotations
 
-from .docx import DocxDocumentExtractor
+from comet_rag.engines.documents.docx import DocxDocumentExtractor
 
 __all__ = ["DocxDocumentExtractor"]
