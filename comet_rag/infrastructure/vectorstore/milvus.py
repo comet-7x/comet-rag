@@ -16,6 +16,7 @@ from pymilvus import (
     FunctionType,
     MilvusClient,
 )
+from pymilvus.client.types import LoadState
 
 from comet_rag.core.logging import logger
 from comet_rag.ports import (
@@ -285,9 +286,41 @@ class MilvusStore(BaseVectorStore):
                 continue
             if existing != dim:
                 raise DimensionMismatch(kb_id, existing, dim)
+            await self._ensure_loaded(name, kb_id)
             self._dims[kb_id] = existing
             return
         raise AssertionError("schema readiness loop exhausted unexpectedly")
+
+    async def _ensure_loaded(self, name: str, kb_id: str) -> None:
+        """主动加载 collection，并在服务端确认完成后返回。"""
+        self._dims.pop(kb_id, None)
+        result = cast(
+            "dict[str, Any]",
+            await asyncio.to_thread(self._sync.get_load_state, name),
+        )
+        state = result.get("state")
+        if state == LoadState.NotExist:
+            raise CollectionNotFound(kb_id)
+        if state != LoadState.Loaded:
+            # load_collection 本身会同步等待服务端完成；对 NotLoad 与 Loading
+            # 都主动调用，避免依赖另一个可能已经退出的创建进程。
+            await asyncio.to_thread(
+                self._sync.load_collection,
+                name,
+                replica_number=self._replica_number,
+            )
+            result = cast(
+                "dict[str, Any]",
+                await asyncio.to_thread(self._sync.get_load_state, name),
+            )
+            state = result.get("state")
+        if state == LoadState.Loaded:
+            return
+        if state == LoadState.NotExist:
+            raise CollectionNotFound(kb_id)
+        raise RuntimeError(
+            f"Milvus collection 加载调用结束但状态不是 Loaded kb={kb_id} state={state}"
+        )
 
     async def aensure_collection(self, kb_id: str, *, dim: int) -> None:
         if dim <= 0:
@@ -347,19 +380,24 @@ class MilvusStore(BaseVectorStore):
         self._created.add(kb_id)
         try:
             await asyncio.to_thread(self._sync.create_index, name, index_params=index)
-            await asyncio.to_thread(
-                self._sync.load_collection,
-                name,
-                replica_number=self._replica_number,
-            )
         except Exception:
-            # 只回滚本调用刚创建的空 collection；已有 collection 永远不会走这里。
+            # sparse index 尚不可用时，没有其他实例能通过 schema 就绪检查；
+            # 因此这里仍可精确回收本调用刚创建的空 collection。
             try:
                 await asyncio.to_thread(self._sync.drop_collection, name)
             except Exception:
                 logger.exception(f"Milvus 新建失败且回滚失败 kb={kb_id} name={name}")
             else:
                 self._created.discard(kb_id)
+            raise
+        try:
+            await self._ensure_loaded(name, kb_id)
+        except Exception:
+            # index 已公开后，另一个实例可能已经加载并开始使用。此时删除会让
+            # 对方的维度缓存瞬间失效；保留完整 collection 供下一次主动重试加载。
+            logger.exception(
+                f"Milvus collection 加载失败，保留供重试 kb={kb_id} name={name}"
+            )
             raise
         self._dims[kb_id] = dim
         logger.info(f"Milvus collection 已创建 kb={kb_id} name={name} dim={dim}")

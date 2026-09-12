@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+from threading import Event
 from typing import Any
 
 import pytest
 from pymilvus import DataType, Function, FunctionType, MilvusClient
+from pymilvus.client.types import LoadState
 
 from comet_rag.infrastructure.vectorstore import milvus as target
-from comet_rag.ports import CollectionSchemaMismatch, VectorRecord
+from comet_rag.ports import CollectionNotFound, CollectionSchemaMismatch, VectorRecord
 
 
 def _v2_schema(*, dim: int = 4) -> dict[str, Any]:
@@ -93,6 +96,9 @@ class _FakeSync:
         index_ready_after: int = 0,
         describe_index_none: bool = False,
         create_conflict: bool = False,
+        block_load: bool = False,
+        fail_load: bool = False,
+        delete_on_load: bool = False,
     ):
         self.exists = exists
         self.description = description or _v2_schema()
@@ -100,7 +106,14 @@ class _FakeSync:
         self.index_ready_after = index_ready_after
         self.describe_index_none = describe_index_none
         self.create_conflict = create_conflict
+        self.block_load = block_load
+        self.fail_load = fail_load
+        self.delete_on_load = delete_on_load
         self.list_index_calls = 0
+        self.load_calls = 0
+        self.load_started = Event()
+        self.allow_load = Event()
+        self.load_state = LoadState.Loaded if exists else LoadState.NotExist
         self.created: dict[str, Any] | None = None
         self.indexes: Any = None
         self.loaded: dict[str, Any] | None = None
@@ -132,8 +145,11 @@ class _FakeSync:
     def create_collection(self, name: str, **kwargs: Any) -> None:
         if self.create_conflict:
             self.exists = True
+            self.load_state = LoadState.Loaded
             raise RuntimeError("collection already exists")
         self.created = {"name": name, **kwargs}
+        self.exists = True
+        self.load_state = LoadState.NotLoad
 
     def create_index(self, name: str, *, index_params: Any) -> None:
         if self.fail_index:
@@ -141,10 +157,27 @@ class _FakeSync:
         self.indexes = index_params
 
     def load_collection(self, name: str, **kwargs: Any) -> None:
+        self.load_calls += 1
+        self.load_state = LoadState.Loading
+        self.load_started.set()
+        if self.block_load and not self.allow_load.wait(timeout=2):
+            raise TimeoutError("test did not release load")
+        if self.fail_load:
+            raise RuntimeError("load failed")
+        if self.delete_on_load:
+            self.exists = False
+            self.load_state = LoadState.NotExist
+            return
+        self.load_state = LoadState.Loaded
         self.loaded = {"name": name, **kwargs}
+
+    def get_load_state(self, name: str) -> dict[str, LoadState]:
+        return {"state": self.load_state}
 
     def drop_collection(self, name: str) -> None:
         self.dropped = True
+        self.exists = False
+        self.load_state = LoadState.NotExist
 
 
 class _FakeAsync:
@@ -238,6 +271,63 @@ async def test_ensure_recovers_when_create_loses_cross_process_race(
 
     assert store._dims["shared-kb"] == 4  # noqa: SLF001
     assert "shared-kb" not in store._created  # noqa: SLF001
+
+
+async def test_two_instances_wait_until_collection_is_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sync = _FakeSync(exists=False, block_load=True)
+    first, _, _ = _store(monkeypatch, sync)
+    second, _, _ = _store(monkeypatch, sync)
+
+    first_task = asyncio.create_task(first.aensure_collection("shared-kb", dim=4))
+    assert await asyncio.to_thread(sync.load_started.wait, 1)
+    second_task = asyncio.create_task(second.aensure_collection("shared-kb", dim=4))
+    for _ in range(100):
+        if sync.load_calls == 2:
+            break
+        await asyncio.sleep(0.01)
+
+    assert sync.load_calls == 2
+    assert not first_task.done()
+    assert not second_task.done()
+
+    sync.allow_load.set()
+    await asyncio.gather(first_task, second_task)
+
+    assert sync.load_state == LoadState.Loaded
+    assert first._dims["shared-kb"] == 4  # noqa: SLF001
+    assert second._dims["shared-kb"] == 4  # noqa: SLF001
+
+
+async def test_load_failure_keeps_collection_and_does_not_cache_dimension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sync = _FakeSync(exists=False, fail_load=True)
+    store, _, _ = _store(monkeypatch, sync)
+
+    with pytest.raises(RuntimeError, match="load failed"):
+        await store.aensure_collection("retryable-kb", dim=4)
+
+    assert sync.exists is True
+    assert sync.dropped is False
+    assert "retryable-kb" not in store._dims  # noqa: SLF001
+
+    sync.fail_load = False
+    await store.aensure_collection("retryable-kb", dim=4)
+    assert store._dims["retryable-kb"] == 4  # noqa: SLF001
+
+
+async def test_collection_deleted_during_load_is_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sync = _FakeSync(exists=False, delete_on_load=True)
+    store, _, _ = _store(monkeypatch, sync)
+
+    with pytest.raises(CollectionNotFound):
+        await store.aensure_collection("deleted-kb", dim=4)
+
+    assert "deleted-kb" not in store._dims  # noqa: SLF001
 
 
 async def test_missing_index_description_becomes_stable_schema_error(

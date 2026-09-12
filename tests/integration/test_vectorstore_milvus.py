@@ -229,3 +229,37 @@ async def test_real_legacy_schema_is_rejected_without_deletion(
         await restarted.aclose()
 
     assert await asyncio.to_thread(raw._sync.has_collection, name)  # noqa: SLF001
+
+
+async def test_two_instances_concurrently_restore_a_released_collection(
+    store: BaseVectorStore,
+    milvus_uri: str,
+    milvus_database: str,
+) -> None:
+    """两个进程观察到 NotLoad 时都能幂等加载，且只在 Loaded 后返回。"""
+    from pymilvus.client.types import LoadState
+
+    from comet_rag.infrastructure.vectorstore.milvus import MilvusStore
+
+    kb = "kb-concurrent-load"
+    raw: Any = store
+    await raw.aensure_collection(kb, dim=4)
+    name = raw._name(kb)  # noqa: SLF001
+    await asyncio.to_thread(raw._sync.release_collection, name)  # noqa: SLF001
+
+    second = MilvusStore(
+        endpoint=milvus_uri,
+        database_name=milvus_database,
+        prefix=raw._prefix,  # noqa: SLF001
+    )
+    try:
+        await asyncio.gather(
+            raw.aensure_collection(kb, dim=4),
+            second.aensure_collection(kb, dim=4),
+        )
+        state = await asyncio.to_thread(raw._sync.get_load_state, name)  # noqa: SLF001
+        assert state["state"] == LoadState.Loaded
+        assert raw._dims[kb] == 4  # noqa: SLF001
+        assert second._dims[kb] == 4  # noqa: SLF001
+    finally:
+        await second.aclose()
