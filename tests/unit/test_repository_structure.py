@@ -137,3 +137,26 @@ def test_pipeline_old_path_preserves_public_facade_identity() -> None:
     from comet_rag.pipeline import Pipeline
 
     assert LegacyPipeline is Pipeline
+
+
+def test_model_provider_old_paths_preserve_object_identity() -> None:
+    from comet_rag.infrastructure.models.embedding import BaseEmbeddingModel
+    from comet_rag.infrastructure.models.reranker import BaseReranker
+    from comet_rag.infrastructure.providers.embedding import (
+        BaseEmbeddingModel as LegacyEmbeddingBase,
+    )
+    from comet_rag.infrastructure.providers.reranker import (
+        BaseReranker as LegacyRerankerBase,
+    )
+
+    assert LegacyEmbeddingBase is BaseEmbeddingModel
+    assert LegacyRerankerBase is BaseReranker
+
+
+def test_document_provider_old_path_preserves_object_identity() -> None:
+    from comet_rag.infrastructure.extractors import MinerUDocumentExtractor
+    from comet_rag.infrastructure.providers.document import (
+        MinerUDocumentExtractor as LegacyMinerU,
+    )
+
+    assert LegacyMinerU is MinerUDocumentExtractor

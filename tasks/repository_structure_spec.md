@@ -70,6 +70,13 @@ PostgreSQL TaskStore 进入 persistence，依赖 Redis 的 ARQ 实现进入
 旧 `engines.pipelines.Pipeline` 继续指向公共入口，但 `engines` 内部实现不再反向依赖
 基础设施。
 
+### RS-D8：按适配能力替代泛化 Provider 桶
+
+Embedding、Reranker 与 Vision 是模型适配器，统一归入 `infrastructure/models/`；
+MinerU 实现 `DocumentExtractorPort`，归入 `infrastructure/extractors/`。共享的图片
+引用与线路格式工具跟随模型目录，不再裸露在泛化的 `providers/` 根层。旧
+`infrastructure.providers` 只保留兼容入口。
+
 ## 4. 兼容策略
 
 - 旧公开导入路径保留对象别名，类身份必须保持一致。

@@ -47,7 +47,7 @@ from comet_rag.tasks import (
 )
 
 if TYPE_CHECKING:
-    from comet_rag.infrastructure.providers.document import MinerUDocumentExtractor
+    from comet_rag.infrastructure.extractors import MinerUDocumentExtractor
 
 
 def build_vector_store(config: APPConfig) -> BaseVectorStore:
@@ -241,7 +241,7 @@ def build_mineru_extractor(config: APPConfig) -> MinerUDocumentExtractor | None:
     if not settings.enabled:
         return None
 
-    from comet_rag.infrastructure.providers.document import (  # noqa: PLC0415
+    from comet_rag.infrastructure.extractors import (  # noqa: PLC0415
         MinerUDocumentExtractor,
     )
 
@@ -330,7 +330,7 @@ def build_embedding_model(
     image_url_validator: Callable[[str], None] | None = None,
     local_image_validator: Callable[[str], None] | None = None,
 ) -> EmbeddingPort:
-    from comet_rag.infrastructure.providers.embedding.qwen3_vl_embedding import (  # noqa: PLC0415
+    from comet_rag.infrastructure.models.embedding.qwen3_vl import (  # noqa: PLC0415
         Qwen3VLEmbeddingModel,
     )
 
@@ -359,7 +359,7 @@ def build_reranker(
     if settings is None:
         logger.info("未配置 reranker，检索将跳过重排")
         return None
-    from comet_rag.infrastructure.providers.reranker.qwen3_vl_reranker import (  # noqa: PLC0415
+    from comet_rag.infrastructure.models.reranker.qwen3_vl import (  # noqa: PLC0415
         Qwen3VLReranker,
     )
 

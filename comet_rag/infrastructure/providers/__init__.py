@@ -1,13 +1,13 @@
-"""外部服务适配器的便捷入口。
+from __future__ import annotations
 
-业务代码依赖 :mod:`comet_rag.ports`；直接把项目当库使用时，可以
-从这里导入具体适配器，从 :mod:`comet_rag.ports` 导入供应商无关的输入类型。
-"""
-
-from .document import MinerUDocumentExtractor
-from .embedding import OpenAIEmbeddingModel, Qwen3VLEmbeddingModel
-from .reranker import Qwen3VLReranker
-from .vision import OpenAIVisionModel
+# 外部适配器的旧聚合入口。
+from comet_rag.infrastructure.extractors import MinerUDocumentExtractor
+from comet_rag.infrastructure.models import (
+    OpenAIEmbeddingModel,
+    OpenAIVisionModel,
+    Qwen3VLEmbeddingModel,
+    Qwen3VLReranker,
+)
 
 __all__ = [
     "MinerUDocumentExtractor",

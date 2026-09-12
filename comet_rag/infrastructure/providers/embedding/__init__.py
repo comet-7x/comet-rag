@@ -1,37 +1,4 @@
-from .base import (
-    BaseEmbeddingModel,
-    EmbeddingPort,
-    EmbeddingTask,
-    MultimodalEmbeddingMixin,
-    MultimodalEmbeddingPort,
-)
-from .openai_embedding_model import (
-    DEFAULT_OPENAI_BATCH_LIMIT,
-    OpenAIEmbeddingModel,
-)
-from .qwen3_vl_embedding import (
-    DetokenizeResponse,
-    EmbeddingData,
-    EmbeddingResponse,
-    EncodingFormat,
-    Qwen3VLEmbeddingModel,
-    Qwen3VLEmbeddingModelSystemPrompt,
-    TokenizeResponse,
-)
+from __future__ import annotations
 
-__all__ = [
-    "BaseEmbeddingModel",
-    "EmbeddingPort",
-    "EmbeddingTask",
-    "MultimodalEmbeddingMixin",
-    "MultimodalEmbeddingPort",
-    "DEFAULT_OPENAI_BATCH_LIMIT",
-    "OpenAIEmbeddingModel",
-    "DetokenizeResponse",
-    "EmbeddingData",
-    "EmbeddingResponse",
-    "EncodingFormat",
-    "Qwen3VLEmbeddingModel",
-    "Qwen3VLEmbeddingModelSystemPrompt",
-    "TokenizeResponse",
-]
+from comet_rag.infrastructure.models.embedding import *  # noqa: F403
+from comet_rag.infrastructure.models.embedding import __all__ as __all__

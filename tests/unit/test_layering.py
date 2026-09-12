@@ -227,7 +227,10 @@ def test_ports_dependency_guard_detects_upper_and_third_party_imports() -> None:
 
 # ── 业务/引擎依赖模型 Port，而不是供应商适配器 ─────────────────────────────
 
-MODEL_ADAPTER_PACKAGE = "comet_rag.infrastructure.providers"
+MODEL_ADAPTER_PACKAGES = (
+    "comet_rag.infrastructure.models",
+    "comet_rag.infrastructure.providers",  # 迁移期旧路径
+)
 
 
 def _model_port_consumers() -> list[Path]:
@@ -247,7 +250,7 @@ def test_business_code_depends_on_model_ports(module: Path) -> None:
     hits = {
         name
         for name in _imported_full(tree, module)
-        if name.startswith(MODEL_ADAPTER_PACKAGE)
+        if name.startswith(MODEL_ADAPTER_PACKAGES)
     }
     assert not hits, (
         f"{module.relative_to(PROJECT_ROOT)} 直接依赖了模型适配器：{sorted(hits)}。"
@@ -414,7 +417,7 @@ def test_models_are_only_constructed_by_the_composition_root(module: Path) -> No
     易错的约定，就把它变成够不着的结构。
     """
     relative = module.relative_to(PROJECT_ROOT / "comet_rag").as_posix()
-    if relative.startswith("infrastructure/providers/"):
+    if relative.startswith(("infrastructure/models/", "infrastructure/providers/")):
         return  # 定义处自己不算
     if any(relative.endswith(allowed) for allowed in MAY_CONSTRUCT_MODELS):
         return
