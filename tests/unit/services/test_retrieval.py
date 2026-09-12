@@ -396,6 +396,7 @@ async def test_hybrid_dense_failure_degrades_to_keyword_and_logs(
     assert result.degradations[0].error_type == "TimeoutError"
     assert len(log.exceptions) == 1
     assert "stage=dense" in log.messages[0]
+    assert "降级继续" in log.messages[0]
     assert all(
         "private endpoint" not in (value or "")
         for value in result.degradations[0].to_dict().values()
@@ -424,6 +425,18 @@ async def test_hybrid_keyword_failure_degrades_to_dense(
 async def test_hybrid_raises_one_error_when_both_channels_fail(
     model, store, monkeypatch
 ) -> None:
+    class RecordingLogger:
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+
+        def opt(self, *, exception):
+            return self
+
+        def warning(self, message: str) -> None:
+            self.messages.append(message)
+
+    log = RecordingLogger()
+
     async def fail_dense(*args, **kwargs):
         raise TimeoutError("dense timeout")
 
@@ -432,6 +445,7 @@ async def test_hybrid_raises_one_error_when_both_channels_fail(
 
     monkeypatch.setattr(store, "asearch", fail_dense)
     monkeypatch.setattr(store, "asearch_keywords", fail_keyword)
+    monkeypatch.setattr(retrieval_module, "logger", log)
 
     with pytest.raises(HybridRecallFailed) as caught:
         await service(model, store).search(
@@ -444,6 +458,9 @@ async def test_hybrid_raises_one_error_when_both_channels_fail(
     ]
     assert "dense timeout" not in str(caught.value)
     assert "keyword connection reset" not in str(caught.value)
+    assert len(log.messages) == 2
+    assert all("请求失败" in message for message in log.messages)
+    assert all("降级继续" not in message for message in log.messages)
 
 
 @pytest.mark.parametrize(

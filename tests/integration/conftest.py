@@ -107,6 +107,20 @@ def milvus_database() -> str:
     return configured
 
 
+def _milvus_unavailable_reason(exc: Exception, database: str) -> str:
+    """生成不泄露端点/凭据、但能区分 database 缺失的 skip 原因。"""
+    message = str(exc).lower()
+    database_missing = "database" in message and any(
+        marker in message
+        for marker in ("not found", "not exist", "doesn't exist", "can't find")
+    )
+    if database_missing:
+        return f"Milvus database {database!r} 不存在；请先由管理员创建"
+    code = getattr(exc, "code", None)
+    suffix = f" code={code}" if code is not None else ""
+    return f"Milvus 连接或鉴权失败：{type(exc).__name__}{suffix}"
+
+
 @pytest.fixture(scope="session")
 def milvus_uri(milvus_database: str) -> str:
     """用真实协议探活；裸 TCP 在代理、DNS 或 service mesh 下会误判。"""
@@ -119,7 +133,7 @@ def milvus_uri(milvus_database: str) -> str:
     except ImportError:
         pytest.skip("Milvus 集成测试需要安装 comet-rag[milvus]")
     except Exception as exc:
-        pytest.skip(f"Milvus 不可用：{type(exc).__name__}")
+        pytest.skip(_milvus_unavailable_reason(exc, milvus_database))
     return MILVUS_URI
 
 

@@ -320,13 +320,13 @@ class RetrievalService:
                 _channel_degradation(RetrievalStage.DENSE, dense_error),
                 _channel_degradation(RetrievalStage.KEYWORD, keyword_error),
             )
-            _log_channel_failure(failures[0], dense_error)
-            _log_channel_failure(failures[1], keyword_error)
+            _log_channel_failure(failures[0], dense_error, continued=False)
+            _log_channel_failure(failures[1], keyword_error, continued=False)
             raise HybridRecallFailed(failures)
 
         if dense_error is not None:
             failure = _channel_degradation(RetrievalStage.DENSE, dense_error)
-            _log_channel_failure(failure, dense_error)
+            _log_channel_failure(failure, dense_error, continued=True)
             return _RecallResult(
                 chunks=self._keyword_chunks(cast("list[SearchHit]", keyword_result)),
                 mode=SearchMode.KEYWORD,
@@ -336,7 +336,7 @@ class RetrievalService:
 
         if keyword_error is not None:
             failure = _channel_degradation(RetrievalStage.KEYWORD, keyword_error)
-            _log_channel_failure(failure, keyword_error)
+            _log_channel_failure(failure, keyword_error, continued=True)
             return _RecallResult(
                 chunks=self._dense_chunks(cast("list[SearchHit]", dense_result)),
                 mode=SearchMode.DENSE,
@@ -531,10 +531,13 @@ def _channel_degradation(
     )
 
 
-def _log_channel_failure(degradation: RetrievalDegradation, exc: BaseException) -> None:
+def _log_channel_failure(
+    degradation: RetrievalDegradation, exc: BaseException, *, continued: bool
+) -> None:
     # API 只返回错误类型，完整异常链仅进入服务日志，避免把连接信息带给调用方。
+    outcome = "降级继续" if continued else "请求失败"
     logger.opt(exception=exc).warning(
-        f"hybrid 召回通道失败，降级继续 stage={degradation.stage.value} "
+        f"hybrid 召回通道失败，{outcome} stage={degradation.stage.value} "
         f"error_type={degradation.error_type}"
     )
 

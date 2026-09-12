@@ -279,7 +279,10 @@ curl -X POST localhost:8000/search \
 
 Milvus 必须使用 2.6 版本线的新 BM25 schema。旧 collection 缺少 chinese analyzer、
 BM25 function 或 sparse index 时会返回 `CollectionSchemaMismatch`；服务不会自动删除或
-改写已有数据。确认数据可重建后，由操作者显式删除旧 collection 并重新入库。
+改写已有数据。读路径会返回 HTTP 409，写路径的 indexing 任务会永久失败。升级时还需
+把已移除的 `collection_name` 配置换成必填的 `database_name` 与 `collection_prefix`。
+确认数据可重建后，由操作者显式删除旧 collection 并重新入库；完整步骤见
+[M3 版本说明](release_notes.md#milvus-schema-v2-是破坏性变更)。
 
 ---
 

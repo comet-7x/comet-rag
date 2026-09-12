@@ -94,7 +94,9 @@ uv run comet-rag worker embedder        # IO 密集：向量化 / 写库
 与 `MilvusStore` 跑同一套断言；关键词召回也由两种向量库实现共享同一套契约 ——
 "换后端行为不变"这句话靠断言兑现，不靠文档。
 
-更多见 [docs/architecture.md](docs/architecture.md)；目录结构与流程图见 [docs/structure.md](docs/structure.md)。
+更多见 [docs/architecture.md](docs/architecture.md)；目录结构与流程图见
+[docs/structure.md](docs/structure.md)；升级中的破坏性变更见
+[docs/release_notes.md](docs/release_notes.md)。
 
 ---
 

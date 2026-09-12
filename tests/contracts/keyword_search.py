@@ -1,4 +1,8 @@
-"""`KeywordSearchPort` 的后端无关行为契约。"""
+"""`KeywordSearchPort` 的后端无关行为契约。
+
+契约只约束匹配、隔离、过滤和排序等语义，不约束跨实现分数相等。内存实现使用
+轻量 tokenizer，Milvus 使用 chinese analyzer；尤其 CJK 分词与 BM25 分数会不同。
+"""
 
 from __future__ import annotations
 

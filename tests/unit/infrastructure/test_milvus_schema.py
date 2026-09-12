@@ -90,10 +90,17 @@ class _FakeSync:
         exists: bool,
         description: dict[str, Any] | None = None,
         fail_index: bool = False,
+        index_ready_after: int = 0,
+        describe_index_none: bool = False,
+        create_conflict: bool = False,
     ):
         self.exists = exists
         self.description = description or _v2_schema()
         self.fail_index = fail_index
+        self.index_ready_after = index_ready_after
+        self.describe_index_none = describe_index_none
+        self.create_conflict = create_conflict
+        self.list_index_calls = 0
         self.created: dict[str, Any] | None = None
         self.indexes: Any = None
         self.loaded: dict[str, Any] | None = None
@@ -106,9 +113,14 @@ class _FakeSync:
         return self.description
 
     def list_indexes(self, name: str, *, field_name: str) -> list[str]:
+        self.list_index_calls += 1
+        if self.list_index_calls <= self.index_ready_after:
+            return []
         return ["sparse_vector"]
 
-    def describe_index(self, name: str, index_name: str) -> dict[str, Any]:
+    def describe_index(self, name: str, index_name: str) -> dict[str, Any] | None:
+        if self.describe_index_none:
+            return None
         return _v2_index()
 
     def create_schema(self, **kwargs: Any):
@@ -118,6 +130,9 @@ class _FakeSync:
         return MilvusClient.prepare_index_params()
 
     def create_collection(self, name: str, **kwargs: Any) -> None:
+        if self.create_conflict:
+            self.exists = True
+            raise RuntimeError("collection already exists")
         self.created = {"name": name, **kwargs}
 
     def create_index(self, name: str, *, index_params: Any) -> None:
@@ -198,6 +213,42 @@ async def test_old_schema_is_rejected_without_create_or_drop(
 
     assert sync.created is None
     assert sync.dropped is False
+
+
+async def test_ensure_waits_for_concurrent_creator_to_finish_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sync = _FakeSync(exists=True, index_ready_after=2)
+    store, _, _ = _store(monkeypatch, sync)
+    monkeypatch.setattr(target, "_SCHEMA_READY_INTERVAL_SECONDS", 0)
+
+    await store.aensure_collection("shared-kb", dim=4)
+
+    assert sync.list_index_calls == 3
+    assert store._dims["shared-kb"] == 4  # noqa: SLF001
+
+
+async def test_ensure_recovers_when_create_loses_cross_process_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sync = _FakeSync(exists=False, create_conflict=True)
+    store, _, _ = _store(monkeypatch, sync)
+
+    await store.aensure_collection("shared-kb", dim=4)
+
+    assert store._dims["shared-kb"] == 4  # noqa: SLF001
+    assert "shared-kb" not in store._created  # noqa: SLF001
+
+
+async def test_missing_index_description_becomes_stable_schema_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sync = _FakeSync(exists=True, describe_index_none=True)
+    store, _, _ = _store(monkeypatch, sync)
+    monkeypatch.setattr(target, "_SCHEMA_READY_ATTEMPTS", 1)
+
+    with pytest.raises(CollectionSchemaMismatch, match="SPARSE_INVERTED_INDEX"):
+        await store.aensure_collection("existing-kb", dim=4)
 
 
 @pytest.mark.parametrize("mode", ["dense", "keyword"])

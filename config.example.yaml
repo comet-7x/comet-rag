@@ -36,7 +36,9 @@ infrastructure_config:
   # vector_database:
   #   endpoint: http://localhost:19530
   #   api_key: null
-  #   collection_name: comet_rag
+  #   database_name: your_database  # 必填；生产环境请使用独立 database
+  #   collection_prefix: comet
+  #   replica_number: 1
 
   # backends.task_store = postgres 时必填
   # database:

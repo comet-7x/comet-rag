@@ -34,6 +34,12 @@ _METADATA = "metadata"
 _DENSE = "dense_vector"
 _SPARSE = "sparse_vector"
 _BM25_FUNCTION = "text_bm25"
+_BM25_INDEX_MISSING = f"{_SPARSE} 缺少 BM25 SPARSE_INVERTED_INDEX"
+
+# create_collection 与 create_index 不是一个原子操作。另一个进程可能在两者
+# 之间观察到 collection；只对这一种暂态做有限等待，旧 schema 仍立即拒绝。
+_SCHEMA_READY_ATTEMPTS = 41
+_SCHEMA_READY_INTERVAL_SECONDS = 0.25
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9_]")
 
@@ -161,7 +167,7 @@ def _schema_mismatches(
         for index in indexes
     )
     if not has_bm25_index:
-        problems.append(f"{_SPARSE} 缺少 BM25 SPARSE_INVERTED_INDEX")
+        problems.append(_BM25_INDEX_MISSING)
     return problems
 
 
@@ -187,7 +193,6 @@ class MilvusStore(BaseVectorStore):
         self._async = AsyncMilvusClient(
             uri=endpoint, token=token, db_name=database_name
         )
-        self._database_name = database_name
         self._prefix = prefix
         self._consistency = consistency_level
         self._metric = metric_type
@@ -213,13 +218,16 @@ class MilvusStore(BaseVectorStore):
             "list[str]",
             await asyncio.to_thread(self._sync.list_indexes, name, field_name=_SPARSE),
         )
-        return [
-            cast(
-                "dict[str, Any]",
-                await asyncio.to_thread(self._sync.describe_index, name, index_name),
+        indexes: list[dict[str, Any]] = []
+        for index_name in index_names:
+            description = await asyncio.to_thread(
+                self._sync.describe_index, name, index_name
             )
-            for index_name in index_names
-        ]
+            # list_indexes 与 describe_index 之间索引可能被并发删除。把 SDK 的
+            # None 当成“当前未就绪”，交给 schema 校验输出稳定的领域错误。
+            if isinstance(description, dict):
+                indexes.append(description)
+        return indexes
 
     @staticmethod
     def _dense_dim(description: dict[str, Any], kb_id: str) -> int:
@@ -264,16 +272,30 @@ class MilvusStore(BaseVectorStore):
             raise CollectionSchemaMismatch(kb_id, problems)
         return dim
 
+    async def _ensure_existing_ready(self, name: str, kb_id: str, dim: int) -> None:
+        """校验已有 collection，并容忍并发建表尚未建完索引的短窗口。"""
+        for attempt in range(_SCHEMA_READY_ATTEMPTS):
+            try:
+                existing = await self._validated_dim(name, kb_id)
+            except CollectionSchemaMismatch as exc:
+                transient = exc.reasons == (_BM25_INDEX_MISSING,)
+                if not transient or attempt == _SCHEMA_READY_ATTEMPTS - 1:
+                    raise
+                await asyncio.sleep(_SCHEMA_READY_INTERVAL_SECONDS)
+                continue
+            if existing != dim:
+                raise DimensionMismatch(kb_id, existing, dim)
+            self._dims[kb_id] = existing
+            return
+        raise AssertionError("schema readiness loop exhausted unexpectedly")
+
     async def aensure_collection(self, kb_id: str, *, dim: int) -> None:
         if dim <= 0:
             raise ValueError(f"维度必须为正整数，收到 {dim}")
         name = self._name(kb_id)
 
         if await asyncio.to_thread(self._sync.has_collection, name):
-            existing = await self._validated_dim(name, kb_id)
-            if existing != dim:
-                raise DimensionMismatch(kb_id, existing, dim)
-            self._dims[kb_id] = existing
+            await self._ensure_existing_ready(name, kb_id, dim)
             return
 
         # 这两个是纯本地构造（不打网络），留在事件循环上没问题
@@ -308,12 +330,20 @@ class MilvusStore(BaseVectorStore):
             metric_type="BM25",
         )
 
-        await asyncio.to_thread(
-            self._sync.create_collection,
-            name,
-            schema=schema,
-            consistency_level=self._consistency,
-        )
+        try:
+            await asyncio.to_thread(
+                self._sync.create_collection,
+                name,
+                schema=schema,
+                consistency_level=self._consistency,
+            )
+        except Exception:
+            # 跨进程没有共享锁。若别的实例刚好抢先建表，本次 create 会失败；
+            # 重新探测并等待对方完成索引即可。其余错误保留原异常。
+            if not await asyncio.to_thread(self._sync.has_collection, name):
+                raise
+            await self._ensure_existing_ready(name, kb_id, dim)
+            return
         self._created.add(kb_id)
         try:
             await asyncio.to_thread(self._sync.create_index, name, index_params=index)

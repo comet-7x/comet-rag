@@ -82,6 +82,11 @@ M2 的 `DocumentExtractorPort` 也遵循这条规则：它只接收 Loader 已�
 并发调用两路，hybrid 的原始分数不直接相加，而是在 `engines/retrieval/` 用纯 RRF
 按名次融合。这样 Milvus 的表达式、BM25 index 与 consistency level 都不会穿透 Port。
 
+两路各自最多返回 `fetch_k` 条，因此去重前最多有 `2 × fetch_k`（当前上限 1000）
+个候选进入 RRF；去重后的全部候选会送给 reranker。调大 `fetch_k` 会同时增加 Milvus
+返回量和重排成本，不是免费的精度旋钮。关键词契约只保证后端行为语义一致：内存实现
+的轻量 tokenizer 与 Milvus chinese analyzer 不承诺相同分词或相同 BM25 分数。
+
 hybrid 单路出现可恢复故障时只降级该路；schema、维度、知识库与请求参数错误仍直接
 失败。两路都失败才返回 503。重排位于融合之后，失败时返回融合候选并留下结构化诊断。
 

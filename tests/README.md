@@ -121,6 +121,11 @@ uv run pytest -m integration
 可用 `COMET_TEST_POSTGRES_DSN` / `COMET_TEST_REDIS_URL` / `COMET_TEST_MILVUS_URI`
 指向别的实例。
 
+Milvus 集成测试固定使用 `zhihao_test_database`，不会回落到 `default`，也不会为测试
+创建 database。首次运行前请让管理员预先创建该 database；缺失时用例会明确 skip 并
+提示 database 名。`COMET_TEST_MILVUS_DATABASE` 即使设置成其他值也会直接拒绝运行，
+避免测试误删非测试数据。
+
 ### 真实 MinerU
 
 真实 PDF 测试没有默认地址。未设置地址或服务不可达时会明确 skip：
