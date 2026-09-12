@@ -54,7 +54,7 @@ class KeywordEmbedding(BaseEmbeddingModel):
     def _vector(self, text: str) -> list[float]:
         return [
             1.0 if "苹果" in text else 0.0,
-            1.0 if "香蕉" in text else 0.0,
+            1.0 if "香蕉" in text or "弯月形水果" in text else 0.0,
             1.0 if "橙子" in text else 0.0,
         ]
 
@@ -240,6 +240,56 @@ async def test_ingest_then_search(client: httpx.AsyncClient) -> None:
     assert body["chunks"], "检索不到刚入库的内容"
     assert "香蕉" in body["chunks"][0]["text"]
     assert body["chunks"][0]["metadata"]["kb_id"] == KB
+
+
+async def test_search_api_exposes_dense_keyword_and_hybrid_modes(
+    client: httpx.AsyncClient,
+) -> None:
+    """三种公开模式走同一条建库、入库与 HTTP 检索链路。"""
+    await client.post("/kb", json={"kb_id": KB})
+    submitted = await client.post(
+        "/ingest", json={"kb_id": KB, "source": "fruits.stub"}
+    )
+    await poll_until_terminal(client, submitted.json()["task_id"])
+
+    cases = {
+        # 查询不含“香蕉”，只靠替身定义的语义映射命中 dense 文档。
+        "dense": ("弯月形水果如何栽培", ["dense"]),
+        "keyword": ("香蕉", ["keyword"]),
+        "hybrid": ("香蕉 弯月形水果", ["dense", "keyword"]),
+    }
+    for mode, (query, channels) in cases.items():
+        response = await client.post(
+            "/search",
+            json={
+                "kb_id": KB,
+                "query": query,
+                "top_k": 1,
+                "mode": mode,
+                "rerank": False,
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["mode"] == mode
+        assert body["channels"] == channels
+        assert "香蕉" in body["chunks"][0]["text"]
+
+    hybrid = (
+        await client.post(
+            "/search",
+            json={
+                "kb_id": KB,
+                "query": "香蕉 弯月形水果",
+                "top_k": 1,
+                "mode": "hybrid",
+                "rerank": False,
+            },
+        )
+    ).json()
+    assert hybrid["chunks"][0]["fusion_score"] is not None
+    assert hybrid["chunks"][0]["vector_rank"] == 1
+    assert hybrid["chunks"][0]["keyword_rank"] == 1
 
 
 async def test_chunk_metadata_carries_kb_id(client: httpx.AsyncClient) -> None:

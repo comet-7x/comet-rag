@@ -60,6 +60,7 @@ comet_rag/
 ├── ports/              契约与词汇表 ← 零依赖地基
 │   ├── embedding.py    EmbeddingPort · MultimodalEmbeddingPort
 │   ├── reranker.py     RerankerPort
+│   ├── vector_store.py VectorSearchPort · KeywordSearchPort · 存储值对象
 │   ├── document.py     DocumentExtractorPort · 提取错误词汇表
 │   ├── source.py       SourceLoaderPort · LoadedResource · SourceContent
 │   ├── gate.py         AsyncGate
@@ -181,28 +182,44 @@ flowchart TD
 ```mermaid
 flowchart TD
     A["POST /search"] --> B["RetrievalService.search"]
-    B --> DEG{"当前降级级别"}
+    B --> DEG{"当前系统降级级别"}
     DEG -->|"NO_RERANK"| D1["关掉重排"]
     DEG -->|"更低"| D2["再砍 top_k"]
     DEG -->|NORMAL| D3["按请求执行"]
 
-    D1 --> E["aembed_query"]
-    D2 --> E
-    D3 --> E
-    E --> GATE{{"进程级闸门<br/>与 embedding 共用"}}
-    GATE --> F[("VectorStore.asearch<br/>取 fetch_k 条粗召回")]
-    F --> G{"命中为空？"}
+    D1 --> MODE{"请求 mode"}
+    D2 --> MODE
+    D3 --> MODE
+    MODE -->|dense| E["EmbeddingPort.aembed_query"]
+    MODE -->|keyword| KW[("KeywordSearchPort<br/>BM25 取 fetch_k")]
+    MODE -->|hybrid| BOTH["并发执行两路召回"]
+    BOTH --> E
+    BOTH --> KW
+    E --> GATE{{"进程级模型闸门"}}
+    GATE --> F[("VectorSearchPort.asearch<br/>dense 取 fetch_k")]
+    F --> CAND["dense 候选"]
+    KW --> KCAND["keyword 候选"]
+    CAND --> RRF{"是否 hybrid？"}
+    KCAND --> RRF
+    RRF -->|是，两路成功| RF["纯 RRF 按名次融合去重"]
+    RRF -->|是，单路故障| FALL["退到可用通道<br/>记录 degradations"]
+    RRF -->|否| ONE["单路候选"]
+    RF --> G{"命中为空？"}
+    FALL --> G
+    ONE --> G
     G -->|是| GX["返回空结果，附带 effective_top_k 与降级级别"]
     G -->|否| H{"配了 reranker<br/>且允许重排？"}
     H -->|否| I["直接截取 top_k"]
     H -->|是| J["RerankerPort.arank"]
-    J --> K{"分数条数与索引<br/>能与候选对齐？"}
-    K -->|"否 / 抛异常"| L["降级：返回向量召回结果<br/>并打 WARNING"]
-    K -->|是| M["按新分数排序 → top_k"]
+    J --> CHECK{"分数条数与索引<br/>能与候选对齐？"}
+    CHECK -->|"否 / 抛异常"| L["降级：返回召回/融合结果<br/>并打 WARNING"]
+    CHECK -->|是| M["按新分数排序 → top_k"]
 ```
 
 **重排失败一定降级、不失败整个查询** —— 检索是读路径，稍差的结果远好过没有
-结果。但降级必须留下日志，否则线上质量下滑无人察觉。
+结果。但降级必须留下日志和响应诊断，否则线上质量下滑无人察觉。hybrid 的两路
+原始分数不可比，因此只用 RRF 的名次融合；`vector_score`、`keyword_score`、
+`fusion_score` 与各路 rank 仅用于观察和调试。
 
 ## 改一件事，去哪找
 
@@ -216,6 +233,8 @@ flowchart TD
 | 接一个外部文档解析服务 | 实现 `ports/document.py`，适配器放 `infrastructure/providers/document/`，只在 `composition/bootstrap.py` 装配 |
 | 改 MinerU 协议或资源上限 | `infrastructure/providers/document/mineru.py` + `config/schemas.py::MinerUConfig` |
 | 改切分策略 | `engines/chunkers/` |
+| 改 dense / keyword 检索契约 | `ports/vector_store.py`；Milvus 语法只留在 `infrastructure/vectorstore/` |
+| 改 hybrid 融合算法 | `engines/retrieval/fusion.py`；通道编排在 `services/retrieval.py` |
 | 改并发上限 / 背压 | `core/concurrency.py`（同步异步共用一份预算）；数字在 `LimitsConfig`，库兜底在 `engines/defaults.py` |
 | 改降级策略 | `core/degradation.py` |
 | 加一个 HTTP 端点 | `api/routes/` + `schemas/` |

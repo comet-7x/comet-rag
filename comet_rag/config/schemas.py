@@ -279,11 +279,30 @@ class MinerUConfig(BaseModel):
 
 
 class VectorDatabaseConfig(_SecretsModel):
-    """向量数据库配置 (如 Milvus, Pinecone)"""
+    """向量数据库连接；database 必须显式选择，禁止依赖 SDK 默认值。"""
 
     endpoint: str = Field(..., description="服务接入点地址")
     api_key: SecretValue | None = Field(default=None, description="API 访问密钥")
-    collection_name: str = Field(..., description="集合/数据库名称")
+    database_name: str = Field(..., min_length=1, description="Milvus database 名称")
+    collection_prefix: str = Field(
+        default="comet",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+        description="collection 名称前缀；集成测试用独立随机前缀隔离清理范围",
+    )
+    replica_number: int = Field(
+        default=1,
+        gt=0,
+        description="collection 加载副本数；必须不超过可用 query/streaming nodes",
+    )
+
+    @field_validator("database_name")
+    @classmethod
+    def _reject_blank_database_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("database_name must not be blank")
+        return value
 
     @property
     def api_key_value(self) -> str | None:

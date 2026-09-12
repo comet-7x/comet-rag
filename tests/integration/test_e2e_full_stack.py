@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import AsyncIterator
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -42,9 +43,6 @@ pytestmark = pytest.mark.integration
 
 #: 与其他集成用例区分，避免残留 collection 互相干扰
 KB = "kb-fullstack"
-PREFIX = "fullstack"
-
-
 @pytest.fixture
 def document(tmp_path: Path) -> Path:
     path = tmp_path / "fruits.stub"
@@ -68,7 +66,9 @@ def hooks():
     yield
 
 
-def make_config(milvus_uri: str) -> APPConfig:
+def make_config(
+    milvus_uri: str, milvus_database: str, collection_prefix: str
+) -> APPConfig:
     """**与全内存版唯一的差别就是 backends 段与两处连接配置。**"""
     return APPConfig(
         server_config=ServerConfig(app_name="comet-rag-full", host="127.0.0.1", port=0),
@@ -84,7 +84,9 @@ def make_config(milvus_uri: str) -> APPConfig:
                 database="comet_rag",
             ),
             vector_database=VectorDatabaseConfig(
-                endpoint=milvus_uri, collection_name="unused"
+                endpoint=milvus_uri,
+                database_name=milvus_database,
+                collection_prefix=collection_prefix,
             ),
         ),
         backends=BackendsConfig(
@@ -105,10 +107,15 @@ async def _clean_postgres(dsn: str) -> None:
 
 @pytest.fixture
 async def client(
-    document: Path, postgres_dsn: str, milvus_uri: str
+    document: Path,
+    postgres_dsn: str,
+    milvus_uri: str,
+    milvus_database: str,
 ) -> AsyncIterator[httpx.AsyncClient]:
     await _clean_postgres(postgres_dsn)
-    config = make_config(milvus_uri)
+    config = make_config(
+        milvus_uri, milvus_database, f"ctfull_{uuid4().hex[:12]}"
+    )
     app = create_app(
         config,
         embedding_model=KeywordEmbedding(),

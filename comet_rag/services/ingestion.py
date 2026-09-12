@@ -17,12 +17,13 @@ from comet_rag.engines.loaders.auto_loader import AutoLoader
 from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import HookProvider, PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
-from comet_rag.infrastructure.vectorstore import BaseVectorStore, VectorRecord
 from comet_rag.ports import (
+    BaseVectorStore,
     DocumentResourceLimitExceeded,
     EmbeddingPort,
     RetryableDocumentUpstreamError,
     SourceLoaderPort,
+    VectorRecord,
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.tasks import (

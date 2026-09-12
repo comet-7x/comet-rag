@@ -62,19 +62,33 @@ M2 的 `DocumentExtractorPort` 也遵循这条规则：它只接收 Loader 已�
 或 HTTP 响应。`MinerUDocumentExtractor` 是 `infrastructure/providers/document/`
 中的外部适配器，只有 `composition/` 能把它注册成 PDF Pipeline Hook。
 
-## 三个核心抽象
+## 核心抽象
 
 每一个都配有一套**与实现无关的契约测试**（`tests/contracts/`）。
 换实现时跑同一套契约，这是"换后端行为不变"这句承诺的唯一兑现手段 ——
-不是靠文档，是靠 79 条断言。
+不是靠文档，是靠契约断言。
 
 | 抽象 | 内存实现 | 真实实现 | 契约条数 |
 |---|---|---|---|
 | `TaskStore` | `InMemoryTaskStore` | `PostgresTaskStore` | 37 |
 | `TaskExecutor` | `InProcessExecutor` | `ArqExecutor` | 15 |
 | `BaseVectorStore` | `InMemoryVectorStore` | `MilvusStore` | 27 |
+| `KeywordSearchPort` | `InMemoryVectorStore` | `MilvusStore` | 12 |
 
 `KnowledgeBaseRepository` 另有 10 条。
+
+检索侧刻意把完整存储生命周期与只读能力分开：`VectorSearchPort` 只暴露 dense
+召回，`KeywordSearchPort` 只暴露关键词召回。`RetrievalService` 按请求选择一路或
+并发调用两路，hybrid 的原始分数不直接相加，而是在 `engines/retrieval/` 用纯 RRF
+按名次融合。这样 Milvus 的表达式、BM25 index 与 consistency level 都不会穿透 Port。
+
+两路各自最多返回 `fetch_k` 条，因此去重前最多有 `2 × fetch_k`（当前上限 1000）
+个候选进入 RRF；去重后的全部候选会送给 reranker。调大 `fetch_k` 会同时增加 Milvus
+返回量和重排成本，不是免费的精度旋钮。关键词契约只保证后端行为语义一致：内存实现
+的轻量 tokenizer 与 Milvus chinese analyzer 不承诺相同分词或相同 BM25 分数。
+
+hybrid 单路出现可恢复故障时只降级该路；schema、维度、知识库与请求参数错误仍直接
+失败。两路都失败才返回 503。重排位于融合之后，失败时返回融合候选并留下结构化诊断。
 
 ### 为什么 store 与 executor 是分开的
 

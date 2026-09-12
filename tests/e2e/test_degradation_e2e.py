@@ -141,7 +141,13 @@ async def test_model_timeouts_degrade_rerank_but_search_still_answers(
     await _ingest(client)
 
     # 正常时重排确实在跑
-    ok = await client.post("/search", json={"kb_id": KB, "query": "苹果", "top_k": 3})
+    payload = {
+        "kb_id": KB,
+        "query": "苹果",
+        "top_k": 3,
+        "mode": "hybrid",
+    }
+    ok = await client.post("/search", json=payload)
     assert ok.status_code == 200
     assert ok.json()["reranked"] is True
     calls_before = reranker.calls
@@ -152,11 +158,17 @@ async def test_model_timeouts_degrade_rerank_but_search_still_answers(
     reranker.failing = True
     try:
         for _ in range(10):
-            resp = await client.post(
-                "/search", json={"kb_id": KB, "query": "苹果", "top_k": 3}
-            )
+            resp = await client.post("/search", json=payload)
             assert resp.status_code == 200, "降级期间检索必须仍然可用，不能失败"
             assert resp.json()["chunks"], "降级了也得给出向量召回的结果"
+            if resp.json()["reranked"] is False:
+                assert resp.json()["mode"] == "hybrid"
+                if resp.json()["degradations"]:
+                    assert resp.json()["degradations"][-1]["stage"] == "reranker"
+                else:
+                    # 控制器进入 L1 后会直接跳过重排，此时是系统级 degraded，
+                    # 不应伪造一次并未发生的 reranker 请求失败。
+                    assert resp.json()["degraded"] == "NO_RERANK"
     finally:
         logger.remove(sink_id)
 
@@ -167,10 +179,11 @@ async def test_model_timeouts_degrade_rerank_but_search_still_answers(
     assert any("服务降级" in r for r in records), f"降级没留下日志：{records}"
 
     # 降级之后不该再去打那个坏掉的重排 —— 否则等于白降
-    last = await client.post("/search", json={"kb_id": KB, "query": "苹果", "top_k": 3})
+    last = await client.post("/search", json=payload)
     assert last.json()["reranked"] is False
+    assert last.json()["chunks"][0]["fusion_score"] is not None
     stalled = reranker.calls
-    await client.post("/search", json={"kb_id": KB, "query": "苹果", "top_k": 3})
+    await client.post("/search", json=payload)
     assert reranker.calls == stalled, "降级后仍在调用坏掉的重排"
 
     assert calls_before > 0

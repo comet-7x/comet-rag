@@ -98,13 +98,24 @@ def _imported_full(tree: ast.AST, module: Path | None = None) -> set[str]:
             if node.level == 0:
                 if node.module:
                     names.add(node.module)
+                    names.update(
+                        f"{node.module}.{alias.name}"
+                        for alias in node.names
+                        if alias.name != "*"
+                    )
             elif package is not None:
                 # level=1 是当前包，每多一级往上退一层
                 base = package[: len(package) - (node.level - 1)]
                 if not base:
                     continue
                 if node.module:
-                    names.add(".".join([*base, node.module]))
+                    absolute = ".".join([*base, node.module])
+                    names.add(absolute)
+                    names.update(
+                        f"{absolute}.{alias.name}"
+                        for alias in node.names
+                        if alias.name != "*"
+                    )
                     continue
                 # `from ... import services` —— module 是 None，被导入的名字在
                 # names 里。只记 base 的话解析结果是 `comet_rag`，它不以
@@ -166,7 +177,9 @@ def test_guard_actually_detects_violations() -> None:
     assert _imported_roots(tree) & FORBIDDEN_IN_ENGINES == {"sqlalchemy"}
     assert _engine_internal_violations(tree) == {
         "comet_rag.api",
+        "comet_rag.api.deps",
         "comet_rag.application.embedding_batch",
+        "comet_rag.application.embedding_batch.aembed_documents",
     }
 
 
@@ -207,6 +220,7 @@ def test_ports_dependency_guard_detects_upper_and_third_party_imports() -> None:
 
     assert _port_dependency_violations(tree) == {
         "comet_rag.engines.loaders",
+        "comet_rag.engines.loaders.AutoLoader",
         "httpx",
     }
 
@@ -239,6 +253,57 @@ def test_business_code_depends_on_model_ports(module: Path) -> None:
         f"{module.relative_to(PROJECT_ROOT)} 直接依赖了模型适配器：{sorted(hits)}。"
         "请依赖 comet_rag.ports，并在 composition/bootstrap.py 装配实现。"
     )
+
+
+# ── Service 依赖向量存储 Port，而不是适配器包（M3-T2）──────────────────────
+
+VECTORSTORE_ADAPTER_PACKAGE = "comet_rag.infrastructure.vectorstore"
+
+
+def _service_vectorstore_violations(
+    tree: ast.AST, module: Path | None = None
+) -> set[str]:
+    return {
+        name
+        for name in _imported_full(tree, module)
+        if name.startswith(VECTORSTORE_ADAPTER_PACKAGE)
+    }
+
+
+def _service_modules() -> list[Path]:
+    return sorted(
+        path
+        for path in (PROJECT_ROOT / "comet_rag" / "services").rglob("*.py")
+        if "__pycache__" not in path.parts
+    )
+
+
+@pytest.mark.parametrize("module", _service_modules(), ids=lambda p: p.name)
+def test_services_depend_on_vectorstore_ports(module: Path) -> None:
+    """Service 只描述业务能力，具体向量后端必须由组合根注入。"""
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    violations = _service_vectorstore_violations(tree, module)
+    assert not violations, (
+        f"{module.relative_to(PROJECT_ROOT)} 直接依赖了向量存储适配器："
+        f"{sorted(violations)}。请依赖 comet_rag.ports，并在组合根注入实现。"
+    )
+
+
+def test_vectorstore_port_guard_detects_absolute_and_relative_imports() -> None:
+    """用故意违规的源码证明守卫不会静默放过两种导入写法。"""
+    module = PROJECT_ROOT / "comet_rag" / "services" / "retrieval.py"
+    tree = ast.parse(
+        "from comet_rag.infrastructure.vectorstore import BaseVectorStore\n"
+        "from ..infrastructure.vectorstore.milvus import MilvusStore\n"
+        "from comet_rag.infrastructure import vectorstore\n"
+        "from ..infrastructure import vectorstore\n"
+    )
+    assert _service_vectorstore_violations(tree, module) == {
+        "comet_rag.infrastructure.vectorstore.BaseVectorStore",
+        "comet_rag.infrastructure.vectorstore",
+        "comet_rag.infrastructure.vectorstore.milvus",
+        "comet_rag.infrastructure.vectorstore.milvus.MilvusStore",
+    }
 
 
 # ── 单进程模式不得挂上租约回收（T24）────────────────────────────────────────
@@ -404,7 +469,10 @@ def test_core_guard_actually_detects_violations() -> None:
         for name in _imported_full(tree)
         if name.startswith("comet_rag.") and not name.startswith("comet_rag.core")
     }
-    assert violations == {"comet_rag.services.retrieval"}
+    assert violations == {
+        "comet_rag.services.retrieval",
+        "comet_rag.services.retrieval.RetrievalService",
+    }
 
 
 # ── 包级依赖不得成环（第 5 条守卫）──────────────────────────────────────────
@@ -504,12 +572,19 @@ def test_relative_imports_are_resolved_to_absolute_names() -> None:
 
     assert _imported_full(tree, module) == {
         "comet_rag.engines.pipelines.types",
+        "comet_rag.engines.pipelines.types.Chunk",
         "comet_rag.engines.loaders",
+        "comet_rag.engines.loaders.Auto",
         "comet_rag.services",
+        "comet_rag.services.Foo",
         "comet_rag.ports",
+        "comet_rag.ports.EmbeddingPort",
     }
     # 解析之后，越层的那条才拦得住
-    assert _engine_internal_violations(tree, module) == {"comet_rag.services"}
+    assert _engine_internal_violations(tree, module) == {
+        "comet_rag.services",
+        "comet_rag.services.Foo",
+    }
 
 
 def test_bare_relative_import_resolves_each_imported_name() -> None:
@@ -554,7 +629,10 @@ def test_cycle_detector_sees_relative_imports() -> None:
     """环检测同样不能被相对导入绕过。"""
     module = PROJECT_ROOT / "comet_rag" / "infrastructure" / "knowledge_base.py"
     tree = ast.parse("from ..tasks.models import Time\n")
-    assert _imported_full(tree, module) == {"comet_rag.tasks.models"}
+    assert _imported_full(tree, module) == {
+        "comet_rag.tasks.models",
+        "comet_rag.tasks.models.Time",
+    }
 
 
 # ── engines 不得自己发明并发数字（第 6 条守卫）──────────────────────────────

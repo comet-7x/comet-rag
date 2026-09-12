@@ -24,11 +24,14 @@ from comet_rag.infrastructure.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
     KnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.vectorstore import (
+from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.ports import (
     BaseVectorStore,
-    InMemoryVectorStore,
+    DocumentExtractorPort,
+    EmbeddingPort,
+    KeywordSearchPort,
+    RerankerPort,
 )
-from comet_rag.ports import DocumentExtractorPort, EmbeddingPort, RerankerPort
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
 from comet_rag.services.source_policy import SourcePolicy, build_source_policy
@@ -64,6 +67,9 @@ def build_vector_store(config: APPConfig) -> BaseVectorStore:
         return MilvusStore(
             endpoint=settings.endpoint,
             api_key=settings.api_key_value,
+            database_name=settings.database_name,
+            prefix=settings.collection_prefix,
+            replica_number=settings.replica_number,
         )
     raise ValueError(f"不支持的 vector_store 后端：{backend}")
 
@@ -500,6 +506,11 @@ def build_context(
         retrieval=RetrievalService(
             embedding_model=embedding_model,
             vector_store=vector_store,
+            keyword_search=(
+                vector_store
+                if isinstance(vector_store, KeywordSearchPort)
+                else None
+            ),
             knowledge_base=knowledge_base,
             reranker=reranker,
             degradation=degradation,

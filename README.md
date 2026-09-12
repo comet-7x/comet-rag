@@ -9,7 +9,7 @@
 **在安装期强制**，并由 AST 层级守卫在 CI 里盯着（`tests/unit/test_layering.py`）。
 
 > 当前进度：M1、M2（PDF / 外部 MinerU）与公共 Loader/Extractor 入口收敛已完成；
-> 下一里程碑是 M3（BM25 + RRF 混合检索）。
+> M3 已完成 dense、Milvus BM25 与 RRF hybrid 三种检索模式，正在做出口验收。
 
 ---
 
@@ -52,6 +52,17 @@ curl      localhost:8000/tasks/<task_id>
 curl -X POST localhost:8000/search -d '{"kb_id":"demo","query":"关键结论是什么"}'  -H 'Content-Type: application/json'
 ```
 
+检索默认仍是向量召回；需要精确术语或混合召回时显式选择模式：
+
+```bash
+curl -X POST localhost:8000/search \
+  -H 'Content-Type: application/json' \
+  -d '{"kb_id":"demo","query":"TraitObject 内存布局","mode":"hybrid","top_k":5}'
+```
+
+`mode` 可选 `dense`、`keyword`、`hybrid`。响应里的 `channels` 表示实际执行的
+召回通道；hybrid 单路故障时会退到仍可用的一路，并在 `degradations` 给出安全诊断。
+
 ### 生产形态
 
 ```bash
@@ -78,11 +89,14 @@ uv run comet-rag worker embedder        # IO 密集：向量化 / 写库
 "绕过闸门"在类型层面就没有写法。换成"包一层 wrapper"只是约定 —— 谁直接调
 底层都能绕过去且不报错，而闸门恰恰是静默失效型的保护。
 
-**三个核心抽象各有一套与实现无关的契约测试**（79 条）。`InMemoryTaskStore` 与
+**核心抽象各有一套与实现无关的契约测试**。`InMemoryTaskStore` 与
 `PostgresTaskStore`、`InProcessExecutor` 与 `ArqExecutor`、`InMemoryVectorStore`
-与 `MilvusStore` 跑同一套断言 —— "换后端行为不变"这句话靠它们兑现，不靠文档。
+与 `MilvusStore` 跑同一套断言；关键词召回也由两种向量库实现共享同一套契约 ——
+"换后端行为不变"这句话靠断言兑现，不靠文档。
 
-更多见 [docs/architecture.md](docs/architecture.md)；目录结构与流程图见 [docs/structure.md](docs/structure.md)。
+更多见 [docs/architecture.md](docs/architecture.md)；目录结构与流程图见
+[docs/structure.md](docs/structure.md)；升级中的破坏性变更见
+[docs/release_notes.md](docs/release_notes.md)。
 
 ---
 

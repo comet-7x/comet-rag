@@ -2,7 +2,12 @@
 
 from fastapi import APIRouter
 
-from ...schemas.search import SearchRequest, SearchResponse, SearchResultItem
+from ...schemas.search import (
+    RetrievalDegradationItem,
+    SearchRequest,
+    SearchResponse,
+    SearchResultItem,
+)
 from ...services.retrieval import SearchQuery
 from ..deps import RetrievalDep
 
@@ -19,6 +24,7 @@ async def search(payload: SearchRequest, retrieval: RetrievalDep) -> SearchRespo
             fetch_k=payload.fetch_k,
             filter=payload.filter,
             rerank=payload.rerank,
+            mode=payload.mode,
         )
     )
     return SearchResponse(
@@ -27,4 +33,14 @@ async def search(payload: SearchRequest, retrieval: RetrievalDep) -> SearchRespo
         fetched=result.fetched,
         effective_top_k=result.effective_top_k,
         degraded=result.degraded,
+        mode=result.mode,
+        channels=list(result.channels),
+        degradations=[
+            RetrievalDegradationItem(
+                stage=item.stage,
+                reason=item.reason,
+                error_type=item.error_type,
+            )
+            for item in result.degradations
+        ],
     )

@@ -6,7 +6,12 @@
 
 from .ingest import IngestAccepted, IngestSubmit
 from .kb import KnowledgeBaseCreate, KnowledgeBaseInfo
-from .search import SearchRequest, SearchResponse, SearchResultItem
+from .search import (
+    RetrievalDegradationItem,
+    SearchRequest,
+    SearchResponse,
+    SearchResultItem,
+)
 from .task import TaskListResponse, TaskView
 
 __all__ = [
@@ -14,6 +19,7 @@ __all__ = [
     "IngestSubmit",
     "KnowledgeBaseCreate",
     "KnowledgeBaseInfo",
+    "RetrievalDegradationItem",
     "SearchRequest",
     "SearchResponse",
     "SearchResultItem",

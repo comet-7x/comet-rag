@@ -26,9 +26,25 @@ from .embedding import (
 from .gate import AsyncGate
 from .reranker import RerankerPort
 from .source import LoadedResource, SourceContent, SourceLoaderPort
+from .vector_store import (
+    BaseVectorStore,
+    CollectionNotFound,
+    CollectionSchemaMismatch,
+    DimensionMismatch,
+    Filter,
+    KeywordSearchPort,
+    SearchHit,
+    VectorRecord,
+    VectorSearchPort,
+    VectorStoreError,
+    matches_filter,
+)
 
 __all__ = [
     "AsyncGate",
+    "BaseVectorStore",
+    "CollectionNotFound",
+    "CollectionSchemaMismatch",
     "ContentInput",
     "ContentPart",
     "DocumentExtractionError",
@@ -36,10 +52,13 @@ __all__ = [
     "DocumentProtocolError",
     "DocumentResourceLimitExceeded",
     "DocumentUpstreamError",
+    "DimensionMismatch",
     "EmbeddingPort",
     "EmbeddingTask",
     "ExtractedDocument",
+    "Filter",
     "ImageContent",
+    "KeywordSearchPort",
     "LoadedResource",
     "MediaResource",
     "MultimodalEmbeddingPort",
@@ -49,5 +68,10 @@ __all__ = [
     "RetryableDocumentUpstreamError",
     "SourceContent",
     "SourceLoaderPort",
+    "SearchHit",
     "TextContent",
+    "VectorRecord",
+    "VectorSearchPort",
+    "VectorStoreError",
+    "matches_filter",
 ]

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -38,6 +39,7 @@ KB = "kb-search-bench"
 CHUNKS = 500
 #: 200 次采样：P99 至少要有两个样本落在尾部才不至于等同于 max
 ROUNDS = 200
+MODE_ROUNDS = 100
 
 
 class IdentityReranker(BaseReranker):
@@ -53,8 +55,13 @@ class IdentityReranker(BaseReranker):
 @pytest.fixture(scope="session")
 def document(tmp_path_factory: pytest.TempPathFactory) -> Path:
     path = tmp_path_factory.mktemp("searchbench") / "corpus.stub"
+    samples = (
+        "苹果富含维生素与膳食纤维。",
+        "香蕉适合在热带地区种植。",
+        "橙子的酸度取决于成熟度。",
+    )
     path.write_text(
-        "\n".join(f"第 {i} 段：苹果与香蕉与橙子的描述。" for i in range(CHUNKS)),
+        "\n".join(f"第 {i} 段：{samples[i % len(samples)]}" for i in range(CHUNKS)),
         encoding="utf-8",
     )
     return path
@@ -118,13 +125,27 @@ async def client(document: Path) -> AsyncIterator[httpx.AsyncClient]:
         yield http
 
 
-async def _search(http: httpx.AsyncClient, *, rerank: bool, top_k: int = 5) -> None:
+async def _search(
+    http: httpx.AsyncClient,
+    *,
+    rerank: bool,
+    top_k: int = 5,
+    mode: str = "dense",
+) -> dict[str, Any]:
     resp = await http.post(
         "/search",
-        json={"kb_id": KB, "query": "香蕉怎么种", "top_k": top_k, "rerank": rerank},
+        json={
+            "kb_id": KB,
+            "query": "香蕉",
+            "top_k": top_k,
+            "rerank": rerank,
+            "mode": mode,
+        },
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["chunks"]
+    body = resp.json()
+    assert body["chunks"]
+    return body
 
 
 async def test_search_latency_without_rerank(client: httpx.AsyncClient, bench) -> None:
@@ -151,3 +172,22 @@ async def test_search_latency_scales_with_top_k(
         lambda i: _search(client, rerank=True, top_k=50),
         metric="search_top_k_50",
     )
+
+
+async def test_search_modes_record_fixed_sample_signal(
+    client: httpx.AsyncClient, bench
+) -> None:
+    """固定合成语料只用于回归观测，不据此宣称真实检索质量提升。"""
+    for mode in ("dense", "keyword", "hybrid"):
+        await bench.measure(
+            MODE_ROUNDS,
+            lambda i, mode=mode: _search(client, rerank=False, mode=mode),
+            metric=f"search_{mode}",
+        )
+        body = await _search(client, rerank=False, mode=mode)
+        hit = float("香蕉" in body["chunks"][0]["text"])
+        bench.record(f"{mode}_hit_at_1", hit, "ratio")
+        bench.record(f"{mode}_candidates", float(body["fetched"]), "chunks")
+
+        assert hit == 1.0
+        assert body["mode"] == mode

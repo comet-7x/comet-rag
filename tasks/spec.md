@@ -1,8 +1,8 @@
 # Spec: Comet-RAG
 
-> 状态：M1、M2 已完成（v1.1）
-> 最后更新：2026-09-10
-> 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0
+> 状态：M1、M2 已完成；M3 实现与本地验收完成，等待 PR 评审（v1.2）
+> 最后更新：2026-09-12
+> 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0；M3 见 `tasks/m3_spec.md` v1.0
 
 ---
 
@@ -55,10 +55,11 @@
 |---|---|---|
 | **M1** | **DOCX 全链路** —— 上传 docx → 解析 → 分块 → 向量化 → 入 Milvus → 检索命中 | §8 的 S1–S5 全绿（已完成） |
 | **M2** | **PDF 支持（通过 HTTP 连接外部 MinerU 服务）** | 本地、URL、S3 PDF 复用 M1 入库链路；默认安装不含 MinerU 运行时（已完成） |
-| M3 | 混合检索（BM25 + RRF） | sparse schema 已预留；实现召回与融合逻辑 |
+| **M3** | **混合检索（Milvus BM25 + RRF）** | 两路召回、纯 RRF、通道降级与真实 Milvus 链路全绿（等待 PR 评审） |
 
 M1、M2 与 M2 后 P1 已完成并具备单元、契约、集成、端到端和基准测试保护。
-下一步为 M3 单独冻结 BM25 后端、关键词检索 Port 与 RRF 成功标准。
+M3-T8 已完成真实混合链路、E2E、固定样本基准、文档和本地出口质量门，PR #55
+已面向 `develop` 创建。当前下一项为完成 AI Bot 增量评审。
 
 ### 非目标（明确不做）
 

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
+from collections import Counter
 from collections.abc import Sequence
 from typing import Any
 
-from comet_rag.infrastructure.vectorstore.base import (
+from comet_rag.ports import (
     BaseVectorStore,
     CollectionNotFound,
     DimensionMismatch,
@@ -16,6 +18,52 @@ from comet_rag.infrastructure.vectorstore.base import (
     VectorRecord,
     matches_filter,
 )
+
+_TERM = re.compile(r"[A-Za-z0-9_]+|[\u3400-\u4dbf\u4e00-\u9fff]")
+_BM25_K1 = 1.2
+_BM25_B = 0.75
+
+
+def _tokenize(text: str) -> list[str]:
+    """提供不依赖外部分词器的确定性参考行为，不模拟供应商 analyzer 细节。"""
+    return [match.group(0).casefold() for match in _TERM.finditer(text)]
+
+
+def _bm25_scores(
+    records: Sequence[VectorRecord], query_terms: Sequence[str]
+) -> dict[str, float]:
+    documents = {record.id: _tokenize(record.text) for record in records}
+    if not documents or not query_terms:
+        return {}
+
+    document_count = len(documents)
+    average_length = sum(map(len, documents.values())) / document_count
+    frequencies = {rid: Counter(tokens) for rid, tokens in documents.items()}
+    document_frequency = {
+        term: sum(term in frequency for frequency in frequencies.values())
+        for term in set(query_terms)
+    }
+
+    scores: dict[str, float] = {}
+    for rid, frequency in frequencies.items():
+        length = len(documents[rid])
+        score = 0.0
+        for term in set(query_terms):
+            term_frequency = frequency[term]
+            if term_frequency == 0:
+                continue
+            inverse_frequency = math.log(
+                1
+                + (document_count - document_frequency[term] + 0.5)
+                / (document_frequency[term] + 0.5)
+            )
+            normalization = term_frequency + _BM25_K1 * (
+                1 - _BM25_B + _BM25_B * length / (average_length or 1)
+            )
+            score += inverse_frequency * term_frequency * (_BM25_K1 + 1) / normalization
+        if score > 0:
+            scores[rid] = score
+    return scores
 
 
 def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
@@ -110,6 +158,34 @@ class InMemoryVectorStore(BaseVectorStore):
         # id 作为次级键，保证同分时顺序稳定（否则快照/断言会随机失败）
         scored.sort(key=lambda h: (-h.score, h.id))
         return scored[:top_k]
+
+    async def asearch_keywords(
+        self,
+        kb_id: str,
+        query: str,
+        *,
+        top_k: int = 5,
+        filter: Filter | None = None,
+    ) -> list[SearchHit]:
+        if top_k <= 0:
+            raise ValueError(f"top_k 必须为正整数，收到 {top_k}")
+        async with self._lock:
+            collection = self._require(kb_id)
+            records = list(collection.records.values())
+        query_terms = _tokenize(query)
+        scores = _bm25_scores(records, query_terms)
+        hits = [
+            SearchHit(
+                id=record.id,
+                text=record.text,
+                score=scores[record.id],
+                metadata=dict(record.metadata),
+            )
+            for record in records
+            if record.id in scores and matches_filter(record.metadata, filter)
+        ]
+        hits.sort(key=lambda hit: (-hit.score, hit.id))
+        return hits[:top_k]
 
     async def adelete(
         self,

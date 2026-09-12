@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import socket
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import pytest
@@ -27,7 +27,12 @@ POSTGRES_DSN = os.environ.get(
     "postgresql+asyncpg://comet:comet@localhost:5432/comet_rag",
 )
 REDIS_URL = os.environ.get("COMET_TEST_REDIS_URL", "redis://localhost:6379/0")
-MILVUS_URI = os.environ.get("COMET_TEST_MILVUS_URI", "http://localhost:19530")
+MILVUS_URI = os.environ.get(
+    "COMET_TEST_MILVUS_URI",
+    os.environ.get("MILVUS_URI", "http://localhost:19530"),
+)
+# 真实测试绝不能因漏配而回落到 default 或沿用应用环境的生产库。
+MILVUS_DATABASE = "zhihao_test_database"
 MINIO_ENDPOINT = os.environ.get("COMET_TEST_MINIO_ENDPOINT", "http://localhost:9010")
 
 
@@ -91,8 +96,44 @@ def redis_url() -> str:
 
 
 @pytest.fixture(scope="session")
-def milvus_uri() -> str:
-    _require("localhost", 19530, "Milvus")
+def milvus_database() -> str:
+    configured = os.environ.get("COMET_TEST_MILVUS_DATABASE", MILVUS_DATABASE)
+    if configured != MILVUS_DATABASE:
+        pytest.fail(
+            "本项目集成测试只允许访问 zhihao_test_database，"
+            "拒绝连接其他 Milvus database",
+            pytrace=False,
+        )
+    return configured
+
+
+def _milvus_unavailable_reason(exc: Exception, database: str) -> str:
+    """生成不泄露端点/凭据、但能区分 database 缺失的 skip 原因。"""
+    message = str(exc).lower()
+    database_missing = "database" in message and any(
+        marker in message
+        for marker in ("not found", "not exist", "doesn't exist", "can't find")
+    )
+    if database_missing:
+        return f"Milvus database {database!r} 不存在；请先由管理员创建"
+    code = getattr(exc, "code", None)
+    suffix = f" code={code}" if code is not None else ""
+    return f"Milvus 连接或鉴权失败：{type(exc).__name__}{suffix}"
+
+
+@pytest.fixture(scope="session")
+def milvus_uri(milvus_database: str) -> str:
+    """用真实协议探活；裸 TCP 在代理、DNS 或 service mesh 下会误判。"""
+    try:
+        from pymilvus import MilvusClient
+
+        client = MilvusClient(uri=MILVUS_URI, db_name=milvus_database, timeout=3.0)
+        _ = cast("list[str]", client.list_collections(timeout=3.0))
+        client.close()
+    except ImportError:
+        pytest.skip("Milvus 集成测试需要安装 comet-rag[milvus]")
+    except Exception as exc:
+        pytest.skip(_milvus_unavailable_reason(exc, milvus_database))
     return MILVUS_URI
 
 

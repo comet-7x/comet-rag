@@ -17,6 +17,7 @@ from comet_rag.composition.bootstrap import (
     build_context,
     build_embedding_model,
     build_mineru_extractor,
+    build_vector_store,
     wire_pdf_extractor,
 )
 from comet_rag.config.schemas import (
@@ -29,6 +30,7 @@ from comet_rag.config.schemas import (
     MinerUConfig,
     S3Config,
     ServerConfig,
+    VectorDatabaseConfig,
 )
 from comet_rag.core.concurrency import Gate
 from comet_rag.engines.loaders.auto_loader import AutoLoader
@@ -180,6 +182,7 @@ async def test_memory_backends_need_no_middleware(context) -> None:
     assert isinstance(context.vector_store, InMemoryVectorStore)
     assert context.task_service is not None
     assert context.retrieval is not None
+    assert context.retrieval._keyword_search is context.vector_store  # noqa: SLF001
     assert context.embedding_dim == DIM
 
     await context.aclose()
@@ -543,6 +546,38 @@ def test_milvus_backend_requires_connection_settings(
 
     with pytest.raises((ValueError, ImportError, ModuleNotFoundError)):
         build_context(config, embedding_model=embedding)
+
+
+def test_milvus_database_and_prefix_are_forwarded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from comet_rag.infrastructure.vectorstore import milvus
+
+    captured: dict[str, Any] = {}
+
+    class FakeMilvusStore(InMemoryVectorStore):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__()
+            captured.update(kwargs)
+
+    monkeypatch.setattr(milvus, "MilvusStore", FakeMilvusStore)
+    config = make_config(vector_store=Backend.MILVUS)
+    config.infrastructure_config.vector_database = VectorDatabaseConfig(
+        endpoint="http://milvus.invalid:19530",
+        database_name="zhihao_test_database",
+        collection_prefix="ct_bootstrap",
+    )
+
+    store = build_vector_store(config)
+
+    assert isinstance(store, FakeMilvusStore)
+    assert captured == {
+        "endpoint": "http://milvus.invalid:19530",
+        "api_key": None,
+        "database_name": "zhihao_test_database",
+        "prefix": "ct_bootstrap",
+        "replica_number": 1,
+    }
 
 
 # ── 关停 ───────────────────────────────────────────────────────────────────
