@@ -13,8 +13,8 @@ M3 在现有 dense 检索和 reranker 之间增加独立 BM25 召回与纯 RRF �
 
 ## Current Priority
 
-M3-T8 的真实 Milvus 混合链路、E2E、固定样本基准、文档和本地出口质量门均已完成。
-下一项为创建面向 `develop` 的 PR，并完成 AI Bot 增量评审。
+M3-T8 的真实 Milvus 混合链路、E2E、固定样本基准、文档和本地出口质量门均已完成，
+面向 `develop` 的 PR #55 已创建。下一项为完成 AI Bot 增量评审。
 
 ## Dependency Graph
 
