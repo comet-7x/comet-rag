@@ -1,9 +1,9 @@
 # 版本说明
 
-## Unreleased — M3 混合检索
+## Unreleased — 目录与文档处理边界重构
 
-M3 新增 Milvus BM25 关键词召回、RRF 混合召回与单通道降级。以下两项属于部署兼容性
-变更，升级前必须处理。
+本轮在已完成的 M3 混合检索基础上收敛目录，并为 M4 冻结统一文档输入。以下变更
+包含 Python API 与部署兼容性调整，升级前必须处理。
 
 ### Python 导入路径收敛
 
@@ -12,6 +12,17 @@ M3 新增 Milvus BM25 关键词召回、RRF 混合召回与单通道降级。以
 `comet_rag.pipeline`；具体实现只存在于 `infrastructure/sources`、
 `infrastructure/persistence`、`infrastructure/models`、`infrastructure/extractors`
 及 `engines/documents` 等规范目录。HTTP DTO 位于 `comet_rag.api.schemas`。
+
+### 文档 Hook 返回值变更
+
+`PipelineHooks.extractor()` 与 `aextractor()` 注册的函数现在必须返回
+`ExtractedDocument`，不再直接返回字符串。Pipeline 会统一转换为
+`NormalizedDocument` 后再交给 Chunker，避免 DOCX、MinerU 与后续 PDF/OCR 各自维护
+一套跨格式空白和编码规则。自定义 Hook 可按以下方式迁移：
+
+```python
+return ExtractedDocument(markdown=text, metadata={"provider": "custom"})
+```
 
 ### 配置变更
 

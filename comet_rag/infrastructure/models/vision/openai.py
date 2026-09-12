@@ -11,7 +11,7 @@ from comet_rag.exceptions import CometRAGException
 class OpenAIVisionModel:
     """OpenAI ``/chat/completions`` 兼容视觉模型适配器。
 
-    该实现以结构化类型满足 ``engines.cleaners.VisionModel`` 协议，无需让
+    该实现以结构化类型满足 ``ports.VisionDescriptionPort`` 协议，无需让
     engines 层反向导入基础设施实现。
     """
 

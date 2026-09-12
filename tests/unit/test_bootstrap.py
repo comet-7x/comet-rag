@@ -329,12 +329,14 @@ async def test_enabled_mineru_binds_an_independent_gate_and_pdf_hooks(
         metadata={"file_name": "original.pdf", "file_type": "pdf"},
     )
     assert (
-        context.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        context.pipeline_hooks.get_extractor("pdf")(
+            content, PipelineConfig()
+        ).markdown
         == "# PDF"
     )
     async_hook = context.pipeline_hooks.get_aextractor("pdf")
     assert async_hook is not None
-    assert await async_hook(content, PipelineConfig()) == "# PDF"
+    assert (await async_hook(content, PipelineConfig())).markdown == "# PDF"
     assert extractor.calls == [
         (path, "original.pdf", "application/pdf"),
         (path, "original.pdf", "application/pdf"),
@@ -368,11 +370,15 @@ async def test_mineru_hooks_are_isolated_between_contexts_and_disabled_restart(
     )
 
     assert (
-        first.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        first.pipeline_hooks.get_extractor("pdf")(
+            content, PipelineConfig()
+        ).markdown
         == "# first"
     )
     assert (
-        second.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        second.pipeline_hooks.get_extractor("pdf")(
+            content, PipelineConfig()
+        ).markdown
         == "# second"
     )
     with pytest.raises(ValueError, match="No extractor registered"):
@@ -385,7 +391,9 @@ async def test_mineru_hooks_are_isolated_between_contexts_and_disabled_restart(
     with pytest.raises(ValueError, match="No extractor registered"):
         disabled.pipeline_hooks.get_extractor("pdf")
     assert (
-        second.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        second.pipeline_hooks.get_extractor("pdf")(
+            content, PipelineConfig()
+        ).markdown
         == "# second"
     )
 

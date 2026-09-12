@@ -21,6 +21,7 @@ from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.sources import BaseLoader, LoaderContent, SourceContent
 from comet_rag.pipeline import Pipeline
+from comet_rag.ports import ExtractedDocument
 
 CHUNK_COUNT = 200
 STUB_TYPE = "stub"
@@ -106,8 +107,10 @@ def make_pipeline(source_file: Path, model: RecordingEmbeddingModel):
 
     def _factory(*, embed: bool = True, embed_batch_size: int = 32, **kw) -> Pipeline:
         @PipelineHooks.extractor(STUB_TYPE)
-        def _extract(lc: LoaderContent, config: PipelineConfig) -> str:
-            return "x"
+        def _extract(
+            lc: LoaderContent, config: PipelineConfig
+        ) -> ExtractedDocument:
+            return ExtractedDocument(markdown="x")
 
         @PipelineHooks.chunker(STUB_TYPE)
         def _chunk(text: str, config: PipelineConfig) -> list[str]:
@@ -201,19 +204,49 @@ async def test_all_entry_points_embed_every_chunk(make_pipeline) -> None:
     assert all([c.embedding async for c in make_pipeline().astream_run("任意")])
 
 
+async def test_sync_and_async_normalize_before_chunking(make_pipeline) -> None:
+    pipeline = make_pipeline(embed=False)
+    received: list[str] = []
+
+    @PipelineHooks.extractor(STUB_TYPE)
+    def _extract(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
+        return ExtractedDocument(
+            markdown="\ufeff标题  \r\n\r\n\r\n正文\u00a0内容\r\n",
+            metadata={"provider": "fixture"},
+        )
+
+    @PipelineHooks.chunker(STUB_TYPE)
+    def _chunk(text: str, config: PipelineConfig) -> list[str]:
+        received.append(text)
+        return [text]
+
+    sync_result = pipeline.run("任意")
+    async_result = await pipeline.arun("任意")
+
+    assert received == ["标题\n\n正文 内容", "标题\n\n正文 内容"]
+    assert sync_result.metadata["provider"] == "fixture"
+    assert async_result.chunks[0].metadata["provider"] == "fixture"
+
+
 async def test_async_entry_points_prefer_async_extractor(make_pipeline) -> None:
     pipeline = make_pipeline(embed=False)
     calls = {"sync": 0, "async": 0}
 
     @PipelineHooks.extractor(STUB_TYPE)
-    def _sync(lc: LoaderContent, config: PipelineConfig) -> str:
+    def _sync(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
         calls["sync"] += 1
-        return "sync"
+        return ExtractedDocument(markdown="sync")
 
     @PipelineHooks.aextractor(STUB_TYPE)
-    async def _async(lc: LoaderContent, config: PipelineConfig) -> str:
+    async def _async(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
         calls["async"] += 1
-        return "async"
+        return ExtractedDocument(markdown="async")
 
     await pipeline.arun("任意")
     _ = [chunk async for chunk in pipeline.astream_run("任意")]
@@ -226,14 +259,18 @@ def test_sync_entry_points_keep_using_sync_extractor(make_pipeline) -> None:
     calls = {"sync": 0, "async": 0}
 
     @PipelineHooks.extractor(STUB_TYPE)
-    def _sync(lc: LoaderContent, config: PipelineConfig) -> str:
+    def _sync(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
         calls["sync"] += 1
-        return "sync"
+        return ExtractedDocument(markdown="sync")
 
     @PipelineHooks.aextractor(STUB_TYPE)
-    async def _async(lc: LoaderContent, config: PipelineConfig) -> str:
+    async def _async(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
         calls["async"] += 1
-        return "async"
+        return ExtractedDocument(markdown="async")
 
     pipeline.run("任意")
     list(pipeline.stream_run("任意"))

@@ -168,7 +168,7 @@ class PipelineResult:
     chunks: list[Chunk]  # chunk 列表
     metadata: dict[
         str, Any
-    ]  # 来自 LoadedResource（source_type, file_name, file_size...）
+    ]  # Extractor metadata 与 LoadedResource metadata 的合并结果
 ```
 
 ### `Chunk`
@@ -198,8 +198,10 @@ class Chunk:
 
 Pipeline 内部通过 `PipelineHooks` 注册表分发处理逻辑。增加新格式只需注册两个 hook：
 
-- **extractor**：`(LoadedResource, PipelineConfig) → str`，负责将文件转换为清洁文本
+- **extractor**：`(LoadedResource, PipelineConfig) → ExtractedDocument`，负责把文件映射为通用提取结果
 - **chunker**（可选）：`(str, PipelineConfig) → list[str]`，自定义分块策略；不注册则回退到 `TextChunker`
+
+所有提取结果都会在进入 Chunker 前经过统一的 `MarkdownDocumentNormalizer`。
 
 > 两个 hook 都接收完整的 `PipelineConfig`，而不是散装的 `chunk_size` / `chunk_overlap`。
 > 这样新增格式专属配置（如 `config.docx`）时无需改动 hook 签名。
@@ -207,18 +209,27 @@ Pipeline 内部通过 `PipelineHooks` 注册表分发处理逻辑。增加新格
 ```python
 from comet_rag.loaders import LoadedResource
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
+from comet_rag.ports import ExtractedDocument
 
 
 # 注册纯文本 extractor
 @PipelineHooks.extractor("txt", "log")
-def extract_plaintext(loader_content: LoadedResource, config: PipelineConfig) -> str:
-    return loader_content.path.read_text(encoding="utf-8")
+def extract_plaintext(
+    loader_content: LoadedResource, config: PipelineConfig
+) -> ExtractedDocument:
+    return ExtractedDocument(
+        markdown=loader_content.path.read_text(encoding="utf-8")
+    )
 
 
 # 注册 Markdown extractor（可复用 TextChunker）
 @PipelineHooks.extractor("md", "mdx")
-def extract_markdown(loader_content: LoadedResource, config: PipelineConfig) -> str:
-    return loader_content.path.read_text(encoding="utf-8")
+def extract_markdown(
+    loader_content: LoadedResource, config: PipelineConfig
+) -> ExtractedDocument:
+    return ExtractedDocument(
+        markdown=loader_content.path.read_text(encoding="utf-8")
+    )
 
 
 # 为 markdown 注册专用 chunker
@@ -245,13 +256,14 @@ result = Pipeline().run("README.md")
 from comet_rag.engines.documents.docx import DocxDocumentExtractor
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.loaders import LoadedResource
+from comet_rag.ports import ExtractedDocument
 
 
 # 自定义 DOCX extractor：保留页眉页脚，不保留图片
 @PipelineHooks.extractor("docx")
 def extract_docx_with_headers(
     loader_content: LoadedResource, config: PipelineConfig
-) -> str:
+) -> ExtractedDocument:
     extractor = DocxDocumentExtractor(
         include_headers_footers=True,
         include_images=False,
@@ -260,7 +272,7 @@ def extract_docx_with_headers(
         loader_content.path,
         filename=loader_content.metadata.get("file_name", loader_content.path.name),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ).markdown
+    )
 ```
 
 ---

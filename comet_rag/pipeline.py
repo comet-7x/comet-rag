@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Self
 
+from comet_rag.engines.documents.normalization import DocumentNormalizationStrategy
 from comet_rag.engines.pipelines.hooks import HookProvider
 from comet_rag.engines.pipelines.types import PipelineConfig
 from comet_rag.infrastructure.sources import AutoLoader
@@ -18,6 +19,7 @@ class Pipeline(PipelineService):
         loader: SourceLoaderPort | None = None,
         embedding_model: EmbeddingPort | None = None,
         hooks: HookProvider | None = None,
+        normalizer: DocumentNormalizationStrategy | None = None,
     ) -> None:
         selected_loader = loader or AutoLoader.default()
         self._owns_loader = loader is None
@@ -26,6 +28,7 @@ class Pipeline(PipelineService):
             loader=selected_loader,
             embedding_model=embedding_model,
             hooks=hooks,
+            normalizer=normalizer,
         )
 
     def cleanup(self) -> None:

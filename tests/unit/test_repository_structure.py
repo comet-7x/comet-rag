@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REMOVED_LEGACY_PATHS = (
     "comet_rag/engines/loaders",
     "comet_rag/engines/document",
-    "comet_rag/engines/cleaners/docx_cleaner.py",
+    "comet_rag/engines/cleaners",
     "comet_rag/engines/parsers/docx_parser",
     "comet_rag/engines/pipelines/pipeline.py",
     "comet_rag/infrastructure/loaders",

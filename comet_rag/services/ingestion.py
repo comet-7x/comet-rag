@@ -12,6 +12,10 @@ from pydantic import BaseModel, Field
 
 from comet_rag.core.concurrency import Overloaded
 from comet_rag.core.logging import logger
+from comet_rag.engines.documents.normalization import (
+    DocumentNormalizationStrategy,
+    MarkdownDocumentNormalizer,
+)
 from comet_rag.engines.embedding.batch import aembed_documents
 from comet_rag.engines.pipelines import HookProvider, PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
@@ -125,6 +129,7 @@ class IngestRunner:
         loader: SourceLoaderPort,
         config: PipelineConfig | None = None,
         hooks: HookProvider | None = None,
+        normalizer: DocumentNormalizationStrategy | None = None,
         max_extracted_text_bytes_by_type: Mapping[str, int] | None = None,
     ) -> None:
         self._embedding_model = embedding_model
@@ -133,6 +138,7 @@ class IngestRunner:
         self._loader = loader
         self._config = config or PipelineConfig()
         self._hooks = hooks or PipelineHooks
+        self._normalizer = normalizer or MarkdownDocumentNormalizer()
         self._max_extracted_text_bytes_by_type = {
             file_type.lower(): limit
             for file_type, limit in (max_extracted_text_bytes_by_type or {}).items()
@@ -186,7 +192,12 @@ class IngestRunner:
             # 否则连接超时会绕过 _classify，第一次失败就把任务判死。
             loader_content = await self._loader.aload(SourceContent(request.source))
             file_type = str(loader_content.metadata.get("file_type", "")).lower()
-            text = await self._hooks.aextract(file_type, loader_content, self._config)
+            extracted = await self._hooks.aextract(
+                file_type, loader_content, self._config
+            )
+            self._validate_extracted_text_size(extracted.markdown, file_type)
+            document = await asyncio.to_thread(self._normalizer.normalize, extracted)
+            text = document.markdown
             self._validate_extracted_text_size(text, file_type)
             extracted_text_bytes = len(text.encode("utf-8"))
 

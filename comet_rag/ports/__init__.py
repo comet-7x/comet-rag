@@ -16,6 +16,7 @@ from .document import (
     DocumentResourceLimitExceeded,
     DocumentUpstreamError,
     ExtractedDocument,
+    NormalizedDocument,
     RetryableDocumentUpstreamError,
 )
 from .embedding import (
@@ -47,6 +48,7 @@ from .vector_store import (
     VectorStoreError,
     matches_filter,
 )
+from .vision import VisionDescriptionPort
 
 __all__ = [
     "AsyncGate",
@@ -76,6 +78,7 @@ __all__ = [
     "LoadedResource",
     "MediaResource",
     "MultimodalEmbeddingPort",
+    "NormalizedDocument",
     "RankedDocument",
     "RerankDocument",
     "RerankerPort",
@@ -87,5 +90,6 @@ __all__ = [
     "VectorRecord",
     "VectorSearchPort",
     "VectorStoreError",
+    "VisionDescriptionPort",
     "matches_filter",
 ]

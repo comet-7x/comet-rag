@@ -4,11 +4,20 @@ import asyncio
 from collections.abc import AsyncGenerator, Iterator
 from pathlib import Path
 
+from comet_rag.engines.documents.normalization import (
+    DocumentNormalizationStrategy,
+    MarkdownDocumentNormalizer,
+)
 from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
 from comet_rag.engines.pipelines.hooks import HookProvider, PipelineHooks
 from comet_rag.engines.pipelines.types import Chunk, PipelineConfig, PipelineResult
 from comet_rag.engines.utils import compute_sha256
-from comet_rag.ports import EmbeddingPort, SourceLoaderPort
+from comet_rag.ports import (
+    EmbeddingPort,
+    ExtractedDocument,
+    NormalizedDocument,
+    SourceLoaderPort,
+)
 from comet_rag.ports.source import LoadedResource, SourceContent
 
 LoaderContent = LoadedResource
@@ -22,29 +31,31 @@ class Pipeline:
         loader: SourceLoaderPort,
         embedding_model: EmbeddingPort | None = None,
         hooks: HookProvider | None = None,
+        normalizer: DocumentNormalizationStrategy | None = None,
     ):
         self._config = config or PipelineConfig()
         self._loader = loader
         self._embedding_model = embedding_model
         self._hooks = hooks or PipelineHooks
+        self._normalizer = normalizer or MarkdownDocumentNormalizer()
 
     def run(self, source: str | Path | SourceContent) -> PipelineResult:
         lc = self._load(source)
         try:
-            chunks = self._process(lc)
+            chunks, document = self._process(lc)
             if self._config.embed and self._embedding_model:
                 self._embed_chunks(chunks)
-            return self._build_result(lc, chunks)
+            return self._build_result(lc, chunks, document)
         finally:
             lc.cleanup()
 
     async def arun(self, source: str | Path | SourceContent) -> PipelineResult:
         lc = await self._aload(source)
         try:
-            chunks = await self._aprocess(lc)
+            chunks, document = await self._aprocess(lc)
             if self._config.embed and self._embedding_model:
                 await self._aembed_chunks(chunks)
-            return self._build_result(lc, chunks)
+            return self._build_result(lc, chunks, document)
         finally:
             lc.cleanup()
 
@@ -72,7 +83,8 @@ class Pipeline:
     def stream_run(self, source: str | Path | SourceContent) -> Iterator[Chunk]:
         lc = self._load(source)
         try:
-            yield from self._iter_embedded(self._process(lc))
+            chunks, _ = self._process(lc)
+            yield from self._iter_embedded(chunks)
         finally:
             lc.cleanup()
 
@@ -81,34 +93,41 @@ class Pipeline:
     ) -> AsyncGenerator[Chunk, None]:
         lc = await self._aload(source)
         try:
-            chunks = await self._aprocess(lc)
+            chunks, _ = await self._aprocess(lc)
             async for chunk in self._aiter_embedded(chunks):
                 yield chunk
         finally:
             lc.cleanup()
 
-    def _process(self, lc: LoaderContent) -> list[Chunk]:
-        file_type, text = self._extract(lc)
-        return self._chunk(lc, file_type, text)
+    def _process(self, lc: LoaderContent) -> tuple[list[Chunk], NormalizedDocument]:
+        file_type, document = self._extract(lc)
+        return self._chunk(lc, file_type, document), document
 
-    async def _aprocess(self, lc: LoaderContent) -> list[Chunk]:
-        file_type, text = await self._aextract(lc)
-        return await asyncio.to_thread(self._chunk, lc, file_type, text)
+    async def _aprocess(
+        self, lc: LoaderContent
+    ) -> tuple[list[Chunk], NormalizedDocument]:
+        file_type, extracted = await self._aextract(lc)
+        document = await asyncio.to_thread(self._normalizer.normalize, extracted)
+        chunks = await asyncio.to_thread(self._chunk, lc, file_type, document)
+        return chunks, document
 
-    def _extract(self, lc: LoaderContent) -> tuple[str, str]:
+    def _extract(self, lc: LoaderContent) -> tuple[str, NormalizedDocument]:
         file_type = str(lc.metadata.get("file_type", "")).lower()
-        text = self._hooks.get_extractor(file_type)(lc, self._config)
-        return file_type, text
+        extracted = self._hooks.get_extractor(file_type)(lc, self._config)
+        return file_type, self._normalizer.normalize(extracted)
 
-    async def _aextract(self, lc: LoaderContent) -> tuple[str, str]:
+    async def _aextract(self, lc: LoaderContent) -> tuple[str, ExtractedDocument]:
         file_type = str(lc.metadata.get("file_type", "")).lower()
-        text = await self._hooks.aextract(file_type, lc, self._config)
-        return file_type, text
+        document = await self._hooks.aextract(file_type, lc, self._config)
+        return file_type, document
 
-    def _chunk(self, lc: LoaderContent, file_type: str, text: str) -> list[Chunk]:
-        texts = self._hooks.get_chunker(file_type)(text, self._config)
+    def _chunk(
+        self, lc: LoaderContent, file_type: str, document: NormalizedDocument
+    ) -> list[Chunk]:
+        texts = self._hooks.get_chunker(file_type)(document.markdown, self._config)
         source_id = lc.source.source_id
         base_meta = {
+            **document.metadata,
             "source": lc.source.source,
             "source_id": source_id,
             "file_type": file_type,
@@ -133,12 +152,20 @@ class Pipeline:
             source = SourceContent(source)
         return await self._loader.aload(source)
 
-    def _build_result(self, lc: LoaderContent, chunks: list[Chunk]) -> PipelineResult:
+    def _build_result(
+        self,
+        lc: LoaderContent,
+        chunks: list[Chunk],
+        document: NormalizedDocument,
+    ) -> PipelineResult:
         return PipelineResult(
             source_id=lc.source.source_id,
             file_type=lc.metadata.get("file_type", ""),
             chunks=chunks,
-            metadata={k: v for k, v in lc.metadata.items() if k != "parse_config"},
+            metadata={
+                **document.metadata,
+                **{k: v for k, v in lc.metadata.items() if k != "parse_config"},
+            },
         )
 
     # ── Embedding ──────────────────────────────────────────────────────────

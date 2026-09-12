@@ -28,6 +28,7 @@ from comet_rag.ports import (
     BaseVectorStore,
     DocumentExtractorPort,
     EmbeddingPort,
+    ExtractedDocument,
     KeywordSearchPort,
     RerankerPort,
 )
@@ -281,25 +282,28 @@ def wire_pdf_extractor(
         return content.path.name
 
     @registry.extractor("pdf")
-    def extract_pdf(content: LoaderContent, config: PipelineConfig) -> str:
+    def extract_pdf(
+        content: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
         del config
         verify_content(content)
         return extractor.extract(
             content.path,
             filename=filename(content),
             media_type="application/pdf",
-        ).markdown
+        )
 
     @registry.aextractor("pdf")
-    async def aextract_pdf(content: LoaderContent, config: PipelineConfig) -> str:
+    async def aextract_pdf(
+        content: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
         del config
         await asyncio.to_thread(verify_content, content)
-        document = await extractor.aextract(
+        return await extractor.aextract(
             content.path,
             filename=filename(content),
             media_type="application/pdf",
         )
-        return document.markdown
 
     return lambda: registry.restore(previous)
 

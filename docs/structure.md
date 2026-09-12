@@ -32,6 +32,7 @@ comet_rag/
 ├── engines/            纯计算算法
 │   ├── documents/
 │   │   ├── formats.py  文件格式与解析配置
+│   │   ├── normalization/ 跨格式 Markdown 规范化
 │   │   └── docx/       converter · parser · cleaner · extractor · OMML
 │   ├── chunkers/       文本 · 结构化 · 代码
 │   ├── embedding/      批量排程，不发模型请求
@@ -136,8 +137,9 @@ flowchart TD
         DX --> DOCX["engines<br/>converter → parser → cleaner"]
         DP --> MG{{"MinerU 独立闸门"}}
         MG --> MU["infrastructure/extractors<br/>mineru-api / mineru-router"]
-        DOCX --> G["chunking · CPU 道<br/>chunker"]
-        MU --> G
+        DOCX --> N["DocumentNormalizer<br/>统一 Markdown · 保留 metadata"]
+        MU --> N
+        N --> G["chunking · CPU 道<br/>chunker"]
         G -.->|"Handoff 移交道次"| H["indexing · IO 道"]
     end
 
@@ -208,6 +210,7 @@ flowchart TD
 | 加一种进程内文件格式 | `engines/documents/<format>/` 实现 `DocumentExtractorPort` + `engines/pipelines/hooks.py` 注册 |
 | 加一种来源 Loader | 实现 `ports/source.py::SourceLoaderPort`，通过 `LoaderRoute` 装配；公开入口放 `comet_rag.loaders` |
 | 接一个外部文档解析服务 | 实现 `ports/document.py`，适配器放 `infrastructure/extractors/`，只在 `composition/bootstrap.py` 装配 |
+| 改跨格式文档规范化 | `engines/documents/normalization/`；格式专属清洗仍留在对应文档实现内 |
 | 改 MinerU 协议或资源上限 | `infrastructure/extractors/mineru.py` + `config/schemas.py::MinerUConfig` |
 | 改切分策略 | `engines/chunkers/` |
 | 改 dense / keyword 检索契约 | `ports/vector_store.py`；Milvus 语法只留在 `infrastructure/persistence/vector_store/` |

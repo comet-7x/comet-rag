@@ -11,6 +11,7 @@ from comet_rag.ports import (
     DocumentResourceLimitExceeded,
     DocumentUpstreamError,
     ExtractedDocument,
+    NormalizedDocument,
     RetryableDocumentUpstreamError,
 )
 from tests.contracts.document_extractor import DocumentExtractorContract
@@ -63,6 +64,15 @@ def test_fake_satisfies_document_extractor_protocol() -> None:
 def test_extracted_document_metadata_is_not_shared() -> None:
     first = ExtractedDocument(markdown="一")
     second = ExtractedDocument(markdown="二")
+
+    first.metadata["source"] = "first"
+
+    assert second.metadata == {}
+
+
+def test_normalized_document_metadata_is_not_shared() -> None:
+    first = NormalizedDocument(markdown="一")
+    second = NormalizedDocument(markdown="二")
 
     first.metadata["source"] = "first"
 

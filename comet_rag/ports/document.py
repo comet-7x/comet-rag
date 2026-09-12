@@ -7,7 +7,15 @@ from typing import Protocol, runtime_checkable
 
 @dataclass(frozen=True, slots=True)
 class ExtractedDocument:
-    """提取器交给纯计算流水线的规范化结果。"""
+    """提取器映射到通用字段、尚未执行跨格式规范化的结果。"""
+
+    markdown: str
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedDocument:
+    """可直接交给 Chunker 的规范 Markdown 与文档元数据。"""
 
     markdown: str
     metadata: dict[str, object] = field(default_factory=dict)
@@ -35,7 +43,7 @@ class RetryableDocumentUpstreamError(DocumentUpstreamError):
 
 @runtime_checkable
 class DocumentExtractorPort(Protocol):
-    """从受管本地文件提取规范化文档的最小契约。
+    """从受管本地文件生成通用提取结果的最小契约。
 
     Loader 负责把 Local、URL、S3 来源变成本地文件；此接口因此不接受 URL、
     凭据或供应商参数，避免来源路由与内容提取重新耦合。
@@ -61,5 +69,6 @@ __all__ = [
     "DocumentResourceLimitExceeded",
     "DocumentUpstreamError",
     "ExtractedDocument",
+    "NormalizedDocument",
     "RetryableDocumentUpstreamError",
 ]

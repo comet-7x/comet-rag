@@ -6,9 +6,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from comet_rag.engines.cleaners.base_cleaner import BaseCleaner
-from comet_rag.engines.cleaners.vision_model import VisionModel
 from comet_rag.engines.parsers.types import Block, DocxParsedContent
+from comet_rag.ports.vision import VisionDescriptionPort
 
 _IMAGE_MIME_TYPES = {
     "jpg": "image/jpeg",
@@ -52,12 +51,12 @@ def _image_format(value: object) -> tuple[str, str] | None:
     return (extension, mime_type) if mime_type is not None else None
 
 
-class DocxCleaner(BaseCleaner):
+class DocxCleaner:
     def __init__(
         self,
         include_headers_footers: bool = False,
         include_images: bool = True,
-        vision_model: VisionModel | None = None,
+        vision_model: VisionDescriptionPort | None = None,
     ):
         """
         Initialize a DocxCleaner for converting DOCX content to Markdown with configurable filtering and optional vision-based image descriptions.
@@ -65,7 +64,7 @@ class DocxCleaner(BaseCleaner):
         Parameters:
             include_headers_footers (bool): Whether to include header and footer blocks. Defaults to False.
             include_images (bool): Whether to include image blocks. Defaults to True.
-            vision_model (VisionModel | None): Optional vision model for generating image descriptions. Defaults to None.
+            vision_model: Optional image-description model.
         """
         self._include_headers_footers = include_headers_footers
         self._include_images = include_images

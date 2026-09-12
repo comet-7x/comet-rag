@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from comet_rag.engines.cleaners.vision_model import VisionModel
 from comet_rag.engines.converters.archive_guard import ArchiveLimits
 from comet_rag.engines.documents.docx.cleaner import DocxCleaner
 from comet_rag.engines.documents.docx.converter import DocxConverter
 from comet_rag.engines.documents.docx.parser import DocxParser
 from comet_rag.ports.document import ExtractedDocument
 from comet_rag.ports.source import LoadedResource, SourceContent
+from comet_rag.ports.vision import VisionDescriptionPort
 
 LoaderContent = LoadedResource
 
@@ -22,7 +22,7 @@ class DocxDocumentExtractor:
         heading_numbers: bool = False,
         include_images: bool = True,
         include_headers_footers: bool = False,
-        vision_model: VisionModel | None = None,
+        vision_model: VisionDescriptionPort | None = None,
         archive_limits: ArchiveLimits | None = None,
     ) -> None:
         self._heading_numbers = heading_numbers

@@ -58,9 +58,10 @@ pydantic/httpx/lxml 一类的纯计算包；服务那一半在它之上加了任
 值对象（`MediaResource`、`RerankDocument` …）也放在 `ports/`：它们是 Port
 签名里出现的类型，也就是这套契约的词汇表。
 
-M2 的 `DocumentExtractorPort` 也遵循这条规则：它只接收 Loader 已经落地的受管
-本地文件，返回 Markdown 与稳定 metadata，不认识 URL、S3 凭据、MinerU backend
-或 HTTP 响应。`MinerUDocumentExtractor` 是 `infrastructure/extractors/`
+`DocumentExtractorPort` 也遵循这条规则：它只接收 Loader 已经落地的受管本地文件，
+返回 `ExtractedDocument`，不认识 URL、S3 凭据、MinerU backend 或 HTTP 响应。
+所有结果在进入 Chunker 前由 `engines/documents/normalization/` 转换成
+`NormalizedDocument`。`MinerUDocumentExtractor` 是 `infrastructure/extractors/`
 中的外部适配器，只有 `composition/` 能把它注册成 PDF Pipeline Hook。
 
 ## 核心抽象

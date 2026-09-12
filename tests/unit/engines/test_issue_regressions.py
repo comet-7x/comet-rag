@@ -29,6 +29,7 @@ from comet_rag.infrastructure.sources import (
     SourceContent,
     URLLoader,
 )
+from comet_rag.ports import VisionDescriptionPort
 
 
 def test_heading_numbering_tracks_each_num_id_independently(monkeypatch) -> None:
@@ -102,6 +103,10 @@ class _VisionModel:
     async def adescribe(self, base64_data: str, media_type: str, **kwargs) -> str:
         self.mime_types.append(media_type)
         return "jpeg description"
+
+
+def test_vision_model_contract_lives_at_the_port_boundary() -> None:
+    assert isinstance(_VisionModel(), VisionDescriptionPort)
 
 
 def _image_content(**overrides) -> DocxParsedContent:

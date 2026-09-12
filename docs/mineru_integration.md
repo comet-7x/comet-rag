@@ -8,7 +8,7 @@ Comet-RAG 的 PDF 链路已经在 M2 完成。它只通过 HTTP 连接外部
 Local / URL / S3 PDF
         │
         ▼
-Comet-RAG Loader → DocumentExtractorPort → 分块 → 向量化 → 入库
+Comet-RAG Loader → DocumentExtractorPort → Normalizer → 分块 → 向量化 → 入库
                          │
                          │ /health · /tasks · /tasks/{id} · /result
                          ▼

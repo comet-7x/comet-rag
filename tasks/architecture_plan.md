@@ -1,9 +1,9 @@
 # Architecture Evolution Plan：能力边界与统一入口
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
-> 当前状态：M1～M3 已完成；仓库结构归一化实施中，M4 结论已冻结待启动
-> 当前优先级：完成结构验收，再进入 M4 Chunking 规格
-> 最后更新：2026-09-12
+> 当前状态：M1～M3、仓库结构归一化及文档规范化前置重构已完成
+> 当前优先级：进入 M4 Chunking 规格与开源实现调研
+> 最后更新：2026-09-13
 
 ## 1. 目的
 
@@ -68,7 +68,13 @@ LoadedResource（受管本地文件、来源信息、媒体类型、释放语义
 DocumentExtractorPort
     │
     ▼
-ExtractedDocument（Markdown + DocumentBlock + 文档元数据）
+ExtractedDocument（提取 Markdown + 文档元数据）
+    │
+    ▼
+DocumentNormalizationStrategy
+    │
+    ▼
+NormalizedDocument（统一 Markdown + 文档元数据）
     │
     ▼
 ChunkingStrategy
@@ -101,9 +107,10 @@ Query
                                           SearchHit
 ```
 
-当前 M2 只实现其中最小闭环：`LoadedResource → DocumentExtractorPort → Markdown →
-现有 Chunker → Embedding → VectorStore`。`DocumentBlock`、父子块、关键词索引和
-Graph 不得提前塞进 M2。
+当前闭环是 `LoadedResource → DocumentExtractorPort → ExtractedDocument →
+DocumentNormalizationStrategy → NormalizedDocument → Chunker → Embedding →
+VectorStore`。`DocumentBlock` 由 M4 的页面、结构和 IndexPlan 用例反推，不提前建立
+没有消费者的万能块模型。
 
 ## 4. 各部分的推荐边界
 
@@ -114,6 +121,7 @@ Graph 不得提前塞进 M2。
 | DOCX、PDF 文档提取 | `DocumentExtractorPort` | `ports` | 本地文件转标准文档；不出现 MinerU URL/响应字段 |
 | DOCX 提取 | `DocxDocumentExtractor` | `engines/documents/docx` | 纯本地实现，内部组合 converter/parser/cleaner |
 | MinerU 提取 | `MinerUDocumentExtractor` | `infrastructure/extractors` | 外部 HTTP 适配器，负责协议、重试、连接和关闭 |
+| 跨格式文档规范化 | `DocumentNormalizationStrategy` | `engines/documents/normalization` | 纯计算且幂等；格式专属清洗不进入这里 |
 | 固定、递归、按页、语义切分 | `ChunkingStrategy` | `engines/chunking` | 纯计算；消费文档块，生成 Chunk |
 | 父子块、邻接关系、索引记录 | `IndexPlanner` / `HierarchyBuilder` | `engines/indexing` | 生成 `IndexPlan`，不直接写后端 |
 | 外部 LLM 实体关系抽取 | `KnowledgeExtractorPort` | `ports` + provider | 外部模型调用、错误和资源生命周期 |
@@ -208,9 +216,16 @@ DocumentExtractorPort
 `DocxDocumentExtractor` 后重新评估 `BaseParser` ABC 是否还有价值；不能为了增加
 实现数量把外部 MinerU 协议放进 `engines/parsers`。
 
-当前 `ExtractedDocument` 只有 Markdown 与 metadata，是 M2 的刻意最小模型。未来
-支持按页、bbox、图片资产或表格结构时，应通过新规格扩展 `DocumentBlock`，不能把
-MinerU 原始响应直接塞进通用值对象。
+后续文档型 PDF 若由进程内、确定性且无服务生命周期的解析库完成，放在
+`engines/documents/pdf/`；新增依赖仍需按 core-only 边界单独评审。PaddleOCR 无论通过
+HTTP 服务还是本地重型 SDK 接入，都放在 `infrastructure/extractors/paddleocr/`，因为
+它涉及模型权重、计算设备、部署差异或客户端生命周期。PaddleOCR 返回结果中可复用的
+纯计算转换规则可以下沉到 `engines/documents/ocr/`。
+
+`ExtractedDocument` 表示提取器映射后的通用结果，`NormalizedDocument` 表示可交给
+Chunker 的规范结果；二者之间统一经过 `DocumentNormalizationStrategy`。未来支持
+按页、bbox、图片资产或表格结构时，应由 M4 规格扩展 `DocumentBlock`，不能把 MinerU
+原始响应直接塞进通用值对象。
 
 ## 7. Chunking、Hierarchy 与 Graph 的拆分
 
@@ -222,7 +237,7 @@ MinerU 原始响应直接塞进通用值对象。
 ### 7.2 文本分割属于 ChunkingStrategy
 
 固定长度、递归分隔符、按页、按标题、语义边界及 overlap 都属于切分策略。策略
-消费 `ExtractedDocument` / `DocumentBlock`，输出平坦 Chunk，不写数据库。
+消费 `NormalizedDocument` / 后续 `DocumentBlock`，输出平坦 Chunk，不写数据库。
 
 ### 7.3 父子块属于 IndexPlanner
 
@@ -264,13 +279,15 @@ comet_rag/
 │   └── __init__.py
 ├── ports/
 │   ├── source.py                    # 已建立：来源契约与受管资源
-│   ├── document.py                  # 已建立
+│   ├── document.py                  # 提取/规范文档值对象与提取契约
+│   ├── vision.py                    # 图片描述模型契约
 │   ├── embedding.py
 │   ├── reranker.py
 │   ├── vector_store.py              # dense / keyword 契约与存储值对象
 │   └── graph_store.py               # 后续里程碑
 ├── engines/
 │   ├── documents/
+│   │   ├── normalization/           # 跨格式规范化 Strategy
 │   │   └── docx/
 │   │       ├── extractor.py
 │   │       ├── converter.py
@@ -329,15 +346,15 @@ comet_rag/
 1. **已完成**：建立 `DocxDocumentExtractor`，让 DOCX 与 MinerU 在高层共同实现
    `DocumentExtractorPort`；保留现有 DOCX 快照。
 2. **已完成**：建立 `SourceLoaderPort` / `LoadedResource`，Local、URL、S3 运行共享契约。
-3. **已完成**：增加 `comet_rag.loaders` 惰性统一门面并保留旧导入。
+3. **已完成**：增加 `comet_rag.loaders` 惰性统一门面；结构归一化阶段已删除内部旧导入。
 4. **已完成**：收敛 Local/URL/S3 的类型检测、metadata 和临时文件生命周期代码。
 5. **已决策**：`BaseParser` 暂作兼容 ABC，不视为 Port，也不为对称增加实现。
 
 ### P2 — M3：由真实混合检索需求驱动
 
-M3 规格已冻结：Milvus 原生 BM25 位于 `KeywordSearchPort` 后，RRF 是 engines 内的
-纯计算 Strategy，Hybrid 由 RetrievalService 编排。`BaseVectorStore` 下沉 ports 并
-保留旧导入兼容；schema v2 不自动删除旧 collection。详细边界与成功标准见
+M3 规格已冻结并完成：Milvus 原生 BM25 位于 `KeywordSearchPort` 后，RRF 是 engines
+内的纯计算 Strategy，Hybrid 由 RetrievalService 编排。`BaseVectorStore` 已下沉 ports，
+结构归一化阶段已删除内部旧路径；schema v2 不自动删除旧 collection。详细边界与成功标准见
 `tasks/m3_spec.md`，实施清单见 `tasks/m3_todo.md`。
 
 ### P3 — 后续里程碑：Hierarchy 与 Graph
@@ -364,16 +381,16 @@ M3 规格已冻结：Milvus 原生 BM25 位于 `KeywordSearchPort` 后，RRF 是
 
 | 决策 | 结论 |
 |---|---|
-| Loader 是否物理合并到一个层 | 否；S3 可选 SDK 与 core-only 边界要求分层 |
+| Loader 是否物理合并到一个层 | 是；Local/HTTP/S3/AutoLoader 统一在 `infrastructure/sources`，S3 SDK 惰性导入 |
 | Loader 是否提供一个用户入口 | 是；M2 后增加 `comet_rag.loaders` 惰性门面 |
-| 是否现在重构全部 Loader | 否；不阻塞 M2 安全闭环 |
+| 是否重构全部 Loader | 已完成；契约在 ports，实现统一在 infrastructure，公共入口为 `comet_rag.loaders` |
 | MinerU 是否移入 `engines/parsers` | 否；它是外部 `DocumentExtractorPort` 适配器 |
 | DOCX 是否最终实现同一提取 Port | 是；M2 后 P1 已完成 |
 | Chunker 是否统一做页面、父子块和 Graph | 否；分别属于 Extraction、Strategy、Planner 与 Graph ingestion |
 | 是否定义 Search/Graph 全套 Port | M3 只定义 Vector/Keyword Search；Graph 仍由后续需求驱动 |
-| `BaseParser` 是否删除 | 暂不；保留兼容 ABC，不把单一实现数量当作删除或扩展依据 |
-| Loader 是否按物理目录强行合并 | 否；`ports/source.py` 是契约，`comet_rag.loaders` 是惰性公共门面，engines/infrastructure 按依赖重量分层 |
+| `BaseParser` 是否删除 | 暂不；它仍是进程内 Parser 的共享类型，不把单一实现数量当作删除依据 |
+| Loader 是否提供统一公共入口 | 是；`ports/source.py` 是契约，`comet_rag.loaders` 是惰性公共门面 |
 | Worker 是否收入 `tasks/` | 否；workers 是独立进程入口，必须与单进程会加载的通用任务框架隔离 |
-| DOCX 是否立即改为垂直目录 | 否；当前 extractor 组合可复用的 converter/parser/cleaner，出现第二个进程内原生格式后再以真实变化复评 |
-| Provider 私有辅助模块是否整理 | M3 后处理；embedding 专属 wire 可内聚，跨 embedding/reranker 的图片引用不能误放到 embedding 子包 |
-| 当前下一项工作 | M3-T8：PR #55 已创建；完成 AI Bot 增量评审 |
+| DOCX 是否改为垂直目录 | 已完成；专属 converter/parser/cleaner/extractor 位于 `engines/documents/docx` |
+| Provider 私有辅助模块是否整理 | 已完成；模型适配器位于 `infrastructure/models`，MinerU 位于 `infrastructure/extractors` |
+| 当前下一项工作 | M4 Chunking 规格与开源实现调研 |
