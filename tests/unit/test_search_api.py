@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from comet_rag.api.main import _install_exception_handlers
 from comet_rag.api.routes.search import search
-from comet_rag.schemas.search import SearchRequest
+from comet_rag.api.schemas.search import SearchRequest
 from comet_rag.services.retrieval import (
     HybridRecallFailed,
     KeywordSearchUnavailable,

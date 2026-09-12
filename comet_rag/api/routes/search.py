@@ -2,14 +2,14 @@
 
 from fastapi import APIRouter
 
-from ...schemas.search import (
+from ...services.retrieval import SearchQuery
+from ..deps import RetrievalDep
+from ..schemas.search import (
     RetrievalDegradationItem,
     SearchRequest,
     SearchResponse,
     SearchResultItem,
 )
-from ...services.retrieval import SearchQuery
-from ..deps import RetrievalDep
 
 router = APIRouter(prefix="/search", tags=["search"])
 

@@ -88,3 +88,10 @@ def test_loader_facade_exports_canonical_implementations() -> None:
     assert PublicLocalLoader is LocalLoader
     assert PublicURLLoader is URLLoader
     assert PublicS3Loader is S3Loader
+
+
+def test_api_schema_old_path_preserves_object_identity() -> None:
+    from comet_rag.api.schemas import SearchRequest
+    from comet_rag.schemas import SearchRequest as LegacySearchRequest
+
+    assert LegacySearchRequest is SearchRequest

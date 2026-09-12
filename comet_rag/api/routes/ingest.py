@@ -2,9 +2,9 @@
 
 from fastapi import APIRouter, status
 
-from ...schemas.ingest import IngestAccepted, IngestSubmit
 from ...services.ingestion import INGEST_KIND
 from ..deps import AdmissionDep, SourcePolicyDep, TaskServiceDep
+from ..schemas.ingest import IngestAccepted, IngestSubmit
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 

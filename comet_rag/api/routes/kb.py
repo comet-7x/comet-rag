@@ -4,9 +4,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from ...schemas.kb import KnowledgeBaseCreate, KnowledgeBaseInfo, KnowledgeBaseList
 from ...services.knowledge_base import KnowledgeBaseSpec
 from ..deps import KnowledgeBaseDep
+from ..schemas.kb import KnowledgeBaseCreate, KnowledgeBaseInfo, KnowledgeBaseList
 
 router = APIRouter(prefix="/kb", tags=["knowledge-base"])
 

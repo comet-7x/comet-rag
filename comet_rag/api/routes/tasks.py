@@ -4,9 +4,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from ...schemas.task import TaskListResponse, TaskView
 from ...tasks import TaskStatus
 from ..deps import TaskServiceDep
+from ..schemas.task import TaskListResponse, TaskView
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 

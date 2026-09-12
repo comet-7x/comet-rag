@@ -1,19 +1,9 @@
-"""任务接口出参。
+from __future__ import annotations
 
-刻意不复用 `comet_rag/tasks/models.py::Task`：那是内部状态，含 traceback、
-worker_id、乐观锁版本号等不该外泄的字段。对外只返回 `Task.public_view()`
-的裁剪结果。
-"""
+import sys
+from importlib import import_module
 
-from typing import Any
+# 任务 API DTO 的旧导入路径。
 
-from pydantic import BaseModel
-
-#: 直接用 dict 而非逐字段建模：`public_view()` 已经做了裁剪，
-#: 再抄一遍字段只会制造两处需要同步维护的真相。
-TaskView = dict[str, Any]
-
-
-class TaskListResponse(BaseModel):
-    tasks: list[TaskView]
-    total: int
+_target = import_module("comet_rag.api.schemas.task")
+sys.modules[__name__] = _target
