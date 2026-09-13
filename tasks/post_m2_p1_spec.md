@@ -63,7 +63,7 @@ Loader 的 `cleanup()` / `acleanup()` 属于整体 shutdown，删除失败时记
 - 不移动约 2,000 行 Loader 实现来追求目录对称。
 - 不删除旧导入路径，不在本阶段承诺移除版本。
 - 不改变 Task、向量库 schema、MinerU wire contract 或 M3 检索接口。
-- 不因只有一个进程内 Parser 就顺手删除 `BaseParser`；在本阶段末单独记录结论。
+- 本阶段不顺手删除 `BaseParser`；后续结构重构已单独复核并删除该无多态调用方的抽象。
 
 ## 5. 验收记录
 

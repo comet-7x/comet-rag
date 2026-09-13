@@ -6,7 +6,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from comet_rag.engines.parsers.types import Block, DocxParsedContent
+from comet_rag.engines.documents.docx.types import Block, DocxParsedContent
 from comet_rag.ports.vision import VisionDescriptionPort
 
 _IMAGE_MIME_TYPES = {

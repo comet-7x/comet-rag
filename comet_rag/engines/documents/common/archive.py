@@ -1,5 +1,3 @@
-"""压缩容器在交给高层解析器前的廉价资源预检。"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

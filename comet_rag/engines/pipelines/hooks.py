@@ -237,7 +237,7 @@ class PipelineHooks:
 
 
 def _docx_extractor(config: PipelineConfig) -> DocumentExtractorPort:
-    from comet_rag.engines.converters.archive_guard import ArchiveLimits
+    from comet_rag.engines.documents.common.archive import ArchiveLimits
     from comet_rag.engines.documents.docx import DocxDocumentExtractor
 
     return DocxDocumentExtractor(

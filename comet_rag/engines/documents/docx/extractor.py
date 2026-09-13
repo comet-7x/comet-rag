@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from comet_rag.engines.converters.archive_guard import ArchiveLimits
+from comet_rag.engines.documents.common.archive import ArchiveLimits
 from comet_rag.engines.documents.docx.cleaner import DocxCleaner
 from comet_rag.engines.documents.docx.converter import DocxConverter
 from comet_rag.engines.documents.docx.parser import DocxParser

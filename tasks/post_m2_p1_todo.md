@@ -31,8 +31,7 @@
 - [x] 跑默认单测、Ruff、Pyright、core-only 与相关集成测试
 - [x] 更新 `architecture_plan.md` 真实状态并创建面向 `develop` 的 PR
 
-## BaseParser 结论
+## BaseParser 结论（已由后续结构重构取代）
 
-`BaseParser` 暂时保留为已有公开 API 的兼容 ABC，但不把它视为跨层 Port，也不为
-目录对称增加虚假实现。只有出现第二个共享同一进程内输入/输出语义的 Parser，或进入
-明确的主版本兼容清理时，再决定强化或移除该抽象。
+本阶段曾暂时保留 `BaseParser`。后续结构重构确认它只有 DOCX 一个实现且没有多态
+调用方，已经删除；格式专属 parser/converter/type 统一归入 `engines/documents/<format>/`。

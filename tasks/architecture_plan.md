@@ -212,9 +212,9 @@ DocumentExtractorPort
     └── mineru-api / mineru-router
 ```
 
-因此 `DocxParser` 不需要与 MinerU 对称。若长期只有一个进程内 Parser，应在完成
-`DocxDocumentExtractor` 后重新评估 `BaseParser` ABC 是否还有价值；不能为了增加
-实现数量把外部 MinerU 协议放进 `engines/parsers`。
+因此 `DocxParser` 不需要与 MinerU 对称。重构复核确认 `BaseParser` 只有一个实现且
+没有多态调用方，已经删除；格式专属 parser/converter/type 统一归入
+`engines/documents/<format>/`，不能为了增加实现数量把外部 MinerU 协议放进 engines。
 
 后续文档型 PDF 若由进程内、确定性且无服务生命周期的解析库完成，放在
 `engines/documents/pdf/`；新增依赖仍需按 core-only 边界单独评审。PaddleOCR 无论通过
@@ -348,7 +348,7 @@ comet_rag/
 2. **已完成**：建立 `SourceLoaderPort` / `LoadedResource`，Local、URL、S3 运行共享契约。
 3. **已完成**：增加 `comet_rag.loaders` 惰性统一门面；结构归一化阶段已删除内部旧导入。
 4. **已完成**：收敛 Local/URL/S3 的类型检测、metadata 和临时文件生命周期代码。
-5. **已决策**：`BaseParser` 暂作兼容 ABC，不视为 Port，也不为对称增加实现。
+5. **已完成**：删除没有多态调用方的 `BaseParser`/`BaseConverter`，DOCX 内部步骤按格式聚合。
 
 ### P2 — M3：由真实混合检索需求驱动
 
@@ -384,13 +384,14 @@ M3 规格已冻结并完成：Milvus 原生 BM25 位于 `KeywordSearchPort` 后�
 | Loader 是否物理合并到一个层 | 是；Local/HTTP/S3/AutoLoader 统一在 `infrastructure/sources`，S3 SDK 惰性导入 |
 | Loader 是否提供一个用户入口 | 是；M2 后增加 `comet_rag.loaders` 惰性门面 |
 | 是否重构全部 Loader | 已完成；契约在 ports，实现统一在 infrastructure，公共入口为 `comet_rag.loaders` |
-| MinerU 是否移入 `engines/parsers` | 否；它是外部 `DocumentExtractorPort` 适配器 |
+| MinerU 是否移入 `engines/documents` | 否；它是外部 `DocumentExtractorPort` 适配器 |
 | DOCX 是否最终实现同一提取 Port | 是；M2 后 P1 已完成 |
 | Chunker 是否统一做页面、父子块和 Graph | 否；分别属于 Extraction、Strategy、Planner 与 Graph ingestion |
 | 是否定义 Search/Graph 全套 Port | M3 只定义 Vector/Keyword Search；Graph 仍由后续需求驱动 |
-| `BaseParser` 是否删除 | 暂不；它仍是进程内 Parser 的共享类型，不把单一实现数量当作删除依据 |
+| `BaseParser` 是否删除 | 是；仅有一个实现且没有多态调用方，格式内部步骤不提升为项目级抽象 |
 | Loader 是否提供统一公共入口 | 是；`ports/source.py` 是契约，`comet_rag.loaders` 是惰性公共门面 |
 | Worker 是否收入 `tasks/` | 否；workers 是独立进程入口，必须与单进程会加载的通用任务框架隔离 |
 | DOCX 是否改为垂直目录 | 已完成；专属 converter/parser/cleaner/extractor 位于 `engines/documents/docx` |
+| 顶层 Parser/Converter 目录是否保留 | 否；格式专属代码归入 documents，ZIP 防护归入 documents/common |
 | Provider 私有辅助模块是否整理 | 已完成；模型适配器位于 `infrastructure/models`，MinerU 位于 `infrastructure/extractors` |
 | 当前下一项工作 | M4 Chunking 规格与开源实现调研 |

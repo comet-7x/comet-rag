@@ -146,13 +146,11 @@ uv run pytest tests/benchmark --benchmark-only
 ```
 comet_rag/
 ├── engines/              ★ 库核心 —— 禁止 import 任何基础设施
-│   ├── loaders/          本地/URL 取源与路由契约
-│   ├── converters/       文件 → 领域对象（如 docx → Document）
-│   ├── parsers/          领域对象 → 结构化中间表示
-│   ├── cleaners/         中间表示 → markdown / blocks
+│   ├── documents/        文档格式内聚实现 + 跨格式规范化
 │   ├── chunkers/         文本 → chunks
 │   ├── embedding/        后端无关的批量排程
-│   └── pipelines/        上述编排，进程内可独立使用
+│   ├── retrieval/        后端无关的检索算法
+│   └── pipelines/        Hook 与 Pipeline 值对象
 │
 ├── ports/                ★ 跨层契约与值对象
 ├── infrastructure/       ★ 外部系统适配器
@@ -277,7 +275,7 @@ M1 已建立单元、契约、集成、端到端与基准测试；默认单元�
 1. **`tasks/states.py` 状态机** —— 纯函数、零依赖、bug 后果最严重（"已取消的任务又变成成功"）。参数化把 7×7 迁移矩阵全覆盖。
 2. **`tasks/store.py` 乐观锁与租约** —— `InMemoryTaskStore` 天然可测。重点：并发 CAS 冲突、`heartbeat` 的 `bump=False` 不涨版本、`sweep_stale` 回收逻辑。
 3. **`engines/chunkers/`** —— 纯函数，输入输出明确，边界条件多（空文本、超长无分隔符、overlap ≥ size）。
-4. **`engines/parsers/docx_parser/`** —— 962 行且无测试，改动风险最高。用真实 docx 样本做快照测试。
+4. **`engines/documents/docx/parser.py`** —— DOCX 解析核心。用生成的真实 docx 样本做快照测试。
 5. **`services/`** —— 用 fake 模型 + `InMemoryTaskStore` 测编排逻辑。
 
 ### 关键 fixture

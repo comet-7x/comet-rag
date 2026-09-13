@@ -32,13 +32,13 @@ comet_rag/
 ├── engines/            纯计算算法
 │   ├── documents/
 │   │   ├── formats.py  文件格式与解析配置
+│   │   ├── common/      ZIP 等跨格式文档基础能力
 │   │   ├── normalization/ 跨格式 Markdown 规范化
 │   │   └── docx/       converter · parser · cleaner · extractor · OMML
 │   ├── chunkers/       文本 · 结构化 · 代码
 │   ├── embedding/      批量排程，不发模型请求
 │   ├── retrieval/      RRF 等纯计算算法
-│   ├── pipelines/      Hook 与 Pipeline 值对象，不做外部装配
-│   └── converters/     多格式可复用的基础转换与压缩包防护
+│   └── pipelines/      Hook 与 Pipeline 值对象，不做外部装配
 ├── ports/              契约和值对象（只依赖标准库）
 ├── core/               闸门、降级、日志、追踪、时间
 ├── config/             YAML + 环境变量

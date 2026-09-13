@@ -4,25 +4,24 @@ import asyncio
 
 from docx import Document
 
-from comet_rag.engines.converters.archive_guard import (
+from comet_rag.engines.documents.common.archive import (
     ArchiveLimits,
     validate_zip_archive,
 )
-from comet_rag.engines.converters.base_converter import BaseConverter
-from comet_rag.engines.converters.types import DocxDocument
+from comet_rag.engines.documents.docx.types import DocxDocument
 from comet_rag.ports.source import LoadedResource
 
 LoaderContent = LoadedResource
 
 
-class DocxConverter(BaseConverter):
+class DocxConverter:
     def __init__(
         self,
         loader_content: LoaderContent,
         *,
         archive_limits: ArchiveLimits | None = None,
     ) -> None:
-        super().__init__(loader_content)
+        self.loader_content = loader_content
         self._archive_limits = archive_limits or ArchiveLimits()
 
     def to_docx(self) -> DocxDocument:

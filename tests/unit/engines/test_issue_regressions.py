@@ -12,15 +12,18 @@ from docx import Document
 from comet_rag.engines.chunkers.base_chunker import RecursiveCharacterTextSplitter
 from comet_rag.engines.chunkers.separators import SEPARATORS_MDX
 from comet_rag.engines.chunkers.text_chunker import MdxChunker
-from comet_rag.engines.converters.archive_guard import (
+from comet_rag.engines.documents.common import (
     ArchiveLimits,
     ArchiveResourceLimitExceeded,
     validate_zip_archive,
 )
-from comet_rag.engines.converters.types import DocxDocument
-from comet_rag.engines.documents.docx import DocxCleaner, DocxConverter, DocxParser
-from comet_rag.engines.parsers.base_parser import BaseParser
-from comet_rag.engines.parsers.types import DocxParsedContent
+from comet_rag.engines.documents.docx import (
+    DocxCleaner,
+    DocxConverter,
+    DocxDocument,
+    DocxParsedContent,
+    DocxParser,
+)
 from comet_rag.infrastructure.sources import (
     AutoLoader,
     BaseLoader,
@@ -166,13 +169,12 @@ def test_docx_cleaner_rejects_path_traversal(
     assert not (tmp_path / "outside.md").exists()
 
 
-async def test_docx_parser_implements_async_base_contract() -> None:
+async def test_docx_parser_supports_async_parse() -> None:
     document = Document()
     document.add_paragraph("hello")
     converted = DocxDocument(elements=document, metadata={"source": "unit"})
     parser = DocxParser()
 
-    assert isinstance(parser, BaseParser)
     parsed = await parser.aparse(converted)
     assert parsed.text == "hello"
 

@@ -18,10 +18,12 @@ from docx.text.run import Run
 from loguru import logger
 from lxml import etree  # pyright: ignore[reportAttributeAccessIssue]
 
-from comet_rag.engines.converters.types import DocxDocument
 from comet_rag.engines.documents.docx.omml import oMath2Latex as _oMath2Latex
-from comet_rag.engines.parsers.base_parser import BaseParser
-from comet_rag.engines.parsers.types import Block, DocxParsedContent
+from comet_rag.engines.documents.docx.types import (
+    Block,
+    DocxDocument,
+    DocxParsedContent,
+)
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _A = "http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -209,7 +211,7 @@ def _get_run_fmt(run: Run) -> _Fmt:
     )
 
 
-class DocxParser(BaseParser[DocxDocument, DocxParsedContent]):
+class DocxParser:
     """Parse a DocxDocument into a list of semantically typed blocks."""
 
     def __init__(
