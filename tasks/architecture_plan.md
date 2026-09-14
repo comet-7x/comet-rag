@@ -2,8 +2,8 @@
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
 > 当前状态：M1～M3、仓库结构归一化及文档规范化前置重构已完成
-> 当前优先级：进入 M4 Chunking 规格与开源实现调研
-> 最后更新：2026-09-13
+> 当前优先级：M4 Chunking 规格草案与实现基线
+> 最后更新：2026-09-14
 
 ## 1. 目的
 
@@ -122,7 +122,8 @@ VectorStore`。`DocumentBlock` 由 M4 的页面、结构和 IndexPlan 用例反�
 | DOCX 提取 | `DocxDocumentExtractor` | `engines/documents/docx` | 纯本地实现，内部组合 converter/parser/cleaner |
 | MinerU 提取 | `MinerUDocumentExtractor` | `infrastructure/extractors` | 外部 HTTP 适配器，负责协议、重试、连接和关闭 |
 | 跨格式文档规范化 | `DocumentNormalizationStrategy` | `engines/documents/normalization` | 纯计算且幂等；格式专属清洗不进入这里 |
-| 固定、递归、按页、语义切分 | `ChunkingStrategy` | `engines/chunking` | 纯计算；消费文档块，生成 Chunk |
+| 固定、递归、按页、标题切分 | `ChunkingStrategy` | `engines/chunkers` | 纯计算；消费规范文档，生成带位置的平坦块 |
+| 语义切分 | `SemanticChunkingService` + `BreakpointStrategy` | `services` + `engines/chunkers` | Service 调 EmbeddingPort；engines 只计算相似度断点 |
 | 父子块、邻接关系、索引记录 | `IndexPlanner` / `HierarchyBuilder` | `engines/indexing` | 生成 `IndexPlan`，不直接写后端 |
 | 外部 LLM 实体关系抽取 | `KnowledgeExtractorPort` | `ports` + provider | 外部模型调用、错误和资源生命周期 |
 | 本地规则实体关系抽取 | `KnowledgeExtractionStrategy` | `engines` | 纯计算，不应伪装成外部 Port |
@@ -236,8 +237,12 @@ Chunker 的规范结果；二者之间统一经过 `DocumentNormalizationStrateg
 
 ### 7.2 文本分割属于 ChunkingStrategy
 
-固定长度、递归分隔符、按页、按标题、语义边界及 overlap 都属于切分策略。策略
-消费 `NormalizedDocument` / 后续 `DocumentBlock`，输出平坦 Chunk，不写数据库。
+固定长度、递归分隔符、按页、按标题及 overlap 属于纯切分策略。策略消费
+`NormalizedDocument` / 后续 `DocumentBlock`，输出平坦 Chunk，不写数据库。
+
+完整语义分块不是纯 Strategy：它需要通过 `EmbeddingPort` 发起外部调用，并受模型并发、
+失败和生命周期约束。该流程由 `SemanticChunkingService` 编排；只有句间相似度与断点选择
+这类确定性计算进入 engines。详细契约见 `tasks/m4_spec.md`。
 
 ### 7.3 父子块属于 IndexPlanner
 
@@ -296,8 +301,10 @@ comet_rag/
 │   ├── chunkers/
 │   │   ├── protocol.py
 │   │   ├── fixed.py
+│   │   ├── recursive.py
+│   │   ├── markdown.py
 │   │   ├── page.py
-│   │   └── semantic.py
+│   │   └── breakpoints.py
 │   ├── indexing/
 │   │   ├── planner.py
 │   │   └── hierarchy.py
@@ -357,10 +364,12 @@ M3 规格已冻结并完成：Milvus 原生 BM25 位于 `KeywordSearchPort` 后�
 结构归一化阶段已删除内部旧路径；schema v2 不自动删除旧 collection。详细边界与成功标准见
 `tasks/m3_spec.md`，实施清单见 `tasks/m3_todo.md`。
 
-### P3 — 后续里程碑：Hierarchy 与 Graph
+### P3 — M4：Chunking 与可选父子索引
 
-只有在父子检索或 GraphRAG 进入正式规格后，才建立 `IndexPlan`、
-`HierarchyBuilder`、`KnowledgeExtractorPort` 与 `GraphStorePort`。不提前创建空接口。
+M4 先完成带位置的 Chunk 契约、固定/递归策略、Pipeline/Task 单链路和 Markdown/Page
+结构感知。`IndexPlan`、`HierarchyBuilder` 与 `DocumentStore` 位于独立 schema 决策门
+之后；数据库迁移和向量 metadata 约定未经确认不得实施。GraphRAG 仍不在 M4 范围。
+详细顺序见 `tasks/m4_plan.md` 与 `tasks/m4_todo.md`。
 
 ## 11. Port 创建门槛
 
@@ -394,4 +403,5 @@ M3 规格已冻结并完成：Milvus 原生 BM25 位于 `KeywordSearchPort` 后�
 | DOCX 是否改为垂直目录 | 已完成；专属 converter/parser/cleaner/extractor 位于 `engines/documents/docx` |
 | 顶层 Parser/Converter 目录是否保留 | 否；格式专属代码归入 documents，ZIP 防护归入 documents/common |
 | Provider 私有辅助模块是否整理 | 已完成；模型适配器位于 `infrastructure/models`，MinerU 位于 `infrastructure/extractors` |
-| 当前下一项工作 | M4 Chunking 规格与开源实现调研 |
+| 完整语义分块是否是纯 Strategy | 否；Service 编排 EmbeddingPort，engines 只保留断点算法 |
+| 当前下一项工作 | 确认并冻结 M4 v1.0，再实施 M4-T2 ChunkDraft/Strategy 契约 |

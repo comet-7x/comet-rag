@@ -1,8 +1,8 @@
 # Spec: Comet-RAG
 
-> 状态：M1、M2 已完成；M3 实现与本地验收完成，等待 PR 评审（v1.2）
-> 最后更新：2026-09-12
-> 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0；M3 见 `tasks/m3_spec.md` v1.0
+> 状态：M1～M3 已完成；M4 Chunking 进入规格草案阶段（v1.3）
+> 最后更新：2026-09-14
+> 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0；M3 见 `tasks/m3_spec.md` v1.0；M4 草案见 `tasks/m4_spec.md`
 
 ---
 
@@ -55,11 +55,13 @@
 |---|---|---|
 | **M1** | **DOCX 全链路** —— 上传 docx → 解析 → 分块 → 向量化 → 入 Milvus → 检索命中 | §8 的 S1–S5 全绿（已完成） |
 | **M2** | **PDF 支持（通过 HTTP 连接外部 MinerU 服务）** | 本地、URL、S3 PDF 复用 M1 入库链路；默认安装不含 MinerU 运行时（已完成） |
-| **M3** | **混合检索（Milvus BM25 + RRF）** | 两路召回、纯 RRF、通道降级与真实 Milvus 链路全绿（等待 PR 评审） |
+| **M3** | **混合检索（Milvus BM25 + RRF）** | 两路召回、纯 RRF、通道降级与真实 Milvus 链路全绿（已完成） |
+| **M4** | **可追溯 Chunking + 可选父子索引** | 带位置的块、结构感知切分、单链路装配；父子索引通过独立 schema 决策门 |
 
-M1、M2 与 M2 后 P1 已完成并具备单元、契约、集成、端到端和基准测试保护。
-M3-T8 已完成真实混合链路、E2E、固定样本基准、文档和本地出口质量门，PR #55
-已面向 `develop` 创建。当前下一项为完成 AI Bot 增量评审。
+M1、M2、M2 后 P1 与 M3 已完成并合入 `develop`。仓库结构归一化和跨格式文档
+规范化也已由 PR #56 合入。当前在 `feature/m4-chunking` 上执行 M4-T1；先确认并冻结
+Chunking 规格，再修改代码。父子索引会新增持久化表和 metadata 约定，必须经过单独
+决策门。
 
 ### 非目标（明确不做）
 

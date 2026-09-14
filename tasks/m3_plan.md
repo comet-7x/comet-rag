@@ -1,6 +1,6 @@
 # Implementation Plan: Comet-RAG M3（BM25 + RRF）
 
-> 状态：执行中（v1.0）
+> 状态：已完成（v1.0）
 > 依据：`tasks/m3_spec.md` v1.0、GitHub Issue #54
 > 开始日期：2026-09-11
 > 分支：`feature/hybrid-search`
@@ -13,8 +13,8 @@ M3 在现有 dense 检索和 reranker 之间增加独立 BM25 召回与纯 RRF �
 
 ## Current Priority
 
-M3-T8 的真实 Milvus 混合链路、E2E、固定样本基准、文档和本地出口质量门均已完成，
-面向 `develop` 的 PR #55 已创建。下一项为完成 AI Bot 增量评审。
+M3-T1～T8、AI Bot 增量评审与 PR #55 合并均已完成。当前工作已转入 M4，详见
+`tasks/m4_plan.md`。
 
 ## Dependency Graph
 

@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M3（BM25 + RRF）
 
-> 状态：M3-T8 PR #55 已创建，等待 AI Bot 增量评审
+> 状态：M3-T1～T8 与 AI Bot 增量评审已完成，PR #55 已合入 `develop`
 > 规格：`tasks/m3_spec.md` v1.0
 > 计划：`tasks/m3_plan.md` v1.0
 > GitHub Issue：[#54](https://github.com/comet-7x/comet-rag/issues/54)
@@ -111,7 +111,7 @@
 - [x] 更新 README、architecture、structure、deployment 和 API 示例
 - [x] unit < 10s，core-only、integration、e2e、Ruff、Pyright 全绿
 - [x] 创建面向 `develop` 的 PR #55
-- [ ] 完成 AI Bot 增量评审
+- [x] 完成 AI Bot 增量评审
 
 **验收：** `tasks/m3_spec.md` S1～S5 全部完成，Issue 与文档状态一致。
 

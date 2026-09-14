@@ -1,9 +1,10 @@
 # Spec: M3 BM25 + RRF 混合检索
 
-> 状态：已冻结（v1.0）
+> 状态：已完成并合入 `develop`（v1.0）
 > GitHub Issue：[#54](https://github.com/comet-7x/comet-rag/issues/54)
 > 开发分支：`feature/hybrid-search`
-> 最后更新：2026-09-11
+> 合并 PR：[#55](https://github.com/comet-7x/comet-rag/pull/55)
+> 最后更新：2026-09-14
 
 ## 1. 目标
 
