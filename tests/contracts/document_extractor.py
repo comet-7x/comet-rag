@@ -30,7 +30,7 @@ class DocumentExtractorContract:
     def media_type(self) -> str:
         return "application/pdf"
 
-    def test_sync_extract_returns_normalized_document(
+    def test_sync_extract_returns_extracted_document(
         self,
         extractor: DocumentExtractorPort,
         document_path: Path,

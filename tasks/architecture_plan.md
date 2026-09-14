@@ -1,9 +1,9 @@
 # Architecture Evolution Plan：能力边界与统一入口
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
-> 当前状态：M2 与 P1 已完成；M3 规格已冻结并开始执行
-> 当前优先级：M3-T8 PR #55 已创建，完成 AI Bot 增量评审
-> 最后更新：2026-09-12
+> 当前状态：M1～M3、仓库结构归一化及文档规范化前置重构已完成
+> 当前优先级：进入 M4 Chunking 规格与开源实现调研
+> 最后更新：2026-09-13
 
 ## 1. 目的
 
@@ -68,7 +68,13 @@ LoadedResource（受管本地文件、来源信息、媒体类型、释放语义
 DocumentExtractorPort
     │
     ▼
-ExtractedDocument（Markdown + DocumentBlock + 文档元数据）
+ExtractedDocument（提取 Markdown + 文档元数据）
+    │
+    ▼
+DocumentNormalizationStrategy
+    │
+    ▼
+NormalizedDocument（统一 Markdown + 文档元数据）
     │
     ▼
 ChunkingStrategy
@@ -101,9 +107,10 @@ Query
                                           SearchHit
 ```
 
-当前 M2 只实现其中最小闭环：`LoadedResource → DocumentExtractorPort → Markdown →
-现有 Chunker → Embedding → VectorStore`。`DocumentBlock`、父子块、关键词索引和
-Graph 不得提前塞进 M2。
+当前闭环是 `LoadedResource → DocumentExtractorPort → ExtractedDocument →
+DocumentNormalizationStrategy → NormalizedDocument → Chunker → Embedding →
+VectorStore`。`DocumentBlock` 由 M4 的页面、结构和 IndexPlan 用例反推，不提前建立
+没有消费者的万能块模型。
 
 ## 4. 各部分的推荐边界
 
@@ -112,8 +119,9 @@ Graph 不得提前塞进 M2。
 | Local / URL / S3 来源加载 | `SourceLoaderPort` | `ports` 契约；各层实现 | 输入来源，输出受管本地资源；统一释放语义 |
 | 来源选择 | `LoaderRoute` / Loader router | `engines` 或组合层 | 只匹配来源，不执行 I/O，不持有第二份闸门 |
 | DOCX、PDF 文档提取 | `DocumentExtractorPort` | `ports` | 本地文件转标准文档；不出现 MinerU URL/响应字段 |
-| DOCX 提取 | `DocxDocumentExtractor` | `engines/document` | 纯本地实现，内部组合 converter/parser/cleaner |
-| MinerU 提取 | `MinerUDocumentExtractor` | `infrastructure/providers/document` | 外部 HTTP 适配器，负责协议、重试、连接和关闭 |
+| DOCX 提取 | `DocxDocumentExtractor` | `engines/documents/docx` | 纯本地实现，内部组合 converter/parser/cleaner |
+| MinerU 提取 | `MinerUDocumentExtractor` | `infrastructure/extractors` | 外部 HTTP 适配器，负责协议、重试、连接和关闭 |
+| 跨格式文档规范化 | `DocumentNormalizationStrategy` | `engines/documents/normalization` | 纯计算且幂等；格式专属清洗不进入这里 |
 | 固定、递归、按页、语义切分 | `ChunkingStrategy` | `engines/chunking` | 纯计算；消费文档块，生成 Chunk |
 | 父子块、邻接关系、索引记录 | `IndexPlanner` / `HierarchyBuilder` | `engines/indexing` | 生成 `IndexPlan`，不直接写后端 |
 | 外部 LLM 实体关系抽取 | `KnowledgeExtractorPort` | `ports` + provider | 外部模型调用、错误和资源生命周期 |
@@ -129,22 +137,20 @@ Graph 不得提前塞进 M2。
 
 ## 5. Loader 的统一决策
 
-### 5.1 当前为何分布在两个目录
+### 5.1 最终落位
 
-当前 Loader 共约 2,000 行：
+Local、HTTP 与 S3 都读取进程外资源并持有生命周期，现已统一到
+`infrastructure/sources/`。格式词汇与内容类型决策是纯规则，单独位于
+`engines/documents/formats.py`。S3 SDK 在具体方法内惰性导入，因此统一物理目录
+不会破坏 core-only 安装。
 
-- `engines/loaders/`：`LocalLoader`、`URLLoader`、`AutoLoader`、路由、格式词汇表和
-  默认库使用路径；只使用核心安装已有依赖。
-- `infrastructure/loaders/`：`S3Loader`；需要 server extra 中的 `boto3` /
-  `aioboto3`，并承担对象存储凭据、客户端与生命周期。
-
-这种物理分层保护了 `pip install comet-rag` 的核心安装边界。把 S3 移进 `engines`
-会破坏 AST 分层守卫和 core-only CI；把全部 Loader 移进 infrastructure 又会让
-默认 `Pipeline` 反向依赖服务适配器。因此“不分层、全塞进一个内部目录”不成立。
+`services/pipeline.py` 只接收 `SourceLoaderPort`；面向库用户的
+`comet_rag/pipeline.py` 才负责装配默认 Local/HTTP Loader。这样 service 不依赖
+具体适配器，`Pipeline()` 的易用性也不丢失。
 
 ### 5.2 真正需要统一的是使用入口
 
-目标是增加一个轻量、稳定的公共门面：
+已经提供轻量、稳定的公共门面：
 
 ```python
 from comet_rag.loaders import (
@@ -156,25 +162,25 @@ from comet_rag.loaders import (
 )
 ```
 
-`comet_rag.loaders` 只负责发现性与兼容导出，不拥有实现：
+`comet_rag.loaders` 只负责发现性与稳定导出，不拥有实现：
 
-- 核心 Loader 可直接导出；
+- Local、HTTP 与 AutoLoader 直接导出；
 - `S3Loader` 必须惰性导入，只有真正使用它时才要求包含 S3 SDK 的可选依赖组
   （当前为 `server`；是否拆成独立 `s3` extra 另行评审）；
-- 内部代码仍按依赖层放置，组合根仍是唯一装配全部实现的地方；
-- 旧导入路径先保留并给迁移期，不能一次删除。
+- 服务内部仍由组合根装配全部实现；
+- 重构前的内部导入路径已在 `0.1.0` 阶段删除，不保留影子目录。
 
 这样使用者只看一个入口，维护者仍能从目录位置判断依赖方向。公共 API 与物理目录
 不必一一对应。
 
-### 5.3 Loader 契约的长期收敛
+### 5.3 Loader 契约
 
-M2 完成后评审是否新增 `ports/source.py`：
+`ports/source.py` 已提供：
 
 ```text
 SourceLoaderPort
 ├── load / aload
-├── batch_load / abatch_load（是否属于最小 Port，迁移前再确认）
+├── batch_load / abatch_load（显式并发预算）
 └── cleanup / acleanup
 
 LoadedResource
@@ -184,15 +190,13 @@ LoadedResource
 └── cleanup（幂等）
 ```
 
-迁移目标：
+已完成约束：
 
 1. `LoaderRoute.loader` 面向 `SourceLoaderPort`，而不是要求继承 `BaseLoader`；
 2. `BaseLoader` 保留为批量回退、闸门和生命周期的模板实现，不再充当唯一契约；
 3. `LoaderContent` 是否改名 `LoadedResource` 必须提供兼容别名，不能直接破坏库 API；
 4. Local、URL、S3 跑同一套来源加载契约；供应商专有选项只留在具体实现；
-5. 文件类型检测和 metadata 构造从三份 Loader 实现中收敛为共享纯函数。
-
-该迁移涉及公开 API、组合根和全部 Loader 契约测试，必须单独立项，不并入 M2-T5。
+5. 文件类型检测和 metadata 构造从三份 Loader 实现中收敛为共享函数。
 
 ## 6. DocumentExtractor 与 Parser 的边界
 
@@ -200,21 +204,28 @@ LoadedResource
 
 ```text
 DocumentExtractorPort
-├── DocxDocumentExtractor                 engines/document/docx/
+├── DocxDocumentExtractor                 engines/documents/docx/
 │   ├── DocxConverter
 │   ├── DocxParser
 │   └── DocxCleaner
-└── MinerUDocumentExtractor               infrastructure/providers/document/
+└── MinerUDocumentExtractor               infrastructure/extractors/
     └── mineru-api / mineru-router
 ```
 
-因此 `DocxParser` 不需要与 MinerU 对称。若长期只有一个进程内 Parser，应在完成
-`DocxDocumentExtractor` 后重新评估 `BaseParser` ABC 是否还有价值；不能为了增加
-实现数量把外部 MinerU 协议放进 `engines/parsers`。
+因此 `DocxParser` 不需要与 MinerU 对称。重构复核确认 `BaseParser` 只有一个实现且
+没有多态调用方，已经删除；格式专属 parser/converter/type 统一归入
+`engines/documents/<format>/`，不能为了增加实现数量把外部 MinerU 协议放进 engines。
 
-当前 `ExtractedDocument` 只有 Markdown 与 metadata，是 M2 的刻意最小模型。未来
-支持按页、bbox、图片资产或表格结构时，应通过新规格扩展 `DocumentBlock`，不能把
-MinerU 原始响应直接塞进通用值对象。
+后续文档型 PDF 若由进程内、确定性且无服务生命周期的解析库完成，放在
+`engines/documents/pdf/`；新增依赖仍需按 core-only 边界单独评审。PaddleOCR 无论通过
+HTTP 服务还是本地重型 SDK 接入，都放在 `infrastructure/extractors/paddleocr/`，因为
+它涉及模型权重、计算设备、部署差异或客户端生命周期。PaddleOCR 返回结果中可复用的
+纯计算转换规则可以下沉到 `engines/documents/ocr/`。
+
+`ExtractedDocument` 表示提取器映射后的通用结果，`NormalizedDocument` 表示可交给
+Chunker 的规范结果；二者之间统一经过 `DocumentNormalizationStrategy`。未来支持
+按页、bbox、图片资产或表格结构时，应由 M4 规格扩展 `DocumentBlock`，不能把 MinerU
+原始响应直接塞进通用值对象。
 
 ## 7. Chunking、Hierarchy 与 Graph 的拆分
 
@@ -226,7 +237,7 @@ MinerU 原始响应直接塞进通用值对象。
 ### 7.2 文本分割属于 ChunkingStrategy
 
 固定长度、递归分隔符、按页、按标题、语义边界及 overlap 都属于切分策略。策略
-消费 `ExtractedDocument` / `DocumentBlock`，输出平坦 Chunk，不写数据库。
+消费 `NormalizedDocument` / 后续 `DocumentBlock`，输出平坦 Chunk，不写数据库。
 
 ### 7.3 父子块属于 IndexPlanner
 
@@ -264,25 +275,25 @@ RetrievalService
 
 ```text
 comet_rag/
-├── loaders/                         # 用户统一入口；门面与兼容导出
+├── loaders/                         # 用户统一入口；稳定门面
 │   └── __init__.py
 ├── ports/
-│   ├── source.py                    # M2 后评审
-│   ├── document.py                  # 已建立
+│   ├── source.py                    # 已建立：来源契约与受管资源
+│   ├── document.py                  # 提取/规范文档值对象与提取契约
+│   ├── vision.py                    # 图片描述模型契约
 │   ├── embedding.py
 │   ├── reranker.py
-│   ├── vector_store.py              # 长期目标，迁移需单独评审
-│   ├── keyword_search.py            # M3
+│   ├── vector_store.py              # dense / keyword 契约与存储值对象
 │   └── graph_store.py               # 后续里程碑
 ├── engines/
-│   ├── loaders/                     # 核心 Local/URL/Router 实现
-│   ├── document/
+│   ├── documents/
+│   │   ├── normalization/           # 跨格式规范化 Strategy
 │   │   └── docx/
 │   │       ├── extractor.py
 │   │       ├── converter.py
 │   │       ├── parser.py
 │   │       └── cleaner.py
-│   ├── chunking/
+│   ├── chunkers/
 │   │   ├── protocol.py
 │   │   ├── fixed.py
 │   │   ├── page.py
@@ -294,24 +305,30 @@ comet_rag/
 │       ├── hybrid.py
 │       └── fusion.py
 ├── infrastructure/
-│   ├── loaders/
-│   │   └── s3_loader.py
-│   ├── providers/
-│   │   └── document/
-│   │       └── mineru.py
-│   ├── vectorstore/
-│   │   └── milvus.py
-│   └── search/
-│       └── keyword.py
+│   ├── sources/                    # Local · HTTP · S3 · AutoLoader
+│   ├── extractors/
+│   │   └── mineru.py
+│   ├── models/                     # embedding · reranker · vision
+│   ├── persistence/
+│   │   ├── sql/
+│   │   ├── vector_store/
+│   │   ├── task_store/
+│   │   └── knowledge_base/
+│   └── task_execution/
+│       └── arq.py
 ├── services/
 │   ├── ingestion.py
+│   ├── pipeline.py
 │   └── retrieval.py
+├── api/
+│   ├── routes/
+│   └── schemas/
 └── composition/
     └── bootstrap.py                  # 唯一跨层装配点
 ```
 
-该目录图表达的是依赖归属，不要求一次移动现有文件。移动模块只有在对应契约和兼容
-导入准备完成后才能执行。
+上图中 M4 的 `chunkers/indexing` 细节仍是目标形态；其余结构归一化已按
+`repository_structure_spec.md` 执行，重构前的内部路径已删除。
 
 ## 10. 优先级与执行顺序
 
@@ -329,15 +346,15 @@ comet_rag/
 1. **已完成**：建立 `DocxDocumentExtractor`，让 DOCX 与 MinerU 在高层共同实现
    `DocumentExtractorPort`；保留现有 DOCX 快照。
 2. **已完成**：建立 `SourceLoaderPort` / `LoadedResource`，Local、URL、S3 运行共享契约。
-3. **已完成**：增加 `comet_rag.loaders` 惰性统一门面并保留旧导入。
+3. **已完成**：增加 `comet_rag.loaders` 惰性统一门面；结构归一化阶段已删除内部旧导入。
 4. **已完成**：收敛 Local/URL/S3 的类型检测、metadata 和临时文件生命周期代码。
-5. **已决策**：`BaseParser` 暂作兼容 ABC，不视为 Port，也不为对称增加实现。
+5. **已完成**：删除没有多态调用方的 `BaseParser`/`BaseConverter`，DOCX 内部步骤按格式聚合。
 
 ### P2 — M3：由真实混合检索需求驱动
 
-M3 规格已冻结：Milvus 原生 BM25 位于 `KeywordSearchPort` 后，RRF 是 engines 内的
-纯计算 Strategy，Hybrid 由 RetrievalService 编排。`BaseVectorStore` 下沉 ports 并
-保留旧导入兼容；schema v2 不自动删除旧 collection。详细边界与成功标准见
+M3 规格已冻结并完成：Milvus 原生 BM25 位于 `KeywordSearchPort` 后，RRF 是 engines
+内的纯计算 Strategy，Hybrid 由 RetrievalService 编排。`BaseVectorStore` 已下沉 ports，
+结构归一化阶段已删除内部旧路径；schema v2 不自动删除旧 collection。详细边界与成功标准见
 `tasks/m3_spec.md`，实施清单见 `tasks/m3_todo.md`。
 
 ### P3 — 后续里程碑：Hierarchy 与 Graph
@@ -364,16 +381,17 @@ M3 规格已冻结：Milvus 原生 BM25 位于 `KeywordSearchPort` 后，RRF 是
 
 | 决策 | 结论 |
 |---|---|
-| Loader 是否物理合并到一个层 | 否；S3 可选 SDK 与 core-only 边界要求分层 |
+| Loader 是否物理合并到一个层 | 是；Local/HTTP/S3/AutoLoader 统一在 `infrastructure/sources`，S3 SDK 惰性导入 |
 | Loader 是否提供一个用户入口 | 是；M2 后增加 `comet_rag.loaders` 惰性门面 |
-| 是否现在重构全部 Loader | 否；不阻塞 M2 安全闭环 |
-| MinerU 是否移入 `engines/parsers` | 否；它是外部 `DocumentExtractorPort` 适配器 |
+| 是否重构全部 Loader | 已完成；契约在 ports，实现统一在 infrastructure，公共入口为 `comet_rag.loaders` |
+| MinerU 是否移入 `engines/documents` | 否；它是外部 `DocumentExtractorPort` 适配器 |
 | DOCX 是否最终实现同一提取 Port | 是；M2 后 P1 已完成 |
 | Chunker 是否统一做页面、父子块和 Graph | 否；分别属于 Extraction、Strategy、Planner 与 Graph ingestion |
 | 是否定义 Search/Graph 全套 Port | M3 只定义 Vector/Keyword Search；Graph 仍由后续需求驱动 |
-| `BaseParser` 是否删除 | 暂不；保留兼容 ABC，不把单一实现数量当作删除或扩展依据 |
-| Loader 是否按物理目录强行合并 | 否；`ports/source.py` 是契约，`comet_rag.loaders` 是惰性公共门面，engines/infrastructure 按依赖重量分层 |
+| `BaseParser` 是否删除 | 是；仅有一个实现且没有多态调用方，格式内部步骤不提升为项目级抽象 |
+| Loader 是否提供统一公共入口 | 是；`ports/source.py` 是契约，`comet_rag.loaders` 是惰性公共门面 |
 | Worker 是否收入 `tasks/` | 否；workers 是独立进程入口，必须与单进程会加载的通用任务框架隔离 |
-| DOCX 是否立即改为垂直目录 | 否；当前 extractor 组合可复用的 converter/parser/cleaner，出现第二个进程内原生格式后再以真实变化复评 |
-| Provider 私有辅助模块是否整理 | M3 后处理；embedding 专属 wire 可内聚，跨 embedding/reranker 的图片引用不能误放到 embedding 子包 |
-| 当前下一项工作 | M3-T8：PR #55 已创建；完成 AI Bot 增量评审 |
+| DOCX 是否改为垂直目录 | 已完成；专属 converter/parser/cleaner/extractor 位于 `engines/documents/docx` |
+| 顶层 Parser/Converter 目录是否保留 | 否；格式专属代码归入 documents，ZIP 防护归入 documents/common |
+| Provider 私有辅助模块是否整理 | 已完成；模型适配器位于 `infrastructure/models`，MinerU 位于 `infrastructure/extractors` |
+| 当前下一项工作 | M4 Chunking 规格与开源实现调研 |

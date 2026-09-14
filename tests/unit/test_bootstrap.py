@@ -33,21 +33,24 @@ from comet_rag.config.schemas import (
     VectorDatabaseConfig,
 )
 from comet_rag.core.concurrency import Gate
-from comet_rag.engines.loaders.auto_loader import AutoLoader
-from comet_rag.engines.loaders.data_type import ContentTypeMismatch
-from comet_rag.engines.loaders.local_loader import LocalLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
+from comet_rag.engines.documents.formats import ContentTypeMismatch
 from comet_rag.engines.pipelines import (
     DocxConfig,
-    Pipeline,
     PipelineConfig,
     PipelineHooks,
 )
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.loaders import S3Loader
-from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.providers.reranker.base import BaseReranker
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.sources import (
+    AutoLoader,
+    LoaderContent,
+    LocalLoader,
+    SourceContent,
+)
+from comet_rag.infrastructure.sources.s3 import S3Loader
+from comet_rag.pipeline import Pipeline
 from comet_rag.ports import ExtractedDocument, MediaResource, MultimodalEmbeddingPort
 from comet_rag.ports.gate import GatedResource
 from comet_rag.services.ingestion import IngestRunner
@@ -326,12 +329,14 @@ async def test_enabled_mineru_binds_an_independent_gate_and_pdf_hooks(
         metadata={"file_name": "original.pdf", "file_type": "pdf"},
     )
     assert (
-        context.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        context.pipeline_hooks.get_extractor("pdf")(
+            content, PipelineConfig()
+        ).markdown
         == "# PDF"
     )
     async_hook = context.pipeline_hooks.get_aextractor("pdf")
     assert async_hook is not None
-    assert await async_hook(content, PipelineConfig()) == "# PDF"
+    assert (await async_hook(content, PipelineConfig())).markdown == "# PDF"
     assert extractor.calls == [
         (path, "original.pdf", "application/pdf"),
         (path, "original.pdf", "application/pdf"),
@@ -365,11 +370,15 @@ async def test_mineru_hooks_are_isolated_between_contexts_and_disabled_restart(
     )
 
     assert (
-        first.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        first.pipeline_hooks.get_extractor("pdf")(
+            content, PipelineConfig()
+        ).markdown
         == "# first"
     )
     assert (
-        second.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        second.pipeline_hooks.get_extractor("pdf")(
+            content, PipelineConfig()
+        ).markdown
         == "# second"
     )
     with pytest.raises(ValueError, match="No extractor registered"):
@@ -382,7 +391,9 @@ async def test_mineru_hooks_are_isolated_between_contexts_and_disabled_restart(
     with pytest.raises(ValueError, match="No extractor registered"):
         disabled.pipeline_hooks.get_extractor("pdf")
     assert (
-        second.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig())
+        second.pipeline_hooks.get_extractor("pdf")(
+            content, PipelineConfig()
+        ).markdown
         == "# second"
     )
 
@@ -551,7 +562,7 @@ def test_milvus_backend_requires_connection_settings(
 def test_milvus_database_and_prefix_are_forwarded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from comet_rag.infrastructure.vectorstore import milvus
+    from comet_rag.infrastructure.persistence.vector_store import milvus
 
     captured: dict[str, Any] = {}
 

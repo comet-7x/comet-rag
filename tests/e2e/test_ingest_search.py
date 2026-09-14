@@ -25,11 +25,11 @@ from comet_rag.config.schemas import (
     IngestPolicyConfig,
     ServerConfig,
 )
-from comet_rag.engines.loaders.base_loader import BaseLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.sources import BaseLoader, LoaderContent, SourceContent
+from comet_rag.ports import ExtractedDocument
 from comet_rag.services.ingestion import IngestRunner, register_ingest_runner
 
 pytestmark = pytest.mark.e2e
@@ -102,8 +102,10 @@ def document(tmp_path: Path) -> Path:
 @pytest.fixture(autouse=True)
 def hooks(document: Path):
     @PipelineHooks.extractor(STUB_TYPE)
-    def _extract(lc: LoaderContent, config: PipelineConfig) -> str:
-        return lc.path.read_text(encoding="utf-8")
+    def _extract(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
+        return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
     @PipelineHooks.chunker(STUB_TYPE)
     def _chunk(text: str, config: PipelineConfig) -> list[str]:

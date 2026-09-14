@@ -20,7 +20,8 @@ pip install comet-rag        # 只装 pydantic / httpx / lxml / python-docx 一�
 ```
 
 ```python
-from comet_rag.engines.pipelines import Pipeline, PipelineConfig
+from comet_rag.engines.pipelines import PipelineConfig
+from comet_rag.pipeline import Pipeline
 
 pipeline = Pipeline(config=PipelineConfig(chunk_size=2000, chunk_overlap=200))
 result = pipeline.run("报告.docx")

@@ -12,16 +12,20 @@ from pydantic import BaseModel, Field
 
 from comet_rag.core.concurrency import Overloaded
 from comet_rag.core.logging import logger
+from comet_rag.engines.documents.normalization import (
+    DocumentNormalizationStrategy,
+    MarkdownDocumentNormalizer,
+)
 from comet_rag.engines.embedding.batch import aembed_documents
-from comet_rag.engines.loaders.auto_loader import AutoLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import HookProvider, PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
 from comet_rag.ports import (
     BaseVectorStore,
     DocumentResourceLimitExceeded,
     EmbeddingPort,
+    LoadedResource,
     RetryableDocumentUpstreamError,
+    SourceContent,
     SourceLoaderPort,
     VectorRecord,
 )
@@ -122,17 +126,19 @@ class IngestRunner:
         embedding_model: EmbeddingPort,
         vector_store: BaseVectorStore,
         knowledge_base: KnowledgeBaseService,
-        loader: SourceLoaderPort | None = None,
+        loader: SourceLoaderPort,
         config: PipelineConfig | None = None,
         hooks: HookProvider | None = None,
+        normalizer: DocumentNormalizationStrategy | None = None,
         max_extracted_text_bytes_by_type: Mapping[str, int] | None = None,
     ) -> None:
         self._embedding_model = embedding_model
         self._vector_store = vector_store
         self._kb = knowledge_base
-        self._loader = loader or AutoLoader.default()
+        self._loader = loader
         self._config = config or PipelineConfig()
         self._hooks = hooks or PipelineHooks
+        self._normalizer = normalizer or MarkdownDocumentNormalizer()
         self._max_extracted_text_bytes_by_type = {
             file_type.lower(): limit
             for file_type, limit in (max_extracted_text_bytes_by_type or {}).items()
@@ -180,18 +186,26 @@ class IngestRunner:
         task = await ctx.snapshot()
         request = IngestRequest.model_validate(task.request)
 
-        loader_content: LoaderContent | None = None
+        loader_content: LoadedResource | None = None
         try:
             # 下载也属于 extracting 阶段，必须位于同一个异常分类边界内。
             # 否则连接超时会绕过 _classify，第一次失败就把任务判死。
             loader_content = await self._loader.aload(SourceContent(request.source))
             file_type = str(loader_content.metadata.get("file_type", "")).lower()
-            text = await self._hooks.aextract(file_type, loader_content, self._config)
+            extracted = await self._hooks.aextract(
+                file_type, loader_content, self._config
+            )
+            self._validate_extracted_text_size(extracted.markdown, file_type)
+            document = await asyncio.to_thread(self._normalizer.normalize, extracted)
+            text = document.markdown
             self._validate_extracted_text_size(text, file_type)
             extracted_text_bytes = len(text.encode("utf-8"))
 
             await ctx.put(
                 text=text,
+                # 提取器溯源信息必须跨过 CPU/IO worker 的道次边界；否则 API
+                # 入库与库 Pipeline 会为同一文档生成不同的 chunk metadata。
+                document_metadata=dict(document.metadata),
                 # 原文会在 chunking 后清掉；保留这个小标量才能在终态任务上
                 # 观察外部提取量，而不把整份 Markdown 长期留在任务表。
                 extracted_text_bytes=extracted_text_bytes,
@@ -253,6 +267,12 @@ class IngestRunner:
         chunks: list[str] = task.context["chunks"]
         source_id: str = task.context["source_id"]
         file_type: str = task.context["file_type"]
+        raw_document_metadata = task.context.get("document_metadata")
+        document_metadata = (
+            dict(raw_document_metadata)
+            if isinstance(raw_document_metadata, dict)
+            else {}
+        )
 
         # 入库前的一致性检查（spec A12 在写路径上的执行点）：
         # 库必须存在，且建库时的 embedding 模型必须与当前配置一致。
@@ -273,6 +293,7 @@ class IngestRunner:
             )
 
             base_metadata = {
+                **document_metadata,
                 **request.metadata,
                 "kb_id": request.kb_id,  # spec A5 的租户维度
                 "source": task.context.get("source"),

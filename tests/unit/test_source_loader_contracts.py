@@ -7,9 +7,9 @@ from typing import Any
 import httpx
 import pytest
 
-from comet_rag.engines.loaders import LocalLoader, URLLoader
-from comet_rag.engines.loaders.file_info import TemporaryFileRegistry
-from comet_rag.infrastructure.loaders import S3Loader
+from comet_rag.infrastructure.sources import LocalLoader, URLLoader
+from comet_rag.infrastructure.sources.file_info import TemporaryFileRegistry
+from comet_rag.infrastructure.sources.s3 import S3Loader
 from comet_rag.ports import LoadedResource, SourceContent, SourceLoaderPort
 from tests.contracts.source_loader import SourceLoaderContract
 
@@ -52,7 +52,7 @@ class TestURLLoaderContract(SourceLoaderContract):
             async_client=async_client,
         )
         monkeypatch.setattr(
-            "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
+            "comet_rag.infrastructure.sources.file_info.detect_content_type_from_path",
             lambda path: "txt",
         )
         yield loader
@@ -127,7 +127,7 @@ class TestS3LoaderContract(SourceLoaderContract):
             async_client=async_client,
         )
         monkeypatch.setattr(
-            "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
+            "comet_rag.infrastructure.sources.file_info.detect_content_type_from_path",
             lambda path: "txt",
         )
         yield loader
@@ -150,7 +150,7 @@ class TestS3LoaderContract(SourceLoaderContract):
 
 
 def test_legacy_loader_content_is_runtime_alias() -> None:
-    from comet_rag.engines.loaders import LoaderContent
+    from comet_rag.infrastructure.sources import LoaderContent
     from comet_rag.ports import LoadedResource
 
     assert LoaderContent is LoadedResource

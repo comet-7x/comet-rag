@@ -16,6 +16,7 @@ from .document import (
     DocumentResourceLimitExceeded,
     DocumentUpstreamError,
     ExtractedDocument,
+    NormalizedDocument,
     RetryableDocumentUpstreamError,
 )
 from .embedding import (
@@ -24,6 +25,14 @@ from .embedding import (
     MultimodalEmbeddingPort,
 )
 from .gate import AsyncGate
+from .knowledge_base import (
+    EmbeddingModelChanged,
+    KnowledgeBase,
+    KnowledgeBaseError,
+    KnowledgeBaseExists,
+    KnowledgeBaseNotFound,
+    KnowledgeBaseRepository,
+)
 from .reranker import RerankerPort
 from .source import LoadedResource, SourceContent, SourceLoaderPort
 from .vector_store import (
@@ -39,6 +48,7 @@ from .vector_store import (
     VectorStoreError,
     matches_filter,
 )
+from .vision import VisionDescriptionPort
 
 __all__ = [
     "AsyncGate",
@@ -55,13 +65,20 @@ __all__ = [
     "DimensionMismatch",
     "EmbeddingPort",
     "EmbeddingTask",
+    "EmbeddingModelChanged",
     "ExtractedDocument",
     "Filter",
     "ImageContent",
     "KeywordSearchPort",
+    "KnowledgeBase",
+    "KnowledgeBaseError",
+    "KnowledgeBaseExists",
+    "KnowledgeBaseNotFound",
+    "KnowledgeBaseRepository",
     "LoadedResource",
     "MediaResource",
     "MultimodalEmbeddingPort",
+    "NormalizedDocument",
     "RankedDocument",
     "RerankDocument",
     "RerankerPort",
@@ -73,5 +90,6 @@ __all__ = [
     "VectorRecord",
     "VectorSearchPort",
     "VectorStoreError",
+    "VisionDescriptionPort",
     "matches_filter",
 ]

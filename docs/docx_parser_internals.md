@@ -1,6 +1,6 @@
 # DOCX 解析底层逻辑笔记
 
-> 适用代码：`comet_rag/engines/parsers/docx_parser/`
+> 适用代码：`comet_rag/engines/documents/docx/`
 > 覆盖文件：`docx_parser.py` · `omml.py` · `latex_dict.py`
 
 ---
@@ -384,7 +384,7 @@ print(etree.tostring(element, pretty_print=True).decode())
 ### 单独测试公式转换
 
 ```python
-from comet_rag.engines.parsers.docx_parser.omml import oMath2Latex
+from comet_rag.engines.documents.docx.omml import oMath2Latex
 from lxml import etree
 
 xml = """<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">

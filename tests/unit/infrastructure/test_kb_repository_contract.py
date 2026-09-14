@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import pytest
 
-from comet_rag.infrastructure.knowledge_base import (
+from comet_rag.infrastructure.persistence.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
-    KnowledgeBaseRepository,
 )
+from comet_rag.ports.knowledge_base import KnowledgeBaseRepository
 from tests.contracts.knowledge_base import KnowledgeBaseRepositoryContract
 
 

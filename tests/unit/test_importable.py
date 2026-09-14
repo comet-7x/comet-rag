@@ -27,9 +27,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 #: 需要 optional extras 的模块。缺少对应依赖时跳过而非失败 ——
 #: 核心依赖环境下它们本来就不该可导入（spec A1）。
 OPTIONAL = {
-    "comet_rag.infrastructure.vectorstore.milvus": "pymilvus",
-    "comet_rag.tasks.store_postgres": "sqlalchemy",
-    "comet_rag.tasks.executor_arq": "arq",
+    "comet_rag.infrastructure.persistence.vector_store.milvus": "pymilvus",
+    "comet_rag.infrastructure.persistence.task_store.postgres": "sqlalchemy",
+    "comet_rag.infrastructure.task_execution.arq": "arq",
 }
 
 

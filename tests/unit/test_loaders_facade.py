@@ -6,8 +6,13 @@ import sys
 import pytest
 
 from comet_rag import loaders
-from comet_rag.engines.loaders import AutoLoader, LoaderContent, LocalLoader, URLLoader
-from comet_rag.infrastructure.loaders import S3Loader
+from comet_rag.infrastructure.sources import (
+    AutoLoader,
+    LoaderContent,
+    LocalLoader,
+    URLLoader,
+)
+from comet_rag.infrastructure.sources.s3 import S3Loader
 from comet_rag.ports import LoadedResource, SourceLoaderPort
 
 
@@ -27,7 +32,7 @@ def test_core_facade_import_does_not_load_s3_adapter() -> None:
             "-c",
             (
                 "import sys; import comet_rag.loaders; "
-                "assert 'comet_rag.infrastructure.loaders.s3_loader' not in sys.modules"
+                "assert 'comet_rag.infrastructure.sources.s3' not in sys.modules"
             ),
         ],
         check=False,

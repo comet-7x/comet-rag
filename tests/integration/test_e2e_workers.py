@@ -48,8 +48,9 @@ from comet_rag.config.schemas import (
     VectorDatabaseConfig,
 )
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.database import Database
-from comet_rag.tasks.executor_arq import LANE_QUEUES
+from comet_rag.infrastructure.persistence.sql import Database
+from comet_rag.infrastructure.task_execution.arq import LANE_QUEUES
+from comet_rag.ports import ExtractedDocument
 from comet_rag.workers import build_settings
 from comet_rag.workers.embedder import PROFILE as EMBEDDER
 from comet_rag.workers.preprocessor import PROFILE as PREPROCESSOR
@@ -84,8 +85,8 @@ def document(tmp_path: Path) -> Path:
 @pytest.fixture(autouse=True)
 def hooks() -> Any:
     @PipelineHooks.extractor(STUB_TYPE)
-    def _extract(lc: Any, config: PipelineConfig) -> str:
-        return lc.path.read_text(encoding="utf-8")
+    def _extract(lc: Any, config: PipelineConfig) -> ExtractedDocument:
+        return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
     @PipelineHooks.chunker(STUB_TYPE)
     def _chunk(text_: str, config: PipelineConfig) -> list[str]:

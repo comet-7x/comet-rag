@@ -26,8 +26,8 @@ from comet_rag.config.schemas import (
     ServerConfig,
 )
 from comet_rag.engines.pipelines import PipelineConfig
-from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
 from comet_rag.tasks import Task, TaskStatus
 from tests.contracts.support import wait_for_terminal
 from tests.fixtures.pdf import build_minimal_pdf, build_scanned_pdf

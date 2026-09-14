@@ -7,7 +7,7 @@ DTO，也不需要手工把重排分数与原文重新对齐。
 
 ```python
 from comet_rag.engines.embedding.batch import aembed_documents
-from comet_rag.infrastructure.providers import Qwen3VLEmbeddingModel
+from comet_rag.infrastructure.models import Qwen3VLEmbeddingModel
 
 model = Qwen3VLEmbeddingModel(
     base_url="http://localhost:8000/v1",
@@ -37,7 +37,7 @@ await model.aclose()
 模型这一侧只声明 `batch_limit` —— 一次请求最多能装几篇：
 
 ```python
-from comet_rag.infrastructure.providers import OpenAIEmbeddingModel
+from comet_rag.infrastructure.models import OpenAIEmbeddingModel
 
 model = OpenAIEmbeddingModel(
     base_url="https://api.openai.com/v1",
@@ -66,7 +66,7 @@ OpenAI 兼容适配器支持服务端原生批量（`batch_limit` 默认 2048）
 ```python
 from pathlib import Path
 
-from comet_rag.infrastructure.providers import Qwen3VLEmbeddingModel
+from comet_rag.infrastructure.models import Qwen3VLEmbeddingModel
 from comet_rag.ports import ImageContent, MediaResource, TextContent
 
 model = Qwen3VLEmbeddingModel(
@@ -102,7 +102,7 @@ finally:
 简单文本可以直接传字符串；返回值已经按相关度排序：
 
 ```python
-from comet_rag.infrastructure.providers import Qwen3VLReranker
+from comet_rag.infrastructure.models import Qwen3VLReranker
 
 reranker = Qwen3VLReranker(
     base_url="http://localhost:8001/v1",
@@ -128,7 +128,7 @@ Reranker 与 Embedding 一样持有 HTTP 客户端，**用完必须 `aclose()`**
 需要保留业务 ID 和元数据时使用结构化候选：
 
 ```python
-from comet_rag.infrastructure.providers import Qwen3VLReranker
+from comet_rag.infrastructure.models import Qwen3VLReranker
 from comet_rag.ports import RerankDocument
 
 reranker = Qwen3VLReranker(

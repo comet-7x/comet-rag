@@ -8,12 +8,12 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from comet_rag.core.logging import logger
-from comet_rag.infrastructure.knowledge_base import (
+from comet_rag.ports import BaseVectorStore
+from comet_rag.ports.knowledge_base import (
     KnowledgeBase,
     KnowledgeBaseExists,
     KnowledgeBaseRepository,
 )
-from comet_rag.ports import BaseVectorStore
 
 
 class KnowledgeBaseSpec(BaseModel):

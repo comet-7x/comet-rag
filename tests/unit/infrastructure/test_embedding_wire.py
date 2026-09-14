@@ -8,7 +8,7 @@ import struct
 import pytest
 
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.providers._embedding_wire import decode_vector
+from comet_rag.infrastructure.models.embedding.wire import decode_vector
 
 VECTOR = [0.25, -0.5, 1.5]
 ENCODED = base64.b64encode(struct.pack("<3f", *VECTOR)).decode()

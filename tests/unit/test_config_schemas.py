@@ -27,7 +27,7 @@ from comet_rag.engines.defaults import (
     DEFAULT_LOADER_CONCURRENCY,
 )
 from comet_rag.engines.pipelines.types import PipelineConfig
-from comet_rag.infrastructure.providers.document.mineru import (
+from comet_rag.infrastructure.extractors.mineru import (
     DEFAULT_CONNECT_TIMEOUT_SECONDS,
     DEFAULT_MAX_MARKDOWN_BYTES,
     DEFAULT_MAX_RESPONSE_BYTES,

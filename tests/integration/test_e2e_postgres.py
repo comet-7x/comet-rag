@@ -27,7 +27,8 @@ from comet_rag.config.schemas import (
     SqlDatabaseConfig,
 )
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.ports import ExtractedDocument
 from tests.e2e.test_ingest_search import (  # 复用替身，不重写
     DIM,
     KB,
@@ -54,8 +55,8 @@ def document(tmp_path: Path) -> Path:
 @pytest.fixture(autouse=True)
 def hooks():
     @PipelineHooks.extractor(STUB_TYPE)
-    def _extract(lc, config: PipelineConfig) -> str:
-        return lc.path.read_text(encoding="utf-8")
+    def _extract(lc, config: PipelineConfig) -> ExtractedDocument:
+        return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
     @PipelineHooks.chunker(STUB_TYPE)
     def _chunk(text_: str, config: PipelineConfig) -> list[str]:

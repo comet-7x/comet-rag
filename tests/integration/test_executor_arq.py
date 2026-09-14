@@ -29,7 +29,9 @@ from arq.connections import RedisSettings
 from arq.jobs import Job
 from arq.worker import Worker
 
-from comet_rag.infrastructure.database import Database
+from comet_rag.infrastructure.persistence.sql import Database
+from comet_rag.infrastructure.persistence.task_store.postgres import PostgresTaskStore
+from comet_rag.infrastructure.task_execution.arq import JOB_NAME, ArqExecutor, run_task
 from comet_rag.tasks import (
     Done,
     InMemoryTaskStore,
@@ -40,8 +42,6 @@ from comet_rag.tasks import (
     register,
     sleep_with_checkpoint,
 )
-from comet_rag.tasks.executor_arq import JOB_NAME, ArqExecutor, run_task
-from comet_rag.tasks.store_postgres import PostgresTaskStore
 from tests.contracts.support import wait_for_terminal, wait_until
 from tests.contracts.task_executor import TaskExecutorContract
 from tests.integration.conftest import truncate_tables

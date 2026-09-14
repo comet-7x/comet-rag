@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.providers.embedding.qwen3_vl_embedding import (
+from comet_rag.infrastructure.models.embedding.qwen3_vl import (
     EmbeddingData,
     EncodingFormat,
     Qwen3VLEmbeddingModel,

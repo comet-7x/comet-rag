@@ -27,7 +27,7 @@ pytestmark = pytest.mark.integration
 async def store(
     milvus_uri: str, milvus_database: str
 ) -> AsyncIterator[BaseVectorStore]:
-    from comet_rag.infrastructure.vectorstore.milvus import MilvusStore
+    from comet_rag.infrastructure.persistence.vector_store.milvus import MilvusStore
 
     # 随机前缀让清理范围能被精确证明，不会碰到其他测试或业务 collection。
     vs = MilvusStore(
@@ -189,7 +189,7 @@ async def test_real_legacy_schema_is_rejected_without_deletion(
     """旧 collection 属于用户数据；兼容检查失败也绝不能自动迁移或删除。"""
     from pymilvus import DataType
 
-    from comet_rag.infrastructure.vectorstore.milvus import MilvusStore
+    from comet_rag.infrastructure.persistence.vector_store.milvus import MilvusStore
 
     kb = "kb-real-legacy-schema"
     raw: Any = store
@@ -239,7 +239,7 @@ async def test_two_instances_concurrently_restore_a_released_collection(
     """两个进程观察到 NotLoad 时都能幂等加载，且只在 Loaded 后返回。"""
     from pymilvus.client.types import LoadState
 
-    from comet_rag.infrastructure.vectorstore.milvus import MilvusStore
+    from comet_rag.infrastructure.persistence.vector_store.milvus import MilvusStore
 
     kb = "kb-concurrent-load"
     raw: Any = store

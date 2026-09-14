@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from comet_rag.engines.defaults import DEFAULT_EMBED_FANOUT, DEFAULT_EMBED_WINDOW
+from comet_rag.ports.vision import VisionDescriptionPort
 
 
 @dataclass
@@ -36,9 +37,9 @@ class DocxConfig(BaseModel):
     include_headers_footers: bool = Field(
         default=False, description="Include headers and footers in the document"
     )
-    vision_model: Any = Field(
+    vision_model: VisionDescriptionPort | None = Field(
         default=None,
-        description="Vision model for describing images (must implement VisionModel protocol)",
+        description="Vision model for describing images",
     )
     max_archive_members: int = Field(
         default=10_000, gt=0, description="DOCX ZIP 容器允许的最大成员数"

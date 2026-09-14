@@ -12,21 +12,27 @@ from docx import Document
 from comet_rag.engines.chunkers.base_chunker import RecursiveCharacterTextSplitter
 from comet_rag.engines.chunkers.separators import SEPARATORS_MDX
 from comet_rag.engines.chunkers.text_chunker import MdxChunker
-from comet_rag.engines.cleaners.docx_cleaner import DocxCleaner
-from comet_rag.engines.converters.archive_guard import (
+from comet_rag.engines.documents.common import (
     ArchiveLimits,
     ArchiveResourceLimitExceeded,
     validate_zip_archive,
 )
-from comet_rag.engines.converters.text_converter import DocxConverter
-from comet_rag.engines.converters.types import DocxDocument
-from comet_rag.engines.loaders.auto_loader import AutoLoader, LoaderRoute
-from comet_rag.engines.loaders.base_loader import BaseLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
-from comet_rag.engines.loaders.url_loader import URLLoader
-from comet_rag.engines.parsers.base_parser import BaseParser
-from comet_rag.engines.parsers.docx_parser.docx_parser import DocxParser
-from comet_rag.engines.parsers.types import DocxParsedContent
+from comet_rag.engines.documents.docx import (
+    DocxCleaner,
+    DocxConverter,
+    DocxDocument,
+    DocxParsedContent,
+    DocxParser,
+)
+from comet_rag.infrastructure.sources import (
+    AutoLoader,
+    BaseLoader,
+    LoaderContent,
+    LoaderRoute,
+    SourceContent,
+    URLLoader,
+)
+from comet_rag.ports import VisionDescriptionPort
 
 
 def test_heading_numbering_tracks_each_num_id_independently(monkeypatch) -> None:
@@ -102,6 +108,10 @@ class _VisionModel:
         return "jpeg description"
 
 
+def test_vision_model_contract_lives_at_the_port_boundary() -> None:
+    assert isinstance(_VisionModel(), VisionDescriptionPort)
+
+
 def _image_content(**overrides) -> DocxParsedContent:
     block = {
         "type": "image",
@@ -159,13 +169,12 @@ def test_docx_cleaner_rejects_path_traversal(
     assert not (tmp_path / "outside.md").exists()
 
 
-async def test_docx_parser_implements_async_base_contract() -> None:
+async def test_docx_parser_supports_async_parse() -> None:
     document = Document()
     document.add_paragraph("hello")
     converted = DocxDocument(elements=document, metadata={"source": "unit"})
     parser = DocxParser()
 
-    assert isinstance(parser, BaseParser)
     parsed = await parser.aparse(converted)
     assert parsed.text == "hello"
 

@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
-from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 
 
 class SpyEmbedding(BaseEmbeddingModel):

@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from comet_rag.infrastructure.loaders import S3Loader
+from comet_rag.infrastructure.sources.s3 import S3Loader
 from tests.integration import conftest as integration_fixtures
 
 pytestmark = pytest.mark.integration

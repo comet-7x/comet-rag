@@ -146,13 +146,11 @@ uv run pytest tests/benchmark --benchmark-only
 ```
 comet_rag/
 ├── engines/              ★ 库核心 —— 禁止 import 任何基础设施
-│   ├── loaders/          本地/URL 取源与路由契约
-│   ├── converters/       文件 → 领域对象（如 docx → Document）
-│   ├── parsers/          领域对象 → 结构化中间表示
-│   ├── cleaners/         中间表示 → markdown / blocks
+│   ├── documents/        文档格式内聚实现 + 跨格式规范化
 │   ├── chunkers/         文本 → chunks
 │   ├── embedding/        后端无关的批量排程
-│   └── pipelines/        上述编排，进程内可独立使用
+│   ├── retrieval/        后端无关的检索算法
+│   └── pipelines/        Hook 与 Pipeline 值对象
 │
 ├── ports/                ★ 跨层契约与值对象
 ├── infrastructure/       ★ 外部系统适配器
@@ -277,7 +275,7 @@ M1 已建立单元、契约、集成、端到端与基准测试；默认单元�
 1. **`tasks/states.py` 状态机** —— 纯函数、零依赖、bug 后果最严重（"已取消的任务又变成成功"）。参数化把 7×7 迁移矩阵全覆盖。
 2. **`tasks/store.py` 乐观锁与租约** —— `InMemoryTaskStore` 天然可测。重点：并发 CAS 冲突、`heartbeat` 的 `bump=False` 不涨版本、`sweep_stale` 回收逻辑。
 3. **`engines/chunkers/`** —— 纯函数，输入输出明确，边界条件多（空文本、超长无分隔符、overlap ≥ size）。
-4. **`engines/parsers/docx_parser/`** —— 962 行且无测试，改动风险最高。用真实 docx 样本做快照测试。
+4. **`engines/documents/docx/parser.py`** —— DOCX 解析核心。用生成的真实 docx 样本做快照测试。
 5. **`services/`** —— 用 fake 模型 + `InMemoryTaskStore` 测编排逻辑。
 
 ### 关键 fixture
@@ -333,14 +331,14 @@ def fake_embedding_model() -> BaseEmbeddingModel:
 
 ### S1 — 库与服务真正分离（对应 A1）
 
-- [x] 在干净虚拟环境里 `pip install comet-rag`（不带 extras），`from comet_rag.engines.pipelines import Pipeline` 能成功导入并解析一个 docx
+- [x] 在干净虚拟环境里 `pip install comet-rag`（不带 extras），`from comet_rag.pipeline import Pipeline` 能成功导入并解析一个 docx
 - [x] CI 中有一个 job 只装基础依赖验证库可独立导入和解析，通过
 - [x] AST 分层守卫确认 `engines/` 不依赖任何基础设施包
 
 ### S2 — 任务框架落地
 
 - [x] `poc/task_demo/task/` 提升为 `comet_rag/tasks/`，`Pipeline` 更名 `StagePipeline`（避开与 `engines/pipelines` 撞名）
-- [x] 旧任务领域 schema 已删除；`comet_rag/schemas/task.py` 现为新的 HTTP DTO
+- [x] 旧任务领域 schema 已删除；任务 HTTP DTO 位于 `comet_rag/api/schemas/task.py`
 - [x] 确认门已按 A10 移除，且 `resume_stage` / `context` 续跑仍工作：
       *验证*：让 runner 在第 3 阶段抛 `RetriableError`，重试后应从第 3 阶段开始，而非第 1 阶段
 - [x] Postgres 中 `tasks.status` 为 **varchar** 而非 PG 原生 enum（保留将来加状态值的零成本可逆性）

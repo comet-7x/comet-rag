@@ -6,13 +6,17 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import ClassVar, Protocol
 
-from comet_rag.engines.loaders.types import LoaderContent
 from comet_rag.engines.pipelines.types import PipelineConfig
-from comet_rag.ports.document import DocumentExtractorPort
+from comet_rag.ports.document import DocumentExtractorPort, ExtractedDocument
+from comet_rag.ports.source import LoadedResource
+
+LoaderContent = LoadedResource
 
 # Hook type aliases
-ExtractHook = Callable[[LoaderContent, PipelineConfig], str]
-AsyncExtractHook = Callable[[LoaderContent, PipelineConfig], Awaitable[str]]
+ExtractHook = Callable[[LoaderContent, PipelineConfig], ExtractedDocument]
+AsyncExtractHook = Callable[
+    [LoaderContent, PipelineConfig], Awaitable[ExtractedDocument]
+]
 ChunkHook = Callable[[str, PipelineConfig], list[str]]
 
 
@@ -45,7 +49,7 @@ class HookProvider(Protocol):
 
     async def aextract(
         self, file_type: str, loader_content: LoaderContent, config: PipelineConfig
-    ) -> str: ...
+    ) -> ExtractedDocument: ...
 
     def get_chunker(self, file_type: str) -> ChunkHook: ...
 
@@ -119,7 +123,7 @@ class HookRegistry:
 
     async def aextract(
         self, file_type: str, loader_content: LoaderContent, config: PipelineConfig
-    ) -> str:
+    ) -> ExtractedDocument:
         if extractor := self.get_aextractor(file_type):
             return await extractor(loader_content, config)
         return await asyncio.to_thread(
@@ -216,7 +220,7 @@ class PipelineHooks:
     @classmethod
     async def aextract(
         cls, file_type: str, loader_content: LoaderContent, config: PipelineConfig
-    ) -> str:
+    ) -> ExtractedDocument:
         """优先使用异步 Hook；同步兼容路径只在线程池调度一次。"""
         if extractor := cls.get_aextractor(file_type):
             return await extractor(loader_content, config)
@@ -233,8 +237,8 @@ class PipelineHooks:
 
 
 def _docx_extractor(config: PipelineConfig) -> DocumentExtractorPort:
-    from comet_rag.engines.converters.archive_guard import ArchiveLimits
-    from comet_rag.engines.document.docx import DocxDocumentExtractor
+    from comet_rag.engines.documents.common.archive import ArchiveLimits
+    from comet_rag.engines.documents.docx import DocxDocumentExtractor
 
     return DocxDocumentExtractor(
         heading_numbers=config.docx.heading_numbers,
@@ -267,27 +271,27 @@ def _docx_input(loader_content: LoaderContent) -> tuple[str, str]:
 
 
 @PipelineHooks.extractor("docx", "doc")
-def _extract_docx(loader_content: LoaderContent, config: PipelineConfig) -> str:
+def _extract_docx(
+    loader_content: LoaderContent, config: PipelineConfig
+) -> ExtractedDocument:
     filename, media_type = _docx_input(loader_content)
     return _docx_extractor(config).extract(
         loader_content.path,
         filename=filename,
         media_type=media_type,
-    ).markdown
+    )
 
 
 @PipelineHooks.aextractor("docx", "doc")
 async def _aextract_docx(
     loader_content: LoaderContent, config: PipelineConfig
-) -> str:
+) -> ExtractedDocument:
     filename, media_type = _docx_input(loader_content)
-    return (
-        await _docx_extractor(config).aextract(
-            loader_content.path,
-            filename=filename,
-            media_type=media_type,
-        )
-    ).markdown
+    return await _docx_extractor(config).aextract(
+        loader_content.path,
+        filename=filename,
+        media_type=media_type,
+    )
 
 
 # ── Built-in chunkers ───────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ from comet_rag.composition.bootstrap import build_context
 from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.config.settings import get_config
 from comet_rag.core.logging import logger, setup_logging
-from comet_rag.tasks.executor_arq import LANE_QUEUES, run_task
+from comet_rag.infrastructure.task_execution.arq import LANE_QUEUES, run_task
 from comet_rag.workers.maintenance import DEFAULT_LEASE, sweep_cron
 
 

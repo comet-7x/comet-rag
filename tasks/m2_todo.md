@@ -62,7 +62,7 @@
 
 **验收：** 全量 `1633 passed`，8.62s；Ruff、格式与 Pyright 均通过。
 
-**主要文件：** `infrastructure/providers/document/mineru.py`、导出文件、MockTransport 测试。
+**主要文件：** `infrastructure/extractors/mineru.py`、导出文件、MockTransport 测试。
 
 ### M2-T5 — 容错、取消与资源上限（M）
 

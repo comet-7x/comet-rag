@@ -16,9 +16,9 @@ from comet_rag.config.schemas import (
     RedisConfig,
     ServerConfig,
 )
+from comet_rag.infrastructure.task_execution.arq import LANE_QUEUES
 from comet_rag.services.ingestion import IngestRunner
 from comet_rag.tasks import LANE_CPU, LANE_IO, TaskContext
-from comet_rag.tasks.executor_arq import LANE_QUEUES
 from comet_rag.workers.base import build_settings
 from comet_rag.workers.embedder import PROFILE as EMBEDDER
 from comet_rag.workers.maintenance import DEFAULT_LEASE, sweep_cron
@@ -73,6 +73,7 @@ def test_every_lane_the_ingest_pipeline_uses_has_a_worker() -> None:
         embedding_model=None,  # type: ignore[arg-type] —— _build_flow 用不到它们
         vector_store=None,  # type: ignore[arg-type]
         knowledge_base=None,  # type: ignore[arg-type]
+        loader=None,  # type: ignore[arg-type] —— _build_flow 用不到它
     )
     declared = {lane for _, _, lane in runner._flow.stages if lane is not None}  # noqa: SLF001
     served = {p.lane for p in PROFILES}

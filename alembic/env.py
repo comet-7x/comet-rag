@@ -20,7 +20,7 @@ from alembic import context
 from comet_rag.config.settings import get_config
 
 # 只为让 Base.metadata 收集到全部表定义。新增模型模块务必加进来。
-from comet_rag.infrastructure.database import (
+from comet_rag.infrastructure.persistence.sql import (
     Base,
     models,  # noqa: F401
 )

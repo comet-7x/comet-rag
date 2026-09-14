@@ -13,9 +13,9 @@ from collections.abc import AsyncIterator
 import pytest
 from sqlalchemy import text
 
-from comet_rag.infrastructure.database import Database
+from comet_rag.infrastructure.persistence.sql import Database
+from comet_rag.infrastructure.persistence.task_store.postgres import PostgresTaskStore
 from comet_rag.tasks import TaskStatus, TaskStore, VersionConflict
-from comet_rag.tasks.store_postgres import PostgresTaskStore
 from tests.contracts.task_store import TaskStoreContract
 from tests.integration.conftest import truncate_tables
 

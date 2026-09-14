@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 from .hooks import HookProvider, HookRegistry, HooksState, PipelineHooks
-from .pipeline import Pipeline
 from .types import Chunk, DocxConfig, PipelineConfig, PipelineResult
 
 __all__ = [
@@ -8,7 +9,6 @@ __all__ = [
     "HookRegistry",
     "HooksState",
     "DocxConfig",
-    "Pipeline",
     "PipelineConfig",
     "PipelineHooks",
     "PipelineResult",

@@ -14,13 +14,14 @@ from typing import Any
 import httpx
 import pytest
 
-from comet_rag.engines.loaders.base_loader import BaseLoader
-from comet_rag.engines.loaders.types import LoaderContent, SourceContent
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.knowledge_base import InMemoryKnowledgeBaseRepository
-from comet_rag.infrastructure.providers.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
-from comet_rag.ports import RetryableDocumentUpstreamError
+from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.persistence.knowledge_base import (
+    InMemoryKnowledgeBaseRepository,
+)
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.sources import BaseLoader, LoaderContent, SourceContent
+from comet_rag.ports import ExtractedDocument, RetryableDocumentUpstreamError
 from comet_rag.services.ingestion import (
     INGEST_KIND,
     IngestRunner,
@@ -128,9 +129,11 @@ def stub_hooks(calls: dict[str, int]) -> Iterator[None]:
     """注册 stub 格式的 hook。conftest 的 autouse 夹具会在用例后还原（T11）。"""
 
     @PipelineHooks.extractor(STUB_TYPE)
-    def _extract(lc: LoaderContent, config: PipelineConfig) -> str:
+    def _extract(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
         calls["extract"] += 1
-        return "段落一。段落二。段落三。"
+        return ExtractedDocument(markdown="段落一。段落二。段落三。")
 
     @PipelineHooks.chunker(STUB_TYPE)
     def _chunk(text: str, config: PipelineConfig) -> list[str]:
@@ -216,10 +219,12 @@ async def test_ingest_prefers_async_extractor(
     async_calls = 0
 
     @PipelineHooks.aextractor(STUB_TYPE)
-    async def _extract(lc: LoaderContent, config: PipelineConfig) -> str:
+    async def _extract(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
         nonlocal async_calls
         async_calls += 1
-        return "段落一。段落二。段落三。"
+        return ExtractedDocument(markdown="段落一。段落二。段落三。")
 
     task = await svc.submit(INGEST_KIND, request())
     done = await wait_for_terminal(svc.store, task.task_id)
@@ -227,6 +232,27 @@ async def test_ingest_prefers_async_extractor(
     assert done.status is TaskStatus.SUCCEEDED, done.error
     assert async_calls == 1
     assert calls["extract"] == 0
+
+
+async def test_ingest_normalizes_before_chunking(svc: TaskService) -> None:
+    received: list[str] = []
+
+    @PipelineHooks.aextractor(STUB_TYPE)
+    async def _extract(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
+        return ExtractedDocument(markdown="第一段  \r\n\r\n\r\n第二段\u00a0正文\r\n")
+
+    @PipelineHooks.chunker(STUB_TYPE)
+    def _chunk(text: str, config: PipelineConfig) -> list[str]:
+        received.append(text)
+        return [text]
+
+    task = await svc.submit(INGEST_KIND, request())
+    done = await wait_for_terminal(svc.store, task.task_id)
+
+    assert done.status is TaskStatus.SUCCEEDED, done.error
+    assert received == ["第一段\n\n第二段 正文"]
 
 
 async def test_every_chunk_carries_kb_id(
@@ -255,6 +281,38 @@ async def test_extra_metadata_is_attached(
 
     assert hit.metadata["department"] == "研发"
     assert hit.metadata["year"] == 2026
+
+
+async def test_extracted_metadata_is_preserved_with_safe_precedence(
+    svc: TaskService, store: InMemoryVectorStore
+) -> None:
+    @PipelineHooks.aextractor(STUB_TYPE)
+    async def _extract(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
+        return ExtractedDocument(
+            markdown="段落一。段落二。段落三。",
+            metadata={
+                "provider": "fixture",
+                "department": "提取器",
+                "kb_id": "伪造知识库",
+                "source": "伪造来源",
+            },
+        )
+
+    task = await svc.submit(
+        INGEST_KIND,
+        request(metadata={"department": "调用方", "year": 2026}),
+    )
+    await wait_for_terminal(svc.store, task.task_id)
+
+    hit = (await store.asearch(KB, [1.0, 1.0, 1.0]))[0]
+
+    assert hit.metadata["provider"] == "fixture"
+    assert hit.metadata["department"] == "调用方"
+    assert hit.metadata["year"] == 2026
+    assert hit.metadata["kb_id"] == KB
+    assert hit.metadata["source"] == "任意来源"
 
 
 async def test_stage_history_records_three_stages(svc: TaskService) -> None:
@@ -357,12 +415,14 @@ async def test_document_upstream_error_retries_extracting_stage(
     attempts = 0
 
     @PipelineHooks.aextractor(STUB_TYPE)
-    async def _extract(lc: LoaderContent, config: PipelineConfig) -> str:
+    async def _extract(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
         nonlocal attempts
         attempts += 1
         if attempts == 1:
             raise RetryableDocumentUpstreamError("MinerU 返回 503")
-        return "段落一。段落二。段落三。"
+        return ExtractedDocument(markdown="段落一。段落二。段落三。")
 
     task = await svc.submit(INGEST_KIND, request(), max_attempts=3)
     done = await wait_for_terminal(svc.store, task.task_id)

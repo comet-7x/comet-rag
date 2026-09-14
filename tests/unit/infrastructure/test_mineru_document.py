@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from comet_rag.core.concurrency import Gate
-from comet_rag.infrastructure.providers.document import (
+from comet_rag.infrastructure.extractors import (
     MINERU_API_PROTOCOL_VERSION,
     MinerUDocumentExtractor,
 )

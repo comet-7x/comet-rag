@@ -20,6 +20,7 @@ from arq import ArqRedis, create_pool
 from arq.connections import RedisSettings
 from arq.worker import Worker
 
+from comet_rag.infrastructure.task_execution.arq import ArqExecutor, run_task
 from comet_rag.tasks import (
     LANE_CPU,
     LANE_IO,
@@ -30,7 +31,6 @@ from comet_rag.tasks import (
     TaskStatus,
     register,
 )
-from comet_rag.tasks.executor_arq import ArqExecutor, run_task
 from comet_rag.tasks.store import TaskStore
 from comet_rag.tasks.store_memory import InMemoryTaskStore
 from tests.contracts.support import wait_for_terminal, wait_until

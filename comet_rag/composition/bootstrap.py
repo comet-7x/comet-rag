@@ -11,8 +11,7 @@ from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.degradation import DegradationController, DegradationSettings
 from comet_rag.core.logging import logger
-from comet_rag.engines.loaders import AutoLoader, LoaderContent, LoaderRoute
-from comet_rag.engines.loaders.data_type import resolve_detected_extension
+from comet_rag.engines.documents.formats import resolve_detected_extension
 from comet_rag.engines.pipelines import (
     DocxConfig,
     HookProvider,
@@ -20,17 +19,21 @@ from comet_rag.engines.pipelines import (
     PipelineHooks,
 )
 from comet_rag.engines.utils import detect_content_type_from_path
-from comet_rag.infrastructure.knowledge_base import (
+from comet_rag.infrastructure.persistence.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
-    KnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.vectorstore import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.sources import AutoLoader, LoaderContent, LoaderRoute
 from comet_rag.ports import (
     BaseVectorStore,
     DocumentExtractorPort,
     EmbeddingPort,
+    ExtractedDocument,
     KeywordSearchPort,
     RerankerPort,
+)
+from comet_rag.ports.knowledge_base import (
+    KnowledgeBaseRepository,
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
@@ -45,7 +48,7 @@ from comet_rag.tasks import (
 )
 
 if TYPE_CHECKING:
-    from comet_rag.infrastructure.providers.document import MinerUDocumentExtractor
+    from comet_rag.infrastructure.extractors import MinerUDocumentExtractor
 
 
 def build_vector_store(config: APPConfig) -> BaseVectorStore:
@@ -54,7 +57,7 @@ def build_vector_store(config: APPConfig) -> BaseVectorStore:
         return InMemoryVectorStore()
     if backend is Backend.MILVUS:
         # pymilvus 在 `milvus` extra 里，函数内 import 才不会拖累未安装的用户
-        from comet_rag.infrastructure.vectorstore.milvus import (  # noqa: PLC0415
+        from comet_rag.infrastructure.persistence.vector_store.milvus import (  # noqa: PLC0415
             MilvusStore,
         )
 
@@ -76,7 +79,7 @@ def build_vector_store(config: APPConfig) -> BaseVectorStore:
 
 def build_database(config: APPConfig):
     """关系库引擎。只在真的需要时创建 —— 全 memory 的部署不该被迫连库。"""
-    from comet_rag.infrastructure.database import Database  # noqa: PLC0415
+    from comet_rag.infrastructure.persistence.sql import Database  # noqa: PLC0415
 
     settings = config.infrastructure_config.database
     if settings is None:
@@ -97,7 +100,7 @@ def build_kb_repository(config: APPConfig, database=None) -> KnowledgeBaseReposi
     """
     if config.backends.task_store is Backend.MEMORY:
         return InMemoryKnowledgeBaseRepository()
-    from comet_rag.infrastructure.database.kb_repository import (  # noqa: PLC0415
+    from comet_rag.infrastructure.persistence.knowledge_base.postgres import (  # noqa: PLC0415
         PostgresKnowledgeBaseRepository,
     )
 
@@ -111,7 +114,7 @@ def build_task_store(config: APPConfig, database=None) -> TaskStore:
     if backend is Backend.MEMORY:
         return InMemoryTaskStore()
     if backend is Backend.POSTGRES:
-        from comet_rag.tasks.store_postgres import (  # noqa: PLC0415
+        from comet_rag.infrastructure.persistence.task_store.postgres import (  # noqa: PLC0415
             PostgresTaskStore,
         )
 
@@ -135,7 +138,7 @@ def build_task_executor(
         # 而且 InProcessExecutor 压根没有"另一条队列"可投。
         return InProcessExecutor(store, max_concurrency=config.backends.max_concurrency)
     if backend is Backend.ARQ:
-        from comet_rag.tasks.executor_arq import (  # noqa: PLC0415
+        from comet_rag.infrastructure.task_execution.arq import (  # noqa: PLC0415
             LANE_QUEUES,
             ArqExecutor,
         )
@@ -186,7 +189,7 @@ def build_ingest_loader(config: APPConfig, policy: SourcePolicy) -> AutoLoader:
             )
         return AutoLoader(routes)
 
-    from comet_rag.infrastructure.loaders import S3Loader  # noqa: PLC0415
+    from comet_rag.infrastructure.sources.s3 import S3Loader  # noqa: PLC0415
 
     object_loader = S3Loader(
         endpoint_url=settings.endpoint_url,
@@ -239,7 +242,7 @@ def build_mineru_extractor(config: APPConfig) -> MinerUDocumentExtractor | None:
     if not settings.enabled:
         return None
 
-    from comet_rag.infrastructure.providers.document import (  # noqa: PLC0415
+    from comet_rag.infrastructure.extractors import (  # noqa: PLC0415
         MinerUDocumentExtractor,
     )
 
@@ -279,25 +282,28 @@ def wire_pdf_extractor(
         return content.path.name
 
     @registry.extractor("pdf")
-    def extract_pdf(content: LoaderContent, config: PipelineConfig) -> str:
+    def extract_pdf(
+        content: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
         del config
         verify_content(content)
         return extractor.extract(
             content.path,
             filename=filename(content),
             media_type="application/pdf",
-        ).markdown
+        )
 
     @registry.aextractor("pdf")
-    async def aextract_pdf(content: LoaderContent, config: PipelineConfig) -> str:
+    async def aextract_pdf(
+        content: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
         del config
         await asyncio.to_thread(verify_content, content)
-        document = await extractor.aextract(
+        return await extractor.aextract(
             content.path,
             filename=filename(content),
             media_type="application/pdf",
         )
-        return document.markdown
 
     return lambda: registry.restore(previous)
 
@@ -328,7 +334,7 @@ def build_embedding_model(
     image_url_validator: Callable[[str], None] | None = None,
     local_image_validator: Callable[[str], None] | None = None,
 ) -> EmbeddingPort:
-    from comet_rag.infrastructure.providers.embedding.qwen3_vl_embedding import (  # noqa: PLC0415
+    from comet_rag.infrastructure.models.embedding.qwen3_vl import (  # noqa: PLC0415
         Qwen3VLEmbeddingModel,
     )
 
@@ -357,7 +363,7 @@ def build_reranker(
     if settings is None:
         logger.info("未配置 reranker，检索将跳过重排")
         return None
-    from comet_rag.infrastructure.providers.reranker.qwen3_vl_reranker import (  # noqa: PLC0415
+    from comet_rag.infrastructure.models.reranker.qwen3_vl import (  # noqa: PLC0415
         Qwen3VLReranker,
     )
 

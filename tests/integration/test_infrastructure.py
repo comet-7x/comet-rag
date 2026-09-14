@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.pool import QueuePool
 
-from comet_rag.infrastructure.database import Database
+from comet_rag.infrastructure.persistence.sql import Database
 
 pytestmark = pytest.mark.integration
 

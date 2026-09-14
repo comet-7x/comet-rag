@@ -1,6 +1,6 @@
 # Pipeline 使用笔记
 
-本文档记录 `comet_rag.engines.pipelines` 模块的用法，涵盖基本使用、配置、流式输出、批量处理、自定义 Hook 扩展，以及底层模块的独立使用方式。DOCX 是纯库内置能力；PDF 需要外部 MinerU，并由服务组合根或库调用方显式注册。
+本文档记录公共入口 `comet_rag.pipeline` 及其配置的用法，涵盖基本使用、流式输出、批量处理、自定义 Hook 扩展，以及底层模块的独立使用方式。DOCX 是纯库内置能力；PDF 需要外部 MinerU，并由服务组合根或库调用方显式注册。
 
 ---
 
@@ -22,7 +22,7 @@
 ## 1. 快速开始
 
 ```python
-from comet_rag.engines.pipelines import Pipeline
+from comet_rag.pipeline import Pipeline
 
 # 使用默认配置（chunk_size=2000, chunk_overlap=200）
 pipeline = Pipeline()
@@ -37,7 +37,7 @@ for chunk in result.chunks:
 
 ```python
 import asyncio
-from comet_rag.engines.pipelines import Pipeline
+from comet_rag.pipeline import Pipeline
 
 
 async def main():
@@ -54,7 +54,8 @@ asyncio.run(main())
 ## 2. PipelineConfig 配置项
 
 ```python
-from comet_rag.engines.pipelines import Pipeline, PipelineConfig
+from comet_rag.engines.pipelines import PipelineConfig
+from comet_rag.pipeline import Pipeline
 
 config = PipelineConfig(
     chunk_size=1500,  # 每个 chunk 的最大字符数，默认 2000
@@ -85,8 +86,9 @@ config = PipelineConfig(
 启用 Embedding（需要提供 `embedding_model`）：
 
 ```python
-from comet_rag.engines.pipelines import Pipeline, PipelineConfig
-from comet_rag.infrastructure.providers.embedding.qwen3_vl_embedding import (
+from comet_rag.engines.pipelines import PipelineConfig
+from comet_rag.pipeline import Pipeline
+from comet_rag.infrastructure.models.embedding.qwen3_vl import (
     Qwen3VLEmbeddingModel,
 )
 
@@ -166,7 +168,7 @@ class PipelineResult:
     chunks: list[Chunk]  # chunk 列表
     metadata: dict[
         str, Any
-    ]  # 来自 LoadedResource（source_type, file_name, file_size...）
+    ]  # Extractor metadata 与 LoadedResource metadata 的合并结果
 ```
 
 ### `Chunk`
@@ -196,8 +198,10 @@ class Chunk:
 
 Pipeline 内部通过 `PipelineHooks` 注册表分发处理逻辑。增加新格式只需注册两个 hook：
 
-- **extractor**：`(LoadedResource, PipelineConfig) → str`，负责将文件转换为清洁文本
+- **extractor**：`(LoadedResource, PipelineConfig) → ExtractedDocument`，负责把文件映射为通用提取结果
 - **chunker**（可选）：`(str, PipelineConfig) → list[str]`，自定义分块策略；不注册则回退到 `TextChunker`
+
+所有提取结果都会在进入 Chunker 前经过统一的 `MarkdownDocumentNormalizer`。
 
 > 两个 hook 都接收完整的 `PipelineConfig`，而不是散装的 `chunk_size` / `chunk_overlap`。
 > 这样新增格式专属配置（如 `config.docx`）时无需改动 hook 签名。
@@ -205,18 +209,27 @@ Pipeline 内部通过 `PipelineHooks` 注册表分发处理逻辑。增加新格
 ```python
 from comet_rag.loaders import LoadedResource
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
+from comet_rag.ports import ExtractedDocument
 
 
 # 注册纯文本 extractor
 @PipelineHooks.extractor("txt", "log")
-def extract_plaintext(loader_content: LoadedResource, config: PipelineConfig) -> str:
-    return loader_content.path.read_text(encoding="utf-8")
+def extract_plaintext(
+    loader_content: LoadedResource, config: PipelineConfig
+) -> ExtractedDocument:
+    return ExtractedDocument(
+        markdown=loader_content.path.read_text(encoding="utf-8")
+    )
 
 
 # 注册 Markdown extractor（可复用 TextChunker）
 @PipelineHooks.extractor("md", "mdx")
-def extract_markdown(loader_content: LoadedResource, config: PipelineConfig) -> str:
-    return loader_content.path.read_text(encoding="utf-8")
+def extract_markdown(
+    loader_content: LoadedResource, config: PipelineConfig
+) -> ExtractedDocument:
+    return ExtractedDocument(
+        markdown=loader_content.path.read_text(encoding="utf-8")
+    )
 
 
 # 为 markdown 注册专用 chunker
@@ -240,16 +253,17 @@ result = Pipeline().run("README.md")
 对已支持的格式，也可以通过重新注册 hook 覆盖默认行为：
 
 ```python
-from comet_rag.engines.document import DocxDocumentExtractor
+from comet_rag.engines.documents.docx import DocxDocumentExtractor
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.loaders import LoadedResource
+from comet_rag.ports import ExtractedDocument
 
 
 # 自定义 DOCX extractor：保留页眉页脚，不保留图片
 @PipelineHooks.extractor("docx")
 def extract_docx_with_headers(
     loader_content: LoadedResource, config: PipelineConfig
-) -> str:
+) -> ExtractedDocument:
     extractor = DocxDocumentExtractor(
         include_headers_footers=True,
         include_images=False,
@@ -258,7 +272,7 @@ def extract_docx_with_headers(
         loader_content.path,
         filename=loader_content.metadata.get("file_name", loader_content.path.name),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ).markdown
+    )
 ```
 
 ---
@@ -342,9 +356,7 @@ async def load_from_object_storage():
 ### Converter + Parser + Cleaner
 
 ```python
-from comet_rag.engines.converters.text_converter import DocxConverter
-from comet_rag.engines.parsers.docx_parser.docx_parser import DocxParser
-from comet_rag.engines.cleaners.docx_cleaner import DocxCleaner
+from comet_rag.engines.documents.docx import DocxCleaner, DocxConverter, DocxParser
 
 # lc 来自 Loader
 doc = DocxConverter(lc).to_docx()
@@ -420,8 +432,9 @@ chunks = DocxChunker(chunk_size=1500, chunk_overlap=150).chunk(text)
 import asyncio
 
 from comet_rag.composition.bootstrap import wire_pdf_extractor
-from comet_rag.engines.pipelines import Pipeline, PipelineHooks
-from comet_rag.infrastructure.providers.document import MinerUDocumentExtractor
+from comet_rag.engines.pipelines import PipelineHooks
+from comet_rag.infrastructure.extractors import MinerUDocumentExtractor
+from comet_rag.pipeline import Pipeline
 
 
 async def parse_pdf():

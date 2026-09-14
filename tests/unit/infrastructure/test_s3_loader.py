@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from comet_rag.infrastructure.loaders.s3_loader import (
+from comet_rag.infrastructure.sources.s3 import (
     ObjectContentTypeMismatch,
     ObjectTooLarge,
     S3Loader,
@@ -126,7 +126,7 @@ class AsyncClientContext:
 @pytest.fixture(autouse=True)
 def _detect_text(monkeypatch) -> None:
     monkeypatch.setattr(
-        "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
+        "comet_rag.infrastructure.sources.file_info.detect_content_type_from_path",
         lambda path: "txt",
     )
 
@@ -250,7 +250,7 @@ def test_content_mismatch_is_rejected_and_temp_removed(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
+        "comet_rag.infrastructure.sources.file_info.detect_content_type_from_path",
         lambda path: "html",
     )
     loader = S3Loader(download_dir=tmp_path, client=SyncClient())
@@ -266,7 +266,7 @@ def test_unsupported_detected_type_is_rejected_even_with_allowed_suffix(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "comet_rag.engines.loaders.file_info.detect_content_type_from_path",
+        "comet_rag.infrastructure.sources.file_info.detect_content_type_from_path",
         lambda path: "executable",
     )
     loader = S3Loader(download_dir=tmp_path, client=SyncClient())

@@ -26,15 +26,15 @@ jobs:
       - name: 库可独立使用
         run: |
           uv run python -c "
-          from comet_rag.engines.pipelines import Pipeline
           from comet_rag.engines.chunkers import TextChunker
           from comet_rag.loaders import AutoLoader, LocalLoader
+          from comet_rag.pipeline import Pipeline
           import sys
           chunks = TextChunker(chunk_size=50, chunk_overlap=10).chunk('x' * 300)
           assert len(chunks) > 1, f'300 字符按 50 切却只得到 {len(chunks)} 块'
           assert all(len(c) <= 50 for c in chunks), '有块超过了 chunk_size'
           assert AutoLoader and LocalLoader
-          assert 'comet_rag.infrastructure.loaders.s3_loader' not in sys.modules
+          assert 'comet_rag.infrastructure.sources.s3' not in sys.modules
           print(f'核心依赖下引擎可用 ✓（{len(chunks)} 块）')
           "
 
