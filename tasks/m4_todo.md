@@ -1,8 +1,8 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T1 本地工作完成，规格草案等待确认
-> 规格：`tasks/m4_spec.md` v0.1
-> 计划：`tasks/m4_plan.md` v0.1
+> 状态：M4-T1～T2 已完成，下一项 M4-T3
+> 规格：`tasks/m4_spec.md` v1.0
+> 计划：`tasks/m4_plan.md` v1.0
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
 
@@ -19,7 +19,7 @@
 - [x] 明确语义分块属于 Service + EmbeddingPort，不是完整纯 Strategy
 - [x] 编写 M4 spec/plan/todo 草案
 - [x] 记录 develop 单测、Ruff、Pyright 与 core-only 基线
-- [ ] 用户确认后冻结 `tasks/m4_spec.md` v1.0
+- [x] 用户确认后冻结 `tasks/m4_spec.md` v1.0
 - [x] 建立 GitHub Issue 并回填链接
 
 **验收：** 不照搬框架类名；每项采用/拒绝都有本项目边界依据，后半段有明确 schema
@@ -27,14 +27,14 @@
 
 ### M4-T2 — ChunkDraft 与 ChunkingStrategy 契约（M）
 
-**依赖：** M4-T1
+**完成日期：** 09-14　**依赖：** M4-T1
 
-- [ ] 定义 frozen/slots 的 `ChunkDraft` 与同步 `ChunkingStrategy`
-- [ ] 定义 start/end、ordinal、metadata 和不可表示位置的语义
-- [ ] 定义 metadata 合并优先级与系统保留键
-- [ ] 为旧 `list[str]` ChunkHook 建立兼容适配器与弃用窗口
-- [ ] 增加 core-only、类型、不可变性、兼容与分层测试
-- [ ] 反向让 Strategy import service/infrastructure，确认 AST 守卫会失败
+- [x] 定义 frozen/slots 的 `ChunkDraft` 与同步 `ChunkingStrategy`
+- [x] 定义 start/end、ordinal、metadata 和不可表示位置的语义
+- [x] 定义 metadata 合并优先级与系统保留键
+- [x] 为旧 `list[str]` ChunkHook 建立兼容适配器与弃用窗口
+- [x] 增加 core-only、类型、不可变性、兼容与分层测试
+- [x] 反向让 Strategy import service/infrastructure，确认 AST 守卫会失败
 
 **验收：** 契约不含 source-specific ID、embedding、async 或供应商字段。
 

@@ -1,6 +1,6 @@
 # Spec: Comet-RAG
 
-> 状态：M1～M3 已完成；M4 Chunking 进入规格草案阶段（v1.3）
+> 状态：M1～M3 已完成；M4 v1.0 已冻结，M4-T2 已完成（v1.3）
 > 最后更新：2026-09-14
 > 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0；M3 见 `tasks/m3_spec.md` v1.0；M4 草案见 `tasks/m4_spec.md`
 
@@ -59,9 +59,9 @@
 | **M4** | **可追溯 Chunking + 可选父子索引** | 带位置的块、结构感知切分、单链路装配；父子索引通过独立 schema 决策门 |
 
 M1、M2、M2 后 P1 与 M3 已完成并合入 `develop`。仓库结构归一化和跨格式文档
-规范化也已由 PR #56 合入。当前在 `feature/m4-chunking` 上执行 M4-T1；先确认并冻结
-Chunking 规格，再修改代码。父子索引会新增持久化表和 metadata 约定，必须经过单独
-决策门。
+规范化也已由 PR #56 合入。当前在 `feature/m4-chunking` 上已完成 M4-T2 的
+ChunkDraft/Strategy 契约，下一项是 M4-T3 Fixed/Recursive 核心与位置算法。父子索引
+会新增持久化表和 metadata 约定，必须经过单独决策门。
 
 ### 非目标（明确不做）
 

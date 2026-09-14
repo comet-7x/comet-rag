@@ -1,6 +1,6 @@
 # Spec: M4 Chunking 与层级索引
 
-> 状态：设计草案（v0.1，等待确认后冻结）
+> 状态：已冻结，M4-T2 已完成（v1.0）
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
 > 最后更新：2026-09-14
@@ -70,7 +70,7 @@ class ChunkingStrategy(Protocol):
 
 - 输入是完整 `NormalizedDocument`，不再只传 Markdown 字符串；
 - 输出 `ChunkDraft`，至少包含 `text`、`ordinal`、`start_char`、`end_char` 和
-  `metadata`；位置无法无损表示时允许为 `None`，不能伪造；
+  块级 `metadata`；位置无法无损表示时允许为 `None`，不能伪造；
 - Strategy 不生成依赖 `source_id` 的最终 ID，不持有 embedding，也不做 I/O；
 - 它只有同步方法。服务的 async 路径继续统一使用一次 `asyncio.to_thread()`；为纯 CPU
   算法增加 `asplit()` 只会制造两份接口。
@@ -78,6 +78,10 @@ class ChunkingStrategy(Protocol):
 现有面向用户的 `Chunk` 仍表示 Pipeline 的完整结果。Service 将 `ChunkDraft` 加上稳定
 ID、来源 metadata 和可选 embedding 后构造 `Chunk`，避免一个对象同时表示“待索引”和
 “已索引”。
+
+metadata 合并顺序固定为“文档 < 请求 < 块级事实 < 系统字段”。非系统层提供的
+`source_id`、`chunk_index`、`parent_id` 等保留键会被丢弃，而不是在系统层缺少该键时
+侥幸保留；这样未来新增父子索引时不会把调用方输入误当成可信关系。
 
 ### D2 — 位置在切分过程中产生，绝不事后 `find()`
 
@@ -172,18 +176,22 @@ revision，应停在决策门重新设计，不能降级为“通常不会重复
 ### D10 — 兼容迁移一次完成，不长期维护双链路
 
 - 旧 `BaseChunker.chunk(str) -> list[str]` 与格式 Chunker 在 M4 内保留；内部转调新策略；
-- `PipelineHooks.chunker` 增加新文档契约时提供明确适配器，现有自定义 hook 不立即失效；
+- 新增文档级 Hook 时为 `PipelineHooks.chunker` 提供明确适配器，现有自定义 hook 不立即失效；
 - `Pipeline` 与任务入库必须最终调用同一个 Chunking Service，不能各自复制 metadata
   合并与 ID 生成；
 - 兼容接口标注弃用版本和移除窗口，M4 不保留两份核心算法。
+
+具体迁移入口是 `PipelineHooks.document_chunker`；旧 `PipelineHooks.chunker` 在 T4 新链路
+启用后开始发出弃用提示，继续支持整个 0.2.x，最早在 0.3.0 移除。内置 Hook 必须先迁到
+新契约，不能让框架自身触发弃用提示。
 
 ## 6. 成功标准
 
 ### S1 — 契约与分层
 
-- [ ] `ChunkingStrategy` 只依赖 ports/engines，core-only 可导入。
+- [x] `ChunkingStrategy` 只依赖 ports/engines，core-only 可导入。
 - [ ] Pipeline 与任务入库共享同一 ChunkDraft → Chunk/VectorRecord 映射规则。
-- [ ] 自定义旧 ChunkHook 有测试覆盖的兼容路径。
+- [x] 自定义旧 ChunkHook 有测试覆盖的兼容路径。
 - [ ] 语义分块的外部模型调用不进入 engines。
 
 ### S2 — 分块正确性
@@ -242,3 +250,17 @@ M4 后半段（T6～T10）必须先提交 schema/迁移/回滚设计并获得确
 - PR #56 CI 的 core-only、unit、Ruff 与 Pyright 全部通过；M4-T2 之后仍需在新改动上重跑。
 - 调研日期：2026-09-14。除评审指定的 LangChain 快照外，其他链接指向上游 main，实施
   时只吸收已写入 D1～D10 的设计，不跟随上游无审查漂移。
+
+## 10. M4-T2 验证记录
+
+- 新增 frozen/slots `ChunkDraft`：空白、负 ordinal、半缺失/倒置 span 和非法 metadata
+  键在边界处拒绝；metadata 会复制并包装为只读视图。
+- 新增 runtime-checkable `ChunkingStrategy`，只有同步 `split(NormalizedDocument)`；模块只
+  依赖 engines 与 ports。
+- metadata 合并规则落为纯函数，测试覆盖四层优先级、保留键过滤及输入不变性。
+- 新增 `PipelineHooks.document_chunker`；旧 `ChunkHook` 通过显式适配器转成 ChunkDraft，
+  重复文本的位置保持 `None`，不使用 `find()` 猜测。
+- 仅核心依赖的隔离环境可导入 `ChunkDraft`、`ChunkingStrategy` 和旧 Hook 适配器。
+- 定向契约/Hook 测试 38 项通过；分层守卫与契约合计 458 项通过；全量单测为
+  `1888 passed, 20 skipped, 195 deselected, 1 xfailed`，pytest 9.12s。
+- Ruff 与 Pyright 通过，Pyright 为 `0 errors, 0 warnings`。

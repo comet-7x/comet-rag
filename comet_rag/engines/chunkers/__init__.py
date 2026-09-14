@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from .base_chunker import (
     SEPARATORS_EN,
     SEPARATORS_JA,
@@ -20,8 +22,15 @@ from .code_chunker import (
     RustChunker,
     TypeScriptChunker,
 )
+from .protocol import ChunkingStrategy
 from .structured_chunker import CsvChunker, JsonChunker, XmlChunker
 from .text_chunker import DocxChunker, MdxChunker, TextChunker
+from .types import (
+    CHUNK_FACT_METADATA_KEYS,
+    SYSTEM_CHUNK_METADATA_KEYS,
+    ChunkDraft,
+    merge_chunk_metadata,
+)
 
 __all__ = [
     "Language",
@@ -48,4 +57,9 @@ __all__ = [
     "RChunker",
     "RustChunker",
     "HtmlChunker",
+    "ChunkDraft",
+    "ChunkingStrategy",
+    "CHUNK_FACT_METADATA_KEYS",
+    "SYSTEM_CHUNK_METADATA_KEYS",
+    "merge_chunk_metadata",
 ]

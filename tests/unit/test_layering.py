@@ -172,6 +172,8 @@ def test_guard_actually_detects_violations() -> None:
         "import sqlalchemy\n"
         "from comet_rag.api import deps\n"
         "from comet_rag.application.embedding_batch import aembed_documents\n"
+        "from comet_rag.services.pipeline import Pipeline\n"
+        "from comet_rag.infrastructure.sources import AutoLoader\n"
         "from comet_rag.ports import EmbeddingPort\n"
     )
     assert _imported_roots(tree) & FORBIDDEN_IN_ENGINES == {"sqlalchemy"}
@@ -180,6 +182,10 @@ def test_guard_actually_detects_violations() -> None:
         "comet_rag.api.deps",
         "comet_rag.application.embedding_batch",
         "comet_rag.application.embedding_batch.aembed_documents",
+        "comet_rag.infrastructure.sources",
+        "comet_rag.infrastructure.sources.AutoLoader",
+        "comet_rag.services.pipeline",
+        "comet_rag.services.pipeline.Pipeline",
     }
 
 

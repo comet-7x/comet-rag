@@ -4,10 +4,16 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import wraps
 from typing import ClassVar, Protocol
 
+from comet_rag.engines.chunkers.types import ChunkDraft
 from comet_rag.engines.pipelines.types import PipelineConfig
-from comet_rag.ports.document import DocumentExtractorPort, ExtractedDocument
+from comet_rag.ports.document import (
+    DocumentExtractorPort,
+    ExtractedDocument,
+    NormalizedDocument,
+)
 from comet_rag.ports.source import LoadedResource
 
 LoaderContent = LoadedResource
@@ -18,6 +24,35 @@ AsyncExtractHook = Callable[
     [LoaderContent, PipelineConfig], Awaitable[ExtractedDocument]
 ]
 ChunkHook = Callable[[str, PipelineConfig], list[str]]
+DocumentChunkHook = Callable[
+    [NormalizedDocument, PipelineConfig], list[ChunkDraft]
+]
+
+
+def adapt_legacy_chunk_hook(hook: ChunkHook) -> DocumentChunkHook:
+    """把旧 ``str -> list[str]`` Hook 提升为文档级 Hook。
+
+    旧返回值没有位置信息，不能用 ``str.find`` 猜测，故 span 明确留空。文档 metadata
+    也不复制进 draft；统一合并由 Service 在 ChunkDraft 之后执行。
+    """
+
+    @wraps(hook)
+    def adapted(
+        document: NormalizedDocument, config: PipelineConfig
+    ) -> list[ChunkDraft]:
+        texts = hook(document.markdown, config)
+        if not isinstance(texts, list):
+            raise TypeError("旧 ChunkHook 必须返回 list[str]")
+        drafts: list[ChunkDraft] = []
+        for ordinal, text in enumerate(texts):
+            if not isinstance(text, str):
+                raise TypeError(
+                    f"旧 ChunkHook 第 {ordinal} 项必须是 str，收到 {type(text).__name__}"
+                )
+            drafts.append(ChunkDraft(text=text, ordinal=ordinal))
+        return drafts
+
+    return adapted
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +63,7 @@ class HooksState:
     chunkers: dict[str, ChunkHook]
     # 尾字段保留旧的 HooksState(extractors, chunkers) 构造方式。
     async_extractors: dict[str, AsyncExtractHook] = field(default_factory=dict)
+    document_chunkers: dict[str, DocumentChunkHook] = field(default_factory=dict)
 
 
 class HookProvider(Protocol):
@@ -53,6 +89,12 @@ class HookProvider(Protocol):
 
     def get_chunker(self, file_type: str) -> ChunkHook: ...
 
+    def document_chunker(
+        self, *file_types: str
+    ) -> Callable[[DocumentChunkHook], DocumentChunkHook]: ...
+
+    def get_document_chunker(self, file_type: str) -> DocumentChunkHook: ...
+
 
 class HookRegistry:
     """可按 Context 复制的 Hook 注册表，隔离带生命周期的适配器。"""
@@ -62,18 +104,21 @@ class HookRegistry:
         self._extractors = dict(state.extractors)
         self._async_extractors = dict(state.async_extractors)
         self._chunkers = dict(state.chunkers)
+        self._document_chunkers = dict(state.document_chunkers)
 
     def snapshot(self) -> HooksState:
         return HooksState(
             extractors=dict(self._extractors),
             chunkers=dict(self._chunkers),
             async_extractors=dict(self._async_extractors),
+            document_chunkers=dict(self._document_chunkers),
         )
 
     def restore(self, state: HooksState) -> None:
         self._extractors = dict(state.extractors)
         self._async_extractors = dict(state.async_extractors)
         self._chunkers = dict(state.chunkers)
+        self._document_chunkers = dict(state.document_chunkers)
 
     @contextmanager
     def temporary(self) -> Iterator[None]:
@@ -109,6 +154,16 @@ class HookRegistry:
 
         return decorator
 
+    def document_chunker(
+        self, *file_types: str
+    ) -> Callable[[DocumentChunkHook], DocumentChunkHook]:
+        def decorator(fn: DocumentChunkHook) -> DocumentChunkHook:
+            for file_type in file_types:
+                self._document_chunkers[file_type.lower()] = fn
+            return fn
+
+        return decorator
+
     def get_extractor(self, file_type: str) -> ExtractHook:
         try:
             return self._extractors[file_type]
@@ -133,6 +188,11 @@ class HookRegistry:
     def get_chunker(self, file_type: str) -> ChunkHook:
         return self._chunkers.get(file_type, _default_chunk)
 
+    def get_document_chunker(self, file_type: str) -> DocumentChunkHook:
+        if chunker := self._document_chunkers.get(file_type):
+            return chunker
+        return adapt_legacy_chunk_hook(self.get_chunker(file_type))
+
 
 class PipelineHooks:
     """进程级格式钩子注册表；临时覆盖必须用 `temporary()` 隔离。"""
@@ -140,6 +200,7 @@ class PipelineHooks:
     _extractors: ClassVar[dict[str, ExtractHook]] = {}
     _async_extractors: ClassVar[dict[str, AsyncExtractHook]] = {}
     _chunkers: ClassVar[dict[str, ChunkHook]] = {}
+    _document_chunkers: ClassVar[dict[str, DocumentChunkHook]] = {}
 
     # ── 作用域控制 ─────────────────────────────────────────────────────────
 
@@ -150,6 +211,7 @@ class PipelineHooks:
             extractors=dict(cls._extractors),
             chunkers=dict(cls._chunkers),
             async_extractors=dict(cls._async_extractors),
+            document_chunkers=dict(cls._document_chunkers),
         )
 
     @classmethod
@@ -163,6 +225,7 @@ class PipelineHooks:
         cls._extractors = dict(state.extractors)
         cls._async_extractors = dict(state.async_extractors)
         cls._chunkers = dict(state.chunkers)
+        cls._document_chunkers = dict(state.document_chunkers)
 
     @classmethod
     @contextmanager
@@ -204,6 +267,17 @@ class PipelineHooks:
         return decorator
 
     @classmethod
+    def document_chunker(
+        cls, *file_types: str
+    ) -> Callable[[DocumentChunkHook], DocumentChunkHook]:
+        def decorator(fn: DocumentChunkHook) -> DocumentChunkHook:
+            for file_type in file_types:
+                cls._document_chunkers[file_type.lower()] = fn
+            return fn
+
+        return decorator
+
+    @classmethod
     def get_extractor(cls, file_type: str) -> ExtractHook:
         try:
             return cls._extractors[file_type]
@@ -231,6 +305,12 @@ class PipelineHooks:
     @classmethod
     def get_chunker(cls, file_type: str) -> ChunkHook:
         return cls._chunkers.get(file_type, _default_chunk)
+
+    @classmethod
+    def get_document_chunker(cls, file_type: str) -> DocumentChunkHook:
+        if chunker := cls._document_chunkers.get(file_type):
+            return chunker
+        return adapt_legacy_chunk_hook(cls.get_chunker(file_type))
 
 
 # ── Built-in extractors ─────────────────────────────────────────────────────
