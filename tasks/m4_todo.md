@@ -1,8 +1,8 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T1～T2 已完成，下一项 M4-T3
-> 规格：`tasks/m4_spec.md` v1.0
-> 计划：`tasks/m4_plan.md` v1.0
+> 状态：M4-T1～T3 已完成，下一项 M4-T4
+> 规格：`tasks/m4_spec.md` v1.1
+> 计划：`tasks/m4_plan.md` v1.1
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
 
@@ -42,15 +42,16 @@
 
 ### M4-T3 — Fixed / Recursive 与位置算法（M）
 
-**依赖：** M4-T2
+**完成日期：** 09-14　**依赖：** M4-T2
 
-- [ ] 实现 FixedSizeChunker 和 RecursiveChunker
-- [ ] 内部 split/merge 全程携带字符 span，不用事后 `find()`
-- [ ] 支持注入 LengthFunction，默认值和单位写入文档
-- [ ] separator profiles 替代重复算法子类，保留公共兼容门面
-- [ ] 覆盖 CJK、重复文本、连续分隔符、代码前缀、超长 token 与空输入
-- [ ] 明确并测试 best-effort overlap
-- [ ] 反向改为 `find()` 与丢分隔符实现，确认对应性质测试会红
+- [x] 实现 FixedSizeChunker 和 RecursiveChunker
+- [x] 内部 split/merge 全程携带字符 span，不用事后 `find()`
+- [x] 支持注入 LengthFunction，默认值和单位写入文档
+- [x] 代码策略统一为 `CodeRecursiveChunker(code_language=...)`
+- [x] separator profiles 替代重复算法子类，保留公共兼容门面
+- [x] 覆盖 CJK、重复文本、连续分隔符、代码前缀、超长 token 与空输入
+- [x] 明确并测试 best-effort overlap
+- [x] 反向改为事后 `find()` 与丢分隔符实现，确认对应性质测试会红
 
 **验收：** 大小、顺序、重建、位置与非空不变式全部成立。
 

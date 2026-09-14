@@ -49,6 +49,8 @@ def adapt_legacy_chunk_hook(hook: ChunkHook) -> DocumentChunkHook:
                 raise TypeError(
                     f"旧 ChunkHook 第 {ordinal} 项必须是 str，收到 {type(text).__name__}"
                 )
+            if not text.strip():
+                raise ValueError(f"旧 ChunkHook 第 {ordinal} 项不能是空白文本")
             drafts.append(ChunkDraft(text=text, ordinal=ordinal))
         return drafts
 

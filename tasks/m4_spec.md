@@ -1,6 +1,6 @@
 # Spec: M4 Chunking 与层级索引
 
-> 状态：已冻结，M4-T2 已完成（v1.0）
+> 状态：已冻结，M4-T3 已完成（v1.1）
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
 > 最后更新：2026-09-14
@@ -116,6 +116,10 @@ overlap 都不会让 `start_char` 指向错误位置。对连续文本块必须�
 文件类型选择属于 Service/Hook 路由；separator profile 是纯数据，不能继续用大量几乎
 相同的子类表达配置差异。
 
+代码分块的唯一核心类为 `CodeRecursiveChunker`，类名遵循
+“Code + Recursive + Chunker”，并通过必填 `code_language` 参数选择 profile。
+`PythonChunker`、`RustChunker` 等仅保留薄兼容门面，不允许复制算法。
+
 ### D5 — 结构事实使用引用规范 Markdown 的 DocumentBlock
 
 M4 需要标题和页面边界时，在 `ports/document.py` 增加最小 `DocumentBlock`。它用
@@ -196,10 +200,10 @@ revision，应停在决策门重新设计，不能降级为“通常不会重复
 
 ### S2 — 分块正确性
 
-- [ ] 所有策略满足大小、顺序、非空和无 overlap 可重建不变式。
-- [ ] 重复文本、连续分隔符、CJK、Markdown 标题/代码块和超长无分隔文本有独立测试。
-- [ ] 字符位置在算法内产生；反向改成 `find()` 时重复文本用例会失败。
-- [ ] 实际 overlap 可由输出位置观察，文档明确其 best-effort 语义。
+- [x] Fixed/Recursive 满足大小、顺序、非空和无 overlap 可重建不变式。
+- [x] 重复文本、连续分隔符、CJK、代码前缀和超长无分隔文本有独立测试。
+- [x] 字符位置在算法内产生；重复文本测试会阻止事后 `find()` 回查。
+- [x] 实际 overlap 可由输出位置观察，文档明确其 best-effort 语义。
 
 ### S3 — 结构感知
 
@@ -253,8 +257,9 @@ M4 后半段（T6～T10）必须先提交 schema/迁移/回滚设计并获得确
 
 ## 10. M4-T2 验证记录
 
-- 新增 frozen/slots `ChunkDraft`：空白、负 ordinal、半缺失/倒置 span 和非法 metadata
-  键在边界处拒绝；metadata 会复制并包装为只读视图。
+- 新增 frozen/slots `ChunkDraft`：空字符串、负 ordinal、半缺失/倒置 span 和非法 metadata
+  键在边界处拒绝；metadata 会复制并包装为只读视图。旧 Hook 适配器进一步
+  拒绝空白块；新策略只在保全非空原文的连续空白时允许空白 span。
 - 新增 runtime-checkable `ChunkingStrategy`，只有同步 `split(NormalizedDocument)`；模块只
   依赖 engines 与 ports。
 - metadata 合并规则落为纯函数，测试覆盖四层优先级、保留键过滤及输入不变性。
@@ -264,3 +269,18 @@ M4 后半段（T6～T10）必须先提交 schema/迁移/回滚设计并获得确
 - 定向契约/Hook 测试 38 项通过；分层守卫与契约合计 458 项通过；全量单测为
   `1888 passed, 20 skipped, 195 deselected, 1 xfailed`，pytest 9.12s。
 - Ruff 与 Pyright 通过，Pyright 为 `0 errors, 0 warnings`。
+
+## 11. M4-T3 验证记录
+
+- 新增 `FixedSizeChunker` 与 `RecursiveChunker`；split、recursive merge 与硬切兜底
+  全程传递字符 span，输出可直接回引规范 Markdown。
+- 新增可注入 `LengthFunction`；默认 `len` 按 Unicode code point 计量，字节
+  计数、非法计数器和单字符超预算均有独立测试。
+- 代码分块收敛为 `CodeRecursiveChunker(code_language=...)`；11 种语言只提供
+  separator/default profile，旧语言类为薄兼容门面，`.rs` 正确归一为 Rust。
+- 反向注入“事后从头 `find()` 位置回查”和“丢弃 separator”两类缺陷，
+  重复文本位置断言与无 overlap 逐字重建断言分别失败；恢复后重跑通过。
+- 新旧 Chunker 定向测试 `197 passed`；全量单测
+  `1958 passed, 20 skipped, 195 deselected, 1 xfailed`，pytest 9.05s。
+- core-only 临时环境可导入并运行三个新策略，未加载 infrastructure；
+  `make lint` 通过，Pyright 为 `0 errors, 0 warnings`。

@@ -47,8 +47,8 @@ class ChunkDraft:
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.text or not self.text.strip():
-            raise ValueError("ChunkDraft.text 不能是空白文本")
+        if not self.text:
+            raise ValueError("ChunkDraft.text 不能是空字符串")
         if self.ordinal < 0:
             raise ValueError("ChunkDraft.ordinal 必须大于等于 0")
         if (self.start_char is None) != (self.end_char is None):

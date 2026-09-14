@@ -55,7 +55,7 @@ def test_chunk_draft_copies_and_freezes_metadata() -> None:
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"text": "  ", "ordinal": 0}, "空白文本"),
+        ({"text": "", "ordinal": 0}, "空字符串"),
         ({"text": "正文", "ordinal": -1}, "ordinal"),
         ({"text": "正文", "ordinal": 0, "start_char": 0}, "同时提供"),
         (
@@ -153,7 +153,7 @@ def test_legacy_adapter_uses_markdown_without_guessing_positions() -> None:
     assert all(not draft.metadata for draft in drafts)
 
 
-@pytest.mark.parametrize("bad_result", [("tuple",), [123], [" "]])
+@pytest.mark.parametrize("bad_result", [("tuple",), [123], [""], [" "]])
 def test_legacy_adapter_rejects_invalid_results(bad_result: object) -> None:
     def legacy(text: str, config: PipelineConfig) -> list[str]:
         return cast("list[str]", bad_result)

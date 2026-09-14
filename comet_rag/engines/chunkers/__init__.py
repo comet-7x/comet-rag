@@ -1,16 +1,14 @@
 from __future__ import annotations
 
+from ._length import LengthFunction
 from .base_chunker import (
-    SEPARATORS_EN,
-    SEPARATORS_JA,
-    SEPARATORS_KO,
-    SEPARATORS_ZH,
     BaseChunker,
     Language,
     RecursiveCharacterTextSplitter,
 )
 from .code_chunker import (
     CChunker,
+    CodeRecursiveChunker,
     CppChunker,
     GoChunker,
     HtmlChunker,
@@ -22,7 +20,11 @@ from .code_chunker import (
     RustChunker,
     TypeScriptChunker,
 )
+from .fixed import FixedSizeChunker
+from .profiles import CodeLanguage
 from .protocol import ChunkingStrategy
+from .recursive import RecursiveChunker
+from .separators import SEPARATORS_EN, SEPARATORS_JA, SEPARATORS_KO, SEPARATORS_ZH
 from .structured_chunker import CsvChunker, JsonChunker, XmlChunker
 from .text_chunker import DocxChunker, MdxChunker, TextChunker
 from .types import (
@@ -34,6 +36,8 @@ from .types import (
 
 __all__ = [
     "Language",
+    "CodeLanguage",
+    "LengthFunction",
     "BaseChunker",
     "RecursiveCharacterTextSplitter",
     "SEPARATORS_EN",
@@ -46,6 +50,9 @@ __all__ = [
     "TextChunker",
     "DocxChunker",
     "MdxChunker",
+    "FixedSizeChunker",
+    "RecursiveChunker",
+    "CodeRecursiveChunker",
     "PythonChunker",
     "TypeScriptChunker",
     "JavaScriptChunker",

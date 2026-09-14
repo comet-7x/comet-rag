@@ -1,66 +1,13 @@
+from __future__ import annotations
+
 # 修改自 https://github.com/crewAIInc/crewAI/blob/main/lib/crewai-tools/src/crewai_tools/rag/chunkers/
 from collections import deque
-from enum import StrEnum
 
-from comet_rag.engines.chunkers.separators import (
-    SEPARATORS_CODE_C,
-    SEPARATORS_CODE_CPP,
-    SEPARATORS_CODE_GO,
-    SEPARATORS_CODE_HTML,
-    SEPARATORS_CODE_JAVA,
-    SEPARATORS_CODE_JS,
-    SEPARATORS_CODE_PHP,
-    SEPARATORS_CODE_PY,
-    SEPARATORS_CODE_R,
-    SEPARATORS_CODE_RUST,
-    SEPARATORS_CODE_TS,
-    SEPARATORS_EN,
-    SEPARATORS_JA,
-    SEPARATORS_KO,
-    SEPARATORS_ZH,
+from comet_rag.engines.chunkers.profiles import (
+    CodeLanguage,
+    Language,
+    separators_for,
 )
-
-
-class Language(StrEnum):
-    ENGLISH = "en"
-    CHINESE = "zh"
-    JAPANESE = "ja"
-    KOREAN = "ko"
-
-
-class CodeLanguage(StrEnum):
-    PY = "py"
-    TS = "ts"
-    JS = "js"
-    JAVA = "java"
-    C = "c"
-    CPP = "cpp"
-    GO = "go"
-    PHP = "php"
-    R = "r"
-    RUST = "rust"
-    HTML = "html"
-
-
-# fmt: off
-_LANGUAGE_TO_SEPARATORS: dict[Language | CodeLanguage, list[str]] = {
-    Language.ENGLISH:    SEPARATORS_EN,
-    Language.CHINESE:    SEPARATORS_ZH,
-    Language.JAPANESE:   SEPARATORS_JA,
-    Language.KOREAN:     SEPARATORS_KO,
-    CodeLanguage.PY:     SEPARATORS_CODE_PY,
-    CodeLanguage.TS:     SEPARATORS_CODE_TS,
-    CodeLanguage.JS:     SEPARATORS_CODE_JS,
-    CodeLanguage.JAVA:   SEPARATORS_CODE_JAVA,
-    CodeLanguage.C:      SEPARATORS_CODE_C,
-    CodeLanguage.CPP:    SEPARATORS_CODE_CPP,
-    CodeLanguage.GO:     SEPARATORS_CODE_GO,
-    CodeLanguage.PHP:    SEPARATORS_CODE_PHP,
-    CodeLanguage.R:      SEPARATORS_CODE_R,
-    CodeLanguage.RUST:   SEPARATORS_CODE_RUST,
-    CodeLanguage.HTML:   SEPARATORS_CODE_HTML,
-}
-# fmt: on
 
 
 class RecursiveCharacterTextSplitter:
@@ -310,7 +257,7 @@ class BaseChunker:
                 代码和 Markdown 分隔符应设为 `True`，自然语言标点应设为 `False`（默认）
         """
         if separators is None and language:
-            separators = _LANGUAGE_TO_SEPARATORS.get(language)
+            separators = list(separators_for(language))
 
         self._splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,

@@ -1,7 +1,7 @@
 # Implementation Plan: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：执行中（v1.0）
-> 依据：`tasks/m4_spec.md` v1.0
+> 状态：执行中（v1.1）
+> 依据：`tasks/m4_spec.md` v1.1
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开始日期：2026-09-14
 > 分支：`feature/m4-chunking`
@@ -14,8 +14,9 @@ M4 先解决当前 `list[str]` 契约造成的溯源丢失和 overlap 不可观�
 
 ## Current Priority
 
-M4-T1 调研和 M4-T2 ChunkDraft/Strategy 契约已经完成。下一项是 M4-T3 Fixed /
-Recursive 核心与位置算法；仍不创建数据库表、不改 Milvus metadata。
+M4-T1～T3 已完成：新平坦策略保留精确 span，代码分块已统一为
+`CodeRecursiveChunker(code_language=...)`。下一项是 M4-T4 Pipeline / Task
+单链路迁移；仍不创建数据库表、不改 Milvus metadata。
 
 ## Dependency Graph
 

@@ -384,23 +384,59 @@ text = DocxCleaner(
 ### Chunker
 
 ```python
-from comet_rag.engines.chunkers.text_chunker import DocxChunker, TextChunker, MdxChunker
+from comet_rag.engines.chunkers import (
+    CodeRecursiveChunker,
+    FixedSizeChunker,
+    RecursiveChunker,
+)
+from comet_rag.ports import NormalizedDocument
 
-chunks = DocxChunker(chunk_size=1500, chunk_overlap=150).chunk(text)
+document = NormalizedDocument(markdown=text)
+
+# 无自然边界的确定性切分
+fixed = FixedSizeChunker(chunk_size=1000, chunk_overlap=100)
+
+# 段落 → 换行 → 空格 → 字符的递归切分
+recursive = RecursiveChunker(chunk_size=1000, chunk_overlap=100)
+
+# 所有代码语言共用一个算法，code_language 只选择语言画像
+code = CodeRecursiveChunker(
+    code_language="rs", chunk_size=1200, chunk_overlap=120
+)
+
+drafts = code.split(document)
+print(drafts[0].start_char, drafts[0].end_char)
+
+# 兼容旧用法：只需要文本时仍可返回 list[str]
+chunks = code.chunk(text)
 ```
 
-可用 Chunker 汇总：
+新策略汇总：
 
-| 类名 | 适用格式 | 默认 size/overlap |
-|------|---------|------------------|
-| `TextChunker` | TXT | 1500 / 150 |
-| `DocxChunker` | DOCX | 2500 / 250 |
-| `MdxChunker` | MD/MDX | 3000 / 300 |
-| `PythonChunker` | .py | 1500 / 150 |
-| `TypeScriptChunker` | .ts | 1500 / 150 |
-| `CsvChunker` | .csv | 1200 / 100 |
-| `JsonChunker` | .json | 2000 / 200 |
-| `XmlChunker` | .xml | 2500 / 250 |
+| 类名 | 用途 | 默认 size/overlap |
+|------|------|------------------|
+| `FixedSizeChunker` | 按长度预算硬切，也是超长单元的最终兜底 | 1000 / 0 |
+| `RecursiveChunker` | 使用可配置 separator profile 递归切分 | 1000 / 0 |
+| `CodeRecursiveChunker` | 代码递归切分，通过 `code_language` 选择画像 | 随语言画像 |
+
+`code_language` 支持 `py`、`ts`、`js`、`java`、`c`、`cpp`、`go`、`php`、`r`、
+`rust` 和 `html`；也接受 `python`、`typescript`、`javascript`、`c++`、`.py`
+和 `.rs` 等别名。`PythonChunker`、`TypeScriptChunker` 等旧语言类仍保留，
+但只是 `CodeRecursiveChunker` 的兼容配置门面，不再各自维护算法。
+各 profile 的默认 `size/overlap` 为：
+
+| `code_language` | py | ts | js | java | c | cpp | go | php | r | rust | html |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 默认值 | 1500/150 | 1500/150 | 1200/100 | 2000/200 | 1000/100 | 1500/150 | 1000/100 | 1200/100 | 1000/100 | 1500/150 | 1500/200 |
+
+`chunk_size` 和 `chunk_overlap` 使用同一个 `length_function`；默认为
+`len`，单位是 Unicode code point。需要 token 或字节预算时由调用方注入计数函数，
+engines 不强绑 tokenizer 依赖。`chunk_overlap` 是上限目标：递归策略优先
+保留完整语义单元，因此实际 overlap 可以更小，可通过相邻块的
+`start_char/end_char` 直接观察。
+
+原有 `TextChunker`、`DocxChunker`、`MdxChunker`、`CsvChunker`、`JsonChunker` 和
+`XmlChunker` 在 M4-T4 完成 Pipeline/Task 单链路迁移前继续作为兼容入口。
 
 ---
 
