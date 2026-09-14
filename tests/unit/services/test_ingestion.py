@@ -283,6 +283,38 @@ async def test_extra_metadata_is_attached(
     assert hit.metadata["year"] == 2026
 
 
+async def test_extracted_metadata_is_preserved_with_safe_precedence(
+    svc: TaskService, store: InMemoryVectorStore
+) -> None:
+    @PipelineHooks.aextractor(STUB_TYPE)
+    async def _extract(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
+        return ExtractedDocument(
+            markdown="段落一。段落二。段落三。",
+            metadata={
+                "provider": "fixture",
+                "department": "提取器",
+                "kb_id": "伪造知识库",
+                "source": "伪造来源",
+            },
+        )
+
+    task = await svc.submit(
+        INGEST_KIND,
+        request(metadata={"department": "调用方", "year": 2026}),
+    )
+    await wait_for_terminal(svc.store, task.task_id)
+
+    hit = (await store.asearch(KB, [1.0, 1.0, 1.0]))[0]
+
+    assert hit.metadata["provider"] == "fixture"
+    assert hit.metadata["department"] == "调用方"
+    assert hit.metadata["year"] == 2026
+    assert hit.metadata["kb_id"] == KB
+    assert hit.metadata["source"] == "任意来源"
+
+
 async def test_stage_history_records_three_stages(svc: TaskService) -> None:
     task = await svc.submit(INGEST_KIND, request())
     done = await wait_for_terminal(svc.store, task.task_id)

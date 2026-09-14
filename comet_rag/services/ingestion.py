@@ -203,6 +203,9 @@ class IngestRunner:
 
             await ctx.put(
                 text=text,
+                # 提取器溯源信息必须跨过 CPU/IO worker 的道次边界；否则 API
+                # 入库与库 Pipeline 会为同一文档生成不同的 chunk metadata。
+                document_metadata=dict(document.metadata),
                 # 原文会在 chunking 后清掉；保留这个小标量才能在终态任务上
                 # 观察外部提取量，而不把整份 Markdown 长期留在任务表。
                 extracted_text_bytes=extracted_text_bytes,
@@ -264,6 +267,12 @@ class IngestRunner:
         chunks: list[str] = task.context["chunks"]
         source_id: str = task.context["source_id"]
         file_type: str = task.context["file_type"]
+        raw_document_metadata = task.context.get("document_metadata")
+        document_metadata = (
+            dict(raw_document_metadata)
+            if isinstance(raw_document_metadata, dict)
+            else {}
+        )
 
         # 入库前的一致性检查（spec A12 在写路径上的执行点）：
         # 库必须存在，且建库时的 embedding 模型必须与当前配置一致。
@@ -284,6 +293,7 @@ class IngestRunner:
             )
 
             base_metadata = {
+                **document_metadata,
                 **request.metadata,
                 "kb_id": request.kb_id,  # spec A5 的租户维度
                 "source": task.context.get("source"),

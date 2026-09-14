@@ -29,7 +29,6 @@ from .local import LocalLoader
 from .router import AutoLoader, LoaderRoute
 
 LoaderContent = LoadedResource
-Loader = AutoLoader
 
 __all__ = [
     "AllowExt",
@@ -45,7 +44,6 @@ __all__ = [
     "FormatMeta",
     "GranularityStrategy",
     "LoadedResource",
-    "Loader",
     "LoaderContent",
     "LoaderRoute",
     "LocalLoader",
