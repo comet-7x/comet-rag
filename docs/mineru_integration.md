@@ -29,11 +29,13 @@ Comet-RAG Loader → DocumentExtractorPort → Normalizer → 分块 → 向量�
 1. `GET /health` 必须返回 `status=healthy`、`protocol_version=2` 和非空版本号；
 2. `POST /tasks` 流式上传一个 PDF，并以 202 返回 `task_id`；
 3. `GET /tasks/{task_id}` 轮询 `pending`、`processing`、`completed` 或 `failed`；
-4. `GET /tasks/{task_id}/result` 返回唯一一项 `results.*.md_content`。
+4. `GET /tasks/{task_id}/result` 返回唯一一项 `results.*.md_content`，并可同时返回 legacy
+   `content_list`。
 
-M2 只消费 Markdown。适配器显式关闭 ZIP、图片、content list、中间 JSON、模型
-输出与原文件回传，不依赖 MinerU 默认值。`POST /file_parse` 是同步兼容接口，不是
-Comet-RAG 的生产路径。
+`md_content` 始终是正文真相。M4 起适配器显式请求 content list，仅用它验证并生成真实
+页边界：可支持项按页重建后必须与 Markdown 完全一致，否则不产生页事实并回退标题
+section。适配器仍关闭 ZIP、图片、中间 JSON、模型输出与原文件回传，不依赖 MinerU
+默认值。`POST /file_parse` 是同步兼容接口，不是 Comet-RAG 的生产路径。
 
 先确认你拿到的是 MinerU 文档服务，而不是底层 vLLM：
 

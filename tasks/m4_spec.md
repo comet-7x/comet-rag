@@ -1,6 +1,6 @@
 # Spec: M4 Chunking 与层级索引
 
-> 状态：已冻结，M4-T5.1～T5.3 已完成（v1.5）
+> 状态：已冻结，M4-T5 已完成（v1.6）
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
 > 最后更新：2026-09-15
@@ -143,6 +143,12 @@ M4 需要标题和页面边界时，在 `ports/document.py` 增加最小 `Docume
   Planner 选择递归策略，不把换行猜成分页；
 - bbox、图片资产和表格单元格坐标不在首版字段中，出现真实消费用例后再扩展。
 
+PDF 页事实采用“双重校验”接入：MinerU 继续以 `md_content` 为正文真相，同时请求 legacy
+`content_list`。适配器只对能够无损重建的文本、标题、公式和代码项按 `page_idx` 分组；
+重建结果必须与 `md_content` 完全一致。Normalizer 再对逐页片段和全文分别规范化，只有
+逐页重建仍等于规范全文时才按游标直接生成 page span。任一条件不满足即回退 Markdown
+section，不使用 `find()`，也不向 Port/Chunk 暴露 `page_idx` 等 MinerU 专有字段。
+
 ### D6 — 语义分块不是纯 ChunkingStrategy
 
 Embedding 调用有网络、并发、失败与资源生命周期，因此完整语义分块由
@@ -201,9 +207,10 @@ revision，应停在决策门重新设计，不能降级为“通常不会重复
 新契约，不能让框架自身触发弃用提示。
 
 T4 已将两条入口收敛到 `ChunkingService`：Pipeline 与 IngestRunner 都消费完整
-`NormalizedDocument`，再使用同一物化函数生成 ID、位置和 metadata。跨 worker 只保存
-经过严格字段校验、JSON 序列化校验及字节上限保护的 ChunkDraft payload，不持久化
-dataclass 或只读映射对象。
+`NormalizedDocument`，再使用同一物化函数生成 ID、位置和 metadata。跨 worker 保存
+经过严格字段校验、JSON 序列化校验及字节上限保护的 DocumentBlock 与 ChunkDraft 窄
+payload，不持久化 dataclass 或只读映射对象。这样任务链路不会在 extracting → chunking
+之间丢失标题或页面事实。
 
 ## 6. 成功标准
 
@@ -226,7 +233,7 @@ dataclass 或只读映射对象。
 - [x] 标题路径从规范 Markdown 产生并传到 Chunk metadata。
 - [x] PageChunkingStrategy 只使用真实 page facts；缺失时行为明确。
 - [x] 文档 metadata、请求 metadata 与系统保留字段有唯一合并优先级。
-- [ ] 不把 MinerU 专有字段泄漏到 Chunk 或 Port。
+- [x] 不把 MinerU 专有字段泄漏到 Chunk 或 Port。
 
 ### S4 — 层级与可靠性（通过 D8 决策门后执行）
 
@@ -360,3 +367,22 @@ M4 后半段（T6～T10）必须先提交 schema/迁移/回滚设计并获得确
 - 全量单测 `1990 passed, 20 skipped, 195 deselected, 1 xfailed`，pytest 9.36s；E2E
   `30 passed`，integration `6 passed, 152 skipped`，benchmark `7 passed`；Ruff、Pyright
   和结构分块 core-only 冒烟全部通过。
+
+## 16. M4-T5.4～T5.5 验证记录
+
+- 新增通用 `ExtractedPage`，只表达从 1 开始的页号、页 Markdown 和可选通用 metadata；
+  MinerU 的 0-based `page_idx` 在适配器边界完成转换。
+- MinerU 明确请求 `content_list`，但 `md_content` 仍是唯一正文真相。legacy content list
+  只有在支持项可逐页无损重建且全文完全一致时才产生页事实；图片、表格、图表、列表、
+  未知类型、乱序页号和内容不一致均安全回退 section。
+- Normalizer 对全文与每页独立执行同一规范化，再通过顺序游标构造 page span；重复页文本
+  用例证明实现不依赖文本搜索。
+- DocumentBlock 以窄 JSON payload 跨 Task 阶段传递，未知字段、错误类型、非 JSON metadata
+  和字节上限均在服务边界拒绝；chunking 后结构与全文一起清理。
+- 反向禁用官方 content list 字符串解析、丢弃 extracting 阶段的 DocumentBlock payload，
+  对应 MinerU 页事实与跨阶段用例均明确失败；恢复后重新通过。
+- 固定 Markdown、合成 DOCX 与 MinerU PDF 样本覆盖标题/页面硬边界、metadata 传播及
+  extracting → chunking 交接。
+- 全量单测 `2008 passed, 20 skipped, 195 deselected, 1 xfailed`，pytest 9.49s；E2E
+  `30 passed`，integration `6 passed, 152 skipped`，benchmark `7 passed`；Ruff、Pyright
+  与隔离 core-only 页结构冒烟全部通过。

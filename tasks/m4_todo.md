@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T5 执行中；T5.1～T5.3 已完成，下一项 T5.4 PDF 页事实接入决策
+> 状态：M4-T5 已完成；下一项 M4-T6 schema/revision 设计决策门
 > 规格：`tasks/m4_spec.md` v1.5
 > 计划：`tasks/m4_plan.md` v1.5
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
@@ -98,14 +98,14 @@ separator 配置不可被原地修改。
 
 ### M4-T5 — Markdown / Page 结构感知（M）
 
-**依赖：** M4-T4.2
+**完成日期：** 09-15　**依赖：** M4-T4.2
 
 - [x] 从标题与页面用例反推最小 DocumentBlock，并定义 span 校验
 - [x] Markdown 分析器识别 ATX/Setext 标题路径、代码围栏和结构边界
 - [x] MarkdownSectionStrategy 编排原子 Chunker 并保留 heading_path
 - [x] PageChunkingStrategy 只消费真实页事实，缺页行为显式
-- [ ] 决定并实现 MinerU 页内容到规范 Markdown page span 的无搜索映射
-- [ ] DOCX/PDF/Markdown 固定样本覆盖 metadata 传播和边界完整性
+- [x] 决定并实现 MinerU 页内容到规范 Markdown page span 的无搜索映射
+- [x] DOCX/PDF/Markdown 固定样本覆盖 metadata 传播和边界完整性
 - [x] 不加入 bbox/资产等没有当前消费者的字段
 
 **验收：** 结构由 Extractor/Normalizer 提供，Chunker 只消费，不重新猜文档事实。

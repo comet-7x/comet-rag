@@ -8,8 +8,8 @@
 两者共用同一份解析代码。这个双重定位由 `pyproject.toml` 的依赖分组
 **在安装期强制**，并由 AST 层级守卫在 CI 里盯着（`tests/unit/test_layering.py`）。
 
-> 当前进度：M1～M3、公共 Loader/Extractor 入口和仓库结构归一化已完成；M4 正在设计
-> 可追溯 Chunking 与结构感知切分，父子索引将在独立 schema 决策门后实施。
+> 当前进度：M1～M3、公共 Loader/Extractor 入口和仓库结构归一化已完成；M4 已完成
+> 可追溯 Chunking 与结构感知切分，下一项是父子索引的独立 schema/revision 决策门。
 
 ---
 

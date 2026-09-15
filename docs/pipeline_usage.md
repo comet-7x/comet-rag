@@ -481,11 +481,15 @@ print(drafts[0].metadata["heading_path"])
 | Word 文档 | `.docx` `.doc` | ✅ 内置 | ✅ Markdown section 策略 |
 | 纯文本 | `.txt` | 需自定义注册 | 单 section 策略 |
 | Markdown | `.md` | 需自定义注册 | ✅ 默认分析标题 section |
-| PDF | `.pdf` | ✅ 外部 MinerU；服务自动装配，纯库显式注册 | 当前 section 策略；真实 page span 接入后自动按页 |
+| PDF | `.pdf` | ✅ 外部 MinerU；服务自动装配，纯库显式注册 | content list 可无损验证时按页，否则按 section |
 | CSV | `.csv` | 待实现 | — |
 | 代码文件 | `.py` `.ts` 等 | 待实现 | Chunker 已就绪 |
 
 > 所有自定义注册见 [第 6 节](#6-自定义-hook-扩展新格式)。
+
+PDF 会同时请求 MinerU 的 `md_content` 与 legacy `content_list`。只有 content list 能按页
+无损重建出完全相同的 Markdown 时才启用 page 策略；复杂视觉块或协议不一致会保守回退
+section 策略，绝不通过搜索重复文本来猜页边界。
 
 ---
 

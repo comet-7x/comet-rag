@@ -1,8 +1,8 @@
 # Spec: Comet-RAG
 
-> 状态：M1～M3 已完成；M4 v1.5 已冻结，M4-T5.1～T5.3 已完成（v1.8）
+> 状态：M1～M3 已完成；M4 v1.6 已冻结，M4-T5 已完成（v1.9）
 > 最后更新：2026-09-15
-> 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0；M3 见 `tasks/m3_spec.md` v1.0；M4 见 `tasks/m4_spec.md` v1.5
+> 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0；M3 见 `tasks/m3_spec.md` v1.0；M4 见 `tasks/m4_spec.md` v1.6
 
 ---
 
@@ -59,11 +59,12 @@
 | **M4** | **可追溯 Chunking + 可选父子索引** | 带位置的块、结构感知切分、单链路装配；父子索引通过独立 schema 决策门 |
 
 M1、M2、M2 后 P1 与 M3 已完成并合入 `develop`。仓库结构归一化和跨格式文档
-规范化也已由 PR #56 合入。当前在 `feature/m4-chunking` 上已完成 M4-T5.1～T5.3：
+规范化也已由 PR #56 合入。当前在 `feature/m4-chunking` 上已完成 M4-T5：
 Fixed/Recursive 是仅有的两种原子 Chunker，格式与语言差异使用参数画像，Pipeline 与
 任务入库共用 Chunking Service 和物化规则；Markdown 标题与真实页面由文档级 Strategy
-在结构边界内编排原子 Chunker。下一项是 PDF 页事实接入与结构固定样本。父子索引
-会新增持久化表和 metadata 约定，必须经过单独决策门。
+在结构边界内编排原子 Chunker；MinerU 页事实只有在 content list 可无损重建全文时才
+接入，且结构会跨 Task 阶段保存。下一项是父子索引的 schema/revision 设计决策门；
+它会新增持久化表和 metadata 约定，实施前必须再次确认。
 
 ### 非目标（明确不做）
 

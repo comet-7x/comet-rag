@@ -37,6 +37,10 @@ return ExtractedDocument(markdown=text, metadata={"provider": "custom"})
 `MarkdownSectionStrategy` 保留标题路径，`PageChunkingStrategy` 只接受带真实页码的
 page blocks。两个策略都复用原子 Chunker，输出位置仍指向整篇规范 Markdown。
 
+MinerU 现在可从经过全文一致性校验的 legacy content list 生成页事实；无法无损重建时
+保守回退 section。DocumentBlock 同时通过严格 JSON payload 跨 Task 阶段保存，不再因
+worker 交接丢失页面或标题结构。
+
 ### 配置变更
 
 `infrastructure_config.vector_database.collection_name` 已移除，改为：
