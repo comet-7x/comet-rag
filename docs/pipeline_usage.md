@@ -203,7 +203,8 @@ Pipeline 内部通过 `PipelineHooks` 注册表分发处理逻辑。增加新格
 - **extractor**：`(LoadedResource, PipelineConfig) → ExtractedDocument`，负责把文件映射为通用提取结果
 - **document_chunker**（可选）：`(NormalizedDocument, PipelineConfig) → list[ChunkDraft]`，自定义分块策略；不注册则回退到 `RecursiveChunker`
 
-所有提取结果都会在进入 Chunker 前经过统一的 `MarkdownDocumentNormalizer`。
+所有提取结果都会在进入文档级 Strategy 前经过统一的 `MarkdownDocumentNormalizer`；
+原子 Chunker 只接收 Strategy 选择出的 Markdown 字符串。
 
 > 两个 hook 都接收完整的 `PipelineConfig`，而不是散装的 `chunk_size` / `chunk_overlap`。
 > 这样新增格式专属配置（如 `config.docx`）时无需改动 hook 签名。
@@ -225,7 +226,7 @@ def extract_plaintext(
     )
 
 
-# 注册 Markdown extractor（可复用 TextChunker）
+# 注册 Markdown extractor
 @PipelineHooks.extractor("md", "mdx")
 def extract_markdown(
     loader_content: LoadedResource, config: PipelineConfig
@@ -243,7 +244,7 @@ def chunk_markdown(
     return RecursiveChunker(
         config.chunk_size,
         config.chunk_overlap,
-    ).split(document)
+    ).split(document.markdown)
 ```
 
 旧 `PipelineHooks.chunker(str, config) -> list[str]` 仍可运行，但会发出
@@ -395,13 +396,10 @@ text = DocxCleaner(
 
 ```python
 from comet_rag.engines.chunkers import (
-    CodeRecursiveChunker,
     FixedSizeChunker,
     RecursiveChunker,
+    code_profile,
 )
-from comet_rag.ports import NormalizedDocument
-
-document = NormalizedDocument(markdown=text)
 
 # 无自然边界的确定性切分
 fixed = FixedSizeChunker(chunk_size=1000, chunk_overlap=100)
@@ -409,16 +407,16 @@ fixed = FixedSizeChunker(chunk_size=1000, chunk_overlap=100)
 # 段落 → 换行 → 空格 → 字符的递归切分
 recursive = RecursiveChunker(chunk_size=1000, chunk_overlap=100)
 
-# 所有代码语言共用一个算法，code_language 只选择语言画像
-code = CodeRecursiveChunker(
-    code_language="rs", chunk_size=1200, chunk_overlap=120
+# Rust 只是一组参数画像，返回的仍然是 RecursiveChunker
+rust = RecursiveChunker.from_profile(
+    code_profile("rs", chunk_size=1200, chunk_overlap=120)
 )
 
-drafts = code.split(document)
+drafts = rust.split(text)
 print(drafts[0].start_char, drafts[0].end_char)
 
-# 兼容旧用法：只需要文本时仍可返回 list[str]
-chunks = code.chunk(text)
+# 只需要文本时返回 list[str]
+chunks = rust.chunk(text)
 ```
 
 新策略汇总：
@@ -427,11 +425,10 @@ chunks = code.chunk(text)
 |------|------|------------------|
 | `FixedSizeChunker` | 按长度预算硬切，也是超长单元的最终兜底 | 1000 / 0 |
 | `RecursiveChunker` | 使用可配置 separator profile 递归切分 | 1000 / 0 |
-| `CodeRecursiveChunker` | 代码递归切分，通过 `code_language` 选择画像 | 随语言画像 |
 
 `code_language` 支持 `py`、`ts`、`js`、`java`、`c`、`cpp`、`go`、`php`、`r`、
 `rust` 和 `html`；也接受 `python`、`typescript`、`javascript`、`c++`、`.py`
-和 `.rs` 等别名。代码分块只有这一个公开类，不再按语言维护子类。
+和 `.rs` 等别名。`code_profile()` 只返回参数数据，不创建新的 Chunker 类型。
 各 profile 的默认 `size/overlap` 为：
 
 | `code_language` | py | ts | js | java | c | cpp | go | php | r | rust | html |
@@ -444,8 +441,8 @@ engines 不强绑 tokenizer 依赖。`chunk_overlap` 是上限目标：递归策
 保留完整语义单元，因此实际 overlap 可以更小，可通过相邻块的
 `start_char/end_char` 直接观察。
 
-原有 `TextChunker`、`DocxChunker`、`MdxChunker`、`CsvChunker`、`JsonChunker` 和
-`XmlChunker` 在整个 0.2.x 继续作为兼容入口，最早在 0.3.0 移除。
+文本、DOCX、Markdown、CSV、JSON、XML 和代码语言差异都由 `ChunkProfile` 表达；
+运行时只有 `FixedSizeChunker`、`RecursiveChunker` 及未来真正具有不同算法的 Chunker。
 
 ---
 
@@ -453,10 +450,10 @@ engines 不强绑 tokenizer 依赖。`chunk_overlap` 是上限目标：递归策
 
 | 格式 | 扩展名 | Extractor | Chunker |
 |------|--------|-----------|---------|
-| Word 文档 | `.docx` `.doc` | ✅ 内置 | ✅ `DocxChunker` |
-| 纯文本 | `.txt` | 需自定义注册 | 回退 `TextChunker` |
+| Word 文档 | `.docx` `.doc` | ✅ 内置 | ✅ `RecursiveChunker` |
+| 纯文本 | `.txt` | 需自定义注册 | 回退 `RecursiveChunker` |
 | Markdown | `.md` | 需自定义注册 | 需自定义注册 |
-| PDF | `.pdf` | ✅ 外部 MinerU；服务自动装配，纯库显式注册 | 回退 `TextChunker` |
+| PDF | `.pdf` | ✅ 外部 MinerU；服务自动装配，纯库显式注册 | 回退 `RecursiveChunker` |
 | CSV | `.csv` | 待实现 | — |
 | 代码文件 | `.py` `.ts` 等 | 待实现 | Chunker 已就绪 |
 

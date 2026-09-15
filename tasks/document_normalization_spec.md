@@ -25,7 +25,8 @@
 ### DN-D2：提取结果与规范结果分开命名
 
 - `ExtractedDocument`：提取器已经映射到项目通用字段，但尚未执行跨格式文本规范化。
-- `NormalizedDocument`：可安全交给 Chunker 的规范 Markdown 与复制后的文档元数据。
+- `NormalizedDocument`：可安全交给文档级 Chunking Strategy 的规范 Markdown 与复制后的
+  文档元数据；原子 Chunker 只接收其中的 Markdown 字符串。
 
 本阶段不提前定义 `DocumentBlock`。页码、bbox、表格、图片资产等字段必须由 M4 的
 真实 Chunking/IndexPlan 用例反推，不能先造一个没有消费者的万能块模型。

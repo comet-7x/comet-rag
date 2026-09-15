@@ -60,8 +60,9 @@ pydantic/httpx/lxml 一类的纯计算包；服务那一半在它之上加了任
 
 `DocumentExtractorPort` 也遵循这条规则：它只接收 Loader 已经落地的受管本地文件，
 返回 `ExtractedDocument`，不认识 URL、S3 凭据、MinerU backend 或 HTTP 响应。
-所有结果在进入 Chunker 前由 `engines/documents/normalization/` 转换成
-`NormalizedDocument`。`MinerUDocumentExtractor` 是 `infrastructure/extractors/`
+所有结果在进入文档级 `ChunkingStrategy` 前由 `engines/documents/normalization/`
+转换成 `NormalizedDocument`；Strategy 再把 Markdown 文本交给原子 `Chunker`。
+`MinerUDocumentExtractor` 是 `infrastructure/extractors/`
 中的外部适配器，只有 `composition/` 能把它注册成 PDF Pipeline Hook。
 
 ## 核心抽象

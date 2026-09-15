@@ -35,7 +35,7 @@ Port 放在 `comet_rag/ports/`，只依赖标准库和自己的值对象。每�
 
 ### 2.2 Strategy：替换纯计算算法
 
-Strategy 处理进程内、确定性的算法替换，例如固定长度切分、递归切分、RRF 融合。
+Strategy 处理进程内、确定性的算法替换与组合，例如文档级切分、父子块组织、RRF 融合。
 它可以用 `Protocol`，但不因使用了 `Protocol` 就成为架构 Port。Strategy 通常：
 
 - 不持有网络连接或外部 SDK；
@@ -43,8 +43,9 @@ Strategy 处理进程内、确定性的算法替换，例如固定长度切分�
 - 不负责配置装配、重试、限流或资源关闭；
 - 与算法所在的 `engines/` 子模块一起演进。
 
-Strategy 应按能力命名，例如 `ChunkingStrategy`、`FusionStrategy`，避免所有抽象都
-带 `Port` 后缀，最终失去“跨层边界”这一语义。
+Chunking 领域再区分两层：`Chunker` 是接收 `str` 的原子分块方式；
+`ChunkingStrategy` 基于一个或多个 Chunker 编排完整 `NormalizedDocument`。两者都属于
+纯计算，不带 `Port` 后缀。
 
 ### 2.3 Service / Planner：编排多个 Port 与 Strategy
 
@@ -80,7 +81,10 @@ NormalizedDocument（统一 Markdown + 文档元数据）
 ChunkingStrategy
     │
     ▼
-Chunk
+Chunker（FixedSize / Recursive / 未来 2+N）
+    │
+    ▼
+ChunkDraft / ChunkHierarchy
     │
     ▼
 IndexPlanner / HierarchyBuilder
@@ -108,8 +112,8 @@ Query
 ```
 
 当前闭环是 `LoadedResource → DocumentExtractorPort → ExtractedDocument →
-DocumentNormalizationStrategy → NormalizedDocument → Chunker → Embedding →
-VectorStore`。`DocumentBlock` 由 M4 的页面、结构和 IndexPlan 用例反推，不提前建立
+DocumentNormalizationStrategy → NormalizedDocument → ChunkingStrategy → Chunker →
+Embedding → VectorStore`。`DocumentBlock` 由 M4 的页面、结构和 IndexPlan 用例反推，不提前建立
 没有消费者的万能块模型。
 
 ## 4. 各部分的推荐边界
@@ -122,7 +126,8 @@ VectorStore`。`DocumentBlock` 由 M4 的页面、结构和 IndexPlan 用例反�
 | DOCX 提取 | `DocxDocumentExtractor` | `engines/documents/docx` | 纯本地实现，内部组合 converter/parser/cleaner |
 | MinerU 提取 | `MinerUDocumentExtractor` | `infrastructure/extractors` | 外部 HTTP 适配器，负责协议、重试、连接和关闭 |
 | 跨格式文档规范化 | `DocumentNormalizationStrategy` | `engines/documents/normalization` | 纯计算且幂等；格式专属清洗不进入这里 |
-| 固定、递归、按页、标题切分 | `ChunkingStrategy` | `engines/chunkers` | 纯计算；消费规范文档，生成带位置的平坦块 |
+| 固定、递归等原子分块方式 | `Chunker` | `engines/chunkers` | 纯计算；只消费字符串，生成带相对位置的块；当前 2 种，按真实算法扩展 2+N |
+| 按页、标题、父子块组合 | `ChunkingStrategy` | `engines/chunkers` / `engines/indexing` | 消费规范文档与结构事实，编排一个或多个 Chunker |
 | 语义切分 | `SemanticChunkingService` + `BreakpointStrategy` | `services` + `engines/chunkers` | Service 调 EmbeddingPort；engines 只计算相似度断点 |
 | 父子块、邻接关系、索引记录 | `IndexPlanner` / `HierarchyBuilder` | `engines/indexing` | 生成 `IndexPlan`，不直接写后端 |
 | 外部 LLM 实体关系抽取 | `KnowledgeExtractorPort` | `ports` + provider | 外部模型调用、错误和资源生命周期 |
@@ -235,19 +240,22 @@ Chunker 的规范结果；二者之间统一经过 `DocumentNormalizationStrateg
 页码、bbox、标题层级、表格和公式类型来自格式解析/OCR。Extractor 负责产出这些
 事实；Chunker 不应重新猜页边界。
 
-### 7.2 文本分割属于 ChunkingStrategy
+### 7.2 原子文本分割属于 Chunker
 
-固定长度、递归分隔符、按页、按标题及 overlap 属于纯切分策略。策略消费
-`NormalizedDocument` / 后续 `DocumentBlock`，输出平坦 Chunk，不写数据库。
+固定长度和递归分隔符是当前两种原子 Chunker；它们消费 `str`，输出相对于该字符串的
+ChunkDraft。语言、格式、size、overlap 与 separators 只是 ChunkProfile，不产生新类。
+按页、按标题等文档级 Strategy 消费 `NormalizedDocument` / 后续 `DocumentBlock`，
+再编排一个或多个 Chunker，不写数据库。
 
 完整语义分块不是纯 Strategy：它需要通过 `EmbeddingPort` 发起外部调用，并受模型并发、
 失败和生命周期约束。该流程由 `SemanticChunkingService` 编排；只有句间相似度与断点选择
 这类确定性计算进入 engines。详细契约见 `tasks/m4_spec.md`。
 
-### 7.3 父子块属于 IndexPlanner
+### 7.3 父子块计算属于 Strategy，写入决策属于 IndexPlanner
 
-父子块同时涉及两种粒度、`parent_id`、返回粒度和写入记录，已经超出 `split()`。
-`IndexPlanner` 应输出显式 `IndexPlan`，说明哪些块向量化、哪些块只用于回填。
+纯 `HierarchicalChunkingStrategy` 可以用两组画像和一个或多个 Chunker 生成父块、子块及
+关系，但不能决定存储后端。`IndexPlanner` 再消费该结果，输出显式 `IndexPlan`，说明
+哪些块向量化、哪些块只存正文、检索命中后回填哪一层。
 
 ### 7.4 Graph 属于知识提取与图索引
 
@@ -395,7 +403,7 @@ M4 先完成带位置的 Chunk 契约、固定/递归策略、Pipeline/Task 单�
 | 是否重构全部 Loader | 已完成；契约在 ports，实现统一在 infrastructure，公共入口为 `comet_rag.loaders` |
 | MinerU 是否移入 `engines/documents` | 否；它是外部 `DocumentExtractorPort` 适配器 |
 | DOCX 是否最终实现同一提取 Port | 是；M2 后 P1 已完成 |
-| Chunker 是否统一做页面、父子块和 Graph | 否；分别属于 Extraction、Strategy、Planner 与 Graph ingestion |
+| Chunker 是否统一做页面、父子块和 Graph | 否；原子 Chunker 只切字符串，页面/父子属于文档级 Strategy，写入属于 Planner，Graph 属于独立 ingestion |
 | 是否定义 Search/Graph 全套 Port | M3 只定义 Vector/Keyword Search；Graph 仍由后续需求驱动 |
 | `BaseParser` 是否删除 | 是；仅有一个实现且没有多态调用方，格式内部步骤不提升为项目级抽象 |
 | Loader 是否提供统一公共入口 | 是；`ports/source.py` 是契约，`comet_rag.loaders` 是惰性公共门面 |

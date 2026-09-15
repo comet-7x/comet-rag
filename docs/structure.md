@@ -35,7 +35,7 @@ comet_rag/
 │   │   ├── common/      ZIP 等跨格式文档基础能力
 │   │   ├── normalization/ 跨格式 Markdown 规范化
 │   │   └── docx/       converter · parser · cleaner · extractor · OMML
-│   ├── chunkers/       文本 · 结构化 · 代码
+│   ├── chunkers/       原子 Chunker · 参数画像 · 文档级组合策略
 │   ├── embedding/      批量排程，不发模型请求
 │   ├── retrieval/      RRF 等纯计算算法
 │   └── pipelines/      Hook 与 Pipeline 值对象，不做外部装配

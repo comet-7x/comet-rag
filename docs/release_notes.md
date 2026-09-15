@@ -17,12 +17,19 @@
 
 `PipelineHooks.extractor()` 与 `aextractor()` 注册的函数现在必须返回
 `ExtractedDocument`，不再直接返回字符串。Pipeline 会统一转换为
-`NormalizedDocument` 后再交给 Chunker，避免 DOCX、MinerU 与后续 PDF/OCR 各自维护
-一套跨格式空白和编码规则。自定义 Hook 可按以下方式迁移：
+`NormalizedDocument` 后再交给文档级 Chunking Strategy；Strategy 把 Markdown 交给
+原子 Chunker，避免 DOCX、MinerU 与后续 PDF/OCR 各自维护一套跨格式空白和编码规则。
+自定义 Hook 可按以下方式迁移：
 
 ```python
 return ExtractedDocument(markdown=text, metadata={"provider": "custom"})
 ```
+
+### Chunker API 收敛
+
+原子分块器现在直接接收 `str`，当前只有 `FixedSizeChunker` 和 `RecursiveChunker`。
+`BaseChunker`、`RecursiveCharacterTextSplitter` 及按格式/代码语言命名的参数型类已经
+删除；对应差异改用 `ChunkProfile`、`language_profile()` 与 `code_profile()` 表达。
 
 ### 配置变更
 

@@ -1,8 +1,8 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T1～T4 已完成，下一项 M4-T5
-> 规格：`tasks/m4_spec.md` v1.2
-> 计划：`tasks/m4_plan.md` v1.2
+> 状态：M4-T1～T4.1 已完成，下一项 M4-T5
+> 规格：`tasks/m4_spec.md` v1.3
+> 计划：`tasks/m4_plan.md` v1.3
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
 
@@ -47,7 +47,7 @@
 - [x] 实现 FixedSizeChunker 和 RecursiveChunker
 - [x] 内部 split/merge 全程携带字符 span，不用事后 `find()`
 - [x] 支持注入 LengthFunction，默认值和单位写入文档
-- [x] 代码策略统一为 `CodeRecursiveChunker(code_language=...)`
+- [x] 代码差异先统一为 profile，T4.1 再删除参数型 `CodeRecursiveChunker`
 - [x] separator profiles 替代重复算法子类；发布前删除无调用方的代码语言子类
 - [x] 覆盖 CJK、重复文本、连续分隔符、代码前缀、超长 token 与空输入
 - [x] 明确并测试 best-effort overlap
@@ -68,9 +68,24 @@
 
 **验收：** 两条入口不再各自拼 metadata/ID；失败重试仍从 chunking/indexing 正确续跑。
 
+### M4-T4.1 — 原子 Chunker 与参数画像收敛（M）
+
+**完成日期：** 09-15　**依赖：** M4-T4
+
+- [x] 明确当前只有 FixedSize、Recursive 两种原子分块方式，后续按真实算法扩展 2+N
+- [x] 原子 Chunker 接收 `str`，可脱离 NormalizedDocument 和 Pipeline 单独使用
+- [x] ChunkingStrategy 保留为基于 Chunker 的文档级纯计算编排
+- [x] 格式和代码语言差异改为不可变 ChunkProfile
+- [x] 删除 BaseChunker、RecursiveCharacterTextSplitter 和所有参数型 Chunker 类
+- [x] 覆盖 separator start/end、非法值、连续分隔符及无匹配 separator 的 overlap
+- [x] 迁移 Hook、公开示例与原有不变式测试
+
+**验收：** 运行时代码只有两种原子 Chunker；参数画像不产生新类型，文档级 Strategy
+与原子算法使用不同的最小输入契约。
+
 ### M4-T5 — Markdown / Page 结构感知（M）
 
-**依赖：** M4-T4
+**依赖：** M4-T4.1
 
 - [ ] 从标题与页面用例反推最小 DocumentBlock，并定义 span 校验
 - [ ] Markdown 分析器识别标题路径、代码围栏和结构边界
