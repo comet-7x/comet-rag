@@ -33,7 +33,9 @@ from comet_rag.services.chunking import (
     ChunkingService,
     chunk_id,
     dump_chunk_drafts,
+    dump_document_blocks,
     load_chunk_drafts,
+    load_document_blocks,
     materialize_chunk_drafts,
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
@@ -219,6 +221,10 @@ class IngestRunner:
                 # 提取器溯源信息必须跨过 CPU/IO worker 的道次边界；否则 API
                 # 入库与库 Pipeline 会为同一文档生成不同的 chunk metadata。
                 document_metadata=dict(document.metadata),
+                document_blocks=dump_document_blocks(
+                    document.blocks,
+                    max_bytes=self._max_chunk_context_bytes,
+                ),
                 # 原文会在 chunking 后清掉；保留这个小标量才能在终态任务上
                 # 观察外部提取量，而不把整份 Markdown 长期留在任务表。
                 extracted_text_bytes=extracted_text_bytes,
@@ -256,7 +262,11 @@ class IngestRunner:
             if isinstance(raw_document_metadata, dict)
             else {}
         )
-        document = NormalizedDocument(markdown=text, metadata=document_metadata)
+        document = NormalizedDocument(
+            markdown=text,
+            metadata=document_metadata,
+            blocks=load_document_blocks(task.context.get("document_blocks", [])),
+        )
         drafts = await asyncio.to_thread(self._chunking.split, file_type, document)
         payload = dump_chunk_drafts(
             drafts,
@@ -265,7 +275,12 @@ class IngestRunner:
 
         # 清掉原始文本：留着的话 context 会同时装文本和 chunk，体积翻倍，
         # 而后续阶段再也用不到它。
-        await ctx.put(chunk_drafts=payload, chunks=None, text=None)
+        await ctx.put(
+            chunk_drafts=payload,
+            chunks=None,
+            text=None,
+            document_blocks=None,
+        )
         await ctx.report(message=f"已切分 {len(drafts)} 块")
 
     async def _drop_stale_tail(

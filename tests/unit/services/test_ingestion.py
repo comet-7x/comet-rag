@@ -24,7 +24,9 @@ from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStor
 from comet_rag.infrastructure.sources import BaseLoader, LoaderContent, SourceContent
 from comet_rag.pipeline import Pipeline
 from comet_rag.ports import (
+    DocumentBlock,
     ExtractedDocument,
+    ExtractedPage,
     NormalizedDocument,
     RetryableDocumentUpstreamError,
 )
@@ -307,6 +309,49 @@ async def test_ingest_normalizes_before_chunking(svc: TaskService) -> None:
     assert received == ["第一段\n\n第二段 正文"]
 
 
+async def test_document_page_facts_survive_the_task_stage_handoff(
+    svc: TaskService, store: InMemoryVectorStore
+) -> None:
+    received: list[tuple[DocumentBlock, ...]] = []
+
+    @PipelineHooks.aextractor(STUB_TYPE)
+    async def _extract(
+        lc: LoaderContent, config: PipelineConfig
+    ) -> ExtractedDocument:
+        return ExtractedDocument(
+            markdown="共同正文\n\n共同正文",
+            pages=(
+                ExtractedPage(1, "共同正文"),
+                ExtractedPage(2, "共同正文"),
+            ),
+        )
+
+    @PipelineHooks.document_chunker(STUB_TYPE)
+    def _chunk(
+        document: NormalizedDocument, config: PipelineConfig
+    ) -> list[ChunkDraft]:
+        received.append(document.blocks)
+        return [
+            ChunkDraft(
+                text=document.markdown[block.start_char : block.end_char],
+                ordinal=block.ordinal,
+                start_char=block.start_char,
+                end_char=block.end_char,
+                metadata={"page_number": block.page_number},
+            )
+            for block in document.blocks
+        ]
+
+    task = await svc.submit(INGEST_KIND, request())
+    done = await wait_for_terminal(svc.store, task.task_id)
+
+    assert done.status is TaskStatus.SUCCEEDED, done.error
+    assert [block.page_number for block in received[0]] == [1, 2]
+    assert sorted(
+        record["metadata"]["page_number"] for record in store.snapshot()[KB]
+    ) == [1, 2]
+
+
 async def test_every_chunk_carries_kb_id(
     svc: TaskService, store: InMemoryVectorStore
 ) -> None:
@@ -389,6 +434,7 @@ async def test_large_intermediate_state_is_cleared(svc: TaskService) -> None:
     assert done.context.get("text") is None
     assert done.context.get("chunks") is None
     assert done.context.get("chunk_drafts") is None
+    assert done.context.get("document_blocks") is None
     assert done.context["source_id"], "但溯源信息要留着"
     assert done.context["extracted_text_bytes"] == len(
         "段落一。段落二。段落三。".encode()

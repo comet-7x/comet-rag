@@ -9,12 +9,18 @@ import pytest
 from comet_rag.engines.chunkers import ChunkDraft
 from comet_rag.engines.pipelines import HookRegistry, HooksState, PipelineConfig
 from comet_rag.engines.utils import compute_sha256
-from comet_rag.ports import DocumentResourceLimitExceeded, NormalizedDocument
+from comet_rag.ports import (
+    DocumentBlock,
+    DocumentResourceLimitExceeded,
+    NormalizedDocument,
+)
 from comet_rag.services.chunking import (
     ChunkingService,
     chunk_id,
     dump_chunk_drafts,
+    dump_document_blocks,
     load_chunk_drafts,
+    load_document_blocks,
     materialize_chunk_drafts,
 )
 
@@ -107,6 +113,59 @@ def test_structural_metadata_is_stable_across_json_task_handoff() -> None:
 
     assert json_payload == payload
     assert load_chunk_drafts(json_payload) == drafts
+
+
+def test_document_blocks_round_trip_across_json_task_handoff() -> None:
+    blocks = (
+        DocumentBlock(
+            "page",
+            0,
+            0,
+            4,
+            page_number=2,
+            metadata={"provider_page_index": 1},
+        ),
+    )
+
+    payload = dump_document_blocks(blocks)
+    json_payload = json.loads(json.dumps(payload, ensure_ascii=False))
+
+    assert load_document_blocks(json_payload) == blocks
+
+
+def test_document_block_payload_rejects_non_json_metadata_and_excess_size() -> None:
+    non_json = (
+        DocumentBlock("page", 0, 0, 1, metadata={"bad": object()}),
+    )
+    with pytest.raises(TypeError, match="JSON"):
+        dump_document_blocks(non_json)
+
+    with pytest.raises(DocumentResourceLimitExceeded, match="payload"):
+        dump_document_blocks(
+            (DocumentBlock("section", 0, 0, 1, heading_path=("x" * 100,)),),
+            max_bytes=20,
+        )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not-a-list",
+        [{"kind": "page", "ordinal": 0, "start_char": 0, "end_char": 1, "x": 1}],
+        [
+            {
+                "kind": "page",
+                "ordinal": 0,
+                "start_char": 0,
+                "end_char": 1,
+                "heading_path": [1],
+            }
+        ],
+    ],
+)
+def test_document_block_payload_rejects_malformed_data(payload: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        load_document_blocks(payload)
 
 
 def test_task_payload_rejects_non_json_metadata_and_excess_size() -> None:

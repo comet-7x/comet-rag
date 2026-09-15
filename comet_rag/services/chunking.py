@@ -8,7 +8,11 @@ from typing import TypeGuard
 from comet_rag.engines.chunkers import ChunkDraft
 from comet_rag.engines.pipelines import HookProvider, PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
-from comet_rag.ports import DocumentResourceLimitExceeded, NormalizedDocument
+from comet_rag.ports import (
+    DocumentBlock,
+    DocumentResourceLimitExceeded,
+    NormalizedDocument,
+)
 
 # 这里是文档分块与下游物化的唯一用例边界，避免 Pipeline 与任务链路各自拼装。
 
@@ -107,8 +111,6 @@ def dump_chunk_drafts(
     max_bytes: int | None = None,
 ) -> list[dict[str, object]]:
     """转为 Task context 可安全跨进程持久化的窄结构。"""
-    if max_bytes is not None and max_bytes <= 0:
-        raise ValueError("max_bytes 必须大于 0")
     _validate_drafts(drafts)
     payload = [
         {
@@ -120,21 +122,112 @@ def dump_chunk_drafts(
         }
         for draft in drafts
     ]
-    try:
-        encoded = json.dumps(
-            payload,
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    except (TypeError, ValueError) as exc:
-        raise TypeError(f"ChunkDraft Task payload 必须可 JSON 序列化：{exc}") from exc
-    if max_bytes is not None and len(encoded) > max_bytes:
-        raise DocumentResourceLimitExceeded(
-            "ChunkDraft Task payload 超过限制："
-            f"{len(encoded)} > {max_bytes} bytes"
-        )
+    _validate_json_payload(payload, name="ChunkDraft", max_bytes=max_bytes)
     return payload
+
+
+def dump_document_blocks(
+    blocks: Sequence[DocumentBlock],
+    /,
+    *,
+    max_bytes: int | None = None,
+) -> list[dict[str, object]]:
+    """保存结构事实，确保跨 worker 后仍能选择同一种文档级策略。"""
+    payload: list[dict[str, object]] = []
+    for index, block in enumerate(blocks):
+        if not isinstance(block, DocumentBlock):
+            raise TypeError(
+                f"DocumentBlock Task payload 第 {index} 项必须是 DocumentBlock"
+            )
+        payload.append(
+            {
+                "kind": block.kind,
+                "ordinal": block.ordinal,
+                "start_char": block.start_char,
+                "end_char": block.end_char,
+                "heading_path": list(block.heading_path),
+                "page_number": block.page_number,
+                "metadata": dict(block.metadata),
+            }
+        )
+    _validate_json_payload(payload, name="DocumentBlock", max_bytes=max_bytes)
+    return payload
+
+
+def load_document_blocks(payload: object, /) -> tuple[DocumentBlock, ...]:
+    """从 Task context 严格恢复文档结构事实。"""
+    if not isinstance(payload, list):
+        raise TypeError("DocumentBlock Task payload 必须是 list")
+    allowed_keys = {
+        "kind",
+        "ordinal",
+        "start_char",
+        "end_char",
+        "heading_path",
+        "page_number",
+        "metadata",
+    }
+    blocks: list[DocumentBlock] = []
+    for index, item in enumerate(payload):
+        if not isinstance(item, Mapping):
+            raise TypeError(f"DocumentBlock Task payload 第 {index} 项必须是 object")
+        unknown_keys = [key for key in item if key not in allowed_keys]
+        if unknown_keys:
+            raise ValueError(
+                f"DocumentBlock Task payload 第 {index} 项包含未知字段："
+                f"{unknown_keys!r}"
+            )
+        heading_path = item.get("heading_path", [])
+        metadata = item.get("metadata", {})
+        kind = item.get("kind")
+        ordinal = item.get("ordinal")
+        start_char = item.get("start_char")
+        end_char = item.get("end_char")
+        page_number = item.get("page_number")
+        if not isinstance(kind, str):
+            raise TypeError(
+                f"DocumentBlock Task payload 第 {index} 项 kind 必须是 str"
+            )
+        if not _is_int(ordinal):
+            raise TypeError(
+                f"DocumentBlock Task payload 第 {index} 项 ordinal 必须是 int"
+            )
+        if not _is_int(start_char):
+            raise TypeError(
+                f"DocumentBlock Task payload 第 {index} 项 start_char 必须是 int"
+            )
+        if not _is_int(end_char):
+            raise TypeError(
+                f"DocumentBlock Task payload 第 {index} 项 end_char 必须是 int"
+            )
+        if page_number is not None and not _is_int(page_number):
+            raise TypeError(
+                f"DocumentBlock Task payload 第 {index} 项 page_number "
+                "必须是 int | None"
+            )
+        if not isinstance(heading_path, list) or any(
+            not isinstance(heading, str) for heading in heading_path
+        ):
+            raise TypeError(
+                f"DocumentBlock Task payload 第 {index} 项 heading_path "
+                "必须是 list[str]"
+            )
+        if not isinstance(metadata, Mapping):
+            raise TypeError(
+                f"DocumentBlock Task payload 第 {index} 项 metadata 必须是 object"
+            )
+        blocks.append(
+            DocumentBlock(
+                kind=kind,
+                ordinal=ordinal,
+                start_char=start_char,
+                end_char=end_char,
+                heading_path=tuple(heading_path),
+                page_number=page_number,
+                metadata=dict(metadata),
+            )
+        )
+    return tuple(blocks)
 
 
 def load_chunk_drafts(payload: object, /) -> list[ChunkDraft]:
@@ -184,6 +277,30 @@ def load_chunk_drafts(payload: object, /) -> list[ChunkDraft]:
         )
     _validate_drafts(drafts)
     return drafts
+
+
+def _validate_json_payload(
+    payload: object,
+    /,
+    *,
+    name: str,
+    max_bytes: int | None,
+) -> None:
+    if max_bytes is not None and max_bytes <= 0:
+        raise ValueError("max_bytes 必须大于 0")
+    try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"{name} Task payload 必须可 JSON 序列化：{exc}") from exc
+    if max_bytes is not None and len(encoded) > max_bytes:
+        raise DocumentResourceLimitExceeded(
+            f"{name} Task payload 超过限制：{len(encoded)} > {max_bytes} bytes"
+        )
 
 
 def materialize_chunk_drafts(
@@ -278,6 +395,8 @@ __all__ = [
     "MaterializedChunk",
     "chunk_id",
     "dump_chunk_drafts",
+    "dump_document_blocks",
     "load_chunk_drafts",
+    "load_document_blocks",
     "materialize_chunk_drafts",
 ]
