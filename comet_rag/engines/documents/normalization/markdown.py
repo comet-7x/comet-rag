@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from comet_rag.engines.documents.markdown import MarkdownStructureAnalyzer
 from comet_rag.ports.document import ExtractedDocument, NormalizedDocument
 
 _FENCE = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})(?P<rest>.*)$")
@@ -29,9 +30,11 @@ class MarkdownDocumentNormalizer:
             .replace("\ufeff", "")
             .replace("\x00", ""),
         )
+        normalized = self._normalize_lines(markdown)
         return NormalizedDocument(
-            markdown=self._normalize_lines(markdown),
+            markdown=normalized,
             metadata=dict(document.metadata),
+            blocks=MarkdownStructureAnalyzer().analyze(normalized),
         )
 
     @staticmethod

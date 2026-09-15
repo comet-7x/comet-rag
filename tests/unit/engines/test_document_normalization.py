@@ -8,7 +8,7 @@ from comet_rag.engines.documents.normalization import (
     DocumentNormalizationStrategy,
     MarkdownDocumentNormalizer,
 )
-from comet_rag.ports import ExtractedDocument, NormalizedDocument
+from comet_rag.ports import DocumentBlock, ExtractedDocument, NormalizedDocument
 
 
 def test_normalizes_shared_markdown_representation() -> None:
@@ -23,6 +23,7 @@ def test_normalizes_shared_markdown_representation() -> None:
     assert result == NormalizedDocument(
         markdown="Café\n\nA B\n尾部",
         metadata={"provider": "fixture"},
+        blocks=(DocumentBlock("section", 0, 0, 12),),
     )
 
 
