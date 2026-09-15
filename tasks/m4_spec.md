@@ -1,9 +1,9 @@
 # Spec: M4 Chunking 与层级索引
 
-> 状态：已冻结，M4-T5 已完成（v1.6）
+> 状态：M4-T6 设计已冻结，等待持久化决策门确认（v1.7）
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
-> 最后更新：2026-09-15
+> 最后更新：2026-09-16
 
 ## 1. 目标
 
@@ -163,9 +163,11 @@ Sentence/Section Strategy → EmbeddingPort → BreakpointStrategy → ChunkDraf
 
 ### D7 — 父子关系由 IndexPlanner 产生
 
-`HierarchyBuilder` 消费已经稳定的平坦块，`IndexPlanner` 输出 `IndexPlan`：哪些子块要
-embedding、哪些父块只存正文、每个子块回填哪个 parent，以及相邻关系。Chunker 不写
-`parent_id`，也不决定检索命中后返回父块还是子块。
+`HierarchyBuilder` 是文档级组合策略：它消费 `NormalizedDocument`，先用 parent Chunker
+产生互不重叠的父块，再在每个父块内用 child Chunker 产生不可跨父块的子块。
+`IndexPlanner` 输出 `IndexPlan`：哪些子块要 embedding、哪些父块只存正文、每个子块
+回填哪个 parent，以及相邻关系。原子 Chunker 不写 `parent_id`，也不决定检索命中后返回
+父块还是子块。
 
 首版只做两层：父块用于回填，子块用于 dense/BM25 检索。多层递归、RAPTOR 和 GraphRAG
 不在首版范围。
@@ -177,8 +179,8 @@ embedding、哪些父块只存正文、每个子块回填哪个 parent，以及�
 PostgreSQL 实现共享契约测试。
 
 该阶段会新增持久化表并改变向量 metadata 约定，属于 `tasks/spec.md §7` 的“先问再动”
-范围。M4-T6 只能先冻结接口、迁移和失败恢复方案；得到明确确认后才能执行 T7 数据库
-迁移和 T8 双存储入库。
+范围。M4-T6 已冻结接口、迁移和失败恢复方案；得到明确确认后才能执行 T7 数据库迁移和
+T8 双存储入库。
 
 ### D9 — 可靠入库使用 revision，不覆盖当前可用版本
 
@@ -193,6 +195,19 @@ PostgreSQL 实现共享契约测试。
 
 T6 必须用故障矩阵验证每个断点。若实现证明 Milvus 侧无法以有界代价过滤 active
 revision，应停在决策门重新设计，不能降级为“通常不会重复”。
+
+M4-T6 已完成详细设计，权威实施约束见 [`tasks/m4_t6_design.md`](m4_t6_design.md)：
+
+- PostgreSQL `documents.active_revision_id` 是唯一可见性真相；不在 Milvus 镜像
+  `active=true`；
+- revision generation 在 document 行锁内单调分配，旧任务不得反杀新任务；
+- revision-aware 召回使用 Strong consistency，并在 dense/keyword 各通道进入 RRF 前
+  批量判活；
+- 每通道最多两次查询，候选硬上限 2048；过量 stale 数据只允许少返回并记录诊断，不能
+  fail-open；
+- legacy 向量在对应 source 首次激活新 revision 前保持可见，之后立即不可见；
+- revision 数据一旦写入，不能直接回滚到不识别 revision 的 M3 读路径，必须先重建
+  active-only collection。
 
 ### D10 — Hook 兼容与算法兼容分开处理
 
@@ -237,9 +252,9 @@ payload，不持久化 dataclass 或只读映射对象。这样任务链路不�
 
 ### S4 — 层级与可靠性（通过 D8 决策门后执行）
 
-- [ ] IndexPlan 明确父/子、向量化、回填和相邻关系。
+- [x] IndexPlan 设计明确父/子、向量化、回填和相邻关系。
 - [ ] InMemory/PostgreSQL DocumentStore 通过同一契约。
-- [ ] 双存储故障矩阵证明旧 active revision 在失败时仍可检索。
+- [x] 双存储故障矩阵已冻结旧 active revision、重试与降级语义。
 - [ ] 新 revision 激活后旧版本可回收，重试不制造重复可见块。
 
 ### S5 — 质量与出口
@@ -252,7 +267,7 @@ payload，不持久化 dataclass 或只读映射对象。这样任务链路不�
 ## 7. 实施边界
 
 M4 前半段（T1～T5）不新增第三方依赖、不改数据库或 Milvus schema，可直接按本规格推进。
-M4 后半段（T6～T10）必须先提交 schema/迁移/回滚设计并获得确认。任何需要修改
+M4-T6 已提交 schema/迁移/回滚设计；M4 后半段（T7～T10）必须先获得明确确认。任何需要修改
 `TaskStore`、`TaskExecutor` 或 `BaseVectorStore` 方法签名的方案都必须另行评审；优先通过
 新的窄 Port 与 Service 编排完成。
 
@@ -386,3 +401,18 @@ M4 后半段（T6～T10）必须先提交 schema/迁移/回滚设计并获得确
 - 全量单测 `2008 passed, 20 skipped, 195 deselected, 1 xfailed`，pytest 9.49s；E2E
   `30 passed`，integration `6 passed, 152 skipped`，benchmark `7 passed`；Ruff、Pyright
   与隔离 core-only 页结构冒烟全部通过。
+
+## 17. M4-T6 验证记录
+
+- `tasks/m4_t6_design.md` 冻结两层纯计算模型、IndexPlan、DocumentStore Port、三张
+  PostgreSQL 表和 Milvus metadata 边界；本阶段没有创建迁移或修改生产读写代码。
+- 对比并拒绝 Milvus `active=true` 翻标、稳定 ID 原地覆盖、按 source 建 partition、无界
+  active OR filter 和父块正文写 JSON 五种方案。
+- active revision 可见性按 dense/keyword 通道在 RRF 前判定；每通道最多两次查询、候选
+  上限 2048，极端 stale 拥塞时少返回且诊断，不允许泄漏旧 revision。
+- 故障矩阵覆盖 reserve、父块写、embedding、向量写/count、ready、activation、并发旧任务、
+  GC、DocumentStore、parent 回填、reranker 以及跨 Milvus client 可见性。
+- 文档示例测试 `102 passed, 19 skipped`；默认全量单测
+  `2008 passed, 20 skipped, 195 deselected, 1 xfailed`，pytest 9.32s；Ruff 与 Pyright
+  通过，Pyright 为 `0 errors, 0 warnings`。
+- M4-T7 仍被人工决策门阻塞；未获得五项明确确认前，不创建表、不写 revision metadata。

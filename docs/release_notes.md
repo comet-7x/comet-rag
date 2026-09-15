@@ -41,6 +41,12 @@ MinerU 现在可从经过全文一致性校验的 legacy content list 生成页�
 保守回退 section。DocumentBlock 同时通过严格 JSON payload 跨 Task 阶段保存，不再因
 worker 交接丢失页面或标题结构。
 
+### 父子索引设计门
+
+M4-T6 已冻结父子索引与 revision 的接口、三表 PostgreSQL schema、Milvus metadata、
+有界判活、故障恢复和回滚顺序，详见 `tasks/m4_t6_design.md`。本阶段只有设计变更：尚未
+创建表、写入 revision 向量或改变检索行为；这些持久化变更必须先通过人工决策门。
+
 ### 配置变更
 
 `infrastructure_config.vector_database.collection_name` 已移除，改为：

@@ -1,8 +1,8 @@
 # Spec: Comet-RAG
 
-> 状态：M1～M3 已完成；M4 v1.6 已冻结，M4-T5 已完成（v1.9）
-> 最后更新：2026-09-15
-> 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0；M3 见 `tasks/m3_spec.md` v1.0；M4 见 `tasks/m4_spec.md` v1.6
+> 状态：M1～M3 已完成；M4-T6 设计已冻结并等待持久化确认（v1.10）
+> 最后更新：2026-09-16
+> 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0；M3 见 `tasks/m3_spec.md` v1.0；M4 见 `tasks/m4_spec.md` v1.7
 
 ---
 
@@ -63,8 +63,9 @@ M1、M2、M2 后 P1 与 M3 已完成并合入 `develop`。仓库结构归一化�
 Fixed/Recursive 是仅有的两种原子 Chunker，格式与语言差异使用参数画像，Pipeline 与
 任务入库共用 Chunking Service 和物化规则；Markdown 标题与真实页面由文档级 Strategy
 在结构边界内编排原子 Chunker；MinerU 页事实只有在 content list 可无损重建全文时才
-接入，且结构会跨 Task 阶段保存。下一项是父子索引的 schema/revision 设计决策门；
-它会新增持久化表和 metadata 约定，实施前必须再次确认。
+接入，且结构会跨 Task 阶段保存。M4-T6 已冻结父子索引的 IndexPlan、三表 schema、
+revision 激活、有界判活、故障恢复与回滚设计；它会新增持久化表和 metadata 约定，当前
+停在明确确认门，尚未实施迁移或生产写路径。
 
 ### 非目标（明确不做）
 

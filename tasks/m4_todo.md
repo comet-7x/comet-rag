@@ -1,8 +1,8 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T5 已完成；下一项 M4-T6 schema/revision 设计决策门
-> 规格：`tasks/m4_spec.md` v1.5
-> 计划：`tasks/m4_plan.md` v1.5
+> 状态：M4-T6 设计已完成；等待 schema/revision 决策门确认
+> 规格：`tasks/m4_spec.md` v1.7
+> 计划：`tasks/m4_plan.md` v1.7、`tasks/m4_t6_design.md`
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
 
@@ -116,12 +116,12 @@ separator 配置不可被原地修改。
 
 **依赖：** M4-T5　**执行后续前需用户确认**
 
-- [ ] 定义两层 IndexPlan、父子/相邻关系、向量化与回填集合
-- [ ] 定义 DocumentStore 窄 Port、错误、资源和隔离语义
-- [ ] 给出 PostgreSQL 表、唯一键、索引、迁移与回滚 SQL 设计
-- [ ] 给出 Milvus metadata 新增字段、兼容和旧数据策略
-- [ ] 手写双存储各断点的成功/失败/重试矩阵
-- [ ] 证明 active revision 检索可在有界 overfetch 下实现
+- [x] 定义两层 IndexPlan、父子/相邻关系、向量化与回填集合
+- [x] 定义 DocumentStore 窄 Port、错误、资源和隔离语义
+- [x] 给出 PostgreSQL 表、唯一键、索引、迁移与回滚 SQL 设计
+- [x] 给出 Milvus metadata 新增字段、兼容和旧数据策略
+- [x] 手写双存储各断点的成功/失败/重试矩阵
+- [x] 证明 active revision 检索可在有界 overfetch 下实现
 - [ ] 获得修改持久化 schema 与 metadata 约定的明确确认
 
 **验收：** 未确认前不创建迁移、不改生产写路径；无法可靠过滤 revision 时停止重设计。
