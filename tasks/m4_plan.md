@@ -1,7 +1,7 @@
 # Implementation Plan: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：执行中（v1.4）
-> 依据：`tasks/m4_spec.md` v1.4
+> 状态：执行中（v1.5）
+> 依据：`tasks/m4_spec.md` v1.5
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开始日期：2026-09-14
 > 分支：`feature/m4-chunking`
@@ -14,10 +14,9 @@ M4 先解决当前 `list[str]` 契约造成的溯源丢失和 overlap 不可观�
 
 ## Current Priority
 
-M4-T1～T4.2 已完成：运行时只有 FixedSize、Recursive 两种原子 Chunker，格式与语言
-差异收敛为不可变参数画像；Pipeline 与任务入库共用 ChunkingService 和物化规则，
-来源及索引 metadata 规则只属于 Service。下一项是 M4-T5 Markdown / Page 文档级组合
-策略；仍不创建数据库表、不改 Milvus metadata。
+M4-T5.1～T5.3 已完成：DocumentBlock、Markdown 标题分析以及 Markdown/Page 文档级
+策略已经落地并接入默认 Hook。下一项先决定 MinerU 页内容如何无搜索地构造规范 Markdown
+page span，再补 PDF/DOCX/Markdown 固定样本；仍不创建数据库表、不改 Milvus metadata。
 
 ## Dependency Graph
 

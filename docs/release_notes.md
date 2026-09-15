@@ -33,6 +33,10 @@ return ExtractedDocument(markdown=text, metadata={"provider": "custom"})
 所有 separator 常量均为不可变元组；来源、知识库与索引关系的 metadata 合并规则位于
 `services.chunking`，不再作为原子 Chunker 的公共 API。
 
+`MarkdownDocumentNormalizer` 现在生成引用规范 Markdown 的 section blocks；内置
+`MarkdownSectionStrategy` 保留标题路径，`PageChunkingStrategy` 只接受带真实页码的
+page blocks。两个策略都复用原子 Chunker，输出位置仍指向整篇规范 Markdown。
+
 ### 配置变更
 
 `infrastructure_config.vector_database.collection_name` 已移除，改为：

@@ -1,6 +1,6 @@
 # Spec: M4 Chunking 与层级索引
 
-> 状态：已冻结，M4-T4.2 已完成（v1.4）
+> 状态：已冻结，M4-T5.1～T5.3 已完成（v1.5）
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
 > 最后更新：2026-09-15
@@ -223,8 +223,8 @@ dataclass 或只读映射对象。
 
 ### S3 — 结构感知
 
-- [ ] 标题路径从规范 Markdown 产生并传到 Chunk metadata。
-- [ ] PageChunkingStrategy 只使用 extractor page facts；缺失时行为明确。
+- [x] 标题路径从规范 Markdown 产生并传到 Chunk metadata。
+- [x] PageChunkingStrategy 只使用真实 page facts；缺失时行为明确。
 - [x] 文档 metadata、请求 metadata 与系统保留字段有唯一合并优先级。
 - [ ] 不把 MinerU 专有字段泄漏到 Chunk 或 Port。
 
@@ -335,3 +335,28 @@ M4 后半段（T6～T10）必须先提交 schema/迁移/回滚设计并获得确
   E2E `30 passed`；integration `6 passed, 152 skipped`；benchmark `7 passed`。
 - core-only 隔离环境可直接构造两种原子 Chunker、应用代码 profile 且未加载
   infrastructure；Ruff 与 Pyright 全绿，Pyright 为 `0 errors, 0 warnings`。
+
+## 14. M4-T4.2 验证记录
+
+- separator 常量全部改为不可变元组，并移除 profile 构造时多余的重复复制。
+- `engines/chunkers/types.py` 只保留 `ChunkDraft`；metadata 优先级和来源、知识库、
+  revision、parent 等保留键归还 `services/chunking.py`。
+- CI 的 core-only 冒烟从已删除的 `TextChunker` 迁到 `RecursiveChunker`。
+- 将任一 separator 临时恢复为列表时，不可变性测试明确失败；恢复后全量单测为
+  `1908 passed, 20 skipped, 195 deselected, 1 xfailed`，pytest 9.52s；Ruff、Pyright 与
+  core-only 冒烟通过。
+
+## 15. M4-T5.1～T5.3 验证记录
+
+- `DocumentBlock` 用不可变字符 span 表达 section/page 结构，不复制正文；
+  `NormalizedDocument` 校验 block 类型、连续 ordinal、边界、顺序和不重叠。
+- `MarkdownStructureAnalyzer` 支持 ATX/Setext 标题，维护标题路径，并忽略反引号或波浪线
+  fenced code 内的伪标题；规范化阶段直接生成 section blocks。
+- `MarkdownSectionStrategy` 与 `PageChunkingStrategy` 都在结构硬边界内调用注入的原子
+  Chunker，把局部 span 转成整篇文档 span，并生成 JSON 稳定的标题路径或页码事实。
+- 默认 Hook 按 page/section kind 选择策略，无结构时才回退 `RecursiveChunker`；未知混合
+  kind 和缺失页码会明确报错，不猜测。
+- 反向禁用 fence 状态、移除局部到全局 span 偏移时，对应标题和页面性质测试均明确失败。
+- 全量单测 `1990 passed, 20 skipped, 195 deselected, 1 xfailed`，pytest 9.36s；E2E
+  `30 passed`，integration `6 passed, 152 skipped`，benchmark `7 passed`；Ruff、Pyright
+  和结构分块 core-only 冒烟全部通过。

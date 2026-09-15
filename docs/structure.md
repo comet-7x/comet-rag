@@ -33,9 +33,11 @@ comet_rag/
 │   ├── documents/
 │   │   ├── formats.py  文件格式与解析配置
 │   │   ├── common/      ZIP 等跨格式文档基础能力
+│   │   ├── markdown/    标题、代码围栏与 section span 分析
 │   │   ├── normalization/ 跨格式 Markdown 规范化
 │   │   └── docx/       converter · parser · cleaner · extractor · OMML
-│   ├── chunkers/       原子 Chunker · 参数画像 · 文档级组合策略
+│   ├── chunkers/       原子 Chunker · 参数画像
+│   │   └── strategies/ Markdown section · 真实页面组合策略
 │   ├── embedding/      批量排程，不发模型请求
 │   ├── retrieval/      RRF 等纯计算算法
 │   └── pipelines/      Hook 与 Pipeline 值对象，不做外部装配

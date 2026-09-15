@@ -193,6 +193,9 @@ class Chunk:
 | `chunk_index` | `int` | 当前 chunk 的序号（从 0 开始） |
 | `chunk_start` | `int` | 在规范 Markdown 中的起始字符位置（旧 Hook 可能缺失） |
 | `chunk_end` | `int` | 在规范 Markdown 中的结束字符位置（左闭右开） |
+| `block_kind` | `str` | 结构策略产生的 `section` 或 `page` |
+| `heading_path` | `list[str]` | Markdown 标题路径；无标题的前言为空列表 |
+| `page_number` | `int` | 仅在上游提供真实页事实时存在，从 1 开始 |
 
 ---
 
@@ -201,7 +204,7 @@ class Chunk:
 Pipeline 内部通过 `PipelineHooks` 注册表分发处理逻辑。增加新格式只需注册两个 hook：
 
 - **extractor**：`(LoadedResource, PipelineConfig) → ExtractedDocument`，负责把文件映射为通用提取结果
-- **document_chunker**（可选）：`(NormalizedDocument, PipelineConfig) → list[ChunkDraft]`，自定义分块策略；不注册则回退到 `RecursiveChunker`
+- **document_chunker**（可选）：`(NormalizedDocument, PipelineConfig) → list[ChunkDraft]`，自定义分块策略；不注册时按 page/section 事实选择内置策略，无结构才回退 `RecursiveChunker`
 
 所有提取结果都会在进入文档级 Strategy 前经过统一的 `MarkdownDocumentNormalizer`；
 原子 Chunker 只接收 Strategy 选择出的 Markdown 字符串。
@@ -236,7 +239,7 @@ def extract_markdown(
     )
 
 
-# 为 markdown 注册文档级 chunker
+# 可选：覆盖默认的结构感知策略
 @PipelineHooks.document_chunker("md", "mdx")
 def chunk_markdown(
     document: NormalizedDocument, config: PipelineConfig
@@ -444,16 +447,41 @@ engines 不强绑 tokenizer 依赖。`chunk_overlap` 是上限目标：递归策
 文本、DOCX、Markdown、CSV、JSON、XML 和代码语言差异都由 `ChunkProfile` 表达；
 运行时只有 `FixedSizeChunker`、`RecursiveChunker` 及未来真正具有不同算法的 Chunker。
 
+文档级结构策略不会增加新的原子算法：
+
+```python
+from comet_rag.engines.chunkers import (
+    MarkdownSectionStrategy,
+    PageChunkingStrategy,
+    RecursiveChunker,
+)
+from comet_rag.engines.documents import MarkdownDocumentNormalizer
+from comet_rag.ports import ExtractedDocument
+
+document = MarkdownDocumentNormalizer().normalize(
+    ExtractedDocument(markdown="# 安装\n\n正文\n\n## Docker\n\n容器说明")
+)
+strategy = MarkdownSectionStrategy(
+    RecursiveChunker(chunk_size=1000, chunk_overlap=100)
+)
+drafts = strategy.split(document)
+print(drafts[0].metadata["heading_path"])
+```
+
+`MarkdownSectionStrategy` 不跨标题 section，`PageChunkingStrategy` 不跨真实页面。后者
+要求 `NormalizedDocument.blocks` 已包含带 `page_number` 的 page blocks；缺失时明确
+报错，不把换行或 Markdown 内容猜成分页。
+
 ---
 
 ## 9. 目前支持的文件格式
 
 | 格式 | 扩展名 | Extractor | Chunker |
 |------|--------|-----------|---------|
-| Word 文档 | `.docx` `.doc` | ✅ 内置 | ✅ `RecursiveChunker` |
-| 纯文本 | `.txt` | 需自定义注册 | 回退 `RecursiveChunker` |
-| Markdown | `.md` | 需自定义注册 | 需自定义注册 |
-| PDF | `.pdf` | ✅ 外部 MinerU；服务自动装配，纯库显式注册 | 回退 `RecursiveChunker` |
+| Word 文档 | `.docx` `.doc` | ✅ 内置 | ✅ Markdown section 策略 |
+| 纯文本 | `.txt` | 需自定义注册 | 单 section 策略 |
+| Markdown | `.md` | 需自定义注册 | ✅ 默认分析标题 section |
+| PDF | `.pdf` | ✅ 外部 MinerU；服务自动装配，纯库显式注册 | 当前 section 策略；真实 page span 接入后自动按页 |
 | CSV | `.csv` | 待实现 | — |
 | 代码文件 | `.py` `.ts` 等 | 待实现 | Chunker 已就绪 |
 
