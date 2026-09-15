@@ -7,10 +7,17 @@ from comet_rag.ports.document import NormalizedDocument
 
 
 @runtime_checkable
-class ChunkingStrategy(Protocol):
-    """把规范文档切成平坦块的同步纯计算策略。"""
+class Chunker(Protocol):
+    """把一段文本切成可回引原文的块；实现不需要继承本协议。"""
 
-    def split(self, document: NormalizedDocument, /) -> list[ChunkDraft]: ...
+    def split(self, text: str, /) -> list[ChunkDraft]: ...
 
 
-__all__ = ["ChunkingStrategy"]
+@runtime_checkable
+class ChunkingStrategy[ResultT](Protocol):
+    """基于一个或多个 Chunker 编排完整文档的同步纯计算策略。"""
+
+    def split(self, document: NormalizedDocument, /) -> ResultT: ...
+
+
+__all__ = ["Chunker", "ChunkingStrategy"]

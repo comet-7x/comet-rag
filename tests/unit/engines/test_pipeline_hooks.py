@@ -133,7 +133,7 @@ def test_unknown_async_extractor_returns_none() -> None:
 
 
 def test_chunker_falls_back_when_unregistered() -> None:
-    """chunker 是可选的：没注册就回退 TextChunker，而不是报错。"""
+    """chunker 是可选的：没注册就回退 RecursiveChunker，而不是报错。"""
     fallback = PipelineHooks.get_chunker("从未注册过")
 
     assert callable(fallback)

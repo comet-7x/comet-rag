@@ -6,12 +6,12 @@
 
 from __future__ import annotations
 
-from comet_rag.engines.chunkers import TextChunker
+from comet_rag.engines.chunkers import RecursiveChunker
 
 
 def test_chunker_splits_long_text_into_multiple_chunks() -> None:
     text = "这是一段用于验证分块器的中文文本。" * 200
-    chunks = TextChunker(chunk_size=200, chunk_overlap=20).chunk(text)
+    chunks = RecursiveChunker(chunk_size=200, chunk_overlap=20).chunk(text)
 
     assert len(chunks) > 1, "超过 chunk_size 的文本应被切成多块"
     assert all(c.strip() for c in chunks), "不应产生空白块"
@@ -22,7 +22,7 @@ def test_chunker_preserves_content() -> None:
     sentences = [f"第{i}句话的内容各不相同。" for i in range(50)]
     text = "".join(sentences)
 
-    chunks = TextChunker(chunk_size=120, chunk_overlap=0).chunk(text)
+    chunks = RecursiveChunker(chunk_size=120, chunk_overlap=0).chunk(text)
 
     joined = "".join(chunks)
     for sentence in sentences:
@@ -30,4 +30,4 @@ def test_chunker_preserves_content() -> None:
 
 
 def test_chunker_handles_empty_text() -> None:
-    assert TextChunker().chunk("") == []
+    assert RecursiveChunker().chunk("") == []

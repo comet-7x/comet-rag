@@ -8,7 +8,6 @@ from comet_rag.engines.chunkers._length import (
 )
 from comet_rag.engines.chunkers._spans import TextSpan
 from comet_rag.engines.chunkers.types import ChunkDraft
-from comet_rag.ports.document import NormalizedDocument
 
 
 class FixedSizeChunker:
@@ -26,8 +25,7 @@ class FixedSizeChunker:
         self.chunk_overlap = chunk_overlap
         self.length_function = length_function
 
-    def split(self, document: NormalizedDocument, /) -> list[ChunkDraft]:
-        text = document.markdown
+    def split(self, text: str, /) -> list[ChunkDraft]:
         if not text or not text.strip():
             return []
         return [
@@ -41,8 +39,8 @@ class FixedSizeChunker:
         ]
 
     def chunk(self, text: str) -> list[str]:
-        """兼容现有 Chunker 的字符串便捷入口；新代码优先使用 ``split``。"""
-        return [draft.text for draft in self.split(NormalizedDocument(markdown=text))]
+        """只需要正文的便捷入口。"""
+        return [draft.text for draft in self.split(text)]
 
     def _split_spans(self, text: str, start: int, end: int) -> list[TextSpan]:
         spans: list[TextSpan] = []

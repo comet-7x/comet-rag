@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Sequence
-from typing import Literal
 
 from comet_rag.engines.chunkers._length import (
     LengthFunction,
@@ -11,11 +10,10 @@ from comet_rag.engines.chunkers._length import (
 )
 from comet_rag.engines.chunkers._spans import TextSpan
 from comet_rag.engines.chunkers.fixed import FixedSizeChunker
+from comet_rag.engines.chunkers.profiles import ChunkProfile, SeparatorPosition
 from comet_rag.engines.chunkers.types import ChunkDraft
-from comet_rag.ports.document import NormalizedDocument
 
 DEFAULT_SEPARATORS = ("\n\n", "\n", " ", "")
-SeparatorPosition = Literal["start", "end"]
 
 
 class RecursiveChunker:
@@ -50,8 +48,23 @@ class RecursiveChunker:
             length_function=length_function,
         )
 
-    def split(self, document: NormalizedDocument, /) -> list[ChunkDraft]:
-        text = document.markdown
+    @classmethod
+    def from_profile(
+        cls,
+        profile: ChunkProfile,
+        /,
+        *,
+        length_function: LengthFunction = len,
+    ) -> RecursiveChunker:
+        return cls(
+            profile.chunk_size,
+            profile.chunk_overlap,
+            separators=profile.separators,
+            separator_position=profile.separator_position,
+            length_function=length_function,
+        )
+
+    def split(self, text: str, /) -> list[ChunkDraft]:
         if not text or not text.strip():
             return []
         spans = self._split_range(text, TextSpan(0, len(text)), self.separators)
@@ -66,8 +79,8 @@ class RecursiveChunker:
         ]
 
     def chunk(self, text: str) -> list[str]:
-        """兼容现有 Chunker 的字符串便捷入口；新代码优先使用 ``split``。"""
-        return [draft.text for draft in self.split(NormalizedDocument(markdown=text))]
+        """只需要正文的便捷入口。"""
+        return [draft.text for draft in self.split(text)]
 
     def _split_range(
         self,

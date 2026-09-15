@@ -9,9 +9,8 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 from docx import Document
 
-from comet_rag.engines.chunkers.base_chunker import RecursiveCharacterTextSplitter
+from comet_rag.engines.chunkers import MARKDOWN_PROFILE, RecursiveChunker
 from comet_rag.engines.chunkers.separators import SEPARATORS_MDX
-from comet_rag.engines.chunkers.text_chunker import MdxChunker
 from comet_rag.engines.documents.common import (
     ArchiveLimits,
     ArchiveResourceLimitExceeded,
@@ -51,8 +50,8 @@ def test_heading_numbering_tracks_each_num_id_independently(monkeypatch) -> None
 
 
 def test_empty_separators_are_rejected_at_construction() -> None:
-    with pytest.raises(ValueError, match="separators 不能为空列表"):
-        RecursiveCharacterTextSplitter(separators=[])
+    with pytest.raises(ValueError, match="separators 不能为空"):
+        RecursiveChunker(separators=[])
 
 
 def test_directory_is_not_treated_as_local_file(tmp_path: Path) -> None:
@@ -239,7 +238,12 @@ def test_mdx_fenced_code_body_is_not_split_at_internal_blank_line() -> None:
         + "outro " * 15
     )
 
-    chunks = MdxChunker(chunk_size=100, chunk_overlap=0).chunk(text)
+    chunks = RecursiveChunker(
+        chunk_size=100,
+        chunk_overlap=0,
+        separators=MARKDOWN_PROFILE.separators,
+        separator_position=MARKDOWN_PROFILE.separator_position,
+    ).chunk(text)
 
     assert SEPARATORS_MDX.index("\n```") < SEPARATORS_MDX.index("\n\n")
     assert any("first_call()\n\nsecond_call()" in chunk for chunk in chunks)

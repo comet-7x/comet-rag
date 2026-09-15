@@ -9,6 +9,7 @@ import pytest
 
 from comet_rag.engines.chunkers import (
     ChunkDraft,
+    Chunker,
     ChunkingStrategy,
     merge_chunk_metadata,
 )
@@ -19,6 +20,18 @@ from comet_rag.engines.pipelines import (
     adapt_legacy_chunk_hook,
 )
 from comet_rag.ports import NormalizedDocument
+
+
+class StubChunker:
+    def split(self, text: str, /) -> list[ChunkDraft]:
+        return [
+            ChunkDraft(
+                text=text,
+                ordinal=0,
+                start_char=0,
+                end_char=len(text),
+            )
+        ]
 
 
 class StubStrategy:
@@ -33,7 +46,14 @@ class StubStrategy:
         ]
 
 
-def test_strategy_is_structural_and_sync_only() -> None:
+def test_chunker_is_structural_standalone_and_sync_only() -> None:
+    chunker = StubChunker()
+
+    assert isinstance(chunker, Chunker)
+    assert not hasattr(chunker, "asplit")
+
+
+def test_document_strategy_is_structural_and_sync_only() -> None:
     strategy = StubStrategy()
 
     assert isinstance(strategy, ChunkingStrategy)

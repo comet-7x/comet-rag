@@ -9,15 +9,10 @@ import pytest
 from comet_rag.engines.chunkers import (
     ChunkDraft,
     CodeLanguage,
-    CodeRecursiveChunker,
     FixedSizeChunker,
     RecursiveChunker,
+    code_profile,
 )
-from comet_rag.ports import NormalizedDocument
-
-
-def _document(text: str) -> NormalizedDocument:
-    return NormalizedDocument(markdown=text)
 
 
 def _assert_exact_spans(text: str, drafts: list[ChunkDraft]) -> None:
@@ -34,13 +29,13 @@ def _assert_exact_spans(text: str, drafts: list[ChunkDraft]) -> None:
 
 @pytest.mark.parametrize("text", ["", "   ", "\n\n", "\t \n"])
 def test_fixed_and_recursive_ignore_blank_documents(text: str) -> None:
-    assert FixedSizeChunker(4).split(_document(text)) == []
-    assert RecursiveChunker(4).split(_document(text)) == []
+    assert FixedSizeChunker(4).split(text) == []
+    assert RecursiveChunker(4).split(text) == []
 
 
 def test_fixed_size_tracks_exact_overlap_positions() -> None:
     text = "0123456789ABCDEFGHIJklmnopqrst"
-    drafts = FixedSizeChunker(10, 3).split(_document(text))
+    drafts = FixedSizeChunker(10, 3).split(text)
 
     assert [(draft.start_char, draft.end_char) for draft in drafts] == [
         (0, 10),
@@ -62,7 +57,7 @@ def test_fixed_size_tracks_exact_overlap_positions() -> None:
 
 def test_fixed_zero_overlap_reconstructs_text_including_whitespace_runs() -> None:
     text = "A" + (" " * 18) + "B"
-    drafts = FixedSizeChunker(5).split(_document(text))
+    drafts = FixedSizeChunker(5).split(text)
 
     assert "".join(draft.text for draft in drafts) == text
     assert any(draft.text.isspace() for draft in drafts)
@@ -74,7 +69,7 @@ def test_fixed_supports_an_injected_byte_length_function() -> None:
         return len(value.encode("utf-8"))
 
     text = "你好世界"
-    drafts = FixedSizeChunker(6, length_function=byte_length).split(_document(text))
+    drafts = FixedSizeChunker(6, length_function=byte_length).split(text)
 
     assert [draft.text for draft in drafts] == ["你好", "世界"]
     assert all(byte_length(draft.text) <= 6 for draft in drafts)
@@ -106,9 +101,7 @@ def test_fixed_rejects_a_single_codepoint_over_budget() -> None:
 
 def test_recursive_zero_overlap_reconstructs_repeated_text_and_separators() -> None:
     text = ("重复段落\n\n重复段落\n\n" * 8) + "收尾"
-    drafts = RecursiveChunker(13, separators=("\n\n", "\n", "",)).split(
-        _document(text)
-    )
+    drafts = RecursiveChunker(13, separators=("\n\n", "\n", "",)).split(text)
 
     assert "".join(draft.text for draft in drafts) == text
     assert all(len(draft.text) <= 13 for draft in drafts)
@@ -129,7 +122,7 @@ def test_recursive_keeps_code_separator_at_the_next_chunk_start() -> None:
         40,
         separators=("\ndef ", "\n", " ", ""),
         separator_position="start",
-    ).split(_document(text))
+    ).split(text)
 
     assert "".join(draft.text for draft in drafts) == text
     assert any(draft.text.startswith("\ndef ") for draft in drafts[1:])
@@ -138,7 +131,7 @@ def test_recursive_keeps_code_separator_at_the_next_chunk_start() -> None:
 
 def test_recursive_overlap_is_observable_and_best_effort() -> None:
     text = "alpha beta gamma delta epsilon zeta eta theta iota"
-    drafts = RecursiveChunker(20, 8, separators=(" ", "")).split(_document(text))
+    drafts = RecursiveChunker(20, 8, separators=(" ", "")).split(text)
 
     _assert_exact_spans(text, drafts)
     overlaps = [
@@ -150,14 +143,15 @@ def test_recursive_overlap_is_observable_and_best_effort() -> None:
 
 
 @pytest.mark.parametrize("language", list(CodeLanguage))
-def test_one_code_recursive_chunker_handles_every_language_profile(
+def test_recursive_chunker_handles_every_code_profile(
     language: CodeLanguage,
 ) -> None:
     text = "prefix\n" + ("statement value\n" * 12)
-    chunker = CodeRecursiveChunker(language, chunk_size=36, chunk_overlap=0)
-    drafts = chunker.split(_document(text))
+    profile = code_profile(language, chunk_size=36, chunk_overlap=0)
+    chunker = RecursiveChunker.from_profile(profile)
+    drafts = chunker.split(text)
 
-    assert chunker.code_language is language
+    assert type(chunker) is RecursiveChunker
     assert "".join(draft.text for draft in drafts) == text
     assert all(len(draft.text) <= 36 for draft in drafts)
     _assert_exact_spans(text, drafts)
@@ -177,14 +171,42 @@ def test_one_code_recursive_chunker_handles_every_language_profile(
 def test_code_language_accepts_names_and_file_suffixes(
     alias: str, expected: CodeLanguage
 ) -> None:
-    assert CodeRecursiveChunker(alias).code_language is expected
+    assert code_profile(alias) == code_profile(expected)
 
 
 def test_code_language_rejects_unknown_values() -> None:
     with pytest.raises(ValueError, match="code_language"):
-        CodeRecursiveChunker("brainfuck")
+        code_profile("brainfuck")
 
 
 def test_explicit_empty_separator_profile_is_rejected() -> None:
     with pytest.raises(ValueError, match="separators"):
-        CodeRecursiveChunker(CodeLanguage.GO, separators=())
+        RecursiveChunker(separators=())
+
+
+def test_separator_position_rejects_unknown_value() -> None:
+    with pytest.raises(ValueError, match="separator_position"):
+        RecursiveChunker(separator_position="middle")  # type: ignore[arg-type]
+
+
+def test_separator_position_changes_separator_ownership() -> None:
+    text = "header\n\ndef one():\n    pass\n\ndef two():\n    pass"
+    separators = ("\ndef ", "\n", " ", "")
+
+    at_end = RecursiveChunker(
+        24, separators=separators, separator_position="end"
+    ).chunk(text)
+    at_start = RecursiveChunker(
+        24, separators=separators, separator_position="start"
+    ).chunk(text)
+
+    assert at_end == [
+        "header\n\ndef ",
+        "one():\n    pass\n\ndef ",
+        "two():\n    pass",
+    ]
+    assert at_start == [
+        "header\n",
+        "\ndef one():\n    pass\n",
+        "\ndef two():\n    pass",
+    ]

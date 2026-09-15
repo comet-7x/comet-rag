@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 from ._length import LengthFunction
-from .base_chunker import (
-    BaseChunker,
-    Language,
-    RecursiveCharacterTextSplitter,
-)
-from .code_chunker import CodeRecursiveChunker
 from .fixed import FixedSizeChunker
-from .profiles import CodeLanguage
-from .protocol import ChunkingStrategy
+from .profiles import (
+    CSV_PROFILE,
+    DOCX_PROFILE,
+    JSON_PROFILE,
+    MARKDOWN_PROFILE,
+    TEXT_PROFILE,
+    XML_PROFILE,
+    ChunkProfile,
+    CodeLanguage,
+    Language,
+    SeparatorPosition,
+    code_profile,
+    language_profile,
+)
+from .protocol import Chunker, ChunkingStrategy
 from .recursive import RecursiveChunker
 from .separators import SEPARATORS_EN, SEPARATORS_JA, SEPARATORS_KO, SEPARATORS_ZH
-from .structured_chunker import CsvChunker, JsonChunker, XmlChunker
-from .text_chunker import DocxChunker, MdxChunker, TextChunker
 from .types import (
     CHUNK_FACT_METADATA_KEYS,
     SYSTEM_CHUNK_METADATA_KEYS,
@@ -25,21 +30,23 @@ __all__ = [
     "Language",
     "CodeLanguage",
     "LengthFunction",
-    "BaseChunker",
-    "RecursiveCharacterTextSplitter",
+    "SeparatorPosition",
+    "ChunkProfile",
+    "TEXT_PROFILE",
+    "DOCX_PROFILE",
+    "MARKDOWN_PROFILE",
+    "CSV_PROFILE",
+    "JSON_PROFILE",
+    "XML_PROFILE",
+    "language_profile",
+    "code_profile",
     "SEPARATORS_EN",
     "SEPARATORS_ZH",
     "SEPARATORS_JA",
     "SEPARATORS_KO",
-    "CsvChunker",
-    "JsonChunker",
-    "XmlChunker",
-    "TextChunker",
-    "DocxChunker",
-    "MdxChunker",
+    "Chunker",
     "FixedSizeChunker",
     "RecursiveChunker",
-    "CodeRecursiveChunker",
     "ChunkDraft",
     "ChunkingStrategy",
     "CHUNK_FACT_METADATA_KEYS",

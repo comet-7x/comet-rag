@@ -392,9 +392,13 @@ async def _aextract_docx(
 
 
 def _default_chunk(text: str, config: PipelineConfig) -> list[str]:
-    from comet_rag.engines.chunkers.text_chunker import TextChunker
+    from comet_rag.engines.chunkers import SEPARATORS_EN, RecursiveChunker
 
-    return TextChunker(config.chunk_size, config.chunk_overlap).chunk(text)
+    return RecursiveChunker(
+        config.chunk_size,
+        config.chunk_overlap,
+        separators=SEPARATORS_EN,
+    ).chunk(text)
 
 
 def _default_document_chunk(
@@ -406,7 +410,7 @@ def _default_document_chunk(
         config.chunk_size,
         config.chunk_overlap,
         separators=SEPARATORS_EN,
-    ).split(document)
+    ).split(document.markdown)
 
 
 @PipelineHooks.document_chunker("docx", "doc")
