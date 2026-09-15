@@ -19,6 +19,12 @@ from .profiles import (
 from .protocol import Chunker, ChunkingStrategy
 from .recursive import RecursiveChunker
 from .separators import SEPARATORS_EN, SEPARATORS_JA, SEPARATORS_KO, SEPARATORS_ZH
+from .strategies import (
+    DocumentStructureError,
+    MarkdownSectionStrategy,
+    MissingDocumentStructureError,
+    PageChunkingStrategy,
+)
 from .types import ChunkDraft
 
 __all__ = [
@@ -44,4 +50,8 @@ __all__ = [
     "RecursiveChunker",
     "ChunkDraft",
     "ChunkingStrategy",
+    "DocumentStructureError",
+    "MarkdownSectionStrategy",
+    "MissingDocumentStructureError",
+    "PageChunkingStrategy",
 ]

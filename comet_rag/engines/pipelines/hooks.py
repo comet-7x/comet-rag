@@ -404,13 +404,29 @@ def _default_chunk(text: str, config: PipelineConfig) -> list[str]:
 def _default_document_chunk(
     document: NormalizedDocument, config: PipelineConfig
 ) -> list[ChunkDraft]:
-    from comet_rag.engines.chunkers import SEPARATORS_EN, RecursiveChunker
+    from comet_rag.engines.chunkers import (
+        SEPARATORS_EN,
+        DocumentStructureError,
+        MarkdownSectionStrategy,
+        PageChunkingStrategy,
+        RecursiveChunker,
+    )
 
-    return RecursiveChunker(
+    chunker = RecursiveChunker(
         config.chunk_size,
         config.chunk_overlap,
         separators=SEPARATORS_EN,
-    ).split(document.markdown)
+    )
+    if document.blocks:
+        kinds = {block.kind for block in document.blocks}
+        if kinds == {"page"}:
+            return PageChunkingStrategy(chunker).split(document)
+        if kinds == {"section"}:
+            return MarkdownSectionStrategy(chunker).split(document)
+        raise DocumentStructureError(
+            f"没有适用于 DocumentBlock kinds={sorted(kinds)!r} 的内置分块策略"
+        )
+    return chunker.split(document.markdown)
 
 
 @PipelineHooks.document_chunker("docx", "doc")

@@ -166,6 +166,43 @@ def test_builtin_and_default_document_chunkers_do_not_use_legacy_adapter(
     assert not any(issubclass(item.category, DeprecationWarning) for item in caught)
 
 
+def test_default_document_chunker_routes_normalized_section_facts() -> None:
+    from comet_rag.engines.documents import MarkdownDocumentNormalizer
+
+    document = MarkdownDocumentNormalizer().normalize(
+        ExtractedDocument(markdown="# 标题\n\n正文。\n\n## 子标题\n\n更多正文。")
+    )
+
+    drafts = PipelineHooks.get_document_chunker("docx")(
+        document,
+        PipelineConfig(chunk_size=20, chunk_overlap=2),
+    )
+
+    assert [draft.metadata["heading_path"] for draft in drafts] == [
+        ["标题"],
+        ["标题", "子标题"],
+    ]
+
+
+def test_default_document_chunker_routes_real_page_facts() -> None:
+    from comet_rag.ports import DocumentBlock
+
+    document = NormalizedDocument(
+        markdown="第一页第二页",
+        blocks=(
+            DocumentBlock("page", 0, 0, 3, page_number=1),
+            DocumentBlock("page", 1, 3, 6, page_number=2),
+        ),
+    )
+
+    drafts = PipelineHooks.get_document_chunker("pdf")(
+        document,
+        PipelineConfig(chunk_size=20, chunk_overlap=2),
+    )
+
+    assert [draft.metadata["page_number"] for draft in drafts] == [1, 2]
+
+
 # ── 隔离（P8）───────────────────────────────────────────────────────────────
 #
 # 下面两个用例**注册同名 extractor 但期望不同结果**。没有 conftest 里那个
