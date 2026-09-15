@@ -10,6 +10,7 @@ from .content import (
     TextContent,
 )
 from .document import (
+    DocumentBlock,
     DocumentExtractionError,
     DocumentExtractorPort,
     DocumentProtocolError,
@@ -57,6 +58,7 @@ __all__ = [
     "CollectionSchemaMismatch",
     "ContentInput",
     "ContentPart",
+    "DocumentBlock",
     "DocumentExtractionError",
     "DocumentExtractorPort",
     "DocumentProtocolError",
