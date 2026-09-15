@@ -1,7 +1,7 @@
 # Implementation Plan: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：执行中（v1.3）
-> 依据：`tasks/m4_spec.md` v1.3
+> 状态：执行中（v1.4）
+> 依据：`tasks/m4_spec.md` v1.4
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开始日期：2026-09-14
 > 分支：`feature/m4-chunking`
@@ -14,9 +14,10 @@ M4 先解决当前 `list[str]` 契约造成的溯源丢失和 overlap 不可观�
 
 ## Current Priority
 
-M4-T1～T4.1 已完成：运行时只有 FixedSize、Recursive 两种原子 Chunker，格式与语言
-差异收敛为参数画像；Pipeline 与任务入库共用 ChunkingService 和物化规则。下一项是
-M4-T5 Markdown / Page 文档级组合策略；仍不创建数据库表、不改 Milvus metadata。
+M4-T1～T4.2 已完成：运行时只有 FixedSize、Recursive 两种原子 Chunker，格式与语言
+差异收敛为不可变参数画像；Pipeline 与任务入库共用 ChunkingService 和物化规则，
+来源及索引 metadata 规则只属于 Service。下一项是 M4-T5 Markdown / Page 文档级组合
+策略；仍不创建数据库表、不改 Milvus metadata。
 
 ## Dependency Graph
 
@@ -34,6 +35,9 @@ M4-T4 Pipeline / Task 单链路迁移
         │
         ▼
 M4-T4.1 原子 Chunker / Profile 收敛
+        │
+        ▼
+M4-T4.2 Chunker 目录边界清理
         │
         ▼
 M4-T5 Markdown / Page 结构感知
@@ -65,6 +69,7 @@ M4-T10 评测、文档、完整验收与 PR
 | 09-16～09-17 | M4-T3 Fixed/Recursive 与 separator profiles | C：平坦算法正确 |
 | 09-18 | M4-T4 Pipeline/Task 单链路迁移与兼容 | D：入口一致 |
 | 09-18 | M4-T4.1 原子 Chunker、Profile 与 Strategy 语义收敛 | D1：概念一致 |
+| 09-18 | M4-T4.2 不可变配置与物化规则归层 | D2：边界干净 |
 | 09-19～09-20 | M4-T5 Markdown/Page 结构感知 | E：结构不丢 |
 | 09-21 | M4-T6 IndexPlan、schema、revision 故障矩阵 | F：人工决策门 |
 | 09-22～09-23 | M4-T7 DocumentStore 契约、内存与 PostgreSQL | G：父块可存取 |
@@ -101,7 +106,7 @@ M4-T10 评测、文档、完整验收与 PR
 | 通过 `str.find` 回查位置 | 高 | 内部 split 单元始终携带 span；重复文本反向测试 |
 | token size 与字符位置混为一谈 | 高 | LengthFunction 只计预算，位置始终是 Markdown 字符 offset |
 | 语义分块绕过模型闸门 | 高 | Service 复用 EmbeddingPort 与批量排程；engines 只算断点 |
-| 页面边界由 Chunker 猜测 | 中 | PageChunker 只接受 DocumentBlock page fact，缺失时显式失败/回退 |
+| 页面边界由 Chunker 猜测 | 中 | PageChunkingStrategy 只接受 DocumentBlock page fact，缺失时显式失败/回退 |
 | 父子索引造成双存储半写 | 高 | revision 协议、逐断点故障矩阵、T6 人工决策门 |
 | 一次 PR 难以评审和回滚 | 高 | T1～T5 与 T6～T10 分支/PR 分离 |
 | 质量优化只看块长 | 中 | 固定样本同时记录边界、hit@k、延迟与索引体积 |

@@ -20,17 +20,15 @@ jobs:
       - name: 只装核心依赖
         run: uv sync --no-default-groups
 
-      # chunk_overlap 必须显式给：默认是 150，配上 chunk_size=50 会被库正确地
-      # 拒绝（重叠不能 ≥ 分块大小）。这一行曾经写成 `TextChunker(chunk_size=50)`
-      # 并让本 job 从建立起就是红的 —— 分支一直没推，CI 也就一直没跑过。
+      # 同时验证稳定公共入口、原子 Chunker 和 infrastructure 延迟导入边界。
       - name: 库可独立使用
         run: |
           uv run python -c "
-          from comet_rag.engines.chunkers import TextChunker
+          from comet_rag.engines.chunkers import RecursiveChunker
           from comet_rag.loaders import AutoLoader, LocalLoader
           from comet_rag.pipeline import Pipeline
           import sys
-          chunks = TextChunker(chunk_size=50, chunk_overlap=10).chunk('x' * 300)
+          chunks = RecursiveChunker(chunk_size=50, chunk_overlap=10).chunk('x' * 300)
           assert len(chunks) > 1, f'300 字符按 50 切却只得到 {len(chunks)} 块'
           assert all(len(c) <= 50 for c in chunks), '有块超过了 chunk_size'
           assert AutoLoader and LocalLoader

@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 # fmt: off
 
-SEPARATORS_EN = [
+SEPARATORS_EN: tuple[str, ...] = (
     "\n\n\n",  # Triple blank line — chapter / major section boundary
     "\n\n",    # Double blank line — paragraph boundary
     "\n",      # Single line break — line boundary
@@ -11,9 +13,9 @@ SEPARATORS_EN = [
     ", ",      # Comma + space — phrase boundary
     " ",       # Space — word boundary
     "",        # Empty string — character level (last resort)
-]
+)
 
-SEPARATORS_ZH = [
+SEPARATORS_ZH: tuple[str, ...] = (
     "\n\n\n",  # 三个换行 — 章节边界
     "\n\n",    # 双换行 — 段落边界
     "\n",      # 单换行 — 行边界
@@ -24,9 +26,9 @@ SEPARATORS_ZH = [
     "，",      # 全角逗号 — 短语边界
     "、",      # 顿号 — 并列词语边界
     "",        # 字符级 — 兜底（中文无词间空格）
-]
+)
 
-SEPARATORS_JA = [
+SEPARATORS_JA: tuple[str, ...] = (
     "\n\n\n",  # 三重改行 — 章・節の境界
     "\n\n",    # 二重改行 — 段落境界
     "\n",      # 単一改行 — 行境界
@@ -36,9 +38,9 @@ SEPARATORS_JA = [
     "；",      # 全角セミコロン — 節境界
     "、",      # 読点 — 句内区切り
     "",        # 文字レベル — 最終手段（日本語は単語間スペースなし）
-]
+)
 
-SEPARATORS_KO = [
+SEPARATORS_KO: tuple[str, ...] = (
     "\n\n",    # 두 줄 바꿈 — 단락 경계
     "\n",      # 줄 바꿈 — 행 경계
     ". ",      # 반각 마침표 + 공백 — 문장 끝
@@ -52,10 +54,10 @@ SEPARATORS_KO = [
     ", ",      # 반각 쉼표 — 구 경계
     " ",       # 공백 — 어절 경계 (한국어는 띄어쓰기로 어절 구분)
     "",        # 문자 단위 — 최후 수단
-]
+)
 
 
-SEPARATORS_CODE_PY = [
+SEPARATORS_CODE_PY: tuple[str, ...] = (
     "\nclass ",      # Class definition
     "\nasync def ",  # Async function / coroutine definition
     "\ndef ",        # Module-level function definition
@@ -65,9 +67,9 @@ SEPARATORS_CODE_PY = [
     "\n",            # Line break
     " ",             # Token boundary
     "",              # Character level (last resort)
-]
+)
 
-SEPARATORS_CODE_TS = [
+SEPARATORS_CODE_TS: tuple[str, ...] = (
     "\nenum ",                  # Enum declaration
     "\ninterface ",             # Interface declaration
     "\nnamespace ",             # Namespace / module declaration
@@ -95,9 +97,9 @@ SEPARATORS_CODE_TS = [
     "\n",                       # Line break
     " ",                        # Token boundary
     "",                         # Character level (last resort)
-]
+)
 
-SEPARATORS_CODE_JS = [
+SEPARATORS_CODE_JS: tuple[str, ...] = (
     "\nexport default class ",  # Default-exported class
     "\nexport class ",          # Named exported class
     "\nclass ",                 # Non-exported class
@@ -120,9 +122,9 @@ SEPARATORS_CODE_JS = [
     "\n",                       # Line break
     " ",                        # Token boundary
     "",                         # Character level (last resort)
-]
+)
 
-SEPARATORS_CODE_JAVA = [
+SEPARATORS_CODE_JAVA: tuple[str, ...] = (
     "\nclass ",       # Class declaration
     "\ninterface ",   # Interface declaration
     "\nenum ",        # Enum declaration
@@ -142,9 +144,9 @@ SEPARATORS_CODE_JAVA = [
     "\n",             # Line break
     " ",              # Token boundary
     "",               # Character level (last resort)
-]
+)
 
-SEPARATORS_CODE_C = [
+SEPARATORS_CODE_C: tuple[str, ...] = (
     "\nstruct ",    # Struct definition
     "\ntypedef ",   # Type alias definition
     "\nunion ",     # Union definition
@@ -167,9 +169,9 @@ SEPARATORS_CODE_C = [
     "\n",           # Line break
     " ",            # Token boundary
     "",             # Character level (last resort)
-]
+)
 
-SEPARATORS_CODE_CPP = [
+SEPARATORS_CODE_CPP: tuple[str, ...] = (
     "\ntemplate ",   # Template declaration (class / function template)
     "\nnamespace ",  # Namespace block
     "\nclass ",      # Class definition
@@ -199,9 +201,9 @@ SEPARATORS_CODE_CPP = [
     "\n",            # Line break
     " ",             # Token boundary
     "",              # Character level (last resort)
-]
+)
 
-SEPARATORS_CODE_GO = [
+SEPARATORS_CODE_GO: tuple[str, ...] = (
     "\nfunc ",   # Function or method definition
     "\nvar ",    # Variable declaration block
     "\nconst ",  # Constant declaration block
@@ -214,9 +216,9 @@ SEPARATORS_CODE_GO = [
     "\n",        # Line break
     " ",         # Token boundary
     "",          # Character level (last resort)
-]
+)
 
-SEPARATORS_CODE_PHP = [
+SEPARATORS_CODE_PHP: tuple[str, ...] = (
     "\nfunction ", # Function definition
     "\nclass ",    # Class definition
     "\nif ",       # If statement
@@ -229,9 +231,9 @@ SEPARATORS_CODE_PHP = [
     "\n",          # Line break
     " ",           # Token boundary
     "",            # Character level (last resort)
-]
+)
 
-SEPARATORS_CODE_R = [
+SEPARATORS_CODE_R: tuple[str, ...] = (
     "\nfunction ",   # Function definition (assigned via <- or =)
     "\nsetClass(",   # S4 class definition
     "\nsetMethod(",  # S4 method definition for a generic
@@ -247,9 +249,9 @@ SEPARATORS_CODE_R = [
     "\n",            # Line break
     " ",             # Token boundary
     "",              # Character level (last resort)
-]
+)
 
-SEPARATORS_CODE_RUST = [
+SEPARATORS_CODE_RUST: tuple[str, ...] = (
     "\nstruct ",       # Struct definition
     "\nenum ",         # Enum definition
     "\ntrait ",        # Trait definition
@@ -272,9 +274,9 @@ SEPARATORS_CODE_RUST = [
     "\n",              # Line break
     " ",               # Token boundary
     "",                # Character level (last resort)
-]
+)
 
-SEPARATORS_MDX = [
+SEPARATORS_MDX: tuple[str, ...] = (
     "\n# ",     # H1 heading — document title / top-level section
     "\n## ",    # H2 heading — major section
     "\n### ",   # H3 heading — subsection
@@ -289,18 +291,18 @@ SEPARATORS_MDX = [
     ", ",       # Phrase boundary
     " ",        # Word boundary
     "",         # Character level (last resort)
-]
+)
 
-SEPARATORS_CSV = [
+SEPARATORS_CSV: tuple[str, ...] = (
     "\nRow ",  # Row boundary — matches CSVLoader's "Row N:" header format
     "\n",      # Raw line break — fallback row boundary
     " | ",     # Pipe separator — column boundary in display format
     ", ",      # Comma separator — value boundary
     " ",       # Token boundary
     "",        # Character level (last resort)
-]
+)
 
-SEPARATORS_JSON = [
+SEPARATORS_JSON: tuple[str, ...] = (
     "\n\n",  # Major structural gap — boundary between top-level objects
     "\n",    # Line break — boundary between properties
     "},",    # End of nested object within an array
@@ -309,9 +311,9 @@ SEPARATORS_JSON = [
     ": ",    # Key-value pair separator
     " ",     # Token boundary
     "",      # Character level (last resort)
-]
+)
 
-SEPARATORS_XML = [
+SEPARATORS_XML: tuple[str, ...] = (
     "\n\n",  # Major element gap — boundary between sibling elements
     "\n",    # Line break — boundary between tags or text lines
     ">",     # Tag-closing boundary — splits after end of opening/closing tag
@@ -321,9 +323,9 @@ SEPARATORS_XML = [
     ", ",    # List item boundary in element text content
     " ",     # Word boundary
     "",      # Character level (last resort)
-]
+)
 
-SEPARATORS_CODE_HTML = [
+SEPARATORS_CODE_HTML: tuple[str, ...] = (
     "<body",    # Document body root
     "<div",     # Generic block container
     "<p",       # Paragraph
@@ -354,5 +356,5 @@ SEPARATORS_CODE_HTML = [
     "\n",       # Line break
     " ",        # Token boundary
     "",         # Character level (last resort)
-]
+)
 # fmt: on

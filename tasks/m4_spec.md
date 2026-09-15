@@ -1,6 +1,6 @@
 # Spec: M4 Chunking 与层级索引
 
-> 状态：已冻结，M4-T4.1 已完成（v1.3）
+> 状态：已冻结，M4-T4.2 已完成（v1.4）
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
 > 最后更新：2026-09-15
@@ -123,6 +123,10 @@ overlap 都不会让 `start_char` 指向错误位置。对连续文本块必须�
 文件类型选择属于 Service/Hook 路由；separator profile 是纯数据，不能继续用大量几乎
 相同的子类表达配置差异。
 
+T4.2 将所有 separator 常量收敛为元组，防止调用方修改全局列表后改变后续分块行为。
+`engines/chunkers/types.py` 只拥有 `ChunkDraft`；来源、知识库、revision、parent 等
+metadata 保留键及其合并优先级属于物化用例，统一由 `services/chunking.py` 管理。
+
 仓库版本仍为 0.1.0，且没有 tag/Release。T4.1 已删除 `BaseChunker`、
 `RecursiveCharacterTextSplitter`、所有格式参数子类及 `CodeRecursiveChunker`；调用方使用
 `RecursiveChunker.from_profile(code_profile("rust"))`，运行时仍只有递归算法本身。
@@ -135,7 +139,7 @@ M4 需要标题和页面边界时，在 `ports/document.py` 增加最小 `Docume
 避免 `markdown` 与 block.text 成为两套真相。
 
 - 标题结构可由 normalization 后的 Markdown 分析器产生；
-- 页码必须来自 DOCX/PDF Extractor 的事实；没有页信息时 PageChunker 明确拒绝或由
+- 页码必须来自 DOCX/PDF Extractor 的事实；没有页信息时 PageChunkingStrategy 明确拒绝或由
   Planner 选择递归策略，不把换行猜成分页；
 - bbox、图片资产和表格单元格坐标不在首版字段中，出现真实消费用例后再扩展。
 
@@ -220,7 +224,7 @@ dataclass 或只读映射对象。
 ### S3 — 结构感知
 
 - [ ] 标题路径从规范 Markdown 产生并传到 Chunk metadata。
-- [ ] PageChunker 只使用 extractor page facts；缺失时行为明确。
+- [ ] PageChunkingStrategy 只使用 extractor page facts；缺失时行为明确。
 - [x] 文档 metadata、请求 metadata 与系统保留字段有唯一合并优先级。
 - [ ] 不把 MinerU 专有字段泄漏到 Chunk 或 Port。
 

@@ -19,12 +19,7 @@ from .profiles import (
 from .protocol import Chunker, ChunkingStrategy
 from .recursive import RecursiveChunker
 from .separators import SEPARATORS_EN, SEPARATORS_JA, SEPARATORS_KO, SEPARATORS_ZH
-from .types import (
-    CHUNK_FACT_METADATA_KEYS,
-    SYSTEM_CHUNK_METADATA_KEYS,
-    ChunkDraft,
-    merge_chunk_metadata,
-)
+from .types import ChunkDraft
 
 __all__ = [
     "Language",
@@ -49,7 +44,4 @@ __all__ = [
     "RecursiveChunker",
     "ChunkDraft",
     "ChunkingStrategy",
-    "CHUNK_FACT_METADATA_KEYS",
-    "SYSTEM_CHUNK_METADATA_KEYS",
-    "merge_chunk_metadata",
 ]

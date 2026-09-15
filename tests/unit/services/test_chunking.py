@@ -172,3 +172,49 @@ def test_materialization_owns_id_positions_and_metadata_precedence() -> None:
         "chunk_start": 4,
         "chunk_end": 6,
     }
+
+
+def test_materialization_rejects_forged_chunk_facts_and_system_fields() -> None:
+    document_metadata = {
+        "label": "document",
+        "provider": "mineru",
+        "source_id": "forged-document",
+    }
+    request_metadata = {
+        "label": "request",
+        "department": "研发",
+        "heading_path": ["伪造标题"],
+        "parent_id": "forged-request",
+        "page_number": 999,
+    }
+    draft_metadata = {
+        "label": "chunk",
+        "page_number": 7,
+        "source": "forged-chunk",
+    }
+
+    chunks = materialize_chunk_drafts(
+        [ChunkDraft(text="正文", ordinal=0, metadata=draft_metadata)],
+        source_id="trusted-source",
+        source="s3://bucket/report.pdf",
+        file_type="pdf",
+        document_metadata=document_metadata,
+        request_metadata=request_metadata,
+    )
+
+    assert chunks[0].metadata == {
+        "label": "chunk",
+        "provider": "mineru",
+        "department": "研发",
+        "page_number": 7,
+        "source": "s3://bucket/report.pdf",
+        "source_id": "trusted-source",
+        "file_type": "pdf",
+        "total_chunks": 1,
+        "chunk_index": 0,
+    }
+    assert "parent_id" not in chunks[0].metadata
+    assert "heading_path" not in chunks[0].metadata
+    assert document_metadata["source_id"] == "forged-document"
+    assert request_metadata["page_number"] == 999
+    assert draft_metadata["source"] == "forged-chunk"

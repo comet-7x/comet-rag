@@ -15,7 +15,7 @@ class ExtractedDocument:
 
 @dataclass(frozen=True, slots=True)
 class NormalizedDocument:
-    """可直接交给 Chunker 的规范 Markdown 与文档元数据。"""
+    """可交给文档级 ChunkingStrategy 的规范 Markdown 与文档元数据。"""
 
     markdown: str
     metadata: dict[str, object] = field(default_factory=dict)

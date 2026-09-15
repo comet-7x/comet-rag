@@ -5,12 +5,37 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeGuard
 
-from comet_rag.engines.chunkers import ChunkDraft, merge_chunk_metadata
+from comet_rag.engines.chunkers import ChunkDraft
 from comet_rag.engines.pipelines import HookProvider, PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
 from comet_rag.ports import DocumentResourceLimitExceeded, NormalizedDocument
 
 # 这里是文档分块与下游物化的唯一用例边界，避免 Pipeline 与任务链路各自拼装。
+
+# 文档和请求 metadata 不能伪造结构事实；这些字段只接受 ChunkingStrategy 的输出。
+_CHUNK_FACT_METADATA_KEYS = frozenset(
+    {
+        "block_kind",
+        "heading_path",
+        "page_number",
+    }
+)
+
+# 来源身份、位置和索引关系由物化阶段生成，任何上游层都不能覆盖。
+_SYSTEM_CHUNK_METADATA_KEYS = frozenset(
+    {
+        "chunk_end",
+        "chunk_index",
+        "chunk_start",
+        "document_revision",
+        "file_type",
+        "kb_id",
+        "parent_id",
+        "source",
+        "source_id",
+        "total_chunks",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +69,35 @@ class ChunkingService:
             raise TypeError("document_chunker 必须返回 list[ChunkDraft]")
         _validate_drafts(drafts, document=document)
         return drafts
+
+
+def _merge_chunk_metadata(
+    *,
+    document: Mapping[str, object] | None = None,
+    request: Mapping[str, object] | None = None,
+    chunk: Mapping[str, object] | None = None,
+    system: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """按文档 < 请求 < 块级事实 < 系统字段的顺序合并 metadata。"""
+
+    merged: dict[str, object] = {}
+    protected = _SYSTEM_CHUNK_METADATA_KEYS | _CHUNK_FACT_METADATA_KEYS
+    for layer in (document, request):
+        if layer:
+            merged.update(
+                (key, value)
+                for key, value in layer.items()
+                if key not in protected
+            )
+    if chunk:
+        merged.update(
+            (key, value)
+            for key, value in chunk.items()
+            if key not in _SYSTEM_CHUNK_METADATA_KEYS
+        )
+    if system:
+        merged.update(system)
+    return merged
 
 
 def dump_chunk_drafts(
@@ -165,7 +219,7 @@ def materialize_chunk_drafts(
                 id=chunk_id(source_id, draft.ordinal),
                 text=draft.text,
                 ordinal=draft.ordinal,
-                metadata=merge_chunk_metadata(
+                metadata=_merge_chunk_metadata(
                     document=document_metadata,
                     request=request_metadata,
                     chunk=draft.metadata,

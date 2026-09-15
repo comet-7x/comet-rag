@@ -1,8 +1,8 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T1～T4.1 已完成，下一项 M4-T5
-> 规格：`tasks/m4_spec.md` v1.3
-> 计划：`tasks/m4_plan.md` v1.3
+> 状态：M4-T1～T4.2 已完成，下一项 M4-T5
+> 规格：`tasks/m4_spec.md` v1.4
+> 计划：`tasks/m4_plan.md` v1.4
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
 
@@ -83,14 +83,27 @@
 **验收：** 运行时代码只有两种原子 Chunker；参数画像不产生新类型，文档级 Strategy
 与原子算法使用不同的最小输入契约。
 
+### M4-T4.2 — Chunker 目录边界清理（S）
+
+**完成日期：** 09-15　**依赖：** M4-T4.1
+
+- [x] 所有 separator 常量改为不可变元组，避免全局参数被调用方修改
+- [x] `engines/chunkers/types.py` 只保留纯切分产物 `ChunkDraft`
+- [x] metadata 优先级、系统保留键和索引字段归还 `services/chunking.py`
+- [x] metadata 物化测试迁到 Service 测试，分块契约测试不再感知入库字段
+- [x] 明确 `NormalizedDocument` 由文档级 Strategy 消费，而非限制原子 Chunker
+
+**验收：** 原子算法目录不拥有来源、知识库、revision 或 parent 等物化概念；公开
+separator 配置不可被原地修改。
+
 ### M4-T5 — Markdown / Page 结构感知（M）
 
-**依赖：** M4-T4.1
+**依赖：** M4-T4.2
 
 - [ ] 从标题与页面用例反推最小 DocumentBlock，并定义 span 校验
 - [ ] Markdown 分析器识别标题路径、代码围栏和结构边界
-- [ ] MarkdownSectionChunker 保留 heading_path
-- [ ] PageChunker 只消费 extractor 页事实，缺页行为显式
+- [ ] MarkdownSectionStrategy 编排原子 Chunker 并保留 heading_path
+- [ ] PageChunkingStrategy 只消费 extractor 页事实，缺页行为显式
 - [ ] DOCX/PDF/Markdown 固定样本覆盖 metadata 传播和边界完整性
 - [ ] 不加入 bbox/资产等没有当前消费者的字段
 

@@ -10,8 +10,20 @@ from comet_rag.engines.chunkers import (
     code_profile,
     language_profile,
 )
+from comet_rag.engines.chunkers import separators as separator_profiles
 
 # 语言与格式差异只通过 profile 覆盖，不能重新引入参数型 Chunker 子类。
+
+
+def test_separator_profiles_are_immutable_tuples() -> None:
+    constants = {
+        name: value
+        for name, value in vars(separator_profiles).items()
+        if name.startswith("SEPARATORS_")
+    }
+
+    assert constants
+    assert all(isinstance(value, tuple) for value in constants.values())
 
 
 @pytest.mark.parametrize("language", list(CodeLanguage))

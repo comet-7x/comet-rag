@@ -16,7 +16,7 @@
 - [x] `pyproject.toml` dev 组含 `pytest-asyncio`、`pytest-cov`；配置 `asyncio_mode = "auto"`
 - [x] `tests/` 目录结构建立：`unit/ integration/ e2e/ benchmark/ fixtures/`，`conftest.py` 就位
 - [x] `pytest.ini_options` 注册 `integration` / `e2e` / `benchmark` 三个 marker，默认只跑 `unit`
-- [x] 至少 1 个真实断言的冒烟测试（如 `TextChunker` 切一段文本）
+- [x] 至少 1 个真实断言的冒烟测试（`RecursiveChunker` 切一段文本）
 
 **验证：**
 - [x] `uv run pytest tests/unit -q` 通过

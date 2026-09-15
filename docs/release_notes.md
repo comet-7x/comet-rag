@@ -30,6 +30,8 @@ return ExtractedDocument(markdown=text, metadata={"provider": "custom"})
 原子分块器现在直接接收 `str`，当前只有 `FixedSizeChunker` 和 `RecursiveChunker`。
 `BaseChunker`、`RecursiveCharacterTextSplitter` 及按格式/代码语言命名的参数型类已经
 删除；对应差异改用 `ChunkProfile`、`language_profile()` 与 `code_profile()` 表达。
+所有 separator 常量均为不可变元组；来源、知识库与索引关系的 metadata 合并规则位于
+`services.chunking`，不再作为原子 Chunker 的公共 API。
 
 ### 配置变更
 

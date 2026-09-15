@@ -11,7 +11,6 @@ from comet_rag.engines.chunkers import (
     ChunkDraft,
     Chunker,
     ChunkingStrategy,
-    merge_chunk_metadata,
 )
 from comet_rag.engines.pipelines import (
     HooksState,
@@ -116,63 +115,6 @@ def test_chunk_draft_rejects_invalid_state(
 ) -> None:
     with pytest.raises(exception, match=message):
         ChunkDraft(**kwargs)  # type: ignore[arg-type]
-
-
-def test_metadata_precedence_and_reserved_keys() -> None:
-    result = merge_chunk_metadata(
-        document={
-            "label": "document",
-            "provider": "mineru",
-            "source_id": "forged-document",
-        },
-        request={
-            "label": "request",
-            "department": "研发",
-            "heading_path": ["伪造标题"],
-            "parent_id": "forged-request",
-            "page_number": 999,
-        },
-        chunk={
-            "label": "chunk",
-            "page_number": 7,
-            "source": "forged-chunk",
-        },
-        system={
-            "source": "s3://bucket/report.pdf",
-            "source_id": "trusted-source",
-            "chunk_index": 2,
-        },
-    )
-
-    assert result == {
-        "label": "chunk",
-        "provider": "mineru",
-        "department": "研发",
-        "page_number": 7,
-        "source": "s3://bucket/report.pdf",
-        "source_id": "trusted-source",
-        "chunk_index": 2,
-    }
-    assert "parent_id" not in result
-    assert "heading_path" not in result
-
-
-def test_metadata_merge_does_not_mutate_inputs() -> None:
-    document = {"scope": "document"}
-    request = {"scope": "request"}
-    chunk = {"scope": "chunk"}
-    system = {"scope": "system"}
-
-    assert merge_chunk_metadata(
-        document=document,
-        request=request,
-        chunk=chunk,
-        system=system,
-    ) == {"scope": "system"}
-    assert document == {"scope": "document"}
-    assert request == {"scope": "request"}
-    assert chunk == {"scope": "chunk"}
-    assert system == {"scope": "system"}
 
 
 def test_legacy_adapter_uses_markdown_without_guessing_positions() -> None:

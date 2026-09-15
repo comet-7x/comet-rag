@@ -60,40 +60,40 @@ class ChunkProfile:
     separator_position: SeparatorPosition = "end"
 
 
-TEXT_PROFILE = ChunkProfile(1500, 150, tuple(SEPARATORS_EN))
-DOCX_PROFILE = ChunkProfile(2500, 250, tuple(SEPARATORS_EN))
+TEXT_PROFILE = ChunkProfile(1500, 150, SEPARATORS_EN)
+DOCX_PROFILE = ChunkProfile(2500, 250, SEPARATORS_EN)
 MARKDOWN_PROFILE = ChunkProfile(
     3000,
     300,
-    tuple(SEPARATORS_MDX),
+    SEPARATORS_MDX,
     separator_position="start",
 )
 CSV_PROFILE = ChunkProfile(
     1200,
     100,
-    tuple(SEPARATORS_CSV),
+    SEPARATORS_CSV,
     separator_position="start",
 )
-JSON_PROFILE = ChunkProfile(2000, 200, tuple(SEPARATORS_JSON))
-XML_PROFILE = ChunkProfile(2500, 250, tuple(SEPARATORS_XML))
+JSON_PROFILE = ChunkProfile(2000, 200, SEPARATORS_JSON)
+XML_PROFILE = ChunkProfile(2500, 250, SEPARATORS_XML)
 
 
 _LANGUAGE_SEPARATORS: dict[Language | CodeLanguage, tuple[str, ...]] = {
-    Language.ENGLISH: tuple(SEPARATORS_EN),
-    Language.CHINESE: tuple(SEPARATORS_ZH),
-    Language.JAPANESE: tuple(SEPARATORS_JA),
-    Language.KOREAN: tuple(SEPARATORS_KO),
-    CodeLanguage.PY: tuple(SEPARATORS_CODE_PY),
-    CodeLanguage.TS: tuple(SEPARATORS_CODE_TS),
-    CodeLanguage.JS: tuple(SEPARATORS_CODE_JS),
-    CodeLanguage.JAVA: tuple(SEPARATORS_CODE_JAVA),
-    CodeLanguage.C: tuple(SEPARATORS_CODE_C),
-    CodeLanguage.CPP: tuple(SEPARATORS_CODE_CPP),
-    CodeLanguage.GO: tuple(SEPARATORS_CODE_GO),
-    CodeLanguage.PHP: tuple(SEPARATORS_CODE_PHP),
-    CodeLanguage.R: tuple(SEPARATORS_CODE_R),
-    CodeLanguage.RUST: tuple(SEPARATORS_CODE_RUST),
-    CodeLanguage.HTML: tuple(SEPARATORS_CODE_HTML),
+    Language.ENGLISH: SEPARATORS_EN,
+    Language.CHINESE: SEPARATORS_ZH,
+    Language.JAPANESE: SEPARATORS_JA,
+    Language.KOREAN: SEPARATORS_KO,
+    CodeLanguage.PY: SEPARATORS_CODE_PY,
+    CodeLanguage.TS: SEPARATORS_CODE_TS,
+    CodeLanguage.JS: SEPARATORS_CODE_JS,
+    CodeLanguage.JAVA: SEPARATORS_CODE_JAVA,
+    CodeLanguage.C: SEPARATORS_CODE_C,
+    CodeLanguage.CPP: SEPARATORS_CODE_CPP,
+    CodeLanguage.GO: SEPARATORS_CODE_GO,
+    CodeLanguage.PHP: SEPARATORS_CODE_PHP,
+    CodeLanguage.R: SEPARATORS_CODE_R,
+    CodeLanguage.RUST: SEPARATORS_CODE_RUST,
+    CodeLanguage.HTML: SEPARATORS_CODE_HTML,
 }
 
 _CODE_PROFILES = {
