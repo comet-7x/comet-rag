@@ -88,6 +88,27 @@ def test_task_payload_round_trips_without_mapping_proxy_or_dataclass() -> None:
     assert load_chunk_drafts(payload) == drafts
 
 
+def test_structural_metadata_is_stable_across_json_task_handoff() -> None:
+    drafts = [
+        ChunkDraft(
+            text="正文",
+            ordinal=0,
+            start_char=0,
+            end_char=2,
+            metadata={
+                "block_kind": "section",
+                "heading_path": ["安装", "Docker"],
+            },
+        )
+    ]
+
+    payload = dump_chunk_drafts(drafts)
+    json_payload = json.loads(json.dumps(payload, ensure_ascii=False))
+
+    assert json_payload == payload
+    assert load_chunk_drafts(json_payload) == drafts
+
+
 def test_task_payload_rejects_non_json_metadata_and_excess_size() -> None:
     non_json = [ChunkDraft(text="x", ordinal=0, metadata={"bad": object()})]
     with pytest.raises(TypeError, match="JSON"):
