@@ -8,11 +8,45 @@ from typing import Protocol, runtime_checkable
 
 
 @dataclass(frozen=True, slots=True)
+class ExtractedPage:
+    """提取器给出的真实页及其 Markdown 片段；页号从 1 开始。"""
+
+    page_number: int
+    markdown: str
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not _is_int(self.page_number):
+            raise TypeError("ExtractedPage.page_number 必须是 int")
+        if self.page_number <= 0:
+            raise ValueError("ExtractedPage.page_number 必须大于 0")
+        if not isinstance(self.markdown, str):
+            raise TypeError("ExtractedPage.markdown 必须是 str")
+        if any(not isinstance(key, str) or not key for key in self.metadata):
+            raise ValueError("ExtractedPage.metadata 键必须是非空字符串")
+        object.__setattr__(
+            self, "metadata", MappingProxyType(dict(self.metadata))
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ExtractedDocument:
     """提取器映射到通用字段、尚未执行跨格式规范化的结果。"""
 
     markdown: str
     metadata: dict[str, object] = field(default_factory=dict)
+    pages: tuple[ExtractedPage, ...] = ()
+
+    def __post_init__(self) -> None:
+        pages = tuple(self.pages)
+        previous_page = 0
+        for page in pages:
+            if not isinstance(page, ExtractedPage):
+                raise TypeError("ExtractedDocument.pages 必须是 tuple[ExtractedPage, ...]")
+            if page.page_number <= previous_page:
+                raise ValueError("ExtractedDocument.pages 页号必须严格递增")
+            previous_page = page.page_number
+        object.__setattr__(self, "pages", pages)
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +171,7 @@ __all__ = [
     "DocumentResourceLimitExceeded",
     "DocumentUpstreamError",
     "ExtractedDocument",
+    "ExtractedPage",
     "NormalizedDocument",
     "RetryableDocumentUpstreamError",
 ]

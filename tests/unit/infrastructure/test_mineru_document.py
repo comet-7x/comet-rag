@@ -21,6 +21,7 @@ from comet_rag.ports import (
     DocumentResourceLimitExceeded,
     DocumentUpstreamError,
     ExtractedDocument,
+    ExtractedPage,
     RetryableDocumentUpstreamError,
 )
 from tests.contracts.document_extractor import DocumentExtractorContract
@@ -231,7 +232,7 @@ def test_submission_streams_one_pdf_and_sends_every_output_flag(
         "return_md": "true",
         "return_middle_json": "false",
         "return_model_output": "false",
-        "return_content_list": "false",
+        "return_content_list": "true",
         "return_images": "false",
         "response_format_zip": "false",
         "return_original_file": "false",
@@ -240,6 +241,88 @@ def test_submission_streams_one_pdf_and_sends_every_output_flag(
     for field, value in expected.items():
         fragment = f'name="{field}"\r\n\r\n{value}\r\n'.encode()
         assert fragment in body
+
+
+def test_exact_content_list_exposes_real_pages(document_path: Path) -> None:
+    markdown = "# 第一页\n\n相同正文\n\n# 第二页\n\n相同正文"
+    server = ScriptedMinerU(
+        statuses=("completed",),
+        result={
+            "results": {
+                "sample": {
+                    "md_content": markdown,
+                    # 官方 fast_api 读取 *_content_list.json 后把文件正文作为字符串返回。
+                    "content_list": json.dumps(
+                        [
+                            {
+                                "type": "text",
+                                "text": "第一页",
+                                "text_level": 1,
+                                "page_idx": 0,
+                            },
+                            {"type": "text", "text": "相同正文", "page_idx": 0},
+                            {
+                                "type": "text",
+                                "text": "第二页",
+                                "text_level": 1,
+                                "page_idx": 1,
+                            },
+                            {"type": "text", "text": "相同正文", "page_idx": 1},
+                        ],
+                        ensure_ascii=False,
+                    ),
+                }
+            }
+        },
+    )
+
+    result = _extractor(server).extract(
+        document_path, filename="sample.pdf", media_type="application/pdf"
+    )
+
+    assert result.pages == (
+        ExtractedPage(
+            page_number=1,
+            markdown="# 第一页\n\n相同正文",
+        ),
+        ExtractedPage(
+            page_number=2,
+            markdown="# 第二页\n\n相同正文",
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "content_list",
+    [
+        "{not-json",
+        [{"type": "text", "text": "不是正文", "page_idx": 0}],
+        [{"type": "image", "img_path": "x.png", "page_idx": 0}],
+        [
+            {"type": "text", "text": "正文", "page_idx": 1},
+            {"type": "text", "text": "正文", "page_idx": 0},
+        ],
+    ],
+)
+def test_unsafe_content_list_does_not_claim_page_facts(
+    document_path: Path, content_list: object
+) -> None:
+    result = _extractor(
+        ScriptedMinerU(
+            statuses=("completed",),
+            result={
+                "results": {
+                    "sample": {
+                        "md_content": "正文",
+                        "content_list": content_list,
+                    }
+                }
+            },
+        )
+    ).extract(document_path, filename="sample.pdf", media_type="application/pdf")
+
+    assert result.markdown == "正文"
+    assert result.pages == ()
 
 
 @pytest.mark.parametrize(

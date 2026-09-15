@@ -11,6 +11,7 @@ from comet_rag.ports import (
     DocumentResourceLimitExceeded,
     DocumentUpstreamError,
     ExtractedDocument,
+    ExtractedPage,
     NormalizedDocument,
     RetryableDocumentUpstreamError,
 )
@@ -68,6 +69,17 @@ def test_extracted_document_metadata_is_not_shared() -> None:
     first.metadata["source"] = "first"
 
     assert second.metadata == {}
+
+
+def test_extracted_pages_require_strictly_increasing_positive_page_numbers() -> None:
+    with pytest.raises(ValueError, match="严格递增"):
+        ExtractedDocument(
+            markdown="正文",
+            pages=(ExtractedPage(2, "二"), ExtractedPage(1, "一")),
+        )
+
+    with pytest.raises(ValueError, match="大于 0"):
+        ExtractedPage(0, "正文")
 
 
 def test_normalized_document_metadata_is_not_shared() -> None:

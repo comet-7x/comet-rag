@@ -17,6 +17,7 @@ from .document import (
     DocumentResourceLimitExceeded,
     DocumentUpstreamError,
     ExtractedDocument,
+    ExtractedPage,
     NormalizedDocument,
     RetryableDocumentUpstreamError,
 )
@@ -69,6 +70,7 @@ __all__ = [
     "EmbeddingTask",
     "EmbeddingModelChanged",
     "ExtractedDocument",
+    "ExtractedPage",
     "Filter",
     "ImageContent",
     "KeywordSearchPort",

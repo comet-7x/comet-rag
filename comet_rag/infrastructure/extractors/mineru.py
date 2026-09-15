@@ -21,6 +21,8 @@ from comet_rag.ports import (
 )
 from comet_rag.ports.gate import GatedResource
 
+from ._mineru_pages import extract_mineru_pages
+
 MINERU_API_PROTOCOL_VERSION = 2
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 10.0
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 60.0
@@ -34,7 +36,7 @@ _OUTPUT_FLAGS: dict[str, str] = {
     "return_md": "true",
     "return_middle_json": "false",
     "return_model_output": "false",
-    "return_content_list": "false",
+    "return_content_list": "true",
     "return_images": "false",
     "response_format_zip": "false",
     "return_original_file": "false",
@@ -403,6 +405,11 @@ class MinerUDocumentExtractor(GatedResource):
                 "MinerU Markdown 超过限制："
                 f"{markdown_size} > {self._max_markdown_bytes} bytes"
             )
+        pages = extract_mineru_pages(result.get("content_list"))
+        if pages is not None and "\n\n".join(
+            page.markdown for page in pages
+        ) != markdown:
+            pages = None
         return ExtractedDocument(
             markdown=markdown,
             metadata={
@@ -411,6 +418,7 @@ class MinerUDocumentExtractor(GatedResource):
                 "version": server_info.version,
                 "protocol_version": MINERU_API_PROTOCOL_VERSION,
             },
+            pages=pages or (),
         )
 
     def _submit(

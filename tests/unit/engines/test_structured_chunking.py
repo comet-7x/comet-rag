@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 
 import pytest
+from docx import Document
 
 from comet_rag.engines.chunkers import (
     ChunkDraft,
@@ -15,6 +17,7 @@ from comet_rag.engines.chunkers import (
 )
 from comet_rag.engines.chunkers.strategies import DocumentStructureError
 from comet_rag.engines.documents import MarkdownDocumentNormalizer
+from comet_rag.engines.documents.docx import DocxDocumentExtractor
 from comet_rag.ports import DocumentBlock, ExtractedDocument, NormalizedDocument
 
 
@@ -55,6 +58,36 @@ def test_markdown_strategy_keeps_section_boundaries_and_heading_paths() -> None:
             if block.start_char <= start and end <= block.end_char
         ]
         assert len(containing) == 1
+
+
+def test_docx_fixture_preserves_heading_boundaries_and_document_metadata(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "structure.docx"
+    source = Document()
+    source.add_heading("安装", level=1)
+    source.add_paragraph("安装说明。")
+    source.add_heading("Docker", level=2)
+    source.add_paragraph("容器说明。")
+    source.save(str(path))
+    extracted = DocxDocumentExtractor().extract(
+        path,
+        filename=path.name,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "wordprocessingml.document"
+        ),
+    )
+    document = MarkdownDocumentNormalizer().normalize(extracted)
+
+    drafts = MarkdownSectionStrategy(FixedSizeChunker(100)).split(document)
+
+    _assert_exact_spans(document, drafts)
+    assert document.metadata["file_name"] == "structure.docx"
+    assert [draft.metadata["heading_path"] for draft in drafts] == [
+        ["**安装**"],
+        ["**安装**", "**Docker**"],
+    ]
 
 
 def test_page_strategy_never_crosses_pages_and_preserves_page_numbers() -> None:

@@ -8,7 +8,12 @@ from comet_rag.engines.documents.normalization import (
     DocumentNormalizationStrategy,
     MarkdownDocumentNormalizer,
 )
-from comet_rag.ports import DocumentBlock, ExtractedDocument, NormalizedDocument
+from comet_rag.ports import (
+    DocumentBlock,
+    ExtractedDocument,
+    ExtractedPage,
+    NormalizedDocument,
+)
 
 
 def test_normalizes_shared_markdown_representation() -> None:
@@ -51,6 +56,37 @@ def test_normalization_is_idempotent_and_does_not_alias_metadata() -> None:
 
     assert first == second
     assert first.metadata == {"page_count": 2}
+
+
+def test_exact_page_fragments_become_spans_without_searching_repeated_text() -> None:
+    document = ExtractedDocument(
+        markdown="共同正文  \r\n\r\n共同正文  ",
+        pages=(
+            ExtractedPage(1, "共同正文  "),
+            ExtractedPage(2, "共同正文  "),
+        ),
+    )
+
+    result = MarkdownDocumentNormalizer().normalize(document)
+
+    assert result.markdown == "共同正文\n\n共同正文"
+    assert result.blocks == (
+        DocumentBlock("page", 0, 0, 4, page_number=1),
+        DocumentBlock("page", 1, 6, 10, page_number=2),
+    )
+
+
+def test_page_fragments_that_do_not_rebuild_document_fall_back_to_sections() -> None:
+    document = ExtractedDocument(
+        markdown="# 标题\n\n正文",
+        pages=(ExtractedPage(1, "另一份正文"),),
+    )
+
+    result = MarkdownDocumentNormalizer().normalize(document)
+
+    assert result.blocks == (
+        DocumentBlock("section", 0, 0, 8, heading_path=("标题",)),
+    )
 
 
 def test_normalizer_satisfies_strategy_protocol() -> None:
