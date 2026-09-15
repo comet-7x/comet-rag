@@ -2,8 +2,8 @@
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
 > 当前状态：M1～M3、仓库结构归一化及文档规范化前置重构已完成
-> 当前优先级：M4-T4 Pipeline / Task 单链路迁移
-> 最后更新：2026-09-14
+> 当前优先级：M4-T5 Markdown / Page 结构感知
+> 最后更新：2026-09-15
 
 ## 1. 目的
 
@@ -404,4 +404,4 @@ M4 先完成带位置的 Chunk 契约、固定/递归策略、Pipeline/Task 单�
 | 顶层 Parser/Converter 目录是否保留 | 否；格式专属代码归入 documents，ZIP 防护归入 documents/common |
 | Provider 私有辅助模块是否整理 | 已完成；模型适配器位于 `infrastructure/models`，MinerU 位于 `infrastructure/extractors` |
 | 完整语义分块是否是纯 Strategy | 否；Service 编排 EmbeddingPort，engines 只保留断点算法 |
-| 当前下一项工作 | M4-T4 Pipeline / Task 单链路迁移 |
+| 当前下一项工作 | M4-T5 Markdown / Page 结构感知 |

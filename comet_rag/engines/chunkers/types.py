@@ -49,11 +49,20 @@ class ChunkDraft:
     def __post_init__(self) -> None:
         if not self.text:
             raise ValueError("ChunkDraft.text 不能是空字符串")
+        if not isinstance(self.ordinal, int) or isinstance(self.ordinal, bool):
+            raise TypeError("ChunkDraft.ordinal 必须是 int")
         if self.ordinal < 0:
             raise ValueError("ChunkDraft.ordinal 必须大于等于 0")
         if (self.start_char is None) != (self.end_char is None):
             raise ValueError("start_char 与 end_char 必须同时提供或同时省略")
         if self.start_char is not None and self.end_char is not None:
+            if (
+                not isinstance(self.start_char, int)
+                or isinstance(self.start_char, bool)
+                or not isinstance(self.end_char, int)
+                or isinstance(self.end_char, bool)
+            ):
+                raise TypeError("start_char 与 end_char 必须是 int | None")
             if self.start_char < 0:
                 raise ValueError("start_char 必须大于等于 0")
             if self.end_char <= self.start_char:

@@ -436,6 +436,11 @@ class LimitsConfig(BaseModel):
         description="待执行任务数上限，超了直接拒收（HTTP 429）。0 表示不限。"
         "没有它的话，投递量一大队列就无限堆积",
     )
+    task_chunk_context_max_bytes: int = Field(
+        default=32 * 1024 * 1024,
+        gt=0,
+        description="ChunkDraft 跨 worker 持久化 payload 的字节上限",
+    )
     docx_max_archive_members: int = Field(
         default=10_000,
         gt=0,

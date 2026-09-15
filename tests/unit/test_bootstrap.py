@@ -502,6 +502,7 @@ def test_enabled_mineru_propagates_pdf_task_context_limit(
 ) -> None:
     config = make_config()
     enable_mineru(config, max_response_bytes=2048, max_markdown_bytes=1024)
+    config.limits.task_chunk_context_max_bytes = 4096
 
     context = build_context(
         config,
@@ -510,11 +511,13 @@ def test_enabled_mineru_propagates_pdf_task_context_limit(
     )
 
     assert context.extracted_text_limits == {"pdf": 1024}
+    assert context.max_chunk_context_bytes == 4096
     from comet_rag.tasks import get_runner
 
     runner = get_runner("ingest")
     assert isinstance(runner, IngestRunner)
     assert runner._max_extracted_text_bytes_by_type == {"pdf": 1024}  # noqa: SLF001
+    assert runner._max_chunk_context_bytes == 4096  # noqa: SLF001
 
 
 async def test_runner_registration_is_idempotent(embedding: FakeEmbedding) -> None:

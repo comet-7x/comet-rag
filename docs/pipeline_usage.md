@@ -191,6 +191,8 @@ class Chunk:
 | `file_type` | `str` | 如 `"docx"` |
 | `total_chunks` | `int` | 该文件产生的 chunk 总数 |
 | `chunk_index` | `int` | 当前 chunk 的序号（从 0 开始） |
+| `chunk_start` | `int` | 在规范 Markdown 中的起始字符位置（旧 Hook 可能缺失） |
+| `chunk_end` | `int` | 在规范 Markdown 中的结束字符位置（左闭右开） |
 
 ---
 
@@ -199,7 +201,7 @@ class Chunk:
 Pipeline 内部通过 `PipelineHooks` 注册表分发处理逻辑。增加新格式只需注册两个 hook：
 
 - **extractor**：`(LoadedResource, PipelineConfig) → ExtractedDocument`，负责把文件映射为通用提取结果
-- **chunker**（可选）：`(str, PipelineConfig) → list[str]`，自定义分块策略；不注册则回退到 `TextChunker`
+- **document_chunker**（可选）：`(NormalizedDocument, PipelineConfig) → list[ChunkDraft]`，自定义分块策略；不注册则回退到 `RecursiveChunker`
 
 所有提取结果都会在进入 Chunker 前经过统一的 `MarkdownDocumentNormalizer`。
 
@@ -208,8 +210,9 @@ Pipeline 内部通过 `PipelineHooks` 注册表分发处理逻辑。增加新格
 
 ```python
 from comet_rag.loaders import LoadedResource
+from comet_rag.engines.chunkers import ChunkDraft, RecursiveChunker
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.ports import ExtractedDocument
+from comet_rag.ports import ExtractedDocument, NormalizedDocument
 
 
 # 注册纯文本 extractor
@@ -232,13 +235,20 @@ def extract_markdown(
     )
 
 
-# 为 markdown 注册专用 chunker
-@PipelineHooks.chunker("md", "mdx")
-def chunk_markdown(text: str, config: PipelineConfig) -> list[str]:
-    from comet_rag.engines.chunkers.text_chunker import MdxChunker
-
-    return MdxChunker(config.chunk_size, config.chunk_overlap).chunk(text)
+# 为 markdown 注册文档级 chunker
+@PipelineHooks.document_chunker("md", "mdx")
+def chunk_markdown(
+    document: NormalizedDocument, config: PipelineConfig
+) -> list[ChunkDraft]:
+    return RecursiveChunker(
+        config.chunk_size,
+        config.chunk_overlap,
+    ).split(document)
 ```
+
+旧 `PipelineHooks.chunker(str, config) -> list[str]` 仍可运行，但会发出
+`DeprecationWarning`，且无法提供可信的字符位置；请在 0.3.0 前迁移到
+`document_chunker`。
 
 注册之后，`Pipeline` 无需任何修改即可处理这些格式：
 
@@ -421,8 +431,7 @@ chunks = code.chunk(text)
 
 `code_language` 支持 `py`、`ts`、`js`、`java`、`c`、`cpp`、`go`、`php`、`r`、
 `rust` 和 `html`；也接受 `python`、`typescript`、`javascript`、`c++`、`.py`
-和 `.rs` 等别名。`PythonChunker`、`TypeScriptChunker` 等旧语言类仍保留，
-但只是 `CodeRecursiveChunker` 的兼容配置门面，不再各自维护算法。
+和 `.rs` 等别名。代码分块只有这一个公开类，不再按语言维护子类。
 各 profile 的默认 `size/overlap` 为：
 
 | `code_language` | py | ts | js | java | c | cpp | go | php | r | rust | html |
@@ -436,7 +445,7 @@ engines 不强绑 tokenizer 依赖。`chunk_overlap` 是上限目标：递归策
 `start_char/end_char` 直接观察。
 
 原有 `TextChunker`、`DocxChunker`、`MdxChunker`、`CsvChunker`、`JsonChunker` 和
-`XmlChunker` 在 M4-T4 完成 Pipeline/Task 单链路迁移前继续作为兼容入口。
+`XmlChunker` 在整个 0.2.x 继续作为兼容入口，最早在 0.3.0 移除。
 
 ---
 

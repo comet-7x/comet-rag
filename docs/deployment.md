@@ -71,6 +71,7 @@ limits:
   model_queue: 256          # 闸门外的等待席位
   model_image_max_bytes: 20971520  # 本地模型图片上限（20 MiB）
   max_backlog: 1000         # 待执行任务上限，超了返回 429
+  task_chunk_context_max_bytes: 33554432  # CPU/IO worker 交接 payload 上限
 ```
 
 ### 3. 起进程

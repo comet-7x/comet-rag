@@ -8,12 +8,13 @@
 from __future__ import annotations
 
 import threading
+import warnings
 from pathlib import Path
 
 import pytest
 
 from comet_rag.engines.pipelines import HooksState, PipelineConfig, PipelineHooks
-from comet_rag.ports import ExtractedDocument
+from comet_rag.ports import ExtractedDocument, NormalizedDocument
 from comet_rag.ports.source import LoadedResource, SourceContent
 
 LoaderContent = LoadedResource
@@ -148,6 +149,21 @@ def test_chunker_dispatches_when_registered() -> None:
 def test_builtin_docx_hooks_are_registered() -> None:
     assert PipelineHooks.get_extractor("docx") is not None
     assert PipelineHooks.get_extractor("doc") is not None
+
+
+@pytest.mark.parametrize("file_type", ["docx", "unregistered"])
+def test_builtin_and_default_document_chunkers_do_not_use_legacy_adapter(
+    file_type: str,
+) -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        drafts = PipelineHooks.get_document_chunker(file_type)(
+            NormalizedDocument(markdown="正文。" * 20),
+            PipelineConfig(chunk_size=30, chunk_overlap=3),
+        )
+
+    assert drafts
+    assert not any(issubclass(item.category, DeprecationWarning) for item in caught)
 
 
 # ── 隔离（P8）───────────────────────────────────────────────────────────────

@@ -11,7 +11,6 @@ from comet_rag.engines.chunkers import (
     CodeLanguage,
     CodeRecursiveChunker,
     FixedSizeChunker,
-    PythonChunker,
     RecursiveChunker,
 )
 from comet_rag.ports import NormalizedDocument
@@ -184,16 +183,6 @@ def test_code_language_accepts_names_and_file_suffixes(
 def test_code_language_rejects_unknown_values() -> None:
     with pytest.raises(ValueError, match="code_language"):
         CodeRecursiveChunker("brainfuck")
-
-
-def test_legacy_language_class_is_only_a_configuration_facade() -> None:
-    text = "head\n\ndef repeated():\n    return 1\n" * 4
-    legacy = PythonChunker(chunk_size=48, chunk_overlap=6).split(_document(text))
-    unified = CodeRecursiveChunker(
-        CodeLanguage.PY, chunk_size=48, chunk_overlap=6
-    ).split(_document(text))
-
-    assert legacy == unified
 
 
 def test_explicit_empty_separator_profile_is_rejected() -> None:

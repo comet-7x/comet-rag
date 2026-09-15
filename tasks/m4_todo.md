@@ -1,8 +1,8 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T1～T3 已完成，下一项 M4-T4
-> 规格：`tasks/m4_spec.md` v1.1
-> 计划：`tasks/m4_plan.md` v1.1
+> 状态：M4-T1～T4 已完成，下一项 M4-T5
+> 规格：`tasks/m4_spec.md` v1.2
+> 计划：`tasks/m4_plan.md` v1.2
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
 
@@ -48,7 +48,7 @@
 - [x] 内部 split/merge 全程携带字符 span，不用事后 `find()`
 - [x] 支持注入 LengthFunction，默认值和单位写入文档
 - [x] 代码策略统一为 `CodeRecursiveChunker(code_language=...)`
-- [x] separator profiles 替代重复算法子类，保留公共兼容门面
+- [x] separator profiles 替代重复算法子类；发布前删除无调用方的代码语言子类
 - [x] 覆盖 CJK、重复文本、连续分隔符、代码前缀、超长 token 与空输入
 - [x] 明确并测试 best-effort overlap
 - [x] 反向改为事后 `find()` 与丢分隔符实现，确认对应性质测试会红
@@ -57,14 +57,14 @@
 
 ### M4-T4 — Pipeline / Task 单链路迁移（M）
 
-**依赖：** M4-T3
+**完成日期：** 09-15　**依赖：** M4-T3
 
-- [ ] 建立共享 Chunking Service/映射函数
-- [ ] Pipeline 与 IngestRunner 统一消费 NormalizedDocument 和 ChunkDraft
-- [ ] Task context 跨 worker 保存有界、可序列化的 ChunkDraft 结构
-- [ ] ID、document/request/system metadata 合并只有一份实现
-- [ ] 旧自定义 ChunkHook 与公开 Chunker 示例继续工作并有迁移警告
-- [ ] 同步、异步、流式、任务入库的同源文档产物一致
+- [x] 建立共享 Chunking Service/映射函数
+- [x] Pipeline 与 IngestRunner 统一消费 NormalizedDocument 和 ChunkDraft
+- [x] Task context 跨 worker 保存有界、可序列化的 ChunkDraft 结构
+- [x] ID、document/request/system metadata 合并只有一份实现
+- [x] 旧自定义 ChunkHook 与公开 Chunker 示例继续工作并有迁移警告
+- [x] 同步、异步、流式、任务入库的同源文档产物一致
 
 **验收：** 两条入口不再各自拼 metadata/ID；失败重试仍从 chunking/indexing 正确续跑。
 

@@ -21,9 +21,7 @@ from comet_rag.engines.chunkers import (
     DocxChunker,
     JsonChunker,
     MdxChunker,
-    PythonChunker,
     TextChunker,
-    TypeScriptChunker,
     XmlChunker,
 )
 
@@ -31,8 +29,6 @@ ALL_CHUNKERS = [
     TextChunker,
     DocxChunker,
     MdxChunker,
-    PythonChunker,
-    TypeScriptChunker,
     CsvChunker,
     JsonChunker,
     XmlChunker,
@@ -159,8 +155,6 @@ DOCUMENTED_DEFAULTS = {
     TextChunker: (1500, 150),
     DocxChunker: (2500, 250),
     MdxChunker: (3000, 300),
-    PythonChunker: (1500, 150),
-    TypeScriptChunker: (1500, 150),
     CsvChunker: (1200, 100),
     JsonChunker: (2000, 200),
     XmlChunker: (2500, 250),

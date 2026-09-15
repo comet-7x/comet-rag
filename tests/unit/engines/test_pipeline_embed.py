@@ -17,11 +17,12 @@ from pathlib import Path
 
 import pytest
 
+from comet_rag.engines.chunkers import ChunkDraft
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.sources import BaseLoader, LoaderContent, SourceContent
 from comet_rag.pipeline import Pipeline
-from comet_rag.ports import ExtractedDocument
+from comet_rag.ports import ExtractedDocument, NormalizedDocument
 
 CHUNK_COUNT = 200
 STUB_TYPE = "stub"
@@ -112,9 +113,14 @@ def make_pipeline(source_file: Path, model: RecordingEmbeddingModel):
         ) -> ExtractedDocument:
             return ExtractedDocument(markdown="x")
 
-        @PipelineHooks.chunker(STUB_TYPE)
-        def _chunk(text: str, config: PipelineConfig) -> list[str]:
-            return [f"chunk-{i}" for i in range(CHUNK_COUNT)]
+        @PipelineHooks.document_chunker(STUB_TYPE)
+        def _chunk(
+            document: NormalizedDocument, config: PipelineConfig
+        ) -> list[ChunkDraft]:
+            return [
+                ChunkDraft(text=f"chunk-{i}", ordinal=i)
+                for i in range(CHUNK_COUNT)
+            ]
 
         config = PipelineConfig(embed=embed, embed_batch_size=embed_batch_size, **kw)
         return Pipeline(
@@ -204,6 +210,23 @@ async def test_all_entry_points_embed_every_chunk(make_pipeline) -> None:
     assert all([c.embedding async for c in make_pipeline().astream_run("任意")])
 
 
+async def test_all_entry_points_materialize_identical_chunks(make_pipeline) -> None:
+    def snapshot(chunks):
+        return [(chunk.id, chunk.text, chunk.metadata) for chunk in chunks]
+
+    sync_result = make_pipeline(embed=False).run("任意").chunks
+    async_result = (await make_pipeline(embed=False).arun("任意")).chunks
+    stream_result = list(make_pipeline(embed=False).stream_run("任意"))
+    async_stream_result = [
+        chunk async for chunk in make_pipeline(embed=False).astream_run("任意")
+    ]
+
+    expected = snapshot(sync_result)
+    assert snapshot(async_result) == expected
+    assert snapshot(stream_result) == expected
+    assert snapshot(async_stream_result) == expected
+
+
 async def test_sync_and_async_normalize_before_chunking(make_pipeline) -> None:
     pipeline = make_pipeline(embed=False)
     received: list[str] = []
@@ -217,10 +240,19 @@ async def test_sync_and_async_normalize_before_chunking(make_pipeline) -> None:
             metadata={"provider": "fixture"},
         )
 
-    @PipelineHooks.chunker(STUB_TYPE)
-    def _chunk(text: str, config: PipelineConfig) -> list[str]:
-        received.append(text)
-        return [text]
+    @PipelineHooks.document_chunker(STUB_TYPE)
+    def _chunk(
+        document: NormalizedDocument, config: PipelineConfig
+    ) -> list[ChunkDraft]:
+        received.append(document.markdown)
+        return [
+            ChunkDraft(
+                text=document.markdown,
+                ordinal=0,
+                start_char=0,
+                end_char=len(document.markdown),
+            )
+        ]
 
     sync_result = pipeline.run("任意")
     async_result = await pipeline.arun("任意")

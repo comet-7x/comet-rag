@@ -10,41 +10,24 @@ from __future__ import annotations
 import pytest
 
 from comet_rag.engines.chunkers import (
-    CChunker,
-    CppChunker,
-    GoChunker,
-    HtmlChunker,
-    JavaChunker,
-    JavaScriptChunker,
+    CodeLanguage,
+    CodeRecursiveChunker,
     Language,
     MdxChunker,
-    PhpChunker,
-    RChunker,
-    RustChunker,
     TextChunker,
 )
 
-OTHER_CODE_CHUNKERS = [
-    CChunker,
-    CppChunker,
-    GoChunker,
-    HtmlChunker,
-    JavaChunker,
-    JavaScriptChunker,
-    PhpChunker,
-    RChunker,
-    RustChunker,
-]
 
-
-@pytest.mark.parametrize(
-    "cls", OTHER_CODE_CHUNKERS, ids=[c.__name__ for c in OTHER_CODE_CHUNKERS]
-)
-def test_all_code_chunkers_split_without_losing_content(cls) -> None:
-    """11 个代码分块器都要能跑通，不只是被主参数化覆盖的那两个。"""
+@pytest.mark.parametrize("language", list(CodeLanguage))
+def test_all_code_profiles_split_without_losing_content(
+    language: CodeLanguage,
+) -> None:
+    """11 种语言只切换 profile，全部复用同一个代码策略。"""
     source = "\n".join(f"line_{i} = compute(value_{i})" for i in range(60))
 
-    chunks = cls(chunk_size=120, chunk_overlap=0).chunk(source)
+    chunks = CodeRecursiveChunker(
+        language, chunk_size=120, chunk_overlap=0
+    ).chunk(source)
 
     assert chunks
     assert "".join(chunks) == source

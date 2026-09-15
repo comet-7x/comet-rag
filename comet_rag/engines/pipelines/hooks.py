@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import warnings
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -40,6 +41,13 @@ def adapt_legacy_chunk_hook(hook: ChunkHook) -> DocumentChunkHook:
     def adapted(
         document: NormalizedDocument, config: PipelineConfig
     ) -> list[ChunkDraft]:
+        warnings.warn(
+            "PipelineHooks.chunker(str, config) 已弃用；请迁移到 "
+            "PipelineHooks.document_chunker(NormalizedDocument, config)。"
+            "兼容入口最早在 0.3.0 移除。",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         texts = hook(document.markdown, config)
         if not isinstance(texts, list):
             raise TypeError("旧 ChunkHook 必须返回 list[str]")
@@ -193,7 +201,9 @@ class HookRegistry:
     def get_document_chunker(self, file_type: str) -> DocumentChunkHook:
         if chunker := self._document_chunkers.get(file_type):
             return chunker
-        return adapt_legacy_chunk_hook(self.get_chunker(file_type))
+        if legacy := self._chunkers.get(file_type):
+            return adapt_legacy_chunk_hook(legacy)
+        return _default_document_chunk
 
 
 class PipelineHooks:
@@ -312,7 +322,9 @@ class PipelineHooks:
     def get_document_chunker(cls, file_type: str) -> DocumentChunkHook:
         if chunker := cls._document_chunkers.get(file_type):
             return chunker
-        return adapt_legacy_chunk_hook(cls.get_chunker(file_type))
+        if legacy := cls._chunkers.get(file_type):
+            return adapt_legacy_chunk_hook(legacy)
+        return _default_document_chunk
 
 
 # ── Built-in extractors ─────────────────────────────────────────────────────
@@ -385,8 +397,20 @@ def _default_chunk(text: str, config: PipelineConfig) -> list[str]:
     return TextChunker(config.chunk_size, config.chunk_overlap).chunk(text)
 
 
-@PipelineHooks.chunker("docx", "doc")
-def _chunk_docx(text: str, config: PipelineConfig) -> list[str]:
-    from comet_rag.engines.chunkers.text_chunker import DocxChunker
+def _default_document_chunk(
+    document: NormalizedDocument, config: PipelineConfig
+) -> list[ChunkDraft]:
+    from comet_rag.engines.chunkers import SEPARATORS_EN, RecursiveChunker
 
-    return DocxChunker(config.chunk_size, config.chunk_overlap).chunk(text)
+    return RecursiveChunker(
+        config.chunk_size,
+        config.chunk_overlap,
+        separators=SEPARATORS_EN,
+    ).split(document)
+
+
+@PipelineHooks.document_chunker("docx", "doc")
+def _document_chunk_docx(
+    document: NormalizedDocument, config: PipelineConfig
+) -> list[ChunkDraft]:
+    return _default_document_chunk(document, config)

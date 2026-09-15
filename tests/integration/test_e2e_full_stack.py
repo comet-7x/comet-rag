@@ -36,6 +36,7 @@ from tests.e2e.test_ingest_search import (  # 复用替身，不重写
     STUB_TYPE,
     KeywordEmbedding,
     _use_stub_loader,
+    line_chunk_drafts,
     poll_until_terminal,
 )
 from tests.integration.conftest import truncate_tables
@@ -60,9 +61,7 @@ def hooks():
     def _extract(lc, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
-    @PipelineHooks.chunker(STUB_TYPE)
-    def _chunk(text_: str, config: PipelineConfig) -> list[str]:
-        return [line for line in text_.splitlines() if line.strip()]
+    PipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
 
     yield
 

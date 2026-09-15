@@ -18,16 +18,23 @@ from comet_rag.engines.documents.normalization import (
 )
 from comet_rag.engines.embedding.batch import aembed_documents
 from comet_rag.engines.pipelines import HookProvider, PipelineConfig, PipelineHooks
-from comet_rag.engines.utils import compute_sha256
 from comet_rag.ports import (
     BaseVectorStore,
     DocumentResourceLimitExceeded,
     EmbeddingPort,
     LoadedResource,
+    NormalizedDocument,
     RetryableDocumentUpstreamError,
     SourceContent,
     SourceLoaderPort,
     VectorRecord,
+)
+from comet_rag.services.chunking import (
+    ChunkingService,
+    chunk_id,
+    dump_chunk_drafts,
+    load_chunk_drafts,
+    materialize_chunk_drafts,
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.tasks import (
@@ -42,6 +49,7 @@ from comet_rag.tasks import (
 )
 
 INGEST_KIND = "ingest"
+DEFAULT_MAX_CHUNK_CONTEXT_BYTES = 32 * 1024 * 1024
 
 #: 这些异常意味着"外部依赖此刻不可用"，重试有意义。
 #: 解析失败、维度不符、文件格式不支持等确定性错误**不在此列** ——
@@ -131,6 +139,7 @@ class IngestRunner:
         hooks: HookProvider | None = None,
         normalizer: DocumentNormalizationStrategy | None = None,
         max_extracted_text_bytes_by_type: Mapping[str, int] | None = None,
+        max_chunk_context_bytes: int = DEFAULT_MAX_CHUNK_CONTEXT_BYTES,
     ) -> None:
         self._embedding_model = embedding_model
         self._vector_store = vector_store
@@ -139,6 +148,10 @@ class IngestRunner:
         self._config = config or PipelineConfig()
         self._hooks = hooks or PipelineHooks
         self._normalizer = normalizer or MarkdownDocumentNormalizer()
+        self._chunking = ChunkingService(self._config, self._hooks)
+        if max_chunk_context_bytes <= 0:
+            raise ValueError("max_chunk_context_bytes 必须大于 0")
+        self._max_chunk_context_bytes = max_chunk_context_bytes
         self._max_extracted_text_bytes_by_type = {
             file_type.lower(): limit
             for file_type, limit in (max_extracted_text_bytes_by_type or {}).items()
@@ -237,14 +250,23 @@ class IngestRunner:
         task = await ctx.snapshot()
         text: str = task.context["text"]
         file_type: str = task.context["file_type"]
-
-        chunker = self._hooks.get_chunker(file_type)
-        chunks = await asyncio.to_thread(chunker, text, self._config)
+        raw_document_metadata = task.context.get("document_metadata")
+        document_metadata = (
+            dict(raw_document_metadata)
+            if isinstance(raw_document_metadata, dict)
+            else {}
+        )
+        document = NormalizedDocument(markdown=text, metadata=document_metadata)
+        drafts = await asyncio.to_thread(self._chunking.split, file_type, document)
+        payload = dump_chunk_drafts(
+            drafts,
+            max_bytes=self._max_chunk_context_bytes,
+        )
 
         # 清掉原始文本：留着的话 context 会同时装文本和 chunk，体积翻倍，
         # 而后续阶段再也用不到它。
-        await ctx.put(chunks=chunks, text=None)
-        await ctx.report(message=f"已切分 {len(chunks)} 块")
+        await ctx.put(chunk_drafts=payload, chunks=None, text=None)
+        await ctx.report(message=f"已切分 {len(drafts)} 块")
 
     async def _drop_stale_tail(
         self, kb_id: str, source_id: str, new_count: int, previous: int
@@ -256,7 +278,7 @@ class IngestRunner:
         """
         if previous <= new_count:
             return
-        stale = [compute_sha256(f"{source_id}:{i}") for i in range(new_count, previous)]
+        stale = [chunk_id(source_id, index) for index in range(new_count, previous)]
         await self._vector_store.adelete(kb_id, ids=stale)
         logger.info(f"清理旧版本多余的 {len(stale)} 块 source_id={source_id[:12]}")
 
@@ -264,7 +286,7 @@ class IngestRunner:
         """向量化并写入。按窗口边算边写，内存占用与文档大小无关。"""
         task = await ctx.snapshot()
         request = IngestRequest.model_validate(task.request)
-        chunks: list[str] = task.context["chunks"]
+        drafts = load_chunk_drafts(task.context["chunk_drafts"])
         source_id: str = task.context["source_id"]
         file_type: str = task.context["file_type"]
         raw_document_metadata = task.context.get("document_metadata")
@@ -292,15 +314,18 @@ class IngestRunner:
                 request.kb_id, filter={"source_id": source_id}
             )
 
-            base_metadata = {
-                **document_metadata,
-                **request.metadata,
-                "kb_id": request.kb_id,  # spec A5 的租户维度
-                "source": task.context.get("source"),
-                "source_id": source_id,
-                "file_type": file_type,
-                "total_chunks": len(chunks),
-            }
+            source = task.context.get("source")
+            if not isinstance(source, str):
+                raise TypeError("Task context.source 必须是 str")
+            chunks = materialize_chunk_drafts(
+                drafts,
+                source_id=source_id,
+                source=source,
+                file_type=file_type,
+                document_metadata=document_metadata,
+                request_metadata=request.metadata,
+                kb_id=request.kb_id,
+            )
 
             window = self._config.embed_batch_size
             written = 0
@@ -309,19 +334,17 @@ class IngestRunner:
                 batch = chunks[start : start + window]
                 embeddings = await aembed_documents(
                     self._embedding_model,
-                    batch,
+                    [chunk.text for chunk in batch],
                     max_concurrency=self._config.max_concurrency,
                 )
                 records = [
                     VectorRecord(
-                        id=compute_sha256(f"{source_id}:{start + offset}"),
-                        text=text,
+                        id=chunk.id,
+                        text=chunk.text,
                         embedding=embedding,
-                        metadata={**base_metadata, "chunk_index": start + offset},
+                        metadata=chunk.metadata,
                     )
-                    for offset, (text, embedding) in enumerate(
-                        zip(batch, embeddings, strict=True)
-                    )
+                    for chunk, embedding in zip(batch, embeddings, strict=True)
                 ]
                 await self._vector_store.aupsert(request.kb_id, records)
                 written += len(records)
@@ -340,7 +363,7 @@ class IngestRunner:
             f"入库完成 kb={request.kb_id} source_id={source_id[:12]} chunks={written}"
         )
         # chunks 已经落进向量库，没必要继续占着任务表
-        await ctx.put(chunks=None)
+        await ctx.put(chunk_drafts=None, chunks=None)
         return Done(
             result=IngestOutcome(
                 kb_id=request.kb_id,
@@ -361,6 +384,7 @@ def register_ingest_runner(runner: IngestRunner) -> None:
 
 
 __all__ = [
+    "DEFAULT_MAX_CHUNK_CONTEXT_BYTES",
     "INGEST_KIND",
     "IngestOutcome",
     "IngestRequest",

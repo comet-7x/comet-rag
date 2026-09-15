@@ -31,6 +31,7 @@ from tests.e2e.test_ingest_search import (
     STUB_TYPE,
     KeywordEmbedding,
     _use_stub_loader,
+    line_chunk_drafts,
     poll_until_terminal,
 )
 
@@ -74,9 +75,7 @@ def hooks():
     def _extract(lc, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
-    @PipelineHooks.chunker(STUB_TYPE)
-    def _chunk(text: str, config: PipelineConfig) -> list[str]:
-        return [line for line in text.splitlines() if line.strip()]
+    PipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
 
     yield
 

@@ -6,20 +6,7 @@ from .base_chunker import (
     Language,
     RecursiveCharacterTextSplitter,
 )
-from .code_chunker import (
-    CChunker,
-    CodeRecursiveChunker,
-    CppChunker,
-    GoChunker,
-    HtmlChunker,
-    JavaChunker,
-    JavaScriptChunker,
-    PhpChunker,
-    PythonChunker,
-    RChunker,
-    RustChunker,
-    TypeScriptChunker,
-)
+from .code_chunker import CodeRecursiveChunker
 from .fixed import FixedSizeChunker
 from .profiles import CodeLanguage
 from .protocol import ChunkingStrategy
@@ -53,17 +40,6 @@ __all__ = [
     "FixedSizeChunker",
     "RecursiveChunker",
     "CodeRecursiveChunker",
-    "PythonChunker",
-    "TypeScriptChunker",
-    "JavaScriptChunker",
-    "JavaChunker",
-    "CChunker",
-    "CppChunker",
-    "GoChunker",
-    "PhpChunker",
-    "RChunker",
-    "RustChunker",
-    "HtmlChunker",
     "ChunkDraft",
     "ChunkingStrategy",
     "CHUNK_FACT_METADATA_KEYS",

@@ -25,11 +25,12 @@ from comet_rag.config.schemas import (
     IngestPolicyConfig,
     ServerConfig,
 )
+from comet_rag.engines.chunkers import ChunkDraft
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
 from comet_rag.infrastructure.sources import BaseLoader, LoaderContent, SourceContent
-from comet_rag.ports import ExtractedDocument
+from comet_rag.ports import ExtractedDocument, NormalizedDocument
 from comet_rag.services.ingestion import IngestRunner, register_ingest_runner
 
 pytestmark = pytest.mark.e2e
@@ -43,6 +44,26 @@ DOCUMENT = {
     "香蕉": "香蕉适合在热带地区种植。",
     "橙子": "橙子的酸度取决于成熟度。",
 }
+
+
+def line_chunk_drafts(
+    document: NormalizedDocument, config: PipelineConfig
+) -> list[ChunkDraft]:
+    drafts: list[ChunkDraft] = []
+    cursor = 0
+    for line in document.markdown.splitlines(keepends=True):
+        text = line.rstrip("\r\n")
+        if text.strip():
+            drafts.append(
+                ChunkDraft(
+                    text=text,
+                    ordinal=len(drafts),
+                    start_char=cursor,
+                    end_char=cursor + len(text),
+                )
+            )
+        cursor += len(line)
+    return drafts
 
 
 # ── 替身：唯一被替换的是"打网络的那两个" ───────────────────────────────────
@@ -107,9 +128,7 @@ def hooks(document: Path):
     ) -> ExtractedDocument:
         return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
-    @PipelineHooks.chunker(STUB_TYPE)
-    def _chunk(text: str, config: PipelineConfig) -> list[str]:
-        return [line for line in text.splitlines() if line.strip()]
+    PipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
 
     yield
 

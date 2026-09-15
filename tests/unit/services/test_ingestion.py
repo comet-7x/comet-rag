@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 import pytest
 
+from comet_rag.engines.chunkers import ChunkDraft
 from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.persistence.knowledge_base import (
@@ -21,7 +22,12 @@ from comet_rag.infrastructure.persistence.knowledge_base import (
 )
 from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
 from comet_rag.infrastructure.sources import BaseLoader, LoaderContent, SourceContent
-from comet_rag.ports import ExtractedDocument, RetryableDocumentUpstreamError
+from comet_rag.pipeline import Pipeline
+from comet_rag.ports import (
+    ExtractedDocument,
+    NormalizedDocument,
+    RetryableDocumentUpstreamError,
+)
 from comet_rag.services.ingestion import (
     INGEST_KIND,
     IngestRunner,
@@ -33,6 +39,7 @@ from comet_rag.tasks import (
     InProcessExecutor,
     TaskService,
     TaskStatus,
+    get_runner,
 )
 from comet_rag.tasks.runner import unregister
 from tests.contracts.support import wait_for_terminal
@@ -135,10 +142,20 @@ def stub_hooks(calls: dict[str, int]) -> Iterator[None]:
         calls["extract"] += 1
         return ExtractedDocument(markdown="段落一。段落二。段落三。")
 
-    @PipelineHooks.chunker(STUB_TYPE)
-    def _chunk(text: str, config: PipelineConfig) -> list[str]:
+    @PipelineHooks.document_chunker(STUB_TYPE)
+    def _chunk(
+        document: NormalizedDocument, config: PipelineConfig
+    ) -> list[ChunkDraft]:
         calls["chunk"] += 1
-        return ["段落一。", "段落二。", "段落三。"]
+        return [
+            ChunkDraft(
+                text=document.markdown[start:end],
+                ordinal=ordinal,
+                start_char=start,
+                end_char=end,
+            )
+            for ordinal, (start, end) in enumerate(((0, 4), (4, 8), (8, 12)))
+        ]
 
     yield
 
@@ -213,6 +230,32 @@ async def test_ingest_writes_all_chunks(
     assert await store.acount(KB) == 3
 
 
+async def test_library_pipeline_and_task_ingest_materialize_the_same_chunks(
+    svc: TaskService,
+    store: InMemoryVectorStore,
+    loader: StubLoader,
+) -> None:
+    pipeline_result = Pipeline(
+        loader=loader,
+        config=PipelineConfig(embed=False, embed_batch_size=2, max_concurrency=4),
+    ).run("任意来源")
+
+    task = await svc.submit(INGEST_KIND, request())
+    done = await wait_for_terminal(svc.store, task.task_id)
+    assert done.status is TaskStatus.SUCCEEDED, done.error
+
+    records = sorted(
+        store.snapshot()[KB], key=lambda item: item["metadata"]["chunk_index"]
+    )
+    assert [(item["id"], item["text"]) for item in records] == [
+        (chunk.id, chunk.text) for chunk in pipeline_result.chunks
+    ]
+    for record, chunk in zip(records, pipeline_result.chunks, strict=True):
+        task_metadata = dict(record["metadata"])
+        assert task_metadata.pop("kb_id") == KB
+        assert task_metadata == chunk.metadata
+
+
 async def test_ingest_prefers_async_extractor(
     svc: TaskService, calls: dict[str, int]
 ) -> None:
@@ -243,10 +286,19 @@ async def test_ingest_normalizes_before_chunking(svc: TaskService) -> None:
     ) -> ExtractedDocument:
         return ExtractedDocument(markdown="第一段  \r\n\r\n\r\n第二段\u00a0正文\r\n")
 
-    @PipelineHooks.chunker(STUB_TYPE)
-    def _chunk(text: str, config: PipelineConfig) -> list[str]:
-        received.append(text)
-        return [text]
+    @PipelineHooks.document_chunker(STUB_TYPE)
+    def _chunk(
+        document: NormalizedDocument, config: PipelineConfig
+    ) -> list[ChunkDraft]:
+        received.append(document.markdown)
+        return [
+            ChunkDraft(
+                text=document.markdown,
+                ordinal=0,
+                start_char=0,
+                end_char=len(document.markdown),
+            )
+        ]
 
     task = await svc.submit(INGEST_KIND, request())
     done = await wait_for_terminal(svc.store, task.task_id)
@@ -267,6 +319,8 @@ async def test_every_chunk_carries_kb_id(
     assert all(h.metadata["kb_id"] == KB for h in hits)
     assert all("source_id" in h.metadata for h in hits)
     assert sorted(h.metadata["chunk_index"] for h in hits) == [0, 1, 2]
+    assert sorted(h.metadata["chunk_start"] for h in hits) == [0, 4, 8]
+    assert sorted(h.metadata["chunk_end"] for h in hits) == [4, 8, 12]
 
 
 async def test_extra_metadata_is_attached(
@@ -334,6 +388,7 @@ async def test_large_intermediate_state_is_cleared(svc: TaskService) -> None:
 
     assert done.context.get("text") is None
     assert done.context.get("chunks") is None
+    assert done.context.get("chunk_drafts") is None
     assert done.context["source_id"], "但溯源信息要留着"
     assert done.context["extracted_text_bytes"] == len(
         "段落一。段落二。段落三。".encode()
@@ -503,6 +558,23 @@ async def test_client_4xx_is_not_retriable(
     assert done.error.retriable is False
 
 
+async def test_chunk_payload_is_bounded_before_worker_handoff(
+    svc: TaskService, store: InMemoryVectorStore
+) -> None:
+    runner = get_runner(INGEST_KIND)
+    assert isinstance(runner, IngestRunner)
+    runner._max_chunk_context_bytes = 20  # noqa: SLF001
+
+    task = await svc.submit(INGEST_KIND, request(), max_attempts=3)
+    done = await wait_for_terminal(svc.store, task.task_id)
+
+    assert done.status is TaskStatus.FAILED
+    assert done.attempts == 1
+    assert done.error is not None
+    assert "payload" in done.error.message
+    assert await store.acount(KB) == 0
+
+
 async def test_unsupported_file_type_fails_fast(
     svc: TaskService, loader: StubLoader
 ) -> None:
@@ -549,9 +621,11 @@ async def test_reingest_removes_chunks_that_no_longer_exist(
 
     with PipelineHooks.temporary():
 
-        @PipelineHooks.chunker(STUB_TYPE)
-        def _fewer(text: str, config: PipelineConfig) -> list[str]:
-            return ["只剩一块。"]
+        @PipelineHooks.document_chunker(STUB_TYPE)
+        def _fewer(
+            document: NormalizedDocument, config: PipelineConfig
+        ) -> list[ChunkDraft]:
+            return [ChunkDraft(text="只剩一块。", ordinal=0)]
 
         again = await svc.submit(INGEST_KIND, request())
         await wait_for_terminal(svc.store, again.task_id)
@@ -596,9 +670,11 @@ async def test_reingest_never_leaves_the_document_missing(
     try:
         with PipelineHooks.temporary():
 
-            @PipelineHooks.chunker(STUB_TYPE)
-            def _fewer(text: str, config: PipelineConfig) -> list[str]:
-                return ["只剩一块。"]
+            @PipelineHooks.document_chunker(STUB_TYPE)
+            def _fewer(
+                document: NormalizedDocument, config: PipelineConfig
+            ) -> list[ChunkDraft]:
+                return [ChunkDraft(text="只剩一块。", ordinal=0)]
 
             again = await svc.submit(INGEST_KIND, request())
             await wait_for_terminal(svc.store, again.task_id)

@@ -536,6 +536,7 @@ def build_context(
             if mineru_extractor is not None
             else {}
         ),
+        max_chunk_context_bytes=config.limits.task_chunk_context_max_bytes,
         _extra_closers=[
             ingest_loader,
             *([mineru_extractor] if mineru_extractor is not None else []),

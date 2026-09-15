@@ -11,7 +11,6 @@ from comet_rag.engines.documents.normalization import (
 from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
 from comet_rag.engines.pipelines.hooks import HookProvider, PipelineHooks
 from comet_rag.engines.pipelines.types import Chunk, PipelineConfig, PipelineResult
-from comet_rag.engines.utils import compute_sha256
 from comet_rag.ports import (
     EmbeddingPort,
     ExtractedDocument,
@@ -19,6 +18,7 @@ from comet_rag.ports import (
     SourceLoaderPort,
 )
 from comet_rag.ports.source import LoadedResource, SourceContent
+from comet_rag.services.chunking import ChunkingService, materialize_chunk_drafts
 
 LoaderContent = LoadedResource
 
@@ -38,6 +38,7 @@ class Pipeline:
         self._embedding_model = embedding_model
         self._hooks = hooks or PipelineHooks
         self._normalizer = normalizer or MarkdownDocumentNormalizer()
+        self._chunking = ChunkingService(self._config, self._hooks)
 
     def run(self, source: str | Path | SourceContent) -> PipelineResult:
         lc = self._load(source)
@@ -124,22 +125,22 @@ class Pipeline:
     def _chunk(
         self, lc: LoaderContent, file_type: str, document: NormalizedDocument
     ) -> list[Chunk]:
-        texts = self._hooks.get_chunker(file_type)(document.markdown, self._config)
+        drafts = self._chunking.split(file_type, document)
         source_id = lc.source.source_id
-        base_meta = {
-            **document.metadata,
-            "source": lc.source.source,
-            "source_id": source_id,
-            "file_type": file_type,
-            "total_chunks": len(texts),
-        }
+        materialized = materialize_chunk_drafts(
+            drafts,
+            source_id=source_id,
+            source=lc.source.source,
+            file_type=file_type,
+            document_metadata=document.metadata,
+        )
         return [
             Chunk(
-                id=compute_sha256(f"{source_id}:{i}"),
-                text=t,
-                metadata={**base_meta, "chunk_index": i},
+                id=item.id,
+                text=item.text,
+                metadata=item.metadata,
             )
-            for i, t in enumerate(texts)
+            for item in materialized
         ]
 
     def _load(self, source: str | Path | SourceContent) -> LoaderContent:

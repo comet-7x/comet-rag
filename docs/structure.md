@@ -139,13 +139,15 @@ flowchart TD
         MG --> MU["infrastructure/extractors<br/>mineru-api / mineru-router"]
         DOCX --> N["DocumentNormalizer<br/>统一 Markdown · 保留 metadata"]
         MU --> N
-        N --> G["chunking · CPU 道<br/>chunker"]
-        G -.->|"Handoff 移交道次"| H["indexing · IO 道"]
+        N --> G["ChunkingService · CPU 道<br/>NormalizedDocument → ChunkDraft"]
+        G --> GP["JSON 友好的 ChunkDraft payload<br/>有字节上限"]
+        GP -.->|"Handoff 移交道次"| H["indexing · IO 道"]
     end
 
     H --> KB{"知识库存在？<br/>模型与建库时一致？"}
     KB -->|否| KBX["失败：不允许跨模型混写同一集合"]
-    KB -->|是| I["engines/embedding/batch<br/>按 batch_limit 切块<br/>max_concurrency 控并发"]
+    KB -->|是| MAT["共享 materializer<br/>统一 ID · metadata · 字符位置"]
+    MAT --> I["engines/embedding/batch<br/>按 batch_limit 切块<br/>max_concurrency 控并发"]
     I --> GATE{{"进程级闸门 Gate"}}
     GATE --> J["EmbeddingPort.aembed_batch"]
     J --> K["infrastructure/models<br/>Qwen · OpenAI 兼容"]
@@ -155,6 +157,8 @@ flowchart TD
 
 窗口（`embed_batch_size`）、每请求条数（`batch_limit`）、并发数
 （`max_concurrency`）是**三个不同的旋钮**，见 `docs/model_usage.md`。
+库 `Pipeline` 与服务 `IngestRunner` 共用同一个 `ChunkingService` 和
+materializer，因此同源文档的 chunk ID、顺序和基础 metadata 不会因入口不同而漂移。
 
 ## 检索流程
 

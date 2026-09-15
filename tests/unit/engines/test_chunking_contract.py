@@ -53,26 +53,48 @@ def test_chunk_draft_copies_and_freezes_metadata() -> None:
 
 
 @pytest.mark.parametrize(
-    ("kwargs", "message"),
+    ("kwargs", "exception", "message"),
     [
-        ({"text": "", "ordinal": 0}, "空字符串"),
-        ({"text": "正文", "ordinal": -1}, "ordinal"),
-        ({"text": "正文", "ordinal": 0, "start_char": 0}, "同时提供"),
+        ({"text": "", "ordinal": 0}, ValueError, "空字符串"),
+        ({"text": "正文", "ordinal": True}, TypeError, "ordinal"),
+        ({"text": "正文", "ordinal": "0"}, TypeError, "ordinal"),
+        ({"text": "正文", "ordinal": -1}, ValueError, "ordinal"),
+        (
+            {"text": "正文", "ordinal": 0, "start_char": 0},
+            ValueError,
+            "同时提供",
+        ),
+        (
+            {"text": "正文", "ordinal": 0, "start_char": True, "end_char": 1},
+            TypeError,
+            "int",
+        ),
+        (
+            {"text": "正文", "ordinal": 0, "start_char": 0, "end_char": "1"},
+            TypeError,
+            "int",
+        ),
         (
             {"text": "正文", "ordinal": 0, "start_char": -1, "end_char": 1},
+            ValueError,
             "start_char",
         ),
         (
             {"text": "正文", "ordinal": 0, "start_char": 2, "end_char": 2},
+            ValueError,
             "end_char",
         ),
-        ({"text": "正文", "ordinal": 0, "metadata": {"": 1}}, "非空字符串"),
+        (
+            {"text": "正文", "ordinal": 0, "metadata": {"": 1}},
+            ValueError,
+            "非空字符串",
+        ),
     ],
 )
 def test_chunk_draft_rejects_invalid_state(
-    kwargs: dict[str, object], message: str
+    kwargs: dict[str, object], exception: type[Exception], message: str
 ) -> None:
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(exception, match=message):
         ChunkDraft(**kwargs)  # type: ignore[arg-type]
 
 
@@ -144,7 +166,8 @@ def test_legacy_adapter_uses_markdown_without_guessing_positions() -> None:
         markdown="重复重复",
         metadata={"provider": "fixture"},
     )
-    drafts = adapt_legacy_chunk_hook(legacy)(document, PipelineConfig())
+    with pytest.warns(DeprecationWarning, match="document_chunker"):
+        drafts = adapt_legacy_chunk_hook(legacy)(document, PipelineConfig())
 
     assert received == ["重复重复"]
     assert [draft.ordinal for draft in drafts] == [0, 1]
@@ -158,8 +181,13 @@ def test_legacy_adapter_rejects_invalid_results(bad_result: object) -> None:
     def legacy(text: str, config: PipelineConfig) -> list[str]:
         return cast("list[str]", bad_result)
 
-    with pytest.raises((TypeError, ValueError)):
-        adapt_legacy_chunk_hook(legacy)(NormalizedDocument(markdown="正文"), PipelineConfig())
+    with (
+        pytest.warns(DeprecationWarning, match="document_chunker"),
+        pytest.raises((TypeError, ValueError)),
+    ):
+        adapt_legacy_chunk_hook(legacy)(
+            NormalizedDocument(markdown="正文"), PipelineConfig()
+        )
 
 
 def test_document_chunker_registration_is_case_insensitive() -> None:
@@ -181,9 +209,10 @@ def test_document_chunker_falls_back_to_legacy_registration() -> None:
         return [text]
 
     document = NormalizedDocument(markdown="规范 Markdown")
-    drafts = PipelineHooks.get_document_chunker("legacy")(
-        document, PipelineConfig()
-    )
+    with pytest.warns(DeprecationWarning, match="document_chunker"):
+        drafts = PipelineHooks.get_document_chunker("legacy")(
+            document, PipelineConfig()
+        )
 
     assert received == ["规范 Markdown"]
     assert [draft.text for draft in drafts] == ["规范 Markdown"]

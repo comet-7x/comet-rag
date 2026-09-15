@@ -278,6 +278,7 @@ def test_config_defaults_match_the_library_fallbacks() -> None:
     assert limits.pipeline_concurrency == DEFAULT_EMBED_FANOUT
     assert limits.embed_batch_size == DEFAULT_EMBED_WINDOW
     assert limits.loader_concurrency == DEFAULT_LOADER_CONCURRENCY
+    assert limits.task_chunk_context_max_bytes == 32 * 1024 * 1024
 
 
 def test_pipeline_defaults_come_from_the_same_place() -> None:

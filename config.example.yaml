@@ -107,6 +107,8 @@ limits:
   model_wait_timeout: 30.0
   # 待执行任务上限，超了直接返回 429。0 表示不限。
   max_backlog: 1000
+  # 分块结果在 CPU/IO worker 之间交接时的 JSON 字节上限（32 MiB）。
+  task_chunk_context_max_bytes: 33554432
 
   # 管道每个窗口内同时在飞的模型请求数。与 model_concurrency 是**两个**旋钮：
   # 那个是整个进程的总量（闸门），这个是一次调用的扇出宽度，两者叠加生效。

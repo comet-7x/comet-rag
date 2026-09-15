@@ -12,7 +12,11 @@ from comet_rag.engines.pipelines import HookProvider
 from comet_rag.infrastructure.sources import AutoLoader
 from comet_rag.ports import BaseVectorStore, EmbeddingPort, RerankerPort
 from comet_rag.ports.knowledge_base import KnowledgeBaseRepository
-from comet_rag.services.ingestion import IngestRunner, register_ingest_runner
+from comet_rag.services.ingestion import (
+    DEFAULT_MAX_CHUNK_CONTEXT_BYTES,
+    IngestRunner,
+    register_ingest_runner,
+)
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
 from comet_rag.tasks import TaskExecutor, TaskService, TaskStore
@@ -49,6 +53,8 @@ class Context:
     mineru_gate: Any = None
     #: 写入 Task context 前按文件类型执行的第二道文本字节限制。
     extracted_text_limits: dict[str, int] = field(default_factory=dict)
+    #: ChunkDraft 在 CPU/IO worker 之间交接时的 JSON payload 上限。
+    max_chunk_context_bytes: int = DEFAULT_MAX_CHUNK_CONTEXT_BYTES
     #: 仅在 task_store/kb 用 postgres 时存在。关停时要 dispose 连接池。
     database: Any = None
     #: 需要在关停时释放、但不属于上面任何一类的资源（按注册顺序逆序关闭）
@@ -131,5 +137,6 @@ def wire_runners(context: Context, *, ingest_config: Any = None) -> None:
             config=ingest_config,
             hooks=context.pipeline_hooks,
             max_extracted_text_bytes_by_type=context.extracted_text_limits,
+            max_chunk_context_bytes=context.max_chunk_context_bytes,
         )
     )

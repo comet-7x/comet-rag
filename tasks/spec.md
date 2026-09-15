@@ -1,8 +1,8 @@
 # Spec: Comet-RAG
 
-> 状态：M1～M3 已完成；M4 v1.1 已冻结，M4-T3 已完成（v1.4）
-> 最后更新：2026-09-14
-> 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0；M3 见 `tasks/m3_spec.md` v1.0；M4 见 `tasks/m4_spec.md` v1.1
+> 状态：M1～M3 已完成；M4 v1.2 已冻结，M4-T4 已完成（v1.5）
+> 最后更新：2026-09-15
+> 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0；M3 见 `tasks/m3_spec.md` v1.0；M4 见 `tasks/m4_spec.md` v1.2
 
 ---
 
@@ -59,9 +59,9 @@
 | **M4** | **可追溯 Chunking + 可选父子索引** | 带位置的块、结构感知切分、单链路装配；父子索引通过独立 schema 决策门 |
 
 M1、M2、M2 后 P1 与 M3 已完成并合入 `develop`。仓库结构归一化和跨格式文档
-规范化也已由 PR #56 合入。当前在 `feature/m4-chunking` 上已完成 M4-T3 的
-Fixed/Recursive 核心、精确位置和统一代码策略，下一项是 M4-T4 Pipeline/Task
-单链路迁移。父子索引
+规范化也已由 PR #56 合入。当前在 `feature/m4-chunking` 上已完成 M4-T4：
+Fixed/Recursive 核心保留精确位置，Pipeline 与任务入库共用 Chunking Service 和
+物化规则；下一项是 M4-T5 Markdown/Page 结构感知。父子索引
 会新增持久化表和 metadata 约定，必须经过单独决策门。
 
 ### 非目标（明确不做）

@@ -1,9 +1,9 @@
 # Spec: M4 Chunking 与层级索引
 
-> 状态：已冻结，M4-T3 已完成（v1.1）
+> 状态：已冻结，M4-T4 已完成（v1.2）
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-chunking`
-> 最后更新：2026-09-14
+> 最后更新：2026-09-15
 
 ## 1. 目标
 
@@ -106,7 +106,7 @@ overlap 都不会让 `start_char` 指向错误位置。对连续文本块必须�
 ### D4 — 格式类降为配置画像，算法实现不按扩展名复制
 
 `TextChunker`、`DocxChunker`、`MdxChunker` 与代码类目前主要差异是 separators 和默认
-数字。M4 保留这些公共类作为兼容门面，但核心只实现少量正交策略：
+数字。非代码格式类在 M4 迁移期保留为兼容门面，核心只实现少量正交策略：
 
 - `FixedSizeChunker`：无自然边界时的确定性兜底；
 - `RecursiveChunker`：按 separator profile 递归切分；
@@ -118,7 +118,8 @@ overlap 都不会让 `start_char` 指向错误位置。对连续文本块必须�
 
 代码分块的唯一核心类为 `CodeRecursiveChunker`，类名遵循
 “Code + Recursive + Chunker”，并通过必填 `code_language` 参数选择 profile。
-`PythonChunker`、`RustChunker` 等仅保留薄兼容门面，不允许复制算法。
+仓库尚无 tag/Release，且这些语言子类没有运行时调用方，因此在 M4-T4
+直接删除 `PythonChunker`、`RustChunker` 等临时公开面，避免在首个发布前就背上兼容债务。
 
 ### D5 — 结构事实使用引用规范 Markdown 的 DocumentBlock
 
@@ -189,12 +190,17 @@ revision，应停在决策门重新设计，不能降级为“通常不会重复
 启用后开始发出弃用提示，继续支持整个 0.2.x，最早在 0.3.0 移除。内置 Hook 必须先迁到
 新契约，不能让框架自身触发弃用提示。
 
+T4 已将两条入口收敛到 `ChunkingService`：Pipeline 与 IngestRunner 都消费完整
+`NormalizedDocument`，再使用同一物化函数生成 ID、位置和 metadata。跨 worker 只保存
+经过严格字段校验、JSON 序列化校验及字节上限保护的 ChunkDraft payload，不持久化
+dataclass 或只读映射对象。
+
 ## 6. 成功标准
 
 ### S1 — 契约与分层
 
 - [x] `ChunkingStrategy` 只依赖 ports/engines，core-only 可导入。
-- [ ] Pipeline 与任务入库共享同一 ChunkDraft → Chunk/VectorRecord 映射规则。
+- [x] Pipeline 与任务入库共享同一 ChunkDraft → Chunk/VectorRecord 映射规则。
 - [x] 自定义旧 ChunkHook 有测试覆盖的兼容路径。
 - [ ] 语义分块的外部模型调用不进入 engines。
 
@@ -209,7 +215,7 @@ revision，应停在决策门重新设计，不能降级为“通常不会重复
 
 - [ ] 标题路径从规范 Markdown 产生并传到 Chunk metadata。
 - [ ] PageChunker 只使用 extractor page facts；缺失时行为明确。
-- [ ] 文档 metadata、请求 metadata 与系统保留字段有唯一合并优先级。
+- [x] 文档 metadata、请求 metadata 与系统保留字段有唯一合并优先级。
 - [ ] 不把 MinerU 专有字段泄漏到 Chunk 或 Port。
 
 ### S4 — 层级与可靠性（通过 D8 决策门后执行）
@@ -277,10 +283,29 @@ M4 后半段（T6～T10）必须先提交 schema/迁移/回滚设计并获得确
 - 新增可注入 `LengthFunction`；默认 `len` 按 Unicode code point 计量，字节
   计数、非法计数器和单字符超预算均有独立测试。
 - 代码分块收敛为 `CodeRecursiveChunker(code_language=...)`；11 种语言只提供
-  separator/default profile，旧语言类为薄兼容门面，`.rs` 正确归一为 Rust。
+  separator/default profile，`.rs` 正确归一为 Rust。
 - 反向注入“事后从头 `find()` 位置回查”和“丢弃 separator”两类缺陷，
   重复文本位置断言与无 overlap 逐字重建断言分别失败；恢复后重跑通过。
 - 新旧 Chunker 定向测试 `197 passed`；全量单测
   `1958 passed, 20 skipped, 195 deselected, 1 xfailed`，pytest 9.05s。
 - core-only 临时环境可导入并运行三个新策略，未加载 infrastructure；
   `make lint` 通过，Pyright 为 `0 errors, 0 warnings`。
+
+## 12. M4-T4 验证记录
+
+- 新增共享 `ChunkingService`，Pipeline 的同步、异步、流式入口与 IngestRunner 均通过
+  文档级 Hook 产生 `ChunkDraft`，不再维护两套分块与物化规则。
+- ID、document/request/chunk/system metadata 和字符位置由共享物化函数统一生成；同源
+  文档在 Pipeline 与任务入库链路中的 ID、正文和 metadata 已有交叉测试。
+- Task context 使用窄 JSON payload 移交 ChunkDraft，并拒绝未知字段、隐式布尔整数、
+  不可序列化 metadata 与超出配置字节上限的载荷。
+- 反向同时移除载荷与值对象的布尔整数守卫、移除未知字段守卫，对应测试均会失败；
+  恢复实现后定向测试重新通过。
+- 框架内置 Hook 已迁到 `document_chunker`；旧 `chunker(str, config)` 仍可工作，调用时
+  发出带 0.3.0 移除窗口的 `DeprecationWarning`。
+- 仓库没有 Tag、Release 或旧语言子类的运行时调用方，因此删除 `PythonChunker`、
+  `RustChunker` 等临时公开面，只保留 `CodeRecursiveChunker(code_language=...)`。
+- 全量单测为 `1950 passed, 20 skipped, 195 deselected, 1 xfailed`，pytest 9.26s；
+  E2E `30 passed`；integration `6 passed, 152 skipped`；benchmark `7 passed`。
+- core-only 隔离环境可运行 `CodeRecursiveChunker` 与 `ChunkingService`，未加载
+  infrastructure；Ruff 与 Pyright 全绿，Pyright 为 `0 errors, 0 warnings`。
