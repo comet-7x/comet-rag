@@ -10,13 +10,19 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
+    CheckConstraint,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+)
+from sqlalchemy import (
+    text as sql_text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -46,6 +52,164 @@ class KnowledgeBaseRow(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = timestamp_column(nullable=False, index=True)
     updated_at: Mapped[datetime] = timestamp_column(nullable=False)
+
+
+class DocumentRow(Base):
+    """每个知识库/source 的 generation 分配器与 active 指针。"""
+
+    __tablename__ = "documents"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["kb_id"],
+            ["knowledge_bases.kb_id"],
+            ondelete="CASCADE",
+            name="fk_documents_kb_id_knowledge_bases",
+        ),
+        ForeignKeyConstraint(
+            ["kb_id", "source_id", "active_revision_id"],
+            [
+                "document_revisions.kb_id",
+                "document_revisions.source_id",
+                "document_revisions.revision_id",
+            ],
+            name="fk_documents_active_revision",
+            deferrable=True,
+            initially="DEFERRED",
+            use_alter=True,
+        ),
+        CheckConstraint(
+            "next_generation >= 0",
+            name="documents_next_generation_nonnegative",
+        ),
+    )
+
+    kb_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    active_revision_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    next_generation: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=sql_text("0")
+    )
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    file_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", JsonType, nullable=False)
+    created_at: Mapped[datetime] = timestamp_column(nullable=False)
+    updated_at: Mapped[datetime] = timestamp_column(nullable=False)
+
+
+class DocumentRevisionRow(Base):
+    """不可复用的 revision manifest；purged 行是 generation 防复活墓碑。"""
+
+    __tablename__ = "document_revisions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["kb_id", "source_id"],
+            ["documents.kb_id", "documents.source_id"],
+            ondelete="CASCADE",
+            name="fk_document_revisions_document",
+        ),
+        UniqueConstraint(
+            "kb_id",
+            "source_id",
+            "generation",
+            name="uq_document_revisions_generation",
+        ),
+        UniqueConstraint(
+            "kb_id",
+            "source_id",
+            "revision_id",
+            name="uq_document_revisions_document_revision",
+        ),
+        CheckConstraint(
+            "generation > 0",
+            name="document_revisions_generation_positive",
+        ),
+        CheckConstraint(
+            "parent_count >= 0 AND child_count >= 0",
+            name="document_revisions_counts_nonnegative",
+        ),
+        CheckConstraint(
+            "status IN ('staging', 'ready', 'active', 'retired', "
+            "'abandoned', 'purged')",
+            name="document_revisions_status",
+        ),
+        Index(
+            "uq_document_revisions_active",
+            "kb_id",
+            "source_id",
+            unique=True,
+            postgresql_where=sql_text("status = 'active'"),
+        ),
+        Index(
+            "ix_document_revisions_cleanup",
+            "status",
+            "updated_at",
+            postgresql_where=sql_text("status IN ('retired', 'abandoned')"),
+        ),
+    )
+
+    revision_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    plan_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    parent_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    child_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    file_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", JsonType, nullable=False)
+    task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    replaces_revision_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    created_at: Mapped[datetime] = timestamp_column(nullable=False)
+    updated_at: Mapped[datetime] = timestamp_column(nullable=False)
+    ready_at: Mapped[datetime | None] = timestamp_column(nullable=True)
+    activated_at: Mapped[datetime | None] = timestamp_column(nullable=True)
+    purged_at: Mapped[datetime | None] = timestamp_column(nullable=True)
+
+
+class DocumentParentRow(Base):
+    """父块正文；其生命周期由 revision manifest 管理。"""
+
+    __tablename__ = "document_parents"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["kb_id", "source_id", "revision_id"],
+            [
+                "document_revisions.kb_id",
+                "document_revisions.source_id",
+                "document_revisions.revision_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_document_parents_revision",
+        ),
+        UniqueConstraint(
+            "revision_id", "ordinal", name="uq_document_parents_revision_ordinal"
+        ),
+        CheckConstraint(
+            "ordinal >= 0",
+            name="document_parents_ordinal_nonnegative",
+        ),
+        CheckConstraint(
+            "start_char >= 0 AND end_char > start_char",
+            name="document_parents_span",
+        ),
+        Index("ix_document_parents_kb_parent", "kb_id", "parent_id"),
+    )
+
+    parent_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    revision_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    kb_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    start_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_char: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    next_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JsonType, nullable=False)
+    created_at: Mapped[datetime] = timestamp_column(nullable=False)
 
 
 class TaskRow(Base):
@@ -125,4 +289,11 @@ class TaskEventRow(Base):
     data: Mapped[dict] = mapped_column(JsonType, nullable=False, default=dict)
 
 
-__all__ = ["KnowledgeBaseRow", "TaskEventRow", "TaskRow"]
+__all__ = [
+    "DocumentParentRow",
+    "DocumentRevisionRow",
+    "DocumentRow",
+    "KnowledgeBaseRow",
+    "TaskEventRow",
+    "TaskRow",
+]
