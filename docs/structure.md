@@ -27,7 +27,8 @@ comet_rag/
 │   │   ├── sql/        SQLAlchemy 会话与 ORM
 │   │   ├── vector_store/ Milvus · 内存
 │   │   ├── task_store/ PostgreSQL TaskStore
-│   │   └── knowledge_base/ PostgreSQL · 内存 Repository
+│   │   ├── knowledge_base/ PostgreSQL · 内存 Repository
+│   │   └── document_store/ revision manifest · 父块正文（PostgreSQL · 内存）
 │   └── task_execution/ ARQ / Redis 执行适配器
 ├── engines/            纯计算算法
 │   ├── documents/

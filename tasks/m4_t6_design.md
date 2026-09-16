@@ -1,8 +1,8 @@
 # M4-T6 Design：父子索引、Revision 与双存储一致性
 
-> 状态：设计已完成，等待持久化变更确认
-> 依据：`tasks/m4_spec.md` v1.7
-> 范围：只冻结接口、schema、故障语义与迁移顺序；本文件不授权创建表或修改 Milvus 数据
+> 状态：设计已确认；M4-T7 DocumentStore 与迁移已完成
+> 依据：`tasks/m4_spec.md` v1.8
+> 范围：冻结接口、schema、故障语义与迁移顺序；T8 生产写入仍按本设计分阶段实施
 > 最后更新：2026-09-16
 
 ## 1. 决策摘要
@@ -41,8 +41,9 @@ RetrievalService
    判活。
 5. revision-aware Milvus 搜索使用 `Strong` consistency。当前 `Session` 只保证同一客户端
    看见自己的写入，不能保证 API 进程立即看见 worker 写入。
-6. GC 是可重试的清理，不参与激活事务。清理失败会增加存储和 overfetch 压力，但不会
-   让旧 revision 重新可见。
+6. GC 是可重试的清理，不参与激活事务。它删除向量与父块，但保留 `purged` manifest
+   作为 generation 墓碑；清理失败会增加存储和 overfetch 压力，但不会让旧 revision
+   重新可见。
 7. 现有无 `document_revision` 的向量作为 legacy active 数据兼容；某 source 首次激活新
    revision 后，它的 legacy 向量立即变为不可见。其物理删除由经过版本验证的独立维护
    流程完成，不混入普通 revision GC。
@@ -225,14 +226,15 @@ class DocumentStore(ABC):
     ) -> dict[str, StoredParent]: ...
     async def aabandon_revision(self, revision: RevisionKey) -> None: ...
     async def alist_cleanup_candidates(self, *, limit: int) -> list[RevisionKey]: ...
-    async def adelete_inactive_revision(self, revision: RevisionKey) -> None: ...
+    async def apurge_inactive_revision(self, revision: RevisionKey) -> None: ...
     async def aclose(self) -> None: ...
 ```
 
 `StoredRevision` 返回 key、generation、status 和计划计数；`Activation` 返回新旧 revision
 以及是否为幂等重放。Port 定义 `DocumentStoreError`、`RevisionConflict`、
-`RevisionNotReady`、`StaleRevision`、`ActiveRevisionDeletion`，基础设施连接错误保留原始异常
-作为 cause。值对象使用 frozen/slots dataclass，不在 Port 引入 SQLAlchemy 或 Pydantic。
+`RevisionNotFound`、`RevisionNotReady`、`StaleRevision`、`ActiveRevisionDeletion`，基础设施
+连接错误保留原始异常作为 cause。值对象使用 frozen/slots dataclass，不在 Port 引入
+SQLAlchemy 或 Pydantic。
 
 契约语义：
 
@@ -249,8 +251,9 @@ class DocumentStore(ABC):
 - `aget_active_revisions` 必须单次批量查询并按 kb 隔离。value 为 `None` 表示该 source 尚
   无 revision active，供 legacy 兼容，不表示任意 revision 可见；返回映射必须包含每个
   请求的 source，不能用“缺 key”制造第三种语义。
-- `adelete_inactive_revision` 必须拒绝删除 active；`retired` 与 `abandoned` 一旦进入便不能
-  重新激活。
+- `apurge_inactive_revision` 必须拒绝清理 active；它删除父块并把 retired/abandoned 标成
+  `purged`，不删除 manifest。否则旧任务可在 GC 后用同一 revision ID 重新申请更高
+  generation，绕过旧任务围栏。
 - PostgreSQL 与 InMemory 实现必须继承同一套契约测试。
 
 revision 状态机：
@@ -260,7 +263,7 @@ reserved/staging ── vectors + parents complete ──► ready ──► act
        │                                            │          │
        └──────────────────────► abandoned ◄─────────┘          └──► retired
 
-abandoned / retired ── vector GC complete ──► delete revision + cascade parents
+abandoned / retired ── vector + parent GC complete ──► purged manifest tombstone
 ```
 
 ## 5. PostgreSQL schema
@@ -288,12 +291,13 @@ abandoned / retired ── vector GC complete ──► delete revision + cascad
 | `revision_id` | varchar(64) | 主键 |
 | `kb_id/source_id` | varchar | 复合 FK `documents` ON DELETE CASCADE |
 | `generation` | bigint | 每 source 单调递增，`> 0` |
-| `status` | varchar(16) | `staging/ready/active/retired/abandoned`，不用 PG enum |
+| `status` | varchar(16) | `staging/ready/active/retired/abandoned/purged`，不用 PG enum |
 | `plan_sha256` | char(64) | 幂等内容指纹 |
 | `parent_count/child_count` | integer | 均 `>= 0`，ready 前核对 |
+| `source/file_type/metadata` | text/varchar/jsonb | 候选版本信息；激活事务再复制到 documents |
 | `task_id` | varchar(64), nullable | 诊断与恢复，不作为任务外键 |
 | `replaces_revision_id` | varchar(64), nullable | 激活时记录旧 active，便于审计 |
-| `created_at/ready_at/activated_at/updated_at` | timestamptz | 恢复与 GC |
+| `created_at/ready_at/activated_at/purged_at/updated_at` | timestamptz | 恢复、审计与 GC |
 
 约束和索引：
 
@@ -436,11 +440,11 @@ RRF/rerank 仍对子块执行。child 模式保持当前 top-k 行为；parent �
 
 - reserve generation 单调、相同 revision 幂等、不同 digest 冲突；
 - parent 批量重放、内容冲突、ordinal 与租户隔离；
-- staging/ready/active/retired/abandoned 合法与非法迁移；
+- staging/ready/active/retired/abandoned/purged 合法与非法迁移；
 - active 切换原子、同时最多一个 active、旧 generation 不能反杀新 generation；
 - batch active lookup 的 legacy `None` 语义；
 - parent batch lookup 不跨 KB；
-- GC 只列出 retired/abandoned，删除 active 必须失败；
+- GC 只列出 retired/abandoned，清理 active 必须失败，purged revision 不可复活；
 - InMemory 与 PostgreSQL 跑同一套测试，PostgreSQL 加并发事务用例。
 
 ### 双存储与检索测试
@@ -477,19 +481,20 @@ PostgresDocumentStore，禁止使用重启即丢 active pointer 的内存实现�
 - Alembic downgrade 应在表非空时主动拒绝；数据库迁移无法独自证明 Milvus 已清理，必须
   由显式运维检查命令出具结果后才能执行。
 
-这是一次向前兼容、数据写入后非平凡回滚的变更。T7 开始前必须明确接受这一点，不能把
+这是一次向前兼容、数据写入后非平凡回滚的变更。该条件已在 T7 开始前明确接受，不能把
 “drop 三张表”误写成完整回滚方案。
 
 ## 12. 实施切片
 
-- **M4-T7**：值对象、DocumentStore Port、InMemory/PostgreSQL、迁移与共享契约；不改写入。
+- **M4-T7（已完成）**：值对象、DocumentStore Port、InMemory/PostgreSQL、迁移与共享契约；
+  未改写入。
 - **M4-T8**：HierarchyBuilder、IndexPlanner、revision Task context、双存储写入和故障矩阵。
 - **M4-T9**：Strong revision-aware recall、有界判活、RRF 前过滤、父块回填与 GC。
 - **M4-T10**：真实 PostgreSQL/Milvus 双 client、质量/延迟/存储评测、发布与回滚演练。
 
 ## 13. 决策门
 
-进入 M4-T7 前需要确认：
+以下决策已于 2026-09-16 确认，M4-T7 据此实施：
 
 1. 允许新增 `documents`、`document_revisions`、`document_parents` 三张 PostgreSQL 表；
 2. 允许新向量 metadata 增加 `document_revision`、`parent_id`、相邻 ID；

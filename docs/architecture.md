@@ -80,8 +80,14 @@ span 表示；`MarkdownSectionStrategy` 或 `PageChunkingStrategy` 再在每个�
 | `TaskExecutor` | `InProcessExecutor` | `ArqExecutor` | 15 |
 | `BaseVectorStore` | `InMemoryVectorStore` | `MilvusStore` | 27 |
 | `KeywordSearchPort` | `InMemoryVectorStore` | `MilvusStore` | 12 |
+| `DocumentStore` | `InMemoryDocumentStore` | `PostgresDocumentStore` | 19 |
 
 `KnowledgeBaseRepository` 另有 10 条。
+
+`DocumentStore` 只保存 revision manifest 与不参与召回的父块正文。PostgreSQL 的 active
+pointer 是版本可见性的唯一真相；清理 retired/abandoned revision 时保留 `purged`
+manifest 墓碑，避免旧任务在 GC 后重新申请更高 generation 并覆盖新版本。Milvus 子向量
+及读写链路从 M4-T8 起接入，不属于 Store 自身职责。
 
 检索侧刻意把完整存储生命周期与只读能力分开：`VectorSearchPort` 只暴露 dense
 召回，`KeywordSearchPort` 只暴露关键词召回。`RetrievalService` 按请求选择一路或

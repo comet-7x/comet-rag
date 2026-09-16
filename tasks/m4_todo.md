@@ -1,10 +1,10 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T6 设计已完成；等待 schema/revision 决策门确认
-> 规格：`tasks/m4_spec.md` v1.7
-> 计划：`tasks/m4_plan.md` v1.7、`tasks/m4_t6_design.md`
+> 状态：M4-T7 已完成；下一项 M4-T8 revision 双存储入库
+> 规格：`tasks/m4_spec.md` v1.8
+> 计划：`tasks/m4_plan.md` v1.8、`tasks/m4_t6_design.md`
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
-> 开发分支：`feature/m4-chunking`
+> 开发分支：`feature/m4-hierarchical-indexing`
 
 ## Phase 0：调研与契约
 
@@ -122,7 +122,7 @@ separator 配置不可被原地修改。
 - [x] 给出 Milvus metadata 新增字段、兼容和旧数据策略
 - [x] 手写双存储各断点的成功/失败/重试矩阵
 - [x] 证明 active revision 检索可在有界 overfetch 下实现
-- [ ] 获得修改持久化 schema 与 metadata 约定的明确确认
+- [x] 获得修改持久化 schema 与 metadata 约定的明确确认
 
 **验收：** 未确认前不创建迁移、不改生产写路径；无法可靠过滤 revision 时停止重设计。
 
@@ -132,11 +132,11 @@ separator 配置不可被原地修改。
 
 **依赖：** M4-T6
 
-- [ ] InMemory 与 PostgreSQL 实现同一套 DocumentStore 契约
-- [ ] 覆盖 KB/source/revision 隔离、幂等、激活、批量读取和回收
-- [ ] 数据库不可用时 integration skip，不 fail
-- [ ] 清表复用统一 fixture，不拼裸 TRUNCATE
-- [ ] 契约期望独立手写并反向注入隔离缺陷
+- [x] InMemory 与 PostgreSQL 实现同一套 DocumentStore 契约
+- [x] 覆盖 KB/source/revision 隔离、幂等、激活、批量读取和回收
+- [x] 数据库不可用时 integration skip，不 fail
+- [x] 清表复用统一 fixture，不拼裸 TRUNCATE
+- [x] 契约期望独立手写并反向注入 generation 围栏缺陷
 
 ### M4-T8 — revision 双存储入库（M）
 

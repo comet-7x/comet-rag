@@ -2,7 +2,7 @@
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
 > 当前状态：M1～M3、仓库结构归一化及文档规范化前置重构已完成
-> 当前优先级：确认 M4-T6 持久化决策门，再开始 M4-T7 DocumentStore
+> 当前优先级：M4-T8 revision 双存储入库与故障矩阵
 > 最后更新：2026-09-15
 
 ## 1. 目的
@@ -375,8 +375,9 @@ M3 规格已冻结并完成：Milvus 原生 BM25 位于 `KeywordSearchPort` 后�
 ### P3 — M4：Chunking 与可选父子索引
 
 M4 先完成带位置的 Chunk 契约、固定/递归策略、Pipeline/Task 单链路和 Markdown/Page
-结构感知。`IndexPlan`、`HierarchyBuilder` 与 `DocumentStore` 位于独立 schema 决策门
-之后；数据库迁移和向量 metadata 约定未经确认不得实施。GraphRAG 仍不在 M4 范围。
+结构感知。独立 schema 决策门已经通过，`DocumentStore` 与三表迁移已在 M4-T7 完成；
+`IndexPlan`、`HierarchyBuilder` 和 revision 双存储写入从 M4-T8 开始。GraphRAG 仍不在
+M4 范围。
 详细顺序见 `tasks/m4_plan.md` 与 `tasks/m4_todo.md`。
 
 ## 11. Port 创建门槛
@@ -412,4 +413,4 @@ M4 先完成带位置的 Chunk 契约、固定/递归策略、Pipeline/Task 单�
 | 顶层 Parser/Converter 目录是否保留 | 否；格式专属代码归入 documents，ZIP 防护归入 documents/common |
 | Provider 私有辅助模块是否整理 | 已完成；模型适配器位于 `infrastructure/models`，MinerU 位于 `infrastructure/extractors` |
 | 完整语义分块是否是纯 Strategy | 否；Service 编排 EmbeddingPort，engines 只保留断点算法 |
-| 当前下一项工作 | 确认 `tasks/m4_t6_design.md` 五项决策门；通过后开始 M4-T7 DocumentStore |
+| 当前下一项工作 | M4-T8 HierarchyBuilder、IndexPlanner 与 revision 双存储写入 |

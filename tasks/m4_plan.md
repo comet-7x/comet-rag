@@ -1,10 +1,10 @@
 # Implementation Plan: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T6 设计完成，等待决策门确认（v1.7）
-> 依据：`tasks/m4_spec.md` v1.7、`tasks/m4_t6_design.md`
+> 状态：M4-T7 已完成，下一项 M4-T8 revision 双存储入库（v1.8）
+> 依据：`tasks/m4_spec.md` v1.8、`tasks/m4_t6_design.md`
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开始日期：2026-09-14
-> 分支：`feature/m4-chunking`
+> 分支：`feature/m4-hierarchical-indexing`（堆叠于尚未合入的 `feature/m4-chunking`）
 
 ## Overview
 
@@ -14,10 +14,10 @@ M4 先解决当前 `list[str]` 契约造成的溯源丢失和 overlap 不可观�
 
 ## Current Priority
 
-M4-T6 已完成：IndexPlan、DocumentStore、PostgreSQL schema、Milvus metadata、revision
-激活、故障矩阵、有界判活和不可直接二进制回滚的约束已经冻结。当前停在 Checkpoint F；
-仍未创建数据库表、未改 Milvus metadata。明确确认 `tasks/m4_t6_design.md` 的五项决策门后，
-再从最新 `develop` 创建 `feature/m4-hierarchical-indexing` 执行 M4-T7。
+M4-T7 已完成：决策门已确认，DocumentStore Port、内存/PostgreSQL 实现、三表迁移和
+19 条共享契约已经落地，Checkpoint G 通过。实现保留 purged manifest 防止 GC 后旧任务
+复活；仍未修改入库或检索链路。下一项 M4-T8 实现 HierarchyBuilder、IndexPlanner、
+revision Task context 与双存储写入故障矩阵。
 
 ## Dependency Graph
 
@@ -85,8 +85,8 @@ M4-T10 评测、文档、完整验收与 PR
 - **C — 平坦算法正确**：固定/递归通过性质测试，位置不靠搜索恢复。
 - **D — 入口一致**：Pipeline 与任务入库共用映射，旧 hook 有兼容测试。
 - **E — 结构不丢**：标题路径和真实页边界进入 metadata，缺页时不猜。
-- **F — 人工决策门**：设计已经齐备；表结构、向量 metadata、Strong consistency、
-  revision 激活和非平凡回滚仍需逐项确认。
+- **F — 人工决策门（已通过）**：表结构、向量 metadata、Strong consistency、
+  revision 激活和非平凡回滚已确认。
 - **G — 父块可存取**：两个 DocumentStore 实现通过同一契约和隔离测试。
 - **H — 写路径可靠**：任一写入断点失败都不会替换当前可用 revision。
 - **I — 读路径闭环**：子块召回后可回填父块；失败按规格降级且可观察。

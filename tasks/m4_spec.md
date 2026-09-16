@@ -1,8 +1,8 @@
 # Spec: M4 Chunking 与层级索引
 
-> 状态：M4-T6 设计已冻结，等待持久化决策门确认（v1.7）
+> 状态：M4-T7 DocumentStore 已完成（v1.8）
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
-> 开发分支：`feature/m4-chunking`
+> 开发分支：`feature/m4-hierarchical-indexing`（堆叠于 `feature/m4-chunking`）
 > 最后更新：2026-09-16
 
 ## 1. 目标
@@ -172,15 +172,15 @@ Sentence/Section Strategy → EmbeddingPort → BreakpointStrategy → ChunkDraf
 首版只做两层：父块用于回填，子块用于 dense/BM25 检索。多层递归、RAPTOR 和 GraphRAG
 不在首版范围。
 
-### D8 — DocumentStore 与向量库分开，实施前设置 schema 决策门
+### D8 — DocumentStore 与向量库分开，schema 决策门已通过
 
 父块正文不塞进 Milvus JSON metadata；它由 `DocumentStore` 按
 `kb_id/source_id/revision/parent_id` 保存，向量记录只携带有界引用。InMemory 与
 PostgreSQL 实现共享契约测试。
 
 该阶段会新增持久化表并改变向量 metadata 约定，属于 `tasks/spec.md §7` 的“先问再动”
-范围。M4-T6 已冻结接口、迁移和失败恢复方案；得到明确确认后才能执行 T7 数据库迁移和
-T8 双存储入库。
+范围。M4-T6 冻结接口、迁移和失败恢复方案后，决策门已于 2026-09-16 明确确认；T7
+数据库迁移已经完成，T8 双存储入库按已确认的约束继续实施。
 
 ### D9 — 可靠入库使用 revision，不覆盖当前可用版本
 
@@ -253,7 +253,7 @@ payload，不持久化 dataclass 或只读映射对象。这样任务链路不�
 ### S4 — 层级与可靠性（通过 D8 决策门后执行）
 
 - [x] IndexPlan 设计明确父/子、向量化、回填和相邻关系。
-- [ ] InMemory/PostgreSQL DocumentStore 通过同一契约。
+- [x] InMemory/PostgreSQL DocumentStore 通过同一契约。
 - [x] 双存储故障矩阵已冻结旧 active revision、重试与降级语义。
 - [ ] 新 revision 激活后旧版本可回收，重试不制造重复可见块。
 
@@ -267,9 +267,9 @@ payload，不持久化 dataclass 或只读映射对象。这样任务链路不�
 ## 7. 实施边界
 
 M4 前半段（T1～T5）不新增第三方依赖、不改数据库或 Milvus schema，可直接按本规格推进。
-M4-T6 已提交 schema/迁移/回滚设计；M4 后半段（T7～T10）必须先获得明确确认。任何需要修改
-`TaskStore`、`TaskExecutor` 或 `BaseVectorStore` 方法签名的方案都必须另行评审；优先通过
-新的窄 Port 与 Service 编排完成。
+M4-T6 已提交 schema/迁移/回滚设计，后半段决策门已于 2026-09-16 明确确认，T7 已据此
+完成。任何需要修改 `TaskStore`、`TaskExecutor` 或 `BaseVectorStore` 方法签名的方案仍须
+另行评审；优先通过新的窄 Port 与 Service 编排完成。
 
 ## 8. 参考实现
 
@@ -415,4 +415,25 @@ M4-T6 已提交 schema/迁移/回滚设计；M4 后半段（T7～T10）必须先
 - 文档示例测试 `102 passed, 19 skipped`；默认全量单测
   `2008 passed, 20 skipped, 195 deselected, 1 xfailed`，pytest 9.32s；Ruff 与 Pyright
   通过，Pyright 为 `0 errors, 0 warnings`。
-- M4-T7 仍被人工决策门阻塞；未获得五项明确确认前，不创建表、不写 revision metadata。
+- 此记录对应 T6 完成时点；五项决策随后于 2026-09-16 明确确认，T7 实施结果见下一节。
+
+## 18. M4-T7 验证记录
+
+- 用户于 2026-09-16 确认 M4-T6 五项决策门；实现位于堆叠分支
+  `feature/m4-hierarchical-indexing`，不在 Chunking 前半段分支混入数据库提交。
+- 新增标准库-only `DocumentStore` Port、frozen/slots revision/parent 值对象、状态与错误；
+  InMemory/PostgreSQL 两个实现运行相同的 19 条契约。
+- PostgreSQL 迁移创建 `documents`、`document_revisions`、`document_parents`，包含复合租户
+  外键、单 active partial unique index、GC partial index、状态/计数/span CHECK 和非空
+  downgrade 防护。
+- 实现阶段发现“GC 删除 manifest 后旧任务可重新申请更高 generation”的复活漏洞；最终
+  GC 只删除父块并保留 `purged` manifest 墓碑，revision ID 和 generation 永不复用。
+- 两个并发 reserve 在同一 document 行锁内得到不同 generation；两个并发 activate 最终
+  收敛到较新 generation。旧版本反杀测试在故意反转 generation 比较时明确失败，恢复后
+  重新通过。
+- 本地 PostgreSQL 从空库升级、19 条真实契约、空表 downgrade/upgrade 往返均通过；插入
+  临时 document 后 downgrade 按设计拒绝，事务回滚后仍处于 migration head。
+- SQLAlchemy server extra 修正为 `sqlalchemy[asyncio]`，确保 macOS arm64 也安装 async
+  engine 所需 greenlet。core-only 隔离环境仍可导入 Port 与内存实现。
+- 默认全量单测 `2049 passed, 20 skipped, 214 deselected, 1 xfailed`，独立运行 pytest
+  8.96s；与静态检查并行时资源竞争会使墙钟超过 10s，因此性能门以独立运行记录为准。

@@ -9,8 +9,8 @@
 **在安装期强制**，并由 AST 层级守卫在 CI 里盯着（`tests/unit/test_layering.py`）。
 
 > 当前进度：M1～M3、公共 Loader/Extractor 入口和仓库结构归一化已完成；M4 已完成
-> 可追溯 Chunking 与结构感知切分。父子索引的 schema/revision 设计已经冻结，等待
-> 持久化决策门确认后进入实现。
+> 可追溯 Chunking 与结构感知切分；父子索引的 DocumentStore、三表迁移和 revision
+> 状态机已经完成，下一项是把它接入双存储入库链路。
 
 ---
 
@@ -93,8 +93,9 @@ uv run comet-rag worker embedder        # IO 密集：向量化 / 写库
 
 **核心抽象各有一套与实现无关的契约测试**。`InMemoryTaskStore` 与
 `PostgresTaskStore`、`InProcessExecutor` 与 `ArqExecutor`、`InMemoryVectorStore`
-与 `MilvusStore` 跑同一套断言；关键词召回也由两种向量库实现共享同一套契约 ——
-"换后端行为不变"这句话靠断言兑现，不靠文档。
+与 `MilvusStore`、`InMemoryDocumentStore` 与 `PostgresDocumentStore` 分别跑同一套断言；
+关键词召回也由两种向量库实现共享同一套契约 —— "换后端行为不变"这句话靠断言兑现，
+不靠文档。
 
 更多见 [docs/architecture.md](docs/architecture.md)；目录结构与流程图见
 [docs/structure.md](docs/structure.md)；升级中的破坏性变更见

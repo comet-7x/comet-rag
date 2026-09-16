@@ -44,8 +44,15 @@ worker 交接丢失页面或标题结构。
 ### 父子索引设计门
 
 M4-T6 已冻结父子索引与 revision 的接口、三表 PostgreSQL schema、Milvus metadata、
-有界判活、故障恢复和回滚顺序，详见 `tasks/m4_t6_design.md`。本阶段只有设计变更：尚未
-创建表、写入 revision 向量或改变检索行为；这些持久化变更必须先通过人工决策门。
+有界判活、故障恢复和回滚顺序，详见 `tasks/m4_t6_design.md`。T6 当时只有设计变更；
+持久化决策门随后已确认并进入 T7。
+
+M4-T7 已在决策门确认后实现 `DocumentStore`：内存/PostgreSQL 运行同一套契约，Alembic
+新增 documents、document_revisions 和 document_parents。GC 保留 purged manifest 防止
+旧任务复活；本阶段仍未把 revision 写入生产入库或检索路径。
+
+server 依赖使用 `sqlalchemy[asyncio]`，确保异步 SQLAlchemy engine 所需的 greenlet 在
+支持的平台上随 extra 一起安装。
 
 ### 配置变更
 
