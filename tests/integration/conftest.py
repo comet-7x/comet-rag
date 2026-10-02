@@ -56,6 +56,8 @@ def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
 
 def _require(host: str, port: int, name: str) -> None:
     if not _port_open(host, port):
+        if os.environ.get("COMET_TEST_REQUIRE_SERVICES") == "1":
+            pytest.fail(f"要求的 {name} 不可用（{host}:{port}）", pytrace=False)
         pytest.skip(f"{name} 未运行（{host}:{port}）。先跑 `docker compose up -d`")
 
 
@@ -83,15 +85,36 @@ def _require_endpoint(endpoint: str, name: str) -> None:
     _require(host, port, name)
 
 
+def _require_service(
+    endpoint: str, name: str, *, schemes: tuple[str, ...], default_port: int
+) -> None:
+    """探测实际测试端点；环境变量覆盖不能仍检查 localhost 默认端口。"""
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in schemes or not parsed.hostname:
+        raise ValueError(f"{name} 测试端点协议或主机无效")
+    try:
+        port = parsed.port if parsed.port is not None else default_port
+    except ValueError as exc:
+        raise ValueError(f"{name} 测试端点端口无效") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError(f"{name} 测试端点端口无效")
+    _require(parsed.hostname, port, name)
+
+
 @pytest.fixture(scope="session")
 def postgres_dsn() -> str:
-    _require("localhost", 5432, "PostgreSQL")
+    _require_service(
+        POSTGRES_DSN,
+        "PostgreSQL",
+        schemes=("postgresql+asyncpg", "postgresql"),
+        default_port=5432,
+    )
     return POSTGRES_DSN
 
 
 @pytest.fixture(scope="session")
 def redis_url() -> str:
-    _require("localhost", 6379, "Redis")
+    _require_service(REDIS_URL, "Redis", schemes=("redis", "rediss"), default_port=6379)
     return REDIS_URL
 
 

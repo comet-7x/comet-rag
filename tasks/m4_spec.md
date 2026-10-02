@@ -437,3 +437,21 @@ M4-T6 已提交 schema/迁移/回滚设计，后半段决策门已于 2026-09-16
   engine 所需 greenlet。core-only 隔离环境仍可导入 Port 与内存实现。
 - 默认全量单测 `2049 passed, 20 skipped, 214 deselected, 1 xfailed`，独立运行 pytest
   8.96s；与静态检查并行时资源竞争会使墙钟超过 10s，因此性能门以独立运行记录为准。
+
+## 19. M4-T8 第一切片验证记录（2026-10-02）
+
+- 完整 M4 既有提交已快进合入 `refactor/enterprise-reliability`，原来两处修改与此前
+  可靠性重构均已恢复；原始 stash 和可靠性 stash 保留。
+- 新增纯计算 `HierarchyBuilder`：page/section 硬边界、零 overlap 父块、局部到全局
+  child span；新增 `IndexPlanner` 统一平坦/层级的 revision ID、相邻引用和计划指纹。
+- `RevisionStager` 分批写父块、窗口化 embedding/upsert、精确 count 后标 ready，故障
+  留 staging 供同 revision 重放，不覆盖旧 active。准备服务不自动激活、未接入生产
+  组合根；Task context、激活/superseded、GC 与 T9 判活仍未完成，Checkpoint H 未通过。
+- 新增 29 项单测与 2 项真实 PostgreSQL 组合测试，覆盖半批写入、响应丢失、count
+  不符、内容漂移、不可重写状态和 generation 围栏。反向注入四类守卫缺陷，5 项
+  目标测试失败，恢复后通过。
+- 完整单测 `2156 passed, 20 skipped, 1 xfailed`，独立 9.32s；内存 E2E 30 passed；
+  PostgreSQL/Redis 真实验收 107 passed，无 skip。三层整体覆盖率 89.55%，任务框架
+  95.63%；核心隔离安装的 DOCX/Hierarchy/IndexPlanner、Ruff 与 Pyright 通过。
+- 仅迁移独立临时测试库到 M4 head，测试资源已清理；未修改开发数据库或原 Milvus
+  collection。尚未执行 Milvus 双 client/Strong 和 T10 评测，不把本记录当作 M4 完成。

@@ -1,6 +1,6 @@
 # Implementation Plan: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T7 已完成，下一项 M4-T8 revision 双存储入库（v1.8）
+> 状态：M4-T7 已完成；M4-T8 第一切片已实现，写入/读路径切换未启用（v1.8）
 > 依据：`tasks/m4_spec.md` v1.8、`tasks/m4_t6_design.md`
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开始日期：2026-09-14
@@ -15,9 +15,13 @@ M4 先解决当前 `list[str]` 契约造成的溯源丢失和 overlap 不可观�
 ## Current Priority
 
 M4-T7 已完成：决策门已确认，DocumentStore Port、内存/PostgreSQL 实现、三表迁移和
-19 条共享契约已经落地，Checkpoint G 通过。实现保留 purged manifest 防止 GC 后旧任务
-复活；仍未修改入库或检索链路。下一项 M4-T8 实现 HierarchyBuilder、IndexPlanner、
-revision Task context 与双存储写入故障矩阵。
+19 条共享契约已经落地，Checkpoint G 通过。2026-10-02，完整 M4 已有提交合入
+`refactor/enterprise-reliability`，并恢复原来的两处修改。
+
+T8 第一切片已实现 HierarchyBuilder、IndexPlanner 与 RevisionStager：父块/子向量分批
+幂等写入并核对计数，仅准备到 ready，不激活、不接入组合根。下一项完成有界 revision
+Task context 与跨 worker 恢复，再与 T9 revision-aware 判活/Strong recall 一起验收激活、
+superseded 与 GC。生产写开关保持关闭；当前 IngestRunner 更新行为尚未切换。
 
 ## Dependency Graph
 
