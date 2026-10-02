@@ -35,6 +35,8 @@ _SYSTEM_CHUNK_METADATA_KEYS = frozenset(
         "file_type",
         "kb_id",
         "parent_id",
+        "previous_id",
+        "next_id",
         "source",
         "source_id",
         "total_chunks",

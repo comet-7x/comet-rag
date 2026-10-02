@@ -259,18 +259,22 @@ def test_materialization_rejects_forged_chunk_facts_and_system_fields() -> None:
         "label": "document",
         "provider": "mineru",
         "source_id": "forged-document",
+        "previous_id": "forged-document",
     }
     request_metadata = {
         "label": "request",
         "department": "研发",
         "heading_path": ["伪造标题"],
         "parent_id": "forged-request",
+        "next_id": "forged-request",
         "page_number": 999,
     }
     draft_metadata = {
         "label": "chunk",
         "page_number": 7,
         "source": "forged-chunk",
+        "previous_id": "forged-chunk",
+        "next_id": "forged-chunk",
     }
 
     chunks = materialize_chunk_drafts(
