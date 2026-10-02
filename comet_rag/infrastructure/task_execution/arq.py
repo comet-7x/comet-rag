@@ -2,15 +2,18 @@ from __future__ import annotations
 
 # 通过 Redis 队列提交 task_id 的 ARQ 执行适配器。
 import asyncio
+from datetime import datetime, timedelta
 from typing import Any
 
 from arq import ArqRedis, create_pool
 from arq.connections import RedisSettings
+from arq.constants import result_key_prefix
 
+from comet_rag.core.time import Time
 from comet_rag.tasks.executor import StoreDrivenExecutor, logger
 from comet_rag.tasks.models import Task, TaskStatus
 from comet_rag.tasks.runner import LANE_CPU, LANE_IO, UnknownKind, get_runner
-from comet_rag.tasks.store import TaskStore
+from comet_rag.tasks.store import TaskNotFound, TaskStore
 
 #: arq 侧的函数名。worker 注册的 `run_task` 必须与之一致，否则任务入队即失踪。
 JOB_NAME = "run_task"
@@ -58,6 +61,7 @@ class ArqExecutor(StoreDrivenExecutor):
         #: 传进来的池归调用方管，我们不能替它关（worker 与 executor 常共用一个池）
         self._owns_pool = pool is None
         self._pool_lock = asyncio.Lock()
+        self._pending_offset = 0
 
     # ── Redis 连接 ─────────────────────────────────────────────────────────
 
@@ -80,7 +84,14 @@ class ArqExecutor(StoreDrivenExecutor):
 
     # ── 提交 ───────────────────────────────────────────────────────────────
 
-    def job_id_for(self, task_id: str, attempts: int, lane: str | None = None) -> str:
+    def job_id_for(
+        self,
+        task_id: str,
+        attempts: int,
+        lane: str | None = None,
+        *,
+        version: int = 0,
+    ) -> str:
         """入队幂等键。
 
         **不能只用 task_id**（todo.md 原文如此，实测行不通）：arq 的
@@ -88,16 +99,14 @@ class ArqExecutor(StoreDrivenExecutor):
         None，而结果键默认保留一小时。只用 task_id 的话，第一次失败后的重试
         会被自己上一轮的结果键挡掉，任务就永远停在 PENDING 了——而且不报错。
 
-        带上 attempts 后两件事同时成立：同一次尝试内重复投递被去重（幂等），
-        跨尝试的重投是新 job（可重试）。
-
-        再带上 lane，是因为**移交不涨 attempts**（移交不是一次尝试）：
-        cpu 道跑完投给 io 道时 attempts 没变，只靠 attempts 的话新 job 会被
-        上一条的结果键挡掉 —— 又是同一个"静默卡死"。
+        attempts 与 lane 区分重试和移交；version 进一步区分人工重置次数、
+        返回同一道等场景。每一轮 PENDING 有自己的投递身份，旧结果键不会
+        挡住新一轮，旧延迟消息也不能提前认领新的重试。
         """
-        return (
+        prefix = (
             f"{task_id}:{attempts}" if lane is None else f"{task_id}:{attempts}:{lane}"
         )
+        return f"{prefix}:v{version}"
 
     def _target_lane(self, task: Task, lane: str | None) -> str | None:
         """没指名道姓时投哪条道。按可靠程度从高到低试：
@@ -105,8 +114,8 @@ class ArqExecutor(StoreDrivenExecutor):
         1. 调用方指定的（移交就是这条）；
         2. **任务自己的 `resume_stage` 属于哪条道** —— 崩溃回收（T24）与
            人工 `retry()` 都走这里，它们只知道 task_id，不知道该投哪儿；
-        3. 本 worker 自己那条道（可重试失败重投，失败的阶段本来就归它）；
-        4. `entry_lane`，即流水线第一个阶段所在的道（生产端首次投递）。
+        3. `entry_lane`，即流水线第一个阶段所在的道（含初次投递补偿）；
+        4. 本 worker 自己那条道（未配置入口的兼容兜底）。
 
         投错道虽然能**自愈**（目标 worker 一拿到就会再移交一次），但不能
         指望它：回收往往正是因为某条道整个挂了，把任务投进那条道等于让它
@@ -115,7 +124,19 @@ class ArqExecutor(StoreDrivenExecutor):
         if lane is not None:
             return lane
         by_stage = self._lane_of_resume_stage(task)
-        return by_stage or self._lane or self._entry_lane
+        return by_stage or self._entry_lane or self._lane
+
+    def _retry_at(self, task: Task) -> datetime | None:
+        """从持久化错误恢复业务退避；租约回收与人工 retry 应立即投递。"""
+        error = task.error
+        if (
+            error is None
+            or not error.retriable
+            or error.code == "lease_expired"
+            or task.attempts < 1
+        ):
+            return None
+        return error.at + timedelta(seconds=self._backoff * (2 ** (task.attempts - 1)))
 
     @staticmethod
     def _lane_of_resume_stage(task: Task) -> str | None:
@@ -150,13 +171,31 @@ class ArqExecutor(StoreDrivenExecutor):
 
         target = self._target_lane(task, lane)
         pool = await self.pool()
-        job = await pool.enqueue_job(
-            self._job_name,
-            task_id,  # ← 载荷**只有** task_id
-            _job_id=self.job_id_for(task_id, task.attempts, target),
-            _queue_name=self._queue_for(target),
-            _defer_by=delay or None,
-        )
+        job_id = self.job_id_for(task_id, task.attempts, target, version=task.version)
+        retry_at = self._retry_at(task)
+        now = Time.now()
+        defer_until = now + timedelta(seconds=delay) if delay > 0 else None
+        # 过期截止时间必须立即投递；ARQ 从截止时间计算 job TTL，传多日前的
+        # 日期会得到负 TTL，让长期停机后的恢复再次失败。
+        if retry_at is not None and retry_at > now:
+            defer_until = max(defer_until, retry_at) if defer_until else retry_at
+
+        async def enqueue() -> object:
+            return await pool.enqueue_job(
+                self._job_name,
+                task_id,  # ← 载荷**只有** task_id；版本属于队列的 job 元数据
+                _job_id=job_id,
+                _queue_name=self._queue_for(target),
+                _defer_until=defer_until,
+            )
+
+        job = await enqueue()
+        if job is None and await pool.exists(result_key_prefix + job_id):
+            # 消费者可能在认领前遇到数据库故障，ARQ 留下结果键，任务却仍
+            # PENDING。这里只移除当前投递的传输结果，不动任务结果或 job 键；
+            # 并发补投仍由 enqueue 的 Redis 原子去重与认领 CAS 保护。
+            await pool.delete(result_key_prefix + job_id)
+            job = await enqueue()
         if job is None:
             # 同一次尝试已在队列里或刚跑完。这是幂等生效，不是错误。
             logger.debug("任务 %s 重复投递已去重", task_id)
@@ -167,7 +206,40 @@ class ArqExecutor(StoreDrivenExecutor):
         进程内实现必须 detach 一个协程来等（否则本轮协程收不了尾），
         跨进程这里反而更简单：入队即返回，谁先空出来谁来跑。
         """
-        await self.submit(task_id, delay=delay)
+        # 起算点已在 TaskError.at 持久化；补投与首次重试使用同一截止时间，
+        # 不把补偿时刻误当成新的退避起点。
+        await self.submit(task_id)
+
+    async def reconcile_pending(
+        self, *, limit: int = 100, exclude_ids: frozenset[str] = frozenset()
+    ) -> int:
+        """有界补投，轮转分页；返回成功 submit 数（含 Redis 去重），仅 worker 调用。"""
+        if limit < 1:
+            raise ValueError("limit 必须大于 0")
+        pending = await self._store.list_tasks(
+            status=TaskStatus.PENDING, limit=limit, offset=self._pending_offset
+        )
+        self._pending_offset = (
+            self._pending_offset + len(pending) if len(pending) == limit else 0
+        )
+        delivered = 0
+        for task in pending:
+            if task.task_id in exclude_ids:
+                continue
+            try:
+                await self.submit(task.task_id)
+                delivered += 1
+            except TaskNotFound:
+                logger.debug("补投前任务 %s 已被处理或删除", task.task_id)
+            except ValueError:
+                current = await self._store.get(task.task_id)
+                if current is not None and current.status is TaskStatus.PENDING:
+                    logger.exception("PENDING 任务 %s 补投参数无效", task.task_id)
+                else:
+                    logger.debug("补投前任务 %s 已被处理或删除", task.task_id)
+            except Exception:  # noqa: BLE001 —— 单条投递故障不能中断整批对账
+                logger.exception("PENDING 任务 %s 补投失败，留待后续对账", task.task_id)
+        return delivered
 
     async def _schedule_handoff(self, task_id: str, lane: str) -> None:
         """把任务投到目标道的队列上。这就是分道扩容的全部机制。"""
@@ -217,12 +289,23 @@ async def run_task(ctx: dict[str, Any], task_id: str) -> None:
     """arq 的 job 函数。**签名里只有 task_id**，这是本模块全部承诺的落点。
 
     `ctx["executor"]` 由 worker 的 `on_startup` 装配（见 `workers/`，T23）。
-    这里刻意不吞异常：`execute()` 已经把 runner 的所有异常收口成任务状态了，
-    还能漏到这一层的只有基础设施故障（库连不上之类），那种情况该让 arq
-    按自己的 `max_tries` 重投，而不是被我们静默咽掉。
+    旧部署的无版本消息会被跳过，并由 PENDING 对账生成新消息。基础设施故障
+    不静默吞掉；认领前故障由补投恢复，认领后故障由租约回收恢复。
     """
     executor: ArqExecutor = ctx["executor"]
-    await executor.execute(task_id)
+    task = await executor._store.get(task_id)
+    if task is None or task.status is not TaskStatus.PENDING:
+        return
+    job_id = executor.job_id_for(
+        task_id,
+        task.attempts,
+        executor._target_lane(task, executor.lane),
+        version=task.version,
+    )
+    if ctx["job_id"] != job_id:
+        logger.info("忽略任务 %s 的过期投递 %s", task_id, ctx["job_id"])
+        return
+    await executor._execute(task_id, expected_version=task.version)
 
 
 __all__ = ["DEFAULT_QUEUE", "JOB_NAME", "ArqExecutor", "run_task"]

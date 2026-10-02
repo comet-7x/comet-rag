@@ -9,7 +9,8 @@ from arq import cron
 from arq.cron import CronJob
 
 from comet_rag.core.logging import logger
-from comet_rag.tasks import TaskExecutor, TaskStore
+from comet_rag.infrastructure.task_execution.arq import ArqExecutor
+from comet_rag.tasks import TaskStore
 
 #: 回收租约。远大于 `TaskContext.heartbeat_interval`（10s）—— 见模块文档。
 DEFAULT_LEASE = timedelta(seconds=90)
@@ -26,17 +27,15 @@ async def sweep_stale_tasks(ctx: dict[str, Any]) -> int:
     变成"卡在 PENDING"，看着更健康，实际一样没人跑。
     """
     store: TaskStore = ctx["context"].task_store
-    executor: TaskExecutor = ctx["executor"]
+    executor: ArqExecutor = ctx["executor"]
     lease: timedelta = ctx.get("lease", DEFAULT_LEASE)
 
     revived = await store.sweep_stale(lease)
-    if not revived:
-        return 0
-
-    logger.warning(
-        f"租约回收 {len(revived)} 个任务（lease={lease.total_seconds():.0f}s）："
-        f"{', '.join(revived[:10])}{' …' if len(revived) > 10 else ''}"
-    )
+    if revived:
+        logger.warning(
+            f"租约回收 {len(revived)} 个任务（lease={lease.total_seconds():.0f}s）："
+            f"{', '.join(revived[:10])}{' …' if len(revived) > 10 else ''}"
+        )
     requeued = 0
     for task_id in revived:
         try:
@@ -49,7 +48,9 @@ async def sweep_stale_tasks(ctx: dict[str, Any]) -> int:
         except Exception:
             # 一个任务重投失败不该让整轮回收停摆，下一轮还会再试
             logger.exception(f"任务 {task_id} 回收后重投失败")
-    return requeued
+    # 即使本轮没有失联任务，也必须对账。建任务/重试/移交后进程退出或
+    # Redis 不可用留下的 PENDING，不会出现在 sweep_stale 的候选中。
+    return requeued + await executor.reconcile_pending(exclude_ids=frozenset(revived))
 
 
 def sweep_cron(*, second: int = SWEEP_SECOND) -> CronJob:

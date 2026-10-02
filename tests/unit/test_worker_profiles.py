@@ -83,6 +83,10 @@ def test_every_lane_the_ingest_pipeline_uses_has_a_worker() -> None:
     assert declared <= set(LANE_QUEUES), (
         f"这些道没有对应队列：{sorted(declared - set(LANE_QUEUES))}"
     )
+    assert runner.lane_of("extracting") == LANE_CPU
+    assert runner.lane_of("chunking") == LANE_CPU
+    assert runner.lane_of("indexing") == LANE_IO
+    assert runner.lane_of("unknown") is None
 
 
 def test_lease_is_far_larger_than_the_heartbeat_interval() -> None:

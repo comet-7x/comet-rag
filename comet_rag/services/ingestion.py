@@ -175,6 +175,10 @@ class IngestRunner:
         标成 `Done` 是笔误 —— 它把这条流水线最关键的一个返回值排除在了签名之外。"""
         return await self._flow(ctx)
 
+    def lane_of(self, stage: str | None) -> str | None:
+        """补投与崩溃恢复按续跑点路由，不能依赖发起对账的 worker 所在道。"""
+        return self._flow.lane_of(stage)
+
     # ── 阶段 ───────────────────────────────────────────────────────────────
 
     def _build_flow(self) -> StagePipeline:

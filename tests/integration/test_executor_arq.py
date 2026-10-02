@@ -26,6 +26,7 @@ from uuid import uuid4
 import pytest
 from arq import ArqRedis, create_pool
 from arq.connections import RedisSettings
+from arq.constants import result_key_prefix
 from arq.jobs import Job
 from arq.worker import Worker
 
@@ -216,7 +217,12 @@ async def test_job_id_must_vary_per_attempt(pool: ArqRedis) -> None:
 
     class _NaiveJobId(ArqExecutor):
         def job_id_for(
-            self, task_id: str, attempts: int, lane: str | None = None
+            self,
+            task_id: str,
+            attempts: int,
+            lane: str | None = None,
+            *,
+            version: int = 0,
         ) -> str:
             return task_id  # ← todo.md 的原始写法
 
@@ -374,6 +380,42 @@ async def test_retry_is_rescheduled_through_the_queue(
     assert done.status is TaskStatus.SUCCEEDED
     assert done.attempts == 2
     assert done.result == {"attempts": 2}
+
+
+async def test_pending_created_without_enqueue_is_repaired_across_connections(
+    split_pair: tuple[ArqExecutor, ArqExecutor, TaskStore, TaskStore],
+) -> None:
+    _producer, consumer, store_p, _store_c = split_pair
+    task = await store_p.create("arq-echo", request={"kb_id": "kb-repaired"})
+    # 模拟 API 在数据库提交后退出；消费端只从自己的连接对账，不依赖 API 重试。
+    assert await consumer.reconcile_pending() == 1
+    done = await wait_for_terminal(store_p, task.task_id, timeout=15.0)
+    assert done.status is TaskStatus.SUCCEEDED
+    assert done.attempts == 1
+    assert done.result["worker"] == consumer.worker_id
+
+
+async def test_pending_transport_result_is_removed_without_waiting_for_redis_ttl(
+    pool: ArqRedis,
+) -> None:
+    store = InMemoryTaskStore()
+    queue = _fresh_queue()
+    executor = ArqExecutor(store, pool=pool, queue_name=queue)
+    task = await store.create("arq-echo")
+    job_id = executor.job_id_for(task.task_id, 0, version=task.version)
+    await pool.set(result_key_prefix + job_id, b"transport failed", ex=300)
+    worker = _make_worker(pool, queue, executor, max_jobs=2)
+    try:
+        # 故意先不起消费者，确认真实 enqueue 不再被 result key 挡住。
+        assert await executor.reconcile_pending() == 1
+        assert await pool.zscore(queue, job_id) is not None
+        assert not await pool.exists(result_key_prefix + job_id)
+        async with _running(worker):
+            done = await wait_for_terminal(store, task.task_id, timeout=15.0)
+            assert done.status is TaskStatus.SUCCEEDED
+            assert done.attempts == 1
+    finally:
+        await executor.shutdown()
 
 
 async def _is_running(store: TaskStore, task_id: str) -> bool:
