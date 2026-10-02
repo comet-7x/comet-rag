@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from operator import index
 
-LengthFunction = Callable[[str], int]
+type LengthFunction = Callable[[str], int]
 
 
 def measure(length_function: LengthFunction, text: str) -> int:

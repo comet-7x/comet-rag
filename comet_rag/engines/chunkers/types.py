@@ -47,8 +47,6 @@ class ChunkDraft:
         if invalid_keys:
             raise ValueError(f"ChunkDraft.metadata 键必须是非空字符串：{invalid_keys!r}")
 
-        # frozen dataclass 只会阻止字段重绑；复制并包成只读视图，避免调用者随后
-        # 修改原 dict 或 draft.metadata，导致已经规划好的索引内容静默漂移。
         object.__setattr__(
             self, "metadata", MappingProxyType(dict(self.metadata))
         )
