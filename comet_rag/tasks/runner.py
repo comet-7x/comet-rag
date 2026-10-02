@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from comet_rag.core.time import Time
 
 from .models import Task, TaskStatus
-from .store import TaskStore
+from .store import TaskLeaseLost, TaskStore
 
 # 负载分道
 #
@@ -82,6 +82,7 @@ class TaskContext:
         worker_id: str | None = None,
         lane: str | None = None,
         heartbeat_interval: timedelta = timedelta(seconds=10),
+        attempts: int | None = None,
     ) -> None:
         self.store = store
         self.task_id = task_id
@@ -90,10 +91,28 @@ class TaskContext:
         self.lane = lane
         self._hb_interval = heartbeat_interval
         self._last_beat = Time.now()
+        self._attempts = attempts
 
     async def snapshot(self) -> Task:
         """读当前任务快照（副本，改它不会影响库）。"""
         return await self.store.require(self.task_id)
+
+    def _check_ownership(self, task: Task) -> None:
+        if (
+            self.worker_id is not None
+            and self._attempts is not None
+            and (
+                not task.status.is_active
+                or task.worker_id != self.worker_id
+                or task.attempts != self._attempts
+            )
+        ):
+            raise TaskLeaseLost(self.task_id)
+
+    def _check_write(self, task: Task) -> None:
+        self._check_ownership(task)
+        if task.status is TaskStatus.CANCELLING:
+            raise TaskCancelled(self.task_id)
 
     async def checkpoint(self) -> None:
         """协作式取消检查点 + 续租。
@@ -103,12 +122,18 @@ class TaskContext:
         调一次 checkpoint，看见 CANCELLING 就干净退出。
         """
         task = await self.snapshot()
+        self._check_ownership(task)
         if task.status is TaskStatus.CANCELLING:
             raise TaskCancelled(self.task_id)
         now = Time.now()
         if now - self._last_beat >= self._hb_interval:
             self._last_beat = now
-            await self.store.heartbeat(self.task_id)
+            if self.worker_id is not None and self._attempts is not None:
+                await self.store._renew_lease(
+                    self.task_id, self.worker_id, self._attempts
+                )
+            else:
+                await self.store.heartbeat(self.task_id)
 
     async def enter_stage(
         self, stage: str, *, progress: float | None = None, message: str = ""
@@ -118,12 +143,13 @@ class TaskContext:
             fields["progress"] = progress
         if message:
             fields["message"] = message
-        await self.store.enter_stage(self.task_id, stage, **fields)
+        await self.store._enter_stage_guarded(
+            self.task_id, stage, guard=self._check_write, **fields
+        )
 
     async def put(self, **values: Any) -> None:
         """往 context 里写中间态（必须 JSON 友好）。续跑就靠它。"""
-        task = await self.snapshot()
-        await self.store.update(self.task_id, context={**task.context, **values})
+        await self.store._put_context(self.task_id, values, guard=self._check_write)
 
     async def report(
         self, *, progress: float | None = None, message: str | None = None
@@ -134,7 +160,9 @@ class TaskContext:
         if message is not None:
             fields["message"] = message
         if fields:
-            await self.store.update(self.task_id, **fields)
+            await self.store._update_guarded(
+                self.task_id, guard=self._check_write, **fields
+            )
 
 
 class Runner(Protocol):

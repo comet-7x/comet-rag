@@ -361,6 +361,15 @@ class BackendsConfig(BaseModel):
         default=8, gt=0, description="执行器同时在跑的任务上限"
     )
 
+    @model_validator(mode="after")
+    def _cross_process_storage_is_shared(self) -> Self:
+        if self.task_executor is Backend.ARQ:
+            if self.task_store is not Backend.POSTGRES:
+                raise ValueError("task_executor=arq requires task_store=postgres")
+            if self.vector_store is not Backend.MILVUS:
+                raise ValueError("task_executor=arq requires vector_store=milvus")
+        return self
+
 
 class LimitsConfig(BaseModel):
     """资源上限（spec S4-1、S4-2）。**每一项都是"有界"这件事的具体落点。**

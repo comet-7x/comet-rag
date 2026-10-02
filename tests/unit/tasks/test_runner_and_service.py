@@ -28,6 +28,7 @@ from comet_rag.tasks import (
     sleep_with_checkpoint,
 )
 from comet_rag.tasks.runner import UnknownKind
+from comet_rag.tasks.store import TaskLeaseLost
 from tests.contracts.support import wait_for_terminal
 
 
@@ -124,6 +125,22 @@ async def test_checkpoint_heartbeats_after_interval(store: TaskStore) -> None:
 
     after = (await store.require(task.task_id)).heartbeat_at
     assert before is not None and after is not None and after > before
+
+
+@pytest.mark.parametrize(("worker_id", "attempts"), [("replacement", 1), ("owner", 2)])
+async def test_checkpoint_stops_a_stale_execution_attempt(
+    store: TaskStore, worker_id: str, attempts: int
+) -> None:
+    task = await store.create("rs-demo")
+    before = await store.transition(
+        task.task_id, TaskStatus.RUNNING, worker_id=worker_id, attempts=attempts
+    )
+    ctx = TaskContext(store, task.task_id, worker_id="owner", attempts=1)
+
+    with pytest.raises(TaskLeaseLost):
+        await ctx.checkpoint()
+
+    assert (await store.require(task.task_id)).version == before.version
 
 
 async def test_put_merges_into_context(store: TaskStore) -> None:

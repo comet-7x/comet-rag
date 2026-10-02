@@ -19,6 +19,7 @@ import sys
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import pytest
 import yaml
@@ -36,7 +37,7 @@ from comet_rag.infrastructure.task_execution.arq import (
 from comet_rag.tasks import TaskStatus
 from comet_rag.workers.maintenance import sweep_stale_tasks
 from tests.contracts.support import wait_for_terminal, wait_until
-from tests.integration.conftest import truncate_tables
+from tests.integration.conftest import POSTGRES_DSN, REDIS_URL, truncate_tables
 from tests.integration.crash_worker import KIND
 
 pytestmark = pytest.mark.integration
@@ -50,6 +51,8 @@ LEASE = timedelta(seconds=1)
 
 def _write_config(directory: Path) -> Path:
     """给子进程写一份 config.yaml —— `get_config()` 从 cwd 读它。"""
+    database = urlparse(POSTGRES_DSN)
+    redis = urlparse(REDIS_URL)
     config = {
         "server_config": {"app_name": "crash-test", "host": "127.0.0.1", "port": 0},
         "infrastructure_config": {
@@ -59,17 +62,22 @@ def _write_config(directory: Path) -> Path:
                 "dim": 8,
             },
             "database": {
-                "host": "localhost",
-                "port": 5432,
-                "username": "comet",
-                "password": "comet",
-                "database": "comet_rag",
+                "host": database.hostname,
+                "port": database.port or 5432,
+                "username": unquote(database.username or ""),
+                "password": unquote(database.password or ""),
+                "database": unquote(database.path.lstrip("/")),
             },
-            "redis": {"host": "localhost", "port": 6379, "db_index": TEST_REDIS_DB},
+            "redis": {
+                "host": redis.hostname,
+                "port": redis.port or 6379,
+                "password": unquote(redis.password) if redis.password else None,
+                "db_index": TEST_REDIS_DB,
+            },
         },
-        # 向量库用 memory：本用例只验任务的生死接管，不该把 Milvus 也拉进来
+        # 声明合法的跨进程部署；子进程显式注入内存替身，只验任务接管。
         "backends": {
-            "vector_store": "memory",
+            "vector_store": "milvus",
             "task_store": "postgres",
             "task_executor": "arq",
         },
@@ -80,10 +88,10 @@ def _write_config(directory: Path) -> Path:
 
 
 @pytest.fixture
-async def pool(redis_url: str) -> AsyncIterator[ArqRedis]:  # noqa: ARG001
-    p = await create_pool(
-        RedisSettings.from_dsn(f"redis://localhost:6379/{TEST_REDIS_DB}")
-    )
+async def pool(redis_url: str) -> AsyncIterator[ArqRedis]:
+    settings = RedisSettings.from_dsn(redis_url)
+    settings.database = TEST_REDIS_DB
+    p = await create_pool(settings)
     for queue in LANE_QUEUES.values():
         await p.delete(queue)
     try:
@@ -106,11 +114,12 @@ async def store(postgres_dsn: str) -> AsyncIterator[PostgresTaskStore]:
 @contextlib.contextmanager
 def doomed_worker(tmp_path: Path):
     """起一个**真的** arq worker 子进程，退出时确保它死透。"""
-    _write_config(tmp_path)
+    config_path = _write_config(tmp_path)
     env = {
         **os.environ,
         "PYTHONPATH": str(PROJECT_ROOT),
         "PYTHONUNBUFFERED": "1",
+        "COMET_RAG_CONFIG": str(config_path),
     }
     proc = subprocess.Popen(  # noqa: S603
         [

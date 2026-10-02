@@ -7,7 +7,8 @@ import logging
 import traceback
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Coroutine
+from dataclasses import dataclass
 from typing import Any
 
 from .models import Task, TaskError, TaskStatus
@@ -20,9 +21,16 @@ from .runner import (
     TaskContext,
     get_runner,
 )
-from .store import TaskStore, VersionConflict
+from .store import _CAS_RETRIES, TaskLeaseLost, TaskNotFound, TaskStore, VersionConflict
 
 logger = logging.getLogger("app.task")
+
+
+@dataclass(slots=True)
+class _Claim:
+    """移交退还次数后再次认领，也不能复用旧收尾的本地身份。"""
+
+    attempts: int
 
 
 class TaskExecutor(ABC):
@@ -68,9 +76,10 @@ class StoreDrivenExecutor(TaskExecutor):
         #: 本实例服务哪条负载道。None = 全都做（单进程），此时永远不会有移交。
         self._lane = lane
         #: 本实例正在执行的任务。关停时要把它们排干，否则会留下 RUNNING 僵尸。
-        self._inflight: set[str] = set()
+        self._inflight: dict[str, _Claim] = {}
         self._detached: set[asyncio.Task[None]] = set()
         self._closed = False
+        self._heartbeat_interval = 10.0
 
     @property
     def worker_id(self) -> str:
@@ -88,14 +97,22 @@ class StoreDrivenExecutor(TaskExecutor):
         是 public 的：跨进程实现的 worker 侧入口（arq 的 job 函数）要调它，
         而那已经算不上"内部"了。
         """
-        self._inflight.add(task_id)
+        await self._execute(task_id)
+
+    async def _execute(
+        self, task_id: str, *, expected_version: int | None = None
+    ) -> None:
+        """队列适配器可绑定投递版本；旧消息不能认领新一轮 PENDING。"""
         #: 是否已经把任务"认领"下来（成功迁到 RUNNING）。认领之后的每一次
         #: 写入都要先过 `_still_mine` 这道栅栏，见那里的说明。
         claimed = False
+        claim: _Claim | None = None
         try:
             # 排队期间可能已被取消/删除/被别的 worker 抢走，进来先复查
             task = await self._store.get(task_id)
             if task is None or task.status is not TaskStatus.PENDING:
+                return
+            if expected_version is not None and task.version != expected_version:
                 return
             runner = get_runner(task.kind)  # 未注册的 kind 直接走失败分支
             try:
@@ -122,33 +139,77 @@ class StoreDrivenExecutor(TaskExecutor):
                 logger.info("任务 %s 已被其他 worker 认领，本次放弃", task_id)
                 return
             claimed = True
+            claim = _Claim(attempts=task.attempts + 1)
+            self._inflight[task_id] = claim
             ctx = TaskContext(
-                self._store, task_id, worker_id=self._worker_id, lane=self._lane
+                self._store,
+                task_id,
+                worker_id=self._worker_id,
+                lane=self._lane,
+                attempts=task.attempts + 1,
             )
-            coro = runner(ctx)
+            coro = self._run_with_lease(task_id, runner(ctx), task.attempts + 1)
             outcome = (
                 await asyncio.wait_for(coro, self._timeout)
                 if self._timeout
                 else await coro
             )
-            await self._finish(task_id, outcome)
+            await self._finish(task_id, outcome, claim=claim)
         except asyncio.CancelledError:
             # 已经在被取消的协程里再 await 是不可靠的，把收尾工作甩给独立协程
-            self._detach(self._mark_cancelled(task_id, claimed=claimed))
+            self._detach(self._mark_cancelled(task_id, claimed=claimed, claim=claim))
             raise
         except TaskCancelled:
-            await self._mark_cancelled(task_id, claimed=claimed)
+            await self._mark_cancelled(task_id, claimed=claimed, claim=claim)
+        except TaskLeaseLost:
+            logger.warning("任务 %s 已失去租约，停止本次执行", task_id)
         except Exception as exc:  # noqa: BLE001 —— runner 的任何异常都在这里收口
-            await self._mark_failed(task_id, exc, claimed=claimed)
+            await self._mark_failed(task_id, exc, claimed=claimed, claim=claim)
         finally:
-            self._inflight.discard(task_id)
+            # 旧执行尝试退出不能摘掉同实例刚接手的新尝试。
+            if claim is not None and self._inflight.get(task_id) is claim:
+                self._inflight.pop(task_id)
 
-    async def _still_mine(self, task_id: str, *, claimed: bool) -> Task | None:
+    async def _run_with_lease(
+        self, task_id: str, coro: Awaitable[Outcome], attempts: int
+    ) -> Outcome:
+        """长阶段也持续续租；续租失败先停 runner，再交给外层收尾。"""
+        running = asyncio.ensure_future(coro)
+        heartbeat = asyncio.create_task(self._keep_lease(task_id, attempts))
+        try:
+            done, _ = await asyncio.wait(
+                {running, heartbeat}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if heartbeat in done:
+                await heartbeat
+            return await running
+        finally:
+            for task in (running, heartbeat):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(running, heartbeat, return_exceptions=True)
+
+    async def _keep_lease(self, task_id: str, attempts: int) -> None:
+        while True:
+            await asyncio.sleep(self._heartbeat_interval)
+            await asyncio.wait_for(
+                self._store._renew_lease(task_id, self._worker_id, attempts),
+                timeout=self._heartbeat_interval,
+            )
+
+    async def _still_mine(
+        self, task_id: str, *, claimed: bool, claim: _Claim | None = None
+    ) -> Task | None:
         """写终态前校验 worker 所有权，阻止租约误判后的旧执行者覆盖结果。"""
         task = await self._store.get(task_id)
         if task is None:
             return None
-        if claimed and task.worker_id != self._worker_id:
+        if claimed and (
+            not task.status.is_active
+            or task.worker_id != self._worker_id
+            or (claim is not None and task.attempts != claim.attempts)
+            or (claim is not None and self._inflight.get(task_id, claim) is not claim)
+        ):
             logger.warning(
                 "任务 %s 已被 %s 接管（本 worker %s），放弃写入",
                 task_id,
@@ -156,7 +217,55 @@ class StoreDrivenExecutor(TaskExecutor):
                 self._worker_id,
             )
             return None
+        if not claimed and task.status is not TaskStatus.PENDING:
+            return None
         return task
+
+    async def _commit(
+        self,
+        task: Task,
+        to: TaskStatus,
+        *,
+        claimed: bool = True,
+        claim: _Claim | None = None,
+        **fields: Any,
+    ) -> Task | None:
+        """围栏参与每轮 CAS；取消先于成功、失败重试和移交收尾。"""
+        attempts = claim.attempts if claim is not None else task.attempts
+
+        def guard(current: Task) -> None:
+            if claimed:
+                if (
+                    not current.status.is_active
+                    or current.worker_id != self._worker_id
+                    or current.attempts != attempts
+                    or (
+                        claim is not None
+                        and self._inflight.get(task.task_id, claim) is not claim
+                    )
+                ):
+                    raise TaskLeaseLost(task.task_id)
+            elif (
+                current.status is not TaskStatus.PENDING
+                or current.version != task.version
+            ):
+                raise TaskLeaseLost(task.task_id)
+            if (
+                current.status is TaskStatus.CANCELLING
+                and to is not TaskStatus.CANCELLED
+            ):
+                raise TaskCancelled(task.task_id)
+
+        try:
+            return await self._store._transition_guarded(
+                task.task_id, to, guard=guard, **fields
+            )
+        except (TaskLeaseLost, TaskNotFound):
+            logger.info("任务 %s 收尾前所有权已变更，放弃写入", task.task_id)
+            return None
+        except TaskCancelled:
+            await self._mark_cancelled(task.task_id, claimed=claimed, claim=claim)
+            return None
 
     @abstractmethod
     async def _schedule_retry(self, task_id: str, delay: float) -> None:
@@ -175,20 +284,24 @@ class StoreDrivenExecutor(TaskExecutor):
 
     # ── 收尾 ───────────────────────────────────────────────────────────────
 
-    async def _finish(self, task_id: str, outcome: Outcome) -> None:
+    async def _finish(
+        self, task_id: str, outcome: Outcome, *, claim: _Claim | None = None
+    ) -> None:
         if isinstance(outcome, Handoff):
-            await self._hand_off(task_id, outcome)
+            await self._hand_off(task_id, outcome, claim=claim)
             return
         if not isinstance(outcome, Done):
             raise TypeError(
                 f"runner 必须返回 Done 或 Handoff，得到 {type(outcome).__name__}"
             )
         # 走到这里必然已认领过（RUNNING 之后才会有 outcome），故 claimed=True
-        if await self._still_mine(task_id, claimed=True) is None:
+        task = await self._still_mine(task_id, claimed=True, claim=claim)
+        if task is None:
             return
-        await self._store.transition(
-            task_id,
+        await self._commit(
+            task,
             TaskStatus.SUCCEEDED,
+            claim=claim,
             result=outcome.result,
             result_uri=outcome.result_uri,
             # 成功即清空续跑锚点：否则这条任务日后被显式 retry 时
@@ -197,7 +310,9 @@ class StoreDrivenExecutor(TaskExecutor):
             message=outcome.message,
         )
 
-    async def _hand_off(self, task_id: str, outcome: Handoff) -> None:
+    async def _hand_off(
+        self, task_id: str, outcome: Handoff, *, claim: _Claim | None = None
+    ) -> None:
         """交棒：退回 PENDING + 写续跑锚点 + 投到目标道。
 
         **不消耗重试次数**。`execute()` 进 RUNNING 时把 attempts 加了 1，
@@ -205,17 +320,20 @@ class StoreDrivenExecutor(TaskExecutor):
         不退的话，一条三阶段两次移交的流水线开跑即耗掉 2 次重试预算，
         真出故障时反而没得重试了。
         """
-        task = await self._still_mine(task_id, claimed=True)
-        if task is None or task.status is not TaskStatus.RUNNING:
+        task = await self._still_mine(task_id, claimed=True, claim=claim)
+        if task is None:
             return  # 期间被取消或被回收了，别把它拽回 PENDING
-        await self._store.transition(
-            task_id,
+        saved = await self._commit(
+            task,
             TaskStatus.PENDING,
+            claim=claim,
             attempts=max(task.attempts - 1, 0),
             resume_stage=outcome.resume_stage,
             message=outcome.message,
             note=f"移交 {self._lane} → {outcome.lane}",
         )
+        if saved is None:
+            return
         logger.info(
             "任务 %s 移交 %s → %s（续跑自 %s）",
             task_id,
@@ -225,27 +343,46 @@ class StoreDrivenExecutor(TaskExecutor):
         )
         await self._schedule_handoff(task_id, outcome.lane)
 
-    async def _mark_cancelled(self, task_id: str, *, claimed: bool = True) -> None:
+    async def _mark_cancelled(
+        self, task_id: str, *, claimed: bool = True, claim: _Claim | None = None
+    ) -> None:
         """落 CANCELLED。**幂等**：任务已是终态就直接返回。
 
         取消路径上可能有多个来源同时想收尾（协程被 cancel + runner 自己
         抛 TaskCancelled），让它幂等比让调用方去协调便宜得多。
         """
-        task = await self._still_mine(task_id, claimed=claimed)
+        task = await self._still_mine(task_id, claimed=claimed, claim=claim)
         if task is None or task.status.is_terminal:
             return
-        await self._store.transition(
-            task_id,
+        if task.status is TaskStatus.RUNNING:
+            task = await self._commit(
+                task,
+                TaskStatus.CANCELLING,
+                claimed=claimed,
+                claim=claim,
+                message="正在取消…",
+            )
+            if task is None:
+                return
+        await self._commit(
+            task,
             TaskStatus.CANCELLED,
+            claimed=claimed,
+            claim=claim,
             error=TaskError(code="cancelled", message="任务被取消"),
             message="已取消",
         )
 
     async def _mark_failed(
-        self, task_id: str, exc: BaseException, *, claimed: bool = True
+        self,
+        task_id: str,
+        exc: BaseException,
+        *,
+        claimed: bool = True,
+        claim: _Claim | None = None,
     ) -> None:
         err = _to_task_error(exc)
-        task = await self._still_mine(task_id, claimed=claimed)
+        task = await self._still_mine(task_id, claimed=claimed, claim=claim)
         if task is None or task.status.is_terminal:
             return
 
@@ -256,21 +393,26 @@ class StoreDrivenExecutor(TaskExecutor):
 
         if err.retriable and task.attempts < task.max_attempts:
             delay = self._backoff * (2 ** (task.attempts - 1))
-            await self._store.transition(
-                task_id,
+            saved = await self._commit(
+                task,
                 TaskStatus.PENDING,
+                claimed=claimed,
+                claim=claim,
                 error=err,
                 resume_stage=resume_stage,
                 message=f"第 {task.attempts} 次失败，{delay:.3g}s 后重试",
                 note="可重试失败，重排队",
             )
-            await self._schedule_retry(task_id, delay)
+            if saved is not None:
+                await self._schedule_retry(task_id, delay)
             return
 
         logger.warning("任务 %s 失败：%s", task_id, err.message)
-        await self._store.transition(
-            task_id,
+        await self._commit(
+            task,
             TaskStatus.FAILED,
+            claimed=claimed,
+            claim=claim,
             error=err,
             resume_stage=resume_stage,
             message="执行失败",
@@ -286,26 +428,55 @@ class StoreDrivenExecutor(TaskExecutor):
         进程内实现在此之上还会补一刀本地 cancel，让卡在长 await 上的 runner
         立刻醒过来。
         """
-        task = await self._store.get(task_id)
-        if task is None or task.status.is_terminal:
-            return False
-        if task.status is TaskStatus.RUNNING:
-            await self._store.transition(
-                task_id, TaskStatus.CANCELLING, message="正在取消…"
-            )
-        elif task.status is not TaskStatus.CANCELLING:
-            # PENDING：没有真在跑的 runner，可以直接落终态
-            await self._store.transition(
-                task_id,
-                TaskStatus.CANCELLED,
-                error=TaskError(code="cancelled", message="任务被主动取消"),
-                message="已取消",
-            )
-        return True
+        for _ in range(_CAS_RETRIES):
+            task = await self._store.get(task_id)
+            if task is None or task.status.is_terminal:
+                return False
+            if task.status is TaskStatus.CANCELLING:
+                return True
+            try:
+                # 认领/完成会改变应选的迁移，冲突后必须重新选目标状态，
+                # 不能让 transition 的内部重试沿用旧目标。
+                if task.status is TaskStatus.RUNNING:
+                    await self._store.transition(
+                        task_id,
+                        TaskStatus.CANCELLING,
+                        expected_version=task.version,
+                        message="正在取消…",
+                    )
+                else:
+                    await self._store.transition(
+                        task_id,
+                        TaskStatus.CANCELLED,
+                        expected_version=task.version,
+                        error=TaskError(code="cancelled", message="任务被主动取消"),
+                        message="已取消",
+                    )
+                return True
+            except VersionConflict:
+                continue
+            except TaskNotFound:
+                return False
+        raise VersionConflict(f"任务 {task_id} 取消期间持续变更，请重试")
 
     async def request_cancel(self, task_id: str) -> bool:
         """受理取消。任务不存在或已是终态 → False。"""
         return await self._accept_cancel(task_id)
+
+    async def _cancel_for_shutdown(self, task_id: str) -> None:
+        """关停只能结束本实例持有的尝试，不能取消租约接管者。"""
+        task = await self._store.get(task_id)
+        if task is None or task.status.is_terminal:
+            return
+        claim = self._inflight.get(task_id)
+        if task.status is TaskStatus.PENDING:
+            await self._commit(
+                task, TaskStatus.CANCELLED, claimed=False, message="关停取消"
+            )
+        elif claim is not None and task.status is TaskStatus.RUNNING:
+            await self._commit(
+                task, TaskStatus.CANCELLING, claim=claim, message="正在取消…"
+            )
 
     # ── 生命周期 ───────────────────────────────────────────────────────────
 
@@ -384,7 +555,7 @@ class InProcessExecutor(StoreDrivenExecutor):
         except asyncio.CancelledError:
             # 在拿到闸门之前就被取消：execute() 还没接手，这里补收尾。
             # `_mark_cancelled` 幂等，与 execute() 内那次重复也无害。
-            self._detach(self._mark_cancelled(task_id))
+            self._detach(self._mark_cancelled(task_id, claimed=False))
             raise
 
     async def _schedule_retry(self, task_id: str, delay: float) -> None:
@@ -472,7 +643,9 @@ class InProcessExecutor(StoreDrivenExecutor):
         """停止收新任务；先协作取消在跑的，再等它们收尾，超时则硬掐。"""
         self._closed = True
         for task_id in list(self._bg):
-            await self.request_cancel(task_id)
+            await self._cancel_for_shutdown(task_id)
+            if self._hard_cancel:
+                self._cancel_bg(task_id)
         try:
             await asyncio.wait_for(self.wait_all(), timeout)
         except TimeoutError:

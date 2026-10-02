@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
 from comet_rag.tasks import (
     LANE_CPU,
     Done,
@@ -62,5 +63,5 @@ PROFILE = WorkerProfile(
 
 def __getattr__(name: str) -> Any:
     if name == "WorkerSettings":
-        return build_settings(PROFILE)
+        return build_settings(PROFILE, vector_store=InMemoryVectorStore())
     raise AttributeError(name)

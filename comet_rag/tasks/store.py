@@ -34,6 +34,10 @@ class TaskBusy(RuntimeError):
     """对在跑的任务做了只能对静止任务做的操作（如 delete）。"""
 
 
+class TaskLeaseLost(RuntimeError):
+    """当前执行尝试已失去所有权，不得继续续租或执行。"""
+
+
 # 这些字段不许经 update() 改：status 必须走 transition()，其余是不可变身份
 _IMMUTABLE = frozenset({"task_id", "kind", "created_at", "version", "status"})
 
@@ -179,14 +183,41 @@ class TaskStore(ABC):
         self, task_id: str, *, expected_version: int | None = None, **fields: Any
     ) -> Task:
         """改非状态字段。传 expected_version 即启用乐观锁。"""
+        return await self._update_guarded(
+            task_id, expected_version=expected_version, **fields
+        )
+
+    async def _update_guarded(
+        self,
+        task_id: str,
+        *,
+        guard: Callable[[Task], None] | None = None,
+        expected_version: int | None = None,
+        **fields: Any,
+    ) -> Task:
         self._check_fields(fields)
 
         def mutate(task: Task) -> None:
+            if guard is not None:
+                guard(task)
             for k, v in fields.items():
                 setattr(task, k, v)
             task.updated_at = Time.now()
 
         saved, _ = await self._cas(task_id, expected_version, mutate)
+        return saved
+
+    async def _put_context(
+        self, task_id: str, values: dict[str, Any], *, guard: Callable[[Task], None]
+    ) -> Task:
+        """合并在 CAS 内完成，重读不能丢掉其他并发写入的 context 键。"""
+
+        def mutate(task: Task) -> None:
+            guard(task)
+            task.context = {**task.context, **values}
+            task.updated_at = Time.now()
+
+        saved, _ = await self._cas(task_id, None, mutate)
         return saved
 
     async def transition(
@@ -210,9 +241,26 @@ class TaskStore(ABC):
         只补不覆盖：移交窗口里已有的锚点比 stage 更准（stage 只由 enter_stage
         改写，跨 transition 留旧值），覆盖它会把锚点拨回一格。
         """
+        return await self._transition_guarded(
+            task_id, to, expected_version=expected_version, note=note, **fields
+        )
+
+    async def _transition_guarded(
+        self,
+        task_id: str,
+        to: TaskStatus,
+        *,
+        guard: Callable[[Task], None] | None = None,
+        expected_version: int | None = None,
+        note: str | None = None,
+        **fields: Any,
+    ) -> Task:
+        """transition 的内核：所有权与状态机守卫在每一轮 CAS 中一起复验。"""
         self._check_fields(fields)
 
         def mutate(task: Task) -> TaskStatus:
+            if guard is not None:
+                guard(task)
             frm = task.status
             assert_transition(frm, to)
 
@@ -266,6 +314,20 @@ class TaskStore(ABC):
 
         await self._cas(task_id, None, mutate, bump=False)
 
+    async def _renew_lease(self, task_id: str, worker_id: str, attempts: int) -> None:
+        """所有权检查参与每轮 CAS，旧尝试不能给接管者续租。"""
+
+        def mutate(task: Task) -> None:
+            if (
+                not task.status.is_active
+                or task.worker_id != worker_id
+                or task.attempts != attempts
+            ):
+                raise TaskLeaseLost(task_id)
+            task.heartbeat_at = Time.now()
+
+        await self._cas(task_id, None, mutate, bump=False)
+
     async def sweep_stale(self, lease: timedelta) -> list[str]:
         """回收心跳超时的任务：还有重试次数就退回排队，否则判失败。
 
@@ -282,8 +344,13 @@ class TaskStore(ABC):
         now, revived = Time.now(), []
         for task in await self._stale_candidates(lease, now):
             try:
-                await self._reclaim(task)
-            except (InvalidTransition, TaskNotFound, VersionConflict) as exc:
+                await self._reclaim(task, lease)
+            except (
+                InvalidTransition,
+                TaskNotFound,
+                VersionConflict,
+                TaskLeaseLost,
+            ) as exc:
                 # 竞态，不是错误：候选选出来之后、回收动手之前，worker 自己把
                 # 任务推进到了终态（或它被删了）。回收本就是给"没人再推进它"
                 # 的任务兜底，这里恰恰说明不需要兜底。
@@ -304,19 +371,30 @@ class TaskStore(ABC):
             revived.append(task.task_id)
         return revived
 
-    async def _reclaim(self, task: Task) -> None:
+    async def _reclaim(self, task: Task, lease: timedelta) -> None:
         """回收单个心跳超时的任务。竞态由调用方 `sweep_stale` 兜住。
 
-        注意：这里的 `task` 是**候选查询时的快照**。心跳超时意味着那个 worker
-        大概率已经死了，它不可能再抢先写锚点；而 CAS 会自己重读，所以把锚点
-        的计算挪进 transition 内部（与状态变更同一笔 CAS）才是对的 —— 见
-        `transition` 的 `to is PENDING / FAILED` 分支。
+        候选是旧快照，CAS 每轮必须复查状态、所有权和心跳；续跑锚点仍在
+        transition 内按当前 stage 计算，不能从候选反推。
         """
+
+        def guard(current: Task) -> None:
+            beat = current.heartbeat_at or current.started_at or current.updated_at
+            if (
+                current.status is not task.status
+                or current.worker_id != task.worker_id
+                or current.attempts != task.attempts
+                or current.max_attempts != task.max_attempts
+                or Time.now() - beat <= lease
+            ):
+                raise TaskLeaseLost(task.task_id)
+
         if task.status is TaskStatus.CANCELLING:
             # 用户要的是"停下来"，那就直接给他终态；重排队等于违背原意
-            await self.transition(
+            await self._transition_guarded(
                 task.task_id,
                 TaskStatus.CANCELLED,
+                guard=guard,
                 error=TaskError(
                     code="cancelled_lease_expired",
                     message="worker 在处理取消的过程中失联",
@@ -331,9 +409,10 @@ class TaskStore(ABC):
             if task.attempts < task.max_attempts
             else TaskStatus.FAILED
         )
-        await self.transition(
+        await self._transition_guarded(
             task.task_id,
             nxt,
+            guard=guard,
             error=err,
             note="租约过期",
         )
@@ -371,9 +450,21 @@ class TaskStore(ABC):
     # 阶段留痕
     async def enter_stage(self, task_id: str, stage: str, **fields: Any) -> Task:
         """进入新阶段：关掉上一条阶段记录，开一条新的。"""
+        return await self._enter_stage_guarded(task_id, stage, **fields)
+
+    async def _enter_stage_guarded(
+        self,
+        task_id: str,
+        stage: str,
+        *,
+        guard: Callable[[Task], None] | None = None,
+        **fields: Any,
+    ) -> Task:
         self._check_fields(fields)
 
         def mutate(task: Task) -> None:
+            if guard is not None:
+                guard(task)
             self._close_stage(task, "succeeded")
             task.stage = stage
             task.stage_history.append(StageRecord(stage=stage, started_at=Time.now()))

@@ -34,9 +34,103 @@ from comet_rag.tasks import (
     TaskStore,
     VersionConflict,
 )
+from comet_rag.tasks.store import TaskLeaseLost
 
 
 class TaskStoreContract:
+    async def test_guarded_transition_rechecks_owner_after_cas_conflict(
+        self,
+        store: TaskStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        task = await store.create("guarded", max_attempts=3)
+        await store.transition(
+            task.task_id, TaskStatus.RUNNING, worker_id="old", attempts=1
+        )
+        original_save = store._save
+        replacement: Task | None = None
+
+        async def racing(
+            candidate: Task, expected_version: int, *, bump: bool = True
+        ) -> Task:
+            nonlocal replacement
+            if candidate.status is TaskStatus.SUCCEEDED and replacement is None:
+                replacement = await store.update(
+                    task.task_id, worker_id="new", attempts=2
+                )
+            return await original_save(candidate, expected_version, bump=bump)
+
+        def guard(current: Task) -> None:
+            if current.worker_id != "old" or current.attempts != 1:
+                raise TaskLeaseLost(task.task_id)
+
+        monkeypatch.setattr(store, "_save", racing)
+        with pytest.raises(TaskLeaseLost):
+            await store._transition_guarded(
+                task.task_id, TaskStatus.SUCCEEDED, guard=guard, result="stale"
+            )
+        assert replacement is not None
+        assert await store.require(task.task_id) == replacement
+        assert not any(
+            event.data.get("to") == "succeeded"
+            for event in await store.events(task.task_id)
+        )
+
+    async def test_context_merge_keeps_concurrent_keys_after_cas_conflict(
+        self,
+        store: TaskStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        task = await store.create("context-merge", context={"original": True})
+        original_save = store._save
+        injected = False
+
+        async def racing(
+            candidate: Task, expected_version: int, *, bump: bool = True
+        ) -> Task:
+            nonlocal injected
+            if not injected:
+                injected = True
+                await store.update(
+                    task.task_id, context={"original": True, "peer": True}
+                )
+            return await original_save(candidate, expected_version, bump=bump)
+
+        monkeypatch.setattr(store, "_save", racing)
+        await store._put_context(
+            task.task_id, {"ours": True}, guard=lambda current: None
+        )
+        assert (await store.require(task.task_id)).context == {
+            "original": True,
+            "peer": True,
+            "ours": True,
+        }
+
+    async def test_reclaim_does_not_use_heartbeat_from_old_candidate(
+        self,
+        store: TaskStore,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        task = await store.create("healthy", max_attempts=3)
+        await store.transition(
+            task.task_id, TaskStatus.RUNNING, worker_id="healthy", attempts=1
+        )
+        await store.update(task.task_id, heartbeat_at=Time.now() - timedelta(minutes=5))
+        original_query = store._stale_candidates
+        healthy: Task | None = None
+
+        async def racing(lease: timedelta, now: Any) -> list[Task]:
+            nonlocal healthy
+            candidates = await original_query(lease, now)
+            await store.heartbeat(task.task_id)
+            healthy = await store.require(task.task_id)
+            return candidates
+
+        monkeypatch.setattr(store, "_stale_candidates", racing)
+        assert await store.sweep_stale(timedelta(seconds=90)) == []
+        assert healthy is not None
+        assert await store.require(task.task_id) == healthy
+
     """子类必须覆写 `store` fixture。类名不以 Test 开头，故本身不被收集。"""
 
     @pytest.fixture
@@ -350,6 +444,85 @@ class TaskStoreContract:
 
         new = (await store.require(task.task_id)).heartbeat_at
         assert old is not None and new is not None and new > old
+
+    async def test_owned_renewal_preserves_version_and_context(
+        self, store: TaskStore
+    ) -> None:
+        task = await store.create("demo", context={"checkpoint": "saved"})
+        await store.transition(
+            task.task_id, TaskStatus.RUNNING, worker_id="owner", attempts=1
+        )
+        before = await store.update(
+            task.task_id, heartbeat_at=Time.now() - timedelta(minutes=1)
+        )
+
+        await store._renew_lease(task.task_id, "owner", 1)
+
+        current = await store.require(task.task_id)
+        assert current.version == before.version
+        assert current.context == {"checkpoint": "saved"}
+        assert current.heartbeat_at is not None
+        assert before.heartbeat_at is not None
+        assert current.heartbeat_at > before.heartbeat_at
+
+    @pytest.mark.parametrize(("worker_id", "attempts"), [("other", 1), ("owner", 2)])
+    async def test_owned_renewal_rejects_stale_attempt(
+        self, store: TaskStore, worker_id: str, attempts: int
+    ) -> None:
+        task = await store.create("demo")
+        before = await store.transition(
+            task.task_id, TaskStatus.RUNNING, worker_id=worker_id, attempts=attempts
+        )
+
+        with pytest.raises(TaskLeaseLost):
+            await store._renew_lease(task.task_id, "owner", 1)
+
+        current = await store.require(task.task_id)
+        assert current.version == before.version
+        assert current.heartbeat_at == before.heartbeat_at
+
+    @pytest.mark.parametrize("status", [TaskStatus.PENDING, TaskStatus.SUCCEEDED])
+    async def test_owned_renewal_rejects_inactive_task(
+        self, store: TaskStore, status: TaskStatus
+    ) -> None:
+        task = await store.create("demo")
+        await store.transition(
+            task.task_id, TaskStatus.RUNNING, worker_id="owner", attempts=1
+        )
+        await store.transition(task.task_id, status)
+
+        with pytest.raises(TaskLeaseLost):
+            await store._renew_lease(task.task_id, "owner", 1)
+
+        assert (await store.require(task.task_id)).heartbeat_at is None
+
+    async def test_owned_renewal_rechecks_owner_after_cas_conflict(
+        self, store: TaskStore
+    ) -> None:
+        task = await store.create("demo")
+        await store.transition(
+            task.task_id, TaskStatus.RUNNING, worker_id="owner", attempts=1
+        )
+        original_save = store._save
+        raced = False
+
+        async def takeover(
+            candidate: Task, expected_version: int, *, bump: bool = True
+        ) -> Task:
+            nonlocal raced
+            if not raced and not bump:
+                raced = True
+                await store.update(task.task_id, worker_id="replacement")
+            return await original_save(candidate, expected_version, bump=bump)
+
+        store._save = takeover  # type: ignore[method-assign]
+        try:
+            with pytest.raises(TaskLeaseLost):
+                await store._renew_lease(task.task_id, "owner", 1)
+        finally:
+            store._save = original_save  # type: ignore[method-assign]
+        assert raced
+        assert (await store.require(task.task_id)).worker_id == "replacement"
 
     async def test_loaded_task_is_isolated_from_the_store(
         self, store: TaskStore

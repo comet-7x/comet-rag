@@ -12,6 +12,8 @@ from typing import Any
 import pytest
 
 from comet_rag.config.schemas import (
+    Backend,
+    BackendsConfig,
     IngestPolicyConfig,
     LimitsConfig,
     MinerUConfig,
@@ -37,6 +39,41 @@ from comet_rag.infrastructure.extractors.mineru import (
 )
 
 # ── DSN 编码（PR 评审 #7）──────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("task_store", "vector_store", "message"),
+    [
+        (Backend.MEMORY, Backend.MEMORY, "task_store=postgres"),
+        (Backend.MEMORY, Backend.MILVUS, "task_store=postgres"),
+        (Backend.POSTGRES, Backend.MEMORY, "vector_store=milvus"),
+    ],
+)
+def test_arq_rejects_process_local_storage(
+    task_store: Backend, vector_store: Backend, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        BackendsConfig(
+            task_executor=Backend.ARQ,
+            task_store=task_store,
+            vector_store=vector_store,
+        )
+
+
+def test_arq_accepts_shared_storage() -> None:
+    config = BackendsConfig(
+        task_executor=Backend.ARQ,
+        task_store=Backend.POSTGRES,
+        vector_store=Backend.MILVUS,
+    )
+    assert config.task_executor is Backend.ARQ
+
+
+@pytest.mark.parametrize("task_store", [Backend.MEMORY, Backend.POSTGRES])
+def test_inprocess_keeps_memory_vector_store_available(task_store: Backend) -> None:
+    config = BackendsConfig(task_store=task_store)
+    assert config.task_executor is Backend.INPROCESS
+    assert config.vector_store is Backend.MEMORY
 
 
 @pytest.mark.parametrize(

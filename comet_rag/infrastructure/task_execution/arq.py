@@ -191,7 +191,7 @@ class ArqExecutor(StoreDrivenExecutor):
         """
         self._closed = True
         for task_id in list(self._inflight):
-            await self.request_cancel(task_id)
+            await self._cancel_for_shutdown(task_id)
         try:
             await asyncio.wait_for(self._drain(), timeout)
         except TimeoutError:
