@@ -455,3 +455,21 @@ M4-T6 已提交 schema/迁移/回滚设计，后半段决策门已于 2026-09-16
   95.63%；核心隔离安装的 DOCX/Hierarchy/IndexPlanner、Ruff 与 Pyright 通过。
 - 仅迁移独立临时测试库到 M4 head，测试资源已清理；未修改开发数据库或原 Milvus
   collection。尚未执行 Milvus 双 client/Strong 和 T10 评测，不把本记录当作 M4 完成。
+
+## 20. M4-T9 读侧切片验证记录（2026-10-03）
+
+- 每通道最多两轮 / 2048 个候选，分别批量判活后再 RRF；重复 ID 和 ANN 两轮
+  候选变化也不突破检查预算，第二轮重新读取指针。损坏 metadata 拒绝返回并诊断，
+  判活异常或不完整映射拒绝整次查询，HTTP 返回安全 503。
+- `return_level=child|parent` 默认 child；parent 模式对完整排序 child 去重，再批量
+  回填并截取 top-k。保留 matched_child_id 与 child 分数，核验 KB/source/revision，
+  缺失/错配或读取故障退回 child。Milvus dense/BM25/count 显式传一致性级别，
+  组合根在显式注入 DocumentStore 时创建 Strong 适配器，不默认启用生产 revision。
+- 新增 52 项单测、1 项真实 PostgreSQL 读写组合测试和 1 项 Milvus 双客户端用例。
+  注入放行旧版本、错误降级判活故障、提前截断父块候选、第三轮召回和 Session count
+  五类缺陷，9 项目标测试失败，恢复后通过。
+- 独立 unit：2208 passed / 20 skipped / 1 xfailed，最终复跑 9.28s。内存 E2E 30 passed；
+  真实 PostgreSQL/Redis 108 passed，无 skip。三层合并 2346 passed，25.74s；
+  整体覆盖率 89.81%，tasks 95.51%，新增判活模块 98%。Ruff、Pyright、diff 检查通过。
+- Milvus 未运行，双客户端 Strong 用例 skip，不能算验收通过。配置化读开关、Task
+  跨 worker 续跑、激活/superseded 与 GC 尚未接入，Checkpoint H/I 均未通过。

@@ -282,6 +282,27 @@ curl -X POST localhost:8000/search \
 并在 `degradations` 标明失败阶段和异常类型；两路都失败才返回 503。`degraded` 是
 系统负载降级级别，与请求级通道故障不是一回事。原始异常消息只写日志，不回给客户端。
 
+### Revision 读侧（实验性，生产尚未启用）
+
+查询新增 `return_level=child|parent`，默认 child。parent 模式先对子块融合/重排，
+再对完整候选按父块去重、批量回填正文，最后截取 top-k。返回的 `matched_child_id`
+指向命中子块，所有相似度/融合/重排分数仍属于 child；普通 child 结果该字段为 null。
+旧平坦记录没有 parent 时仍返回 child，父块缺失/错配或读取故障也退回 child，并在
+`degradations` 记录 `stage=parent`，不伪造正文。
+
+当前仅支持向 `build_context(..., document_store=...)` 显式注入已准备好的资源，
+CLI 不会自动装配 DocumentStore，也不启用 revision 写入。使用此实验路径必须先应用
+三表迁移并选择匹配的持久化资源；组合根创建 MilvusStore 时使用 Strong。若自行注入
+MilvusStore，也必须显式配置 `consistency_level="Strong"`，不能依赖旧 collection 默认值。
+
+每通道最多两轮、2048 个候选，先批量读取 active 指针，再参与 RRF/重排；staging、
+retired 和被新版本替代的 legacy 均不可见。旧候选挤满上限时允许少返回，诊断为
+`revision_candidate_cap`。判活存储故障或结果不完整时返回安全 503，**不会降级为返回
+全部版本**。未配置 DocumentStore 的旧链路遇到 revision candidate 也拒绝查询。
+真实 Milvus 双客户端验收、Task 跨 worker 续跑、激活与 GC 完成前不得启用生产新写入。
+
+### Milvus schema 兼容
+
 Milvus 必须使用 2.6 版本线的新 BM25 schema。旧 collection 缺少 chinese analyzer、
 BM25 function 或 sparse index 时会返回 `CollectionSchemaMismatch`；服务不会自动删除或
 改写已有数据。读路径会返回 HTTP 409，写路径的 indexing 任务会永久失败。升级时还需

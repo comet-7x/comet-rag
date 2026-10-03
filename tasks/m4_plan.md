@@ -1,6 +1,6 @@
 # Implementation Plan: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T7 已完成；M4-T8 第一切片已实现，写入/读路径切换未启用（v1.8）
+> 状态：M4-T7 已完成；T8 准备与 T9 读侧切片已实现，生产切换未启用（v1.8）
 > 依据：`tasks/m4_spec.md` v1.8、`tasks/m4_t6_design.md`
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开始日期：2026-09-14
@@ -19,9 +19,11 @@ M4-T7 已完成：决策门已确认，DocumentStore Port、内存/PostgreSQL �
 `refactor/enterprise-reliability`，并恢复原来的两处修改。
 
 T8 第一切片已实现 HierarchyBuilder、IndexPlanner 与 RevisionStager：父块/子向量分批
-幂等写入并核对计数，仅准备到 ready，不激活、不接入组合根。下一项完成有界 revision
-Task context 与跨 worker 恢复，再与 T9 revision-aware 判活/Strong recall 一起验收激活、
-superseded 与 GC。生产写开关保持关闭；当前 IngestRunner 更新行为尚未切换。
+幂等写入并核对计数，仅准备到 ready，不激活、不接入生产组合根。2026-10-03，T9
+读侧切片已支持 RRF 前有界判活、显式 parent 回填、故障诊断与 Strong 请求传递；
+只接受显式注入 DocumentStore，真实 Milvus 双客户端用例本轮 skip。
+下一项完成配置化资源装配/读开关和 Strong 验收，再推进有界 revision Task context、
+跨 worker 恢复、激活/superseded 与 GC。生产新写入保持关闭；IngestRunner 尚未切换。
 
 ## Dependency Graph
 

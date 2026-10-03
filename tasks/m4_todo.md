@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T7 已完成；M4-T8 第一切片已实现，生产写路径未启用
+> 状态：M4-T7 已完成；T8 准备与 T9 读侧切片已实现，生产 revision 链路未启用
 > 规格：`tasks/m4_spec.md` v1.8
 > 计划：`tasks/m4_plan.md` v1.8、`tasks/m4_t6_design.md`
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
@@ -158,11 +158,20 @@ separator 配置不可被原地修改。
 
 **依赖：** M4-T8
 
-- [ ] dense/keyword/hybrid 命中子块后批量读取父块，禁止 N+1
-- [ ] 支持返回 child 或 parent 的显式查询选项，默认行为兼容
-- [ ] parent 缺失时按读路径规则降级并记录诊断
-- [ ] reranker 的输入粒度与去重顺序有明确测试
-- [ ] 旧平坦记录仍可检索，不伪造 parent
+- [x] dense/keyword/hybrid 命中子块后批量读取父块，禁止 N+1
+- [x] 支持 `return_level=child|parent` 的显式查询选项，默认 child
+- [x] parent 缺失时按读路径规则降级并记录诊断
+- [x] reranker 的输入粒度与去重顺序有明确测试
+- [x] 旧平坦记录仍可检索，不伪造 parent
+- [x] 每通道最多两轮召回 / 2048 个 candidate，分别判活后才参与 RRF
+- [x] 判活失败或不完整映射拒绝查询，HTTP 返回安全 503
+- [x] Milvus dense/BM25/count 请求显式指定适配器一致性级别
+- [ ] 真实 Milvus 双客户端 Strong 验收（用例已添加，本轮中间件未运行）
+- [ ] 配置化装配 DocumentStore、生产读开关与旧 revision GC
+
+2026-10-03 读侧切片支持显式注入 DocumentStore，组合根不默认创建资源，CLI/生产
+链路尚未切换；新写入仍关闭。父块 key 必须与命中 child 的 KB/source/revision
+一致，缺失或错配退回 child 并记录诊断。Checkpoint I 仍待 Strong 与完整读写验收。
 
 ## Phase 4：出口验收
 

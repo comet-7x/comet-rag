@@ -110,6 +110,8 @@ ARQ 根据过去的截止时间算出负 job TTL。入库 runner 暴露已有流
 - [x] 与保留的 M4 分支对齐 revision / DocumentStore 设计与实现。
 - [x] 合入完整 M4 已有提交，并恢复原来两处 Chunker 修改。
 - [x] T8 第一切片：HierarchyBuilder、IndexPlanner 与仅准备到 ready 的 RevisionStager。
+- [x] T9 读侧切片：有界 revision 判活、RRF 前过滤、父块批量回填与故障诊断。
+- [ ] 配置化 DocumentStore/读开关与真实 Milvus 双客户端 Strong 验收。
 - [ ] T8 后续：有界 Task context、跨 worker 续跑、激活/响应丢失与 superseded 收尾。
 - [ ] 写入、可见性判定、激活和旧版本回收一起验收。
 - [ ] 覆盖窗口写入失败、同源并发更新、过期执行者提交及回滚。
@@ -139,6 +141,22 @@ Ruff、Pyright、工作流 YAML 与 diff 检查通过，CI 已增加文档契约
 尚未推送执行。Milvus 双 client/Strong、新读写切换和完整故障矩阵尚未验收。
 
 隔离测试容器、网络与匿名测试卷已清理，测试数据可重跑生成；开发资源未改动。
+
+## T9 读侧切片验收
+
+2026-10-03，T9 读侧切片已落地。每通道最多两轮 / 2048 候选，DocumentStore 查询
+失败或映射不完整拒绝整次检索，不能降级泄漏旧 revision。parent 模式对子块完成
+融合/重排后遍历全候选去重，再批量回填并截 top-k；错配/缺失回退 child 并诊断。
+API 新增 return_level 与 matched_child_id（默认 child 时为 null）。Milvus 查询/count
+显式传一致性级别；组合根仅在显式注入 DocumentStore 时创建 Strong 适配器。
+CLI 和生产 IngestRunner 尚未切换，不宣称新写入故障闭环已完成。
+
+独立单测 2208 passed / 20 skipped / 1 xfailed，最终复跑 9.28s；内存 E2E 30 passed；
+真实 PostgreSQL/Redis 108 passed，无 skip。三层合并 2346 passed，25.74s，整体
+覆盖率 89.81%、任务框架 95.51%。5 类反向缺陷被 9 项目标测试抓住；Ruff、
+Pyright、diff 检查通过。Milvus 双客户端用例已添加，但服务未运行而 skip。
+隔离测试资源清理后不保留测试数据。T9 切片按读侧核心、服务接线/验收与文档
+三批本地提交，未推送。
 
 ## 后续产品范围
 
