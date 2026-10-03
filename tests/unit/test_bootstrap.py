@@ -42,6 +42,7 @@ from comet_rag.engines.pipelines import (
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.persistence.document_store import InMemoryDocumentStore
 from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
 from comet_rag.infrastructure.sources import (
     AutoLoader,
@@ -183,12 +184,32 @@ async def test_built_embedding_model_rejects_local_image_by_default(
 async def test_memory_backends_need_no_middleware(context) -> None:
     """全内存装配必须零外部依赖 —— 这是 plan"先内存后真实"成立的前提。"""
     assert isinstance(context.vector_store, InMemoryVectorStore)
+    assert context.document_store is None
     assert context.task_service is not None
     assert context.retrieval is not None
     assert context.retrieval._keyword_search is context.vector_store  # noqa: SLF001
     assert context.embedding_dim == DIM
 
     await context.aclose()
+
+
+async def test_explicit_document_store_is_shared_and_closed(
+    embedding: FakeEmbedding,
+) -> None:
+    class ClosingDocuments(InMemoryDocumentStore):
+        closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    documents = ClosingDocuments()
+    context = build_context(
+        make_config(), embedding_model=embedding, document_store=documents
+    )
+    assert context.document_store is documents
+    assert context.retrieval._document_store is documents  # noqa: SLF001 — 装配同一资源
+    await context.aclose()
+    assert documents.closed
 
 
 async def test_ingest_runner_is_registered(context) -> None:
@@ -329,9 +350,7 @@ async def test_enabled_mineru_binds_an_independent_gate_and_pdf_hooks(
         metadata={"file_name": "original.pdf", "file_type": "pdf"},
     )
     assert (
-        context.pipeline_hooks.get_extractor("pdf")(
-            content, PipelineConfig()
-        ).markdown
+        context.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig()).markdown
         == "# PDF"
     )
     async_hook = context.pipeline_hooks.get_aextractor("pdf")
@@ -370,15 +389,11 @@ async def test_mineru_hooks_are_isolated_between_contexts_and_disabled_restart(
     )
 
     assert (
-        first.pipeline_hooks.get_extractor("pdf")(
-            content, PipelineConfig()
-        ).markdown
+        first.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig()).markdown
         == "# first"
     )
     assert (
-        second.pipeline_hooks.get_extractor("pdf")(
-            content, PipelineConfig()
-        ).markdown
+        second.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig()).markdown
         == "# second"
     )
     with pytest.raises(ValueError, match="No extractor registered"):
@@ -391,9 +406,7 @@ async def test_mineru_hooks_are_isolated_between_contexts_and_disabled_restart(
     with pytest.raises(ValueError, match="No extractor registered"):
         disabled.pipeline_hooks.get_extractor("pdf")
     assert (
-        second.pipeline_hooks.get_extractor("pdf")(
-            content, PipelineConfig()
-        ).markdown
+        second.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig()).markdown
         == "# second"
     )
 
@@ -562,8 +575,10 @@ def test_milvus_backend_requires_connection_settings(
         build_context(config, embedding_model=embedding)
 
 
+@pytest.mark.parametrize("revision_aware", [False, True])
 def test_milvus_database_and_prefix_are_forwarded(
     monkeypatch: pytest.MonkeyPatch,
+    revision_aware: bool,
 ) -> None:
     from comet_rag.infrastructure.persistence.vector_store import milvus
 
@@ -582,7 +597,7 @@ def test_milvus_database_and_prefix_are_forwarded(
         collection_prefix="ct_bootstrap",
     )
 
-    store = build_vector_store(config)
+    store = build_vector_store(config, revision_aware=revision_aware)
 
     assert isinstance(store, FakeMilvusStore)
     assert captured == {
@@ -591,6 +606,7 @@ def test_milvus_database_and_prefix_are_forwarded(
         "database_name": "zhihao_test_database",
         "prefix": "ct_bootstrap",
         "replica_number": 1,
+        "consistency_level": "Strong" if revision_aware else "Session",
     }
 
 

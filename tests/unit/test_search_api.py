@@ -21,9 +21,25 @@ from comet_rag.services.retrieval import (
     RetrievalService,
     RetrievalStage,
     RetrievedChunk,
+    ReturnLevel,
     SearchMode,
     SearchQuery,
 )
+from comet_rag.services.revision_recall import RevisionVisibilityError
+
+
+def test_revision_visibility_failure_maps_to_safe_503() -> None:
+    app = FastAPI()
+    _install_exception_handlers(app)
+
+    @app.get("/revision-failure")
+    async def failure() -> None:
+        raise RevisionVisibilityError("postgresql://secret-password@private-host")
+
+    response = TestClient(app).get("/revision-failure")
+    assert response.status_code == 503
+    assert response.json()["error"] == "文档版本判活暂不可用"
+    assert "secret-password" not in response.text
 
 
 class _RecordingRetrieval:
@@ -65,6 +81,7 @@ def test_search_request_defaults_to_dense_for_backward_compatibility() -> None:
     request = SearchRequest(kb_id="kb", query="query")
 
     assert request.mode is SearchMode.DENSE
+    assert request.return_level is ReturnLevel.CHILD
 
 
 def test_search_request_rejects_unknown_mode() -> None:
@@ -84,6 +101,7 @@ async def test_search_route_forwards_mode_and_returns_diagnostics() -> None:
             top_k=1,
             fetch_k=3,
             mode=SearchMode.HYBRID,
+            return_level=ReturnLevel.PARENT,
         ),
         cast("RetrievalService", retrieval),
     )
@@ -91,6 +109,7 @@ async def test_search_route_forwards_mode_and_returns_diagnostics() -> None:
 
     assert retrieval.query is not None
     assert retrieval.query.mode is SearchMode.HYBRID
+    assert retrieval.query.return_level is ReturnLevel.PARENT
     assert payload["mode"] == "hybrid"
     assert payload["channels"] == ["dense", "keyword"]
     assert payload["degradations"] == [
@@ -110,6 +129,7 @@ async def test_search_route_forwards_mode_and_returns_diagnostics() -> None:
         "fusion_score": 0.03,
         "vector_rank": 2,
         "keyword_rank": 1,
+        "matched_child_id": None,
     }
 
 

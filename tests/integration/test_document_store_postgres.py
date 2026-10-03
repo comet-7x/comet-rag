@@ -21,6 +21,7 @@ from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStor
 from comet_rag.ports import NormalizedDocument
 from comet_rag.ports.document_store import DocumentStore, RevisionStatus, StaleRevision
 from comet_rag.services.indexing import IndexPlan, IndexPlanner, RevisionStager
+from comet_rag.services.retrieval import RetrievalService, ReturnLevel, SearchQuery
 from tests.contracts.document_store import DocumentStoreContract, make_draft
 from tests.contracts.knowledge_base import make_kb
 from tests.integration.conftest import truncate_tables
@@ -37,6 +38,38 @@ class TestPostgresDocumentStore(DocumentStoreContract):
         await repository.acreate(make_kb(make_draft().key.kb_id))
         yield PostgresDocumentStore(database)
         await _truncate(database)
+
+    async def test_reader_only_returns_active_revision_and_matching_parent(
+        self,
+        store: DocumentStore,
+    ) -> None:
+        vectors, model = InMemoryVectorStore(), _Embedding()
+        writer = RevisionStager(
+            document_store=store, vector_store=vectors, embedding_model=model
+        )
+        reader = RetrievalService(
+            embedding_model=model, vector_store=vectors, document_store=store
+        )
+        old, new = _hierarchy_plan("old"), _hierarchy_plan("new")
+        query = SearchQuery(
+            kb_id=old.key.kb_id, query="q", return_level=ReturnLevel.PARENT
+        )
+        await writer.astage(old, embedding_dim=2)
+        assert (await reader.search(query)).chunks == []
+        await store.aactivate_revision(old.key)
+        await writer.astage(new, embedding_dim=2)
+        assert {
+            item.metadata["document_revision"]
+            for item in (await reader.search(query)).chunks
+        } == {"old"}
+        await store.aactivate_revision(new.key)
+        result = await reader.search(query)
+        assert {item.metadata["document_revision"] for item in result.chunks} == {"new"}
+        assert {item.id for item in result.chunks} == {p.id for p in new.parents}
+        assert {item.matched_child_id for item in result.chunks} <= {
+            c.id for c in new.vector_children
+        }
+        assert await vectors.acount(old.key.kb_id) == 8
 
     async def test_planned_hierarchy_stages_and_replays(
         self, store: DocumentStore

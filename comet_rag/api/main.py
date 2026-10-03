@@ -27,6 +27,7 @@ from comet_rag.ports.knowledge_base import (
     KnowledgeBaseNotFound,
 )
 from comet_rag.services.retrieval import HybridRecallFailed, KeywordSearchUnavailable
+from comet_rag.services.revision_recall import RevisionVisibilityError
 from comet_rag.services.source_policy import SourceNotAllowed
 from comet_rag.tasks import TaskBusy, TaskNotFound, VersionConflict
 from comet_rag.tasks.service import Backlogged
@@ -44,6 +45,14 @@ def _problem(request: Request, code: int, message: str) -> JSONResponse:
 
 
 def _install_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(RevisionVisibilityError)
+    async def revision_visibility_unavailable(
+        request: Request, exc: RevisionVisibilityError
+    ) -> JSONResponse:  # noqa: RUF029
+        return _problem(
+            request, status.HTTP_503_SERVICE_UNAVAILABLE, "文档版本判活暂不可用"
+        )
+
     @app.exception_handler(TaskNotFound)
     async def _task_not_found(request: Request, exc: TaskNotFound) -> JSONResponse:  # noqa: RUF029
         return _problem(request, status.HTTP_404_NOT_FOUND, f"任务不存在：{exc!s}")

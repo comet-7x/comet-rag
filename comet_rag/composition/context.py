@@ -11,6 +11,7 @@ from comet_rag.core.logging import logger
 from comet_rag.engines.pipelines import HookProvider
 from comet_rag.infrastructure.sources import AutoLoader
 from comet_rag.ports import BaseVectorStore, EmbeddingPort, RerankerPort
+from comet_rag.ports.document_store import DocumentStore
 from comet_rag.ports.knowledge_base import KnowledgeBaseRepository
 from comet_rag.services.ingestion import (
     DEFAULT_MAX_CHUNK_CONTEXT_BYTES,
@@ -40,6 +41,7 @@ class Context:
     embedding_dim: int
     pipeline_hooks: HookProvider
     reranker: RerankerPort | None = None
+    document_store: DocumentStore | None = None
     #: 对模型服务的进程级并发闸门。放进 Context 是为了让 /admin/health
     #: 能读到它的实时统计 —— 过载时最先想看的就是这几个数。
     model_gate: Any = None
@@ -79,6 +81,8 @@ class Context:
             await _safe(_maybe_close(closer), type(closer).__name__)
         # 4. 再关持久化与模型资源。
         await _safe(self.vector_store.aclose(), "vector_store")
+        if self.document_store is not None:
+            await _safe(self.document_store.aclose(), "document_store")
         if self.reranker is not None:
             await _safe(_maybe_close(self.reranker), "reranker")
         await _safe(_maybe_close(self.embedding_model), "embedding_model")

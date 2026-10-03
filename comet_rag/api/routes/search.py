@@ -1,5 +1,7 @@
 """检索。"""
 
+from __future__ import annotations
+
 from fastapi import APIRouter
 
 from ...services.retrieval import SearchQuery
@@ -25,6 +27,7 @@ async def search(payload: SearchRequest, retrieval: RetrievalDep) -> SearchRespo
             filter=payload.filter,
             rerank=payload.rerank,
             mode=payload.mode,
+            return_level=payload.return_level,
         )
     )
     return SearchResponse(

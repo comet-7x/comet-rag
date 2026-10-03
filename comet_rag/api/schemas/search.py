@@ -5,7 +5,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from comet_rag.services.retrieval import RecallChannel, RetrievalStage, SearchMode
+from comet_rag.services.retrieval import (
+    RecallChannel,
+    RetrievalStage,
+    ReturnLevel,
+    SearchMode,
+)
 
 
 class SearchRequest(BaseModel):
@@ -25,6 +30,10 @@ class SearchRequest(BaseModel):
         default=SearchMode.DENSE,
         description="召回模式：dense、keyword 或 hybrid；默认 dense。",
     )
+    return_level: ReturnLevel = Field(
+        default=ReturnLevel.CHILD,
+        description="返回 child 或回填 parent；默认 child。",
+    )
 
 
 class SearchResultItem(BaseModel):
@@ -37,6 +46,7 @@ class SearchResultItem(BaseModel):
     fusion_score: float | None = None
     vector_rank: int | None = None
     keyword_rank: int | None = None
+    matched_child_id: str | None = None
 
 
 class RetrievalDegradationItem(BaseModel):

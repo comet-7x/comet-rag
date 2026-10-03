@@ -32,6 +32,7 @@ from comet_rag.ports import (
     KeywordSearchPort,
     RerankerPort,
 )
+from comet_rag.ports.document_store import DocumentStore
 from comet_rag.ports.knowledge_base import (
     KnowledgeBaseRepository,
 )
@@ -51,7 +52,9 @@ if TYPE_CHECKING:
     from comet_rag.infrastructure.extractors import MinerUDocumentExtractor
 
 
-def build_vector_store(config: APPConfig) -> BaseVectorStore:
+def build_vector_store(
+    config: APPConfig, *, revision_aware: bool = False
+) -> BaseVectorStore:
     backend = config.backends.vector_store
     if backend is Backend.MEMORY:
         return InMemoryVectorStore()
@@ -73,6 +76,7 @@ def build_vector_store(config: APPConfig) -> BaseVectorStore:
             database_name=settings.database_name,
             prefix=settings.collection_prefix,
             replica_number=settings.replica_number,
+            consistency_level="Strong" if revision_aware else "Session",
         )
     raise ValueError(f"不支持的 vector_store 后端：{backend}")
 
@@ -418,6 +422,7 @@ def build_context(
     task_store: TaskStore | None = None,
     task_executor: TaskExecutor | None = None,
     kb_repository: KnowledgeBaseRepository | None = None,
+    document_store: DocumentStore | None = None,
     pipeline_config: PipelineConfig | None = None,
     ingest_loader: AutoLoader | None = None,
     mineru_extractor: DocumentExtractorPort | None = None,
@@ -480,7 +485,9 @@ def build_context(
         bind_gate(mineru_gate)
         _assert_gated(mineru_gate, mineru_extractor)
 
-    vector_store = vector_store or build_vector_store(config)
+    vector_store = vector_store or build_vector_store(
+        config, revision_aware=document_store is not None
+    )
     task_store = task_store or build_task_store(config, database)
     task_executor = task_executor or build_task_executor(
         config, task_store, lane=executor_lane
@@ -513,19 +520,19 @@ def build_context(
             embedding_model=embedding_model,
             vector_store=vector_store,
             keyword_search=(
-                vector_store
-                if isinstance(vector_store, KeywordSearchPort)
-                else None
+                vector_store if isinstance(vector_store, KeywordSearchPort) else None
             ),
             knowledge_base=knowledge_base,
             reranker=reranker,
             degradation=degradation,
+            document_store=document_store,
         ),
         kb_repository=kb_repository,
         knowledge_base=knowledge_base,
         embedding_dim=embedding_settings.dim,
         pipeline_hooks=pipeline_hooks,
         database=database,
+        document_store=document_store,
         model_gate=gate,
         degradation=degradation,
         source_policy=source_policy,
