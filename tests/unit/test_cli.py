@@ -62,6 +62,19 @@ def test_subcommand_is_required() -> None:
         build_parser().parse_args([])
 
 
+def test_yaml_config_preserves_revision_read_switch(config_file: Path) -> None:
+    settings = {
+        **CONFIG,
+        "retrieval": {"revision_aware": True, "max_revision_candidates": 128},
+    }
+    config_file.write_text(
+        yaml.safe_dump(settings, allow_unicode=True), encoding="utf-8"
+    )
+    loaded = get_config(str(config_file))
+    assert loaded.retrieval.revision_aware is True
+    assert loaded.retrieval.max_revision_candidates == 128
+
+
 def test_worker_profile_is_constrained() -> None:
     """profile 打错字时立刻报错，而不是起一个消费空队列的 worker。"""
     with pytest.raises(SystemExit):

@@ -1,5 +1,7 @@
 """应用配置模型及跨字段约束。"""
 
+from __future__ import annotations
+
 from enum import StrEnum
 from typing import Self
 
@@ -567,6 +569,21 @@ class InfrastructureConfig(BaseModel):
     )
 
 
+class RetrievalConfig(BaseModel):
+    """实验性 revision 读路径；不控制写入或激活。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    revision_aware: bool = Field(default=False, strict=True)
+    max_revision_candidates: int = Field(
+        default=2048,
+        gt=0,
+        le=2048,
+        strict=True,
+        description="每个召回通道两轮查询共用的 candidate 检查预算",
+    )
+
+
 class APPConfig(BaseModel):
     server_config: ServerConfig = Field(..., description="服务配置")
     infrastructure_config: InfrastructureConfig = Field(..., description="基础设施配置")
@@ -579,3 +596,23 @@ class APPConfig(BaseModel):
     ingest_policy: IngestPolicyConfig = Field(
         default_factory=IngestPolicyConfig, description="入库来源准入策略"
     )
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+
+    @model_validator(mode="after")
+    def _revision_storage_is_shared(self) -> Self:
+        if self.retrieval.revision_aware:
+            backend = self.backends.vector_store
+            if backend is Backend.MILVUS:
+                if self.backends.task_store is not Backend.POSTGRES:
+                    raise ValueError(
+                        "revision-aware milvus requires task_store=postgres"
+                    )
+                if self.infrastructure_config.database is None:
+                    raise ValueError("revision-aware milvus requires database settings")
+                if self.infrastructure_config.vector_database is None:
+                    raise ValueError(
+                        "revision-aware milvus requires vector_database settings"
+                    )
+            elif backend is not Backend.MEMORY:
+                raise ValueError("revision recall only supports memory or milvus")
+        return self

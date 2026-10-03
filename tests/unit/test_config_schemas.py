@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from comet_rag.config.schemas import (
+    APPConfig,
     Backend,
     BackendsConfig,
     IngestPolicyConfig,
@@ -19,6 +20,7 @@ from comet_rag.config.schemas import (
     MinerUConfig,
     ModelConfig,
     RedisConfig,
+    RetrievalConfig,
     S3Config,
     SqlDatabaseConfig,
     VectorDatabaseConfig,
@@ -37,6 +39,77 @@ from comet_rag.infrastructure.extractors.mineru import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_UPLOAD_TIMEOUT_SECONDS,
 )
+
+
+def test_revision_read_defaults_are_disabled_and_bounded() -> None:
+    settings = RetrievalConfig()
+    assert not settings.revision_aware
+    assert settings.max_revision_candidates == 2048
+
+
+@pytest.mark.parametrize("cap", [0, -1, 2049, True, 1.5, "64"])
+def test_revision_candidate_budget_is_a_strict_bounded_integer(cap) -> None:
+    with pytest.raises(ValueError):
+        RetrievalConfig(max_revision_candidates=cap)
+
+
+@pytest.mark.parametrize("flag", [1, "true", None])
+def test_revision_read_flag_requires_explicit_boolean(flag) -> None:
+    with pytest.raises(ValueError):
+        RetrievalConfig(revision_aware=flag)
+
+
+def test_revision_read_settings_reject_typos_and_unimplemented_write_flag() -> None:
+    with pytest.raises(ValueError):
+        RetrievalConfig.model_validate({"revision_write": True})
+
+
+@pytest.mark.parametrize(
+    ("vectors", "tasks", "database", "vector_database", "error"),
+    [
+        ("milvus", "memory", True, True, "task_store=postgres"),
+        ("milvus", "postgres", False, True, "database settings"),
+        ("milvus", "postgres", True, False, "vector_database settings"),
+        ("postgres", "memory", False, False, "only supports memory or milvus"),
+    ],
+)
+def test_revision_read_config_rejects_non_durable_or_incomplete_milvus(
+    vectors,
+    tasks,
+    database,
+    vector_database,
+    error,
+) -> None:
+    infra = {
+        "embedding_model": {
+            "base_url": "http://fake/v1",
+            "model_name": "fake",
+            "dim": 3,
+        }
+    }
+    if database:
+        infra["database"] = {
+            "host": "fake",
+            "port": 5432,
+            "username": "comet",
+            "password": "test",
+            "database": "test",
+        }
+    if vector_database:
+        infra["vector_database"] = {
+            "endpoint": "http://fake:19530",
+            "database_name": "test",
+        }
+    with pytest.raises(ValueError, match=error):
+        APPConfig.model_validate(
+            {
+                "server_config": {"host": "127.0.0.1", "port": 8000},
+                "infrastructure_config": infra,
+                "backends": {"vector_store": vectors, "task_store": tasks},
+                "retrieval": {"revision_aware": True},
+            }
+        )
+
 
 # ── DSN 编码（PR 评审 #7）──────────────────────────────────────────────────
 
