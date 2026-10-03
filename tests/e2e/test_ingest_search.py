@@ -123,9 +123,7 @@ def document(tmp_path: Path) -> Path:
 @pytest.fixture(autouse=True)
 def hooks(document: Path):
     @PipelineHooks.extractor(STUB_TYPE)
-    def _extract(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    def _extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
     PipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
@@ -147,14 +145,18 @@ def make_config() -> APPConfig:
     )
 
 
-@pytest.fixture
-async def client(document: Path) -> AsyncIterator[httpx.AsyncClient]:
+@pytest.fixture(params=[False, True], ids=["legacy-reader", "revision-reader"])
+async def client(
+    document: Path, request: pytest.FixtureRequest
+) -> AsyncIterator[httpx.AsyncClient]:
     """真实 ASGI 应用，只把 embedding 模型与 loader 换成替身。
 
     向量库、任务库、执行器全部走配置里的 memory 后端 —— 不是测试特设的分支。
     """
+    settings = make_config()
+    settings.retrieval.revision_aware = request.param
     app = create_app(
-        make_config(),
+        settings,
         embedding_model=KeywordEmbedding(),
         vector_store=InMemoryVectorStore(),
         pipeline_config=PipelineConfig(embed_batch_size=2, max_concurrency=4),

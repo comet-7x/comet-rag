@@ -7,22 +7,39 @@ from collections.abc import AsyncIterator
 import pytest
 from sqlalchemy import text
 
+from comet_rag.composition.bootstrap import build_context
+from comet_rag.config.schemas import (
+    APPConfig,
+    Backend,
+    BackendsConfig,
+    EmbeddingModelConfig,
+    InfrastructureConfig,
+    RetrievalConfig,
+    ServerConfig,
+    SqlDatabaseConfig,
+    VectorDatabaseConfig,
+)
 from comet_rag.engines.chunkers import FixedSizeChunker
 from comet_rag.engines.indexing import HierarchyBuilder
 from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
 from comet_rag.infrastructure.persistence.document_store.postgres import (
     PostgresDocumentStore,
 )
+from comet_rag.infrastructure.persistence.knowledge_base import (
+    InMemoryKnowledgeBaseRepository,
+)
 from comet_rag.infrastructure.persistence.knowledge_base.postgres import (
     PostgresKnowledgeBaseRepository,
 )
 from comet_rag.infrastructure.persistence.sql import Database
 from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store.milvus import MilvusStore
 from comet_rag.ports import NormalizedDocument
 from comet_rag.ports.document_store import DocumentStore, RevisionStatus, StaleRevision
 from comet_rag.services.indexing import IndexPlan, IndexPlanner, RevisionStager
 from comet_rag.services.retrieval import RetrievalService, ReturnLevel, SearchQuery
-from tests.contracts.document_store import DocumentStoreContract, make_draft
+from comet_rag.tasks import InMemoryTaskStore
+from tests.contracts.document_store import DocumentStoreContract, make_draft, make_ready
 from tests.contracts.knowledge_base import make_kb
 from tests.integration.conftest import truncate_tables
 
@@ -38,6 +55,56 @@ class TestPostgresDocumentStore(DocumentStoreContract):
         await repository.acreate(make_kb(make_draft().key.kb_id))
         yield PostgresDocumentStore(database)
         await _truncate(database)
+
+    async def test_configured_document_store_uses_owned_pool_and_durable_pointer(
+        self,
+        store: DocumentStore,
+        database: Database,
+    ) -> None:
+        draft, _ = await make_ready(store, make_draft())
+        await store.aactivate_revision(draft.key)
+        url = database.engine.url
+        assert url.host and url.username and url.password and url.database and url.port
+        settings = APPConfig(
+            server_config=ServerConfig(host="127.0.0.1", port=8000),
+            infrastructure_config=InfrastructureConfig(
+                embedding_model=EmbeddingModelConfig(
+                    base_url="http://fake/v1", model_name="fake", dim=2
+                ),
+                database=SqlDatabaseConfig(
+                    host=url.host,
+                    port=url.port,
+                    username=url.username,
+                    password=url.password,
+                    database=url.database,
+                ),
+                vector_database=VectorDatabaseConfig(
+                    endpoint="http://fake:19530", database_name="test"
+                ),
+            ),
+            backends=BackendsConfig(
+                task_store=Backend.POSTGRES, vector_store=Backend.MILVUS
+            ),
+            retrieval=RetrievalConfig(revision_aware=True),
+        )
+        context = build_context(
+            settings,
+            embedding_model=_Embedding(),
+            vector_store=_StrongMilvusWithoutIO(),
+            task_store=InMemoryTaskStore(),
+            kb_repository=InMemoryKnowledgeBaseRepository(),
+        )
+        try:
+            documents = context.document_store
+            assert isinstance(documents, PostgresDocumentStore)
+            assert context.database is not None and context.database is not database
+            assert await documents.aget_active_revisions(
+                draft.key.kb_id, [draft.key.source_id]
+            ) == {
+                draft.key.source_id: draft.key.revision_id,
+            }
+        finally:
+            await context.aclose()
 
     async def test_reader_only_returns_active_revision_and_matching_parent(
         self,
@@ -116,6 +183,14 @@ def _hierarchy_plan(revision_id: str) -> IndexPlan:
     return IndexPlanner().plan(
         chunks, key=make_draft(revision_id).key, source="fixture.md", file_type="md"
     )
+
+
+class _StrongMilvusWithoutIO(MilvusStore):
+    def __init__(self) -> None:
+        self._consistency = "Strong"
+
+    async def aclose(self) -> None:
+        return None
 
 
 class _Embedding(BaseEmbeddingModel):

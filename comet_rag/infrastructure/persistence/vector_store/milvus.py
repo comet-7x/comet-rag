@@ -205,6 +205,11 @@ class MilvusStore(BaseVectorStore):
 
     # ── 集合 ───────────────────────────────────────────────────────────────
 
+    @property
+    def consistency_level(self) -> str:
+        """组合根检查跨客户端 revision 可见性的启动前提。"""
+        return self._consistency
+
     def _name(self, kb_id: str) -> str:
         return collection_name_for(kb_id, prefix=self._prefix)
 

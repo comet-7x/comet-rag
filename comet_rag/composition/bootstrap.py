@@ -19,6 +19,7 @@ from comet_rag.engines.pipelines import (
     PipelineHooks,
 )
 from comet_rag.engines.utils import detect_content_type_from_path
+from comet_rag.infrastructure.persistence.document_store import InMemoryDocumentStore
 from comet_rag.infrastructure.persistence.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
 )
@@ -50,6 +51,7 @@ from comet_rag.tasks import (
 
 if TYPE_CHECKING:
     from comet_rag.infrastructure.extractors import MinerUDocumentExtractor
+    from comet_rag.infrastructure.persistence.sql import Database
 
 
 def build_vector_store(
@@ -126,6 +128,64 @@ def build_task_store(config: APPConfig, database=None) -> TaskStore:
             raise ValueError("postgres 后端需要传入 database")
         return PostgresTaskStore(database)
     raise ValueError(f"不支持的 task_store 后端：{backend}")
+
+
+def build_document_store(
+    config: APPConfig,
+    database: Database | None = None,
+    *,
+    vector_store: BaseVectorStore | None = None,
+) -> DocumentStore:
+    """跟向量资源配对；显式注入的内存向量替身不应意外创建持久化资源。"""
+    memory = (
+        isinstance(vector_store, InMemoryVectorStore)
+        if vector_store is not None
+        else config.backends.vector_store is Backend.MEMORY
+    )
+    if memory:
+        return InMemoryDocumentStore()
+    from comet_rag.infrastructure.persistence.document_store.postgres import (  # noqa: PLC0415
+        PostgresDocumentStore,
+    )
+
+    if database is None:
+        raise ValueError("revision-aware milvus requires database")
+    return PostgresDocumentStore(database)
+
+
+def _validate_revision_vectors(vectors: BaseVectorStore) -> None:
+    if isinstance(vectors, InMemoryVectorStore):
+        return
+    from comet_rag.infrastructure.persistence.vector_store.milvus import (  # noqa: PLC0415
+        MilvusStore,
+    )
+
+    if not isinstance(vectors, MilvusStore) or vectors.consistency_level != "Strong":
+        raise ValueError("injected revision vector store requires Strong MilvusStore")
+
+
+def _validate_revision_resources(
+    config: APPConfig,
+    documents: DocumentStore,
+    vectors: BaseVectorStore | None,
+) -> None:
+    if vectors is not None:
+        _validate_revision_vectors(vectors)
+    memory = (
+        isinstance(vectors, InMemoryVectorStore)
+        if vectors is not None
+        else config.backends.vector_store is Backend.MEMORY
+    )
+    if memory:
+        if not isinstance(documents, InMemoryDocumentStore):
+            raise ValueError("memory vectors require InMemoryDocumentStore")
+        return
+    from comet_rag.infrastructure.persistence.document_store.postgres import (  # noqa: PLC0415
+        PostgresDocumentStore,
+    )
+
+    if not isinstance(documents, PostgresDocumentStore):
+        raise ValueError("milvus revision recall requires PostgresDocumentStore")
 
 
 def build_task_executor(
@@ -434,10 +494,26 @@ def build_context(
     却会去连真实服务。有了这些参数，测试无需 monkeypatch 就能用同一条装配路径，
     也就真正测到了装配逻辑本身。
     """
-    needs_database = config.backends.task_store is Backend.POSTGRES and (
-        task_store is None or kb_repository is None
+    if config.retrieval.revision_aware and vector_store is not None:
+        _validate_revision_vectors(vector_store)
+    if document_store is not None:
+        _validate_revision_resources(config, document_store, vector_store)
+    needs_document_database = (
+        config.retrieval.revision_aware
+        and document_store is None
+        and config.backends.vector_store is Backend.MILVUS
+        and not isinstance(vector_store, InMemoryVectorStore)
+    )
+    needs_database = needs_document_database or (
+        config.backends.task_store is Backend.POSTGRES
+        and (task_store is None or kb_repository is None)
     )
     database = build_database(config) if needs_database else None
+    if config.retrieval.revision_aware and document_store is None:
+        document_store = build_document_store(
+            config, database, vector_store=vector_store
+        )
+        _validate_revision_resources(config, document_store, vector_store)
 
     source_policy = build_source_policy(config.ingest_policy)
     if ingest_loader is None:
@@ -526,6 +602,7 @@ def build_context(
             reranker=reranker,
             degradation=degradation,
             document_store=document_store,
+            max_revision_candidates=config.retrieval.max_revision_candidates,
         ),
         kb_repository=kb_repository,
         knowledge_base=knowledge_base,
@@ -603,6 +680,7 @@ def build_context(
 
 __all__ = [
     "build_context",
+    "build_document_store",
     "build_database",
     "build_embedding_model",
     "build_degradation",
