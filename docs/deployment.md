@@ -290,10 +290,23 @@ curl -X POST localhost:8000/search \
 旧平坦记录没有 parent 时仍返回 child，父块缺失/错配或读取故障也退回 child，并在
 `degradations` 记录 `stage=parent`，不伪造正文。
 
-当前仅支持向 `build_context(..., document_store=...)` 显式注入已准备好的资源，
-CLI 不会自动装配 DocumentStore，也不启用 revision 写入。使用此实验路径必须先应用
-三表迁移并选择匹配的持久化资源；组合根创建 MilvusStore 时使用 Strong。若自行注入
-MilvusStore，也必须显式配置 `consistency_level="Strong"`，不能依赖旧 collection 默认值。
+`config.yaml` 新增以下配置；默认关闭，未修改配置的部署行为不变：
+
+```yaml
+retrieval:
+  revision_aware: false
+  max_revision_candidates: 2048
+```
+
+在隔离测试环境显式开启后，CLI/API/worker 都走同一组合根：Memory 向量配 Memory
+DocumentStore，Milvus 配 PostgreSQL DocumentStore 和 Strong。Milvus 模式要求
+`backends.task_store=postgres`、SQL/Milvus 连接配置，并先应用三表迁移。
+候选预算必须是 1～2048 的整数，读开关须为布尔值；拼错字段或未实现的写开关会报错。
+此配置**不启用 revision 写入或激活**，生产配置仍应保持关闭直到完整读写验收。
+
+仍可向 `build_context(..., document_store=...)` 显式注入资源；这也是显式启用读侧。
+启动前拒绝持久化资源错配，以及自行注入的非 Strong MilvusStore。组合根拥有自动创建
+的 SQL 连接池，停止执行器/关闭适配器后才释放它；外部注入的 Database 由注入方管理。
 
 每通道最多两轮、2048 个候选，先批量读取 active 指针，再参与 RRF/重排；staging、
 retired 和被新版本替代的 legacy 均不可见。旧候选挤满上限时允许少返回，诊断为

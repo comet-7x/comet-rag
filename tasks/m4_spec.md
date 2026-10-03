@@ -473,3 +473,26 @@ M4-T6 已提交 schema/迁移/回滚设计，后半段决策门已于 2026-09-16
   整体覆盖率 89.81%，tasks 95.51%，新增判活模块 98%。Ruff、Pyright、diff 检查通过。
 - Milvus 未运行，双客户端 Strong 用例 skip，不能算验收通过。配置化读开关、Task
   跨 worker 续跑、激活/superseded 与 GC 尚未接入，Checkpoint H/I 均未通过。
+
+## 21. 配置化读侧装配验证记录（2026-10-03）
+
+- T9 既有改动分三批提交：`81fb9a3` 读侧核心、`87f8982` 服务接线/验收、
+  `6e809fa` 文档；暂存快照分别通过 2205/2208/2208 项单测，9.78/9.48/9.45s，
+  commitizen 检查通过，未推送。
+- 继续实现 `retrieval.revision_aware=false` 与 1～2048 的严格整数候选预算。
+  CLI/API/worker 共用组合根，按实际向量资源创建 Memory/PG DocumentStore。
+  Milvus 配置必须有 PG 元数据与连接配置；启动前拒绝持久化错配和非 Strong 注入。
+  自动创建的 SQL pool 由 Context 持有；仅文档仓储需要数据库时也不得漏建。
+- 新增 25 项单测、1 项真实 PG 装配测试；现有入库/检索 E2E 同时跑旧读与 revision
+  读开关两种模式。反向开启默认开关、放宽预算、移除 Strong 校验、漏建 SQL pool、
+  停用自动装配，6 项目标测试失败，恢复后通过。
+- 独立 unit 2233 passed / 20 skipped / 1 xfailed，9.14s；内存 E2E 49 passed，
+  PostgreSQL/Redis 109 passed，无集成 skip。三层合并 2391 passed，26.24s；
+  整体覆盖率 89.94%、任务框架 95.51%。Ruff、Pyright、diff 与 core-only smoke 通过。
+- Strong 实测尝试沿用固定版本的隔离 Milvus/etcd/MinIO，29530/29091 端口，匿名卷。
+  Milvus/etcd 镜像已拉取，MinIO Docker Hub 来源 denied、官方 Quay 来源 401，未自行
+  使用第三方镜像或新中间件。测试容器/网络/匿名卷已清理，开发资源未操作；需可访问的
+  MinIO 镜像或隔离 Milvus 地址才能完成 Strong 验收。生产开关仍关，T8 激活/续跑/GC
+  未接入，本切片不宣称 Checkpoint H/I 通过。
+- 配置与装配已分别本地提交 `2891f5c`、`b456653`，未推送；配置暂存快照
+  2224 项单测通过（9.98s），装配快照 unit/E2E 合计 2282 passed（11.05s）。

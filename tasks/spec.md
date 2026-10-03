@@ -1,7 +1,7 @@
 # Spec: Comet-RAG
 
-> 状态：M1～M3 已完成；M4-T7 DocumentStore 已完成（v1.11）
-> 最后更新：2026-09-16
+> 状态：M1～M3 已完成；M4-T8 准备/T9 读侧与配置装配切片已实现，生产未启用（v1.11）
+> 最后更新：2026-10-03
 > 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md` v1.0；M3 见 `tasks/m3_spec.md` v1.0；M4 见 `tasks/m4_spec.md` v1.8
 
 ---
@@ -66,7 +66,7 @@ Fixed/Recursive 是仅有的两种原子 Chunker，格式与语言差异使用�
 接入，且结构会跨 Task 阶段保存。M4-T6 已冻结父子索引的 IndexPlan、三表 schema、
 revision 激活、有界判活、故障恢复与回滚设计。决策门已经确认，M4-T7 已实现
 DocumentStore、内存/PostgreSQL 适配器与三表迁移。T8 准备阶段与 T9 读侧切片已实现，
-但生产入库和检索链路仍未切换；下一项是配置化读侧装配/Strong 验收，再推进 T8
+配置化读侧装配已支持默认关闭的开关，但生产入库和检索尚未切换；下一项是 Strong 验收，再推进 T8
 Task 续跑、激活/superseded 与 GC，不能把切片通过视为完整 M4 验收。
 
 ### 非目标（明确不做）

@@ -111,7 +111,8 @@ ARQ 根据过去的截止时间算出负 job TTL。入库 runner 暴露已有流
 - [x] 合入完整 M4 已有提交，并恢复原来两处 Chunker 修改。
 - [x] T8 第一切片：HierarchyBuilder、IndexPlanner 与仅准备到 ready 的 RevisionStager。
 - [x] T9 读侧切片：有界 revision 判活、RRF 前过滤、父块批量回填与故障诊断。
-- [ ] 配置化 DocumentStore/读开关与真实 Milvus 双客户端 Strong 验收。
+- [x] 配置化 DocumentStore/默认关闭的读开关与启动前资源配对校验。
+- [ ] 真实 Milvus 双客户端 Strong 验收（MinIO 镜像来源不可用，未改用第三方镜像）。
 - [ ] T8 后续：有界 Task context、跨 worker 续跑、激活/响应丢失与 superseded 收尾。
 - [ ] 写入、可见性判定、激活和旧版本回收一起验收。
 - [ ] 覆盖窗口写入失败、同源并发更新、过期执行者提交及回滚。
@@ -157,6 +158,27 @@ CLI 和生产 IngestRunner 尚未切换，不宣称新写入故障闭环已完�
 Pyright、diff 检查通过。Milvus 双客户端用例已添加，但服务未运行而 skip。
 隔离测试资源清理后不保留测试数据。T9 切片按读侧核心、服务接线/验收与文档
 三批本地提交，未推送。
+
+## 配置化读侧装配验收
+
+既有 T9 改动已按三批本地提交：`81fb9a3`、`87f8982`、`6e809fa`。三份暂存快照
+单独通过 2205/2208/2208 项单测（9.78/9.48/9.45s），commitizen 通过，未推送；
+临时导出快照已删除，代码可从提交重新生成，原始 stash/branch bundle 备份未删除。
+
+继续实现默认关闭的 `retrieval.revision_aware`，严格候选预算与资源配对。组合根
+自动装配 DocumentStore，把自行注入的 Session Milvus 在创建其他资源前拒绝，
+并持有仅因 DocumentStore 而创建的 SQL pool；既有入库/检索 E2E 两种读模式均通过。
+独立 unit 2233 passed / 20 skipped / 1 xfailed，9.14s；内存 E2E 49 passed；
+真实 PostgreSQL/Redis 109 passed。三层合并 2391 passed，26.24s；整体覆盖率
+89.94%、任务框架 95.51%。5 类反向缺陷被 6 项目标测试抓住；静态/类型/diff 与
+隔离核心安装检查通过。配置与装配分别本地提交 `2891f5c`、`b456653`，未推送。
+配置暂存快照 2224 项单测通过，9.98s；装配快照 unit/E2E 合计 2282 passed，11.05s。
+
+隔离 Milvus 实测在依赖镜像处受阻：MinIO Docker Hub denied，官方 Quay 401。
+未改开发 compose，也未使用第三方镜像/新中间件。隔离测试资源已清理，测试数据
+可重建；拉取的 Milvus/etcd 镜像留作缓存。需可访问的 MinIO 镜像或隔离 Milvus 地址
+后再验收 Strong，随后推进 T8 Task context/跨 worker 续跑、激活/superseded 和 GC。
+生产读开关仍未开启，新写入仍未接入。
 
 ## 后续产品范围
 

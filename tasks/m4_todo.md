@@ -167,11 +167,16 @@ separator 配置不可被原地修改。
 - [x] 判活失败或不完整映射拒绝查询，HTTP 返回安全 503
 - [x] Milvus dense/BM25/count 请求显式指定适配器一致性级别
 - [ ] 真实 Milvus 双客户端 Strong 验收（用例已添加，本轮中间件未运行）
-- [ ] 配置化装配 DocumentStore、生产读开关与旧 revision GC
+- [x] 配置化装配 DocumentStore、默认关闭的读开关与资源配对校验
+- [ ] 旧 revision GC
 
-2026-10-03 读侧切片支持显式注入 DocumentStore，组合根不默认创建资源，CLI/生产
-链路尚未切换；新写入仍关闭。父块 key 必须与命中 child 的 KB/source/revision
+2026-10-03 读侧支持 `retrieval.revision_aware` 显式配置或注入 DocumentStore，默认
+不创建资源；CLI 已接线但生产配置未开启，新写入仍关闭。父块 key 必须与 child 的 KB/source/revision
 一致，缺失或错配退回 child 并记录诊断。Checkpoint I 仍待 Strong 与完整读写验收。
+
+Strong 实测尝试使用隔离项目与 29530/29091 端口；Milvus 镜像已拉取，但 MinIO
+固定版本的 Docker Hub 来源 denied、官方 Quay 来源 401，未自行改用第三方镜像。
+需要可访问的同版本镜像源或隔离 Milvus 测试地址，不能把 mock 一致性传递算作实测。
 
 ## Phase 4：出口验收
 
