@@ -183,13 +183,25 @@ class _FakeSync:
 class _FakeAsync:
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] = []
+        self.reads: list[dict[str, Any]] = []
 
     async def upsert(self, name: str, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
 
+    async def search(self, name: str, **kwargs: Any) -> list:
+        self.reads.append(kwargs)
+        return [[]]
+
+    async def query(self, name: str, **kwargs: Any) -> list:
+        self.reads.append(kwargs)
+        return [{"count(*)": 0}]
+
 
 def _store(
-    monkeypatch: pytest.MonkeyPatch, sync: _FakeSync
+    monkeypatch: pytest.MonkeyPatch,
+    sync: _FakeSync,
+    *,
+    consistency_level: str = "Session",
 ) -> tuple[target.MilvusStore, _FakeAsync, list[dict[str, Any]]]:
     async_client = _FakeAsync()
     constructor_args: list[dict[str, Any]] = []
@@ -208,8 +220,24 @@ def _store(
         endpoint="http://milvus.invalid:19530",
         database_name="zhihao_test_database",
         prefix="ct_schema",
+        consistency_level=consistency_level,
     )
     return store, async_client, constructor_args
+
+
+@pytest.mark.parametrize("consistency", ["Session", "Strong"])
+async def test_existing_collection_reads_explicitly_use_adapter_consistency(
+    monkeypatch: pytest.MonkeyPatch,
+    consistency: str,
+) -> None:
+    store, client, _ = _store(
+        monkeypatch, _FakeSync(exists=True), consistency_level=consistency
+    )
+    await store.asearch("existing-kb", [1.0, 0.0, 0.0, 0.0])
+    await store.asearch_keywords("existing-kb", "量子纠缠")
+    await store.acount("existing-kb", filter={"document_revision": "new"})
+    assert [call["consistency_level"] for call in client.reads] == [consistency] * 3
+    assert client.reads[2]["filter"] == 'metadata["document_revision"] == "new"'
 
 
 async def test_new_collection_uses_bm25_schema_and_server_generated_sparse(

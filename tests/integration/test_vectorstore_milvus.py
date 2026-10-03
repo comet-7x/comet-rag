@@ -61,6 +61,54 @@ class TestMilvusKeywordSearch(KeywordSearchContract):
         return cast("KeywordSearchStore", store)
 
 
+async def test_strong_reads_see_revision_from_independent_client(
+    milvus_uri: str,
+    milvus_database: str,
+) -> None:
+    from comet_rag.infrastructure.persistence.vector_store.milvus import MilvusStore
+
+    prefix = f"ctrevision_{uuid4().hex[:12]}"
+    writer = MilvusStore(
+        endpoint=milvus_uri, database_name=milvus_database, prefix=prefix
+    )
+    reader = MilvusStore(
+        endpoint=milvus_uri,
+        database_name=milvus_database,
+        prefix=prefix,
+        consistency_level="Strong",
+    )
+    kb = "revision-cross-client"
+    try:
+        # 故意复用 Session 创建的 collection，证明读请求真正覆盖 collection 默认值。
+        await writer.aensure_collection(kb, dim=2)
+        await writer.aupsert(
+            kb,
+            [
+                VectorRecord(
+                    id="new-child",
+                    text="量子纠缠实验报告",
+                    embedding=[1.0, 0.0],
+                    metadata={"source_id": "source", "document_revision": "new"},
+                )
+            ],
+        )
+        exact = {"source_id": "source", "document_revision": "new"}
+        assert await reader.acount(kb, filter=exact) == 1
+        assert [
+            hit.id for hit in await reader.asearch(kb, [1.0, 0.0], filter=exact)
+        ] == ["new-child"]
+        assert [
+            hit.id
+            for hit in await reader.asearch_keywords(kb, "量子纠缠", filter=exact)
+        ] == ["new-child"]
+    finally:
+        try:
+            await writer.adrop_collection(kb)
+        finally:
+            await reader.aclose()
+            await writer.aclose()
+
+
 async def test_bm25_schema_handles_chinese_and_english_terms(
     store: BaseVectorStore,
 ) -> None:

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any, cast
 
@@ -24,13 +25,24 @@ from comet_rag.ports import (
     SearchHit,
     VectorSearchPort,
 )
+from comet_rag.ports.document_store import DocumentStore
 from comet_rag.services.knowledge_base import KnowledgeBaseService
+from comet_rag.services.revision_recall import (
+    RevisionRecall,
+    RevisionVisibilityError,
+    VisibleRecall,
+)
 
 
 class SearchMode(StrEnum):
     DENSE = "dense"
     KEYWORD = "keyword"
     HYBRID = "hybrid"
+
+
+class ReturnLevel(StrEnum):
+    CHILD = "child"
+    PARENT = "parent"
 
 
 class RecallChannel(StrEnum):
@@ -42,6 +54,7 @@ class RetrievalStage(StrEnum):
     DENSE = "dense"
     KEYWORD = "keyword"
     RERANKER = "reranker"
+    PARENT = "parent"
 
 
 class KeywordSearchUnavailable(RuntimeError):
@@ -92,6 +105,7 @@ class SearchQuery(BaseModel):
         default=SearchMode.DENSE,
         description="召回模式；默认 dense 保持既有行为。",
     )
+    return_level: ReturnLevel = ReturnLevel.CHILD
 
     def effective_fetch_k(self) -> int:
         if self.fetch_k is not None:
@@ -111,6 +125,7 @@ class RetrievedChunk:
     fusion_score: float | None = None
     vector_rank: int | None = None
     keyword_rank: int | None = None
+    matched_child_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -123,6 +138,7 @@ class RetrievedChunk:
             "fusion_score": self.fusion_score,
             "vector_rank": self.vector_rank,
             "keyword_rank": self.keyword_rank,
+            "matched_child_id": self.matched_child_id,
         }
 
 
@@ -176,6 +192,8 @@ class RetrievalService:
         knowledge_base: KnowledgeBaseService | None = None,
         reranker: RerankerPort | None = None,
         degradation: DegradationController | None = None,
+        document_store: DocumentStore | None = None,
+        max_revision_candidates: int = 2048,
     ) -> None:
         self._embedding_model = embedding_model
         self._vector_store = vector_store
@@ -184,6 +202,12 @@ class RetrievalService:
         self._reranker = reranker
         #: 分级降级（S4-5）。None = 不降级（当库用、单测）。
         self._degradation = degradation
+        self._document_store = document_store
+        self._revision_recall = (
+            RevisionRecall(document_store, max_candidates=max_revision_candidates)
+            if document_store is not None
+            else None
+        )
 
     async def search(self, query: SearchQuery) -> RetrievalResult:
         # 降级顺序的落点：L1 关 rerank（最贵、且没它检索仍可用），
@@ -216,24 +240,18 @@ class RetrievalService:
         # 写成"先取出再判 None"而不是布尔标志：标志变量会把"reranker 不是
         # None"这个结论丢掉，到调用点就得再补一次断言。
         reranker = self._reranker if (query.rerank and allow_rerank) else None
-        if reranker is None:
-            return RetrievalResult(
-                chunks=candidates[:top_k],
-                reranked=False,
-                fetched=len(candidates),
-                effective_top_k=top_k,
-                degraded=level,
-                mode=recall.mode,
-                channels=recall.channels,
-                degradations=recall.degradations,
-            )
-
-        chunks, did_rerank, rerank_degradation = await self._rerank(
-            reranker, query.query, candidates
+        chunks, did_rerank, rerank_degradation = (
+            await self._rerank(reranker, query.query, candidates)
+            if reranker is not None
+            else (candidates, False, None)
         )
         degradations = recall.degradations
         if rerank_degradation is not None:
             degradations = (*degradations, rerank_degradation)
+        if query.return_level is ReturnLevel.PARENT:
+            chunks, parent_degradation = await self._parents(query.kb_id, chunks)
+            if parent_degradation is not None:
+                degradations = (*degradations, parent_degradation)
         return RetrievalResult(
             chunks=chunks[:top_k],
             reranked=did_rerank,
@@ -254,11 +272,12 @@ class RetrievalService:
         fetch_k = query.effective_fetch_k()
 
         if query.mode is SearchMode.DENSE:
-            hits = await self._dense_hits(query, fetch_k=fetch_k, filter=filter)
+            result = await self._dense_hits(query, fetch_k=fetch_k, filter=filter)
             return _RecallResult(
-                chunks=self._dense_chunks(hits),
+                chunks=self._dense_chunks(result.hits),
                 mode=SearchMode.DENSE,
                 channels=(RecallChannel.DENSE,),
+                degradations=_visibility_degradations(RetrievalStage.DENSE, result),
             )
 
         keyword_search = self._keyword_search
@@ -269,16 +288,14 @@ class RetrievalService:
             )
 
         if query.mode is SearchMode.KEYWORD:
-            hits = await keyword_search.asearch_keywords(
-                query.kb_id,
-                query.query,
-                top_k=fetch_k,
-                filter=filter,
+            result = await self._keyword_hits(
+                query, keyword_search=keyword_search, fetch_k=fetch_k, filter=filter
             )
             return _RecallResult(
-                chunks=self._keyword_chunks(hits),
+                chunks=self._keyword_chunks(result.hits),
                 mode=SearchMode.KEYWORD,
                 channels=(RecallChannel.KEYWORD,),
+                degradations=_visibility_degradations(RetrievalStage.KEYWORD, result),
             )
 
         return await self._hybrid_recall(
@@ -298,10 +315,10 @@ class RetrievalService:
     ) -> _RecallResult:
         dense_result, keyword_result = await asyncio.gather(
             self._dense_hits(query, fetch_k=fetch_k, filter=filter),
-            keyword_search.asearch_keywords(
-                query.kb_id,
-                query.query,
-                top_k=fetch_k,
+            self._keyword_hits(
+                query,
+                keyword_search=keyword_search,
+                fetch_k=fetch_k,
                 filter=filter,
             ),
             return_exceptions=True,
@@ -327,35 +344,47 @@ class RetrievalService:
         if dense_error is not None:
             failure = _channel_degradation(RetrievalStage.DENSE, dense_error)
             _log_channel_failure(failure, dense_error, continued=True)
+            surviving = cast("VisibleRecall", keyword_result)
             return _RecallResult(
-                chunks=self._keyword_chunks(cast("list[SearchHit]", keyword_result)),
+                chunks=self._keyword_chunks(surviving.hits),
                 mode=SearchMode.KEYWORD,
                 channels=(RecallChannel.KEYWORD,),
-                degradations=(failure,),
+                degradations=(
+                    failure,
+                    *_visibility_degradations(RetrievalStage.KEYWORD, surviving),
+                ),
             )
 
         if keyword_error is not None:
             failure = _channel_degradation(RetrievalStage.KEYWORD, keyword_error)
             _log_channel_failure(failure, keyword_error, continued=True)
+            surviving = cast("VisibleRecall", dense_result)
             return _RecallResult(
-                chunks=self._dense_chunks(cast("list[SearchHit]", dense_result)),
+                chunks=self._dense_chunks(surviving.hits),
                 mode=SearchMode.DENSE,
                 channels=(RecallChannel.DENSE,),
-                degradations=(failure,),
+                degradations=(
+                    failure,
+                    *_visibility_degradations(RetrievalStage.DENSE, surviving),
+                ),
             )
 
-        dense_hits = cast("list[SearchHit]", dense_result)
-        keyword_hits = cast("list[SearchHit]", keyword_result)
+        dense_recall = cast("VisibleRecall", dense_result)
+        keyword_recall = cast("VisibleRecall", keyword_result)
         fused = reciprocal_rank_fusion(
             {
-                RecallChannel.DENSE.value: dense_hits,
-                RecallChannel.KEYWORD.value: keyword_hits,
+                RecallChannel.DENSE.value: dense_recall.hits,
+                RecallChannel.KEYWORD.value: keyword_recall.hits,
             }
         )
         return _RecallResult(
             chunks=[self._fused_chunk(hit) for hit in fused],
             mode=SearchMode.HYBRID,
             channels=(RecallChannel.DENSE, RecallChannel.KEYWORD),
+            degradations=(
+                *_visibility_degradations(RetrievalStage.DENSE, dense_recall),
+                *_visibility_degradations(RetrievalStage.KEYWORD, keyword_recall),
+            ),
         )
 
     async def _dense_hits(
@@ -364,13 +393,130 @@ class RetrievalService:
         *,
         fetch_k: int,
         filter: Filter | None,
-    ) -> list[SearchHit]:
+    ) -> VisibleRecall:
         embedding = await self._embedding_model.aembed_query(query.query)
-        return await self._vector_store.asearch(
+        return await self._visible_hits(
             query.kb_id,
-            embedding,
-            top_k=fetch_k,
-            filter=filter,
+            fetch_k=fetch_k,
+            recall=lambda limit: self._vector_store.asearch(
+                query.kb_id,
+                embedding,
+                top_k=limit,
+                filter=filter,
+            ),
+        )
+
+    async def _keyword_hits(
+        self,
+        query: SearchQuery,
+        *,
+        keyword_search: KeywordSearchPort,
+        fetch_k: int,
+        filter: Filter | None,
+    ) -> VisibleRecall:
+        return await self._visible_hits(
+            query.kb_id,
+            fetch_k=fetch_k,
+            recall=lambda limit: keyword_search.asearch_keywords(
+                query.kb_id,
+                query.query,
+                top_k=limit,
+                filter=filter,
+            ),
+        )
+
+    async def _visible_hits(
+        self,
+        kb_id: str,
+        *,
+        fetch_k: int,
+        recall: Callable[[int], Awaitable[list[SearchHit]]],
+    ) -> VisibleRecall:
+        if self._revision_recall is not None:
+            return await self._revision_recall.arecall(
+                kb_id, fetch_k=fetch_k, recall=recall
+            )
+        hits = await recall(fetch_k)
+        if any("document_revision" in hit.metadata for hit in hits):
+            raise RevisionVisibilityError("revision recall requires DocumentStore")
+        return VisibleRecall(hits)
+
+    async def _parents(
+        self,
+        kb_id: str,
+        candidates: list[RetrievedChunk],
+    ) -> tuple[list[RetrievedChunk], RetrievalDegradation | None]:
+        # 先遍历完整 child 排名再去重，不能把多个同父命中浪费成多个 top-k 槽。
+        unique: list[RetrievedChunk] = []
+        seen: set[str] = set()
+        for child in candidates:
+            parent_id = child.metadata.get("parent_id")
+            if not isinstance(parent_id, str) or not parent_id:
+                unique.append(child)
+            elif parent_id not in seen:
+                seen.add(parent_id)
+                unique.append(child)
+        if not seen:
+            return unique, None
+        try:
+            if self._document_store is None:
+                raise RevisionVisibilityError("parent lookup requires DocumentStore")
+            parents = await self._document_store.aget_parents(kb_id, list(seen))
+        except Exception as exc:  # noqa: BLE001 — 正文回填失败可退回已判活 child
+            logger.opt(exception=exc).warning("父块回填失败，退回 child")
+            return candidates, RetrievalDegradation(
+                RetrievalStage.PARENT,
+                "request_failed",
+                type(exc).__name__,
+            )
+        result: list[RetrievedChunk] = []
+        damaged = False
+        for child in unique:
+            parent_id = child.metadata.get("parent_id")
+            if not isinstance(parent_id, str) or not parent_id:
+                result.append(child)
+                continue
+            parent = parents.get(parent_id)
+            if parent is None or (
+                parent.parent_id != parent_id
+                or parent.key.kb_id != kb_id
+                or parent.key.source_id != child.metadata.get("source_id")
+                or parent.key.revision_id != child.metadata.get("document_revision")
+            ):
+                damaged = True
+                result.append(child)
+                continue
+            # 位置与相邻关系属于 parent；所有检索/重排分数仍属于命中 child。
+            metadata = {
+                **child.metadata,
+                **parent.metadata,
+                "kb_id": kb_id,
+                "source_id": parent.key.source_id,
+                "document_revision": parent.key.revision_id,
+                "parent_id": parent_id,
+                "chunk_start": parent.start_char,
+                "chunk_end": parent.end_char,
+                "chunk_index": parent.ordinal,
+                "previous_id": parent.previous_id,
+                "next_id": parent.next_id,
+            }
+            # child 总数不是 parent 总数；Port 不提供 manifest 时不要伪造它。
+            metadata.pop("total_chunks", None)
+            result.append(
+                replace(
+                    child,
+                    id=parent_id,
+                    text=parent.text,
+                    metadata=metadata,
+                    matched_child_id=child.id,
+                )
+            )
+        if damaged:
+            logger.warning("父块缺失或 revision/KB 不匹配，相关项退回 child")
+        return result, (
+            RetrievalDegradation(RetrievalStage.PARENT, "invalid_parent")
+            if damaged
+            else None
         )
 
     @staticmethod
@@ -501,6 +647,7 @@ class RetrievalService:
 
 
 _NON_DEGRADABLE_RECALL_ERRORS = (
+    RevisionVisibilityError,
     AssertionError,
     AttributeError,
     CollectionNotFound,
@@ -512,6 +659,13 @@ _NON_DEGRADABLE_RECALL_ERRORS = (
     TypeError,
     ValueError,
 )
+
+
+def _visibility_degradations(
+    stage: RetrievalStage,
+    result: VisibleRecall,
+) -> tuple[RetrievalDegradation, ...]:
+    return tuple(RetrievalDegradation(stage, reason) for reason in result.diagnostics)
 
 
 def _must_propagate(exc: BaseException) -> bool:
@@ -556,6 +710,7 @@ __all__ = [
     "RetrievalService",
     "RetrievalStage",
     "RetrievedChunk",
+    "ReturnLevel",
     "SearchQuery",
     "SearchMode",
 ]

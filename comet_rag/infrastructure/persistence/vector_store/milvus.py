@@ -180,7 +180,7 @@ class MilvusStore(BaseVectorStore):
         database_name: str,
         api_key: str | None = None,
         prefix: str = "comet",
-        #: "读己所写"。改成 Bounded 会让"写完立即查"失效 —— 那正是 plan R1。
+        #: revision 跨客户端切换须传 Strong；Session 只用于旧链路。
         consistency_level: str = "Session",
         metric_type: str = "COSINE",
         replica_number: int = 1,
@@ -482,6 +482,7 @@ class MilvusStore(BaseVectorStore):
             limit=top_k,
             filter=build_expression(filter),
             output_fields=[_TEXT, _METADATA],
+            consistency_level=self._consistency,
         )
         hits = [
             SearchHit(
@@ -518,6 +519,7 @@ class MilvusStore(BaseVectorStore):
             limit=top_k,
             filter=build_expression(filter),
             output_fields=[_TEXT, _METADATA],
+            consistency_level=self._consistency,
         )
         hits = [
             SearchHit(
@@ -537,6 +539,7 @@ class MilvusStore(BaseVectorStore):
             self._name(kb_id),
             filter=build_expression(filter),
             output_fields=["count(*)"],
+            consistency_level=self._consistency,
         )
         return int(rows[0]["count(*)"]) if rows else 0
 
