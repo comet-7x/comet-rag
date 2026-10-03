@@ -496,3 +496,29 @@ M4-T6 已提交 schema/迁移/回滚设计，后半段决策门已于 2026-09-16
   未接入，本切片不宣称 Checkpoint H/I 通过。
 - 配置与装配已分别本地提交 `2891f5c`、`b456653`，未推送；配置暂存快照
   2224 项单测通过（9.98s），装配快照 unit/E2E 合计 2282 passed（11.05s）。
+
+## 22. 真实 Strong 与双存储可见性验收（2026-10-03）
+
+- MinIO 来源受阻后，核对官方 `v2.6.23/scripts/standalone_embed.sh` 与固定版本
+  配置，采用内嵌 etcd/RocksMQ/本地存储的测试拓扑，运行官方 Milvus v2.6.23。
+  端口为 29530/29091，匿名数据卷；不改开发 compose，不引入第三方镜像。
+  该拓扑验证真实服务端行为，不替代生产远程对象存储或 HA 验收。
+- Milvus 集成 44 passed（140.62s），双客户端 Strong 用例独立 1 passed（3.10s）。
+  Session 创建/写入的 collection 被独立 Strong 客户端立即 count/dense/BM25 读到。
+- 新增真实 PG/Milvus 联合用例，1 passed（4.31s）：legacy 可见、partial-write/
+  ready 隐藏、响应丢失幂等重试、激活后新版本即时可见；dense/keyword/hybrid 的
+  child/parent 六种组合均验收，旧向量仍存在但不可见。SQL/Milvus 读者都用独立连接。
+- CI 新增 `revision-integration` job：固定测试拓扑、独立数据库和迁移、严格服务
+  失败、180s 健康等待/20min 总超时、失败日志和始终清理；本地无服务仍 skip。
+  工作流结构与 Compose 校验通过，但未推送，尚无 GitHub Actions 运行结果。
+- 三种反向缺陷（严格模式静默 skip、漏关探活连接、关闭判活过滤）分别使 1/3/1
+  项目标测试失败，恢复后通过。独立 unit 2236 passed / 20 skipped / 1 xfailed，
+  9.31s；Ruff/Pyright/diff 检查通过。
+- CI 验收门已本地提交 `6119cac`。三层暂存快照首跑 2438 passed、20 unit skips、
+  1 xfailed；崩溃用例因导出快照不含 `.venv/bin/arq` 失败。补齐快照环境后该文件
+  4 passed（3.52s），所有 2439 个目标用例均获通过；无集成 skip。合并覆盖率
+  90.29%，任务框架 95.74%；没有删除或跳过失败用例，也没有修改生产代码掩盖问题。
+- 本轮隔离 Milvus/PostgreSQL/Redis 容器、网络和匿名测试卷已清理，测试数据可
+  重建；开发资源未改动，原始 stash 与分支 bundle 仍保留。
+- Strong 原阻塞已解除；下一项为 T8 有界 Task context、跨 worker 续跑、激活/
+  superseded 与 GC。生产写入仍未接入，不宣称完整 Checkpoint H/I 或 M4 完成。

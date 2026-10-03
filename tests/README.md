@@ -233,6 +233,23 @@ uv run alembic revision --autogenerate -m "描述"
 （或被它 import），否则 `--autogenerate` 收集不到，会把那张表判为"该删掉"。
 
 
+## 真实 Milvus 与 revision 可见性
+
+`.github/workflows/tests.yml` 的 `revision-integration` job 使用固定的官方
+`milvusdb/milvus:v2.6.23`，按[官方 standalone 脚本](https://github.com/milvus-io/milvus/blob/v2.6.23/scripts/standalone_embed.sh)
+使用内嵌 etcd、RocksMQ 和本地存储。配置在 `.github/milvus/`；端口是
+29530/29091，数据卷为一次性匿名卷，不使用开发 compose 或生产数据。
+这验收真实服务端的 Strong/BM25/revision 行为，不宣称覆盖远程对象存储故障或生产 HA。
+
+CI 先创建 `zhihao_test_database`、迁移独立 PostgreSQL，再跑向量/文档仓储契约和
+`test_revision_lifecycle.py`。后者使用独立的 SQL/Milvus 读客户端，覆盖 legacy、
+partial-write、ready、激活以及旧向量残留，在 dense/keyword/hybrid 的 child/parent
+模式验证可见性；不靠 flush/sleep 掩盖跨客户端读空窗。
+
+本地缺服务仍 skip；设置 `COMET_TEST_REQUIRE_SERVICES=1` 后，Milvus 缺依赖、
+连接/鉴权失败或测试 database 不存在会 fail，不能用全 skip 的结果冒充验收。
+CI 总耗时上限 20 分钟，服务健康等待上限 180 秒，并始终清理本项目测试容器/卷。
+
 ## 覆盖率怎么量
 
 spec S5 要求 `tests/unit` ≥ 70%、`comet_rag/tasks/` ≥ 90%。

@@ -112,7 +112,7 @@ ARQ 根据过去的截止时间算出负 job TTL。入库 runner 暴露已有流
 - [x] T8 第一切片：HierarchyBuilder、IndexPlanner 与仅准备到 ready 的 RevisionStager。
 - [x] T9 读侧切片：有界 revision 判活、RRF 前过滤、父块批量回填与故障诊断。
 - [x] 配置化 DocumentStore/默认关闭的读开关与启动前资源配对校验。
-- [ ] 真实 Milvus 双客户端 Strong 验收（MinIO 镜像来源不可用，未改用第三方镜像）。
+- [x] 真实 Milvus 双客户端 Strong 及 PostgreSQL/Milvus 可见性联合验收。
 - [ ] T8 后续：有界 Task context、跨 worker 续跑、激活/响应丢失与 superseded 收尾。
 - [ ] 写入、可见性判定、激活和旧版本回收一起验收。
 - [ ] 覆盖窗口写入失败、同源并发更新、过期执行者提交及回滚。
@@ -179,6 +179,26 @@ Pyright、diff 检查通过。Milvus 双客户端用例已添加，但服务未�
 可重建；拉取的 Milvus/etcd 镜像留作缓存。需可访问的 MinIO 镜像或隔离 Milvus 地址
 后再验收 Strong，随后推进 T8 Task context/跨 worker 续跑、激活/superseded 和 GC。
 生产读开关仍未开启，新写入仍未接入。
+
+## Strong 阻塞解除与持续验收
+
+配置/装配/文档已本地提交 `2891f5c`、`b456653`、`decafbc`。随后核对 Milvus
+官方固定版本 standalone 脚本，用内嵌 etcd/RocksMQ/本地存储启动官方 v2.6.23
+隔离实例，不再需要不可访问的 MinIO 镜像；这不是生产存储拓扑的更换。
+Milvus 44 项集成通过（140.62s），真实 PG/Milvus 故障链路也通过：partial-write/
+ready 不可见，激活后六种检索组合由独立客户端立即看到新版本，旧向量残留不泄漏。
+
+`6119cac` 将这套验收加进 CI；严格服务探测缺依赖/连接/鉴权/数据库时 fail，本地
+可选模式仍 skip，连接总会关闭。三种反向缺陷导致 5 项目标测试失败，恢复后通过。
+暂存快照三层首跑 2438 passed，另一个崩溃用例受缺少 `.venv/bin/arq` 的导出环境
+影响；补齐快照环境后崩溃文件 4 passed，所有 2439 个目标用例均获通过。
+整体覆盖率 90.29%、任务框架 95.74%；独立 unit 2236 passed，9.31s。
+新增工作流仅本地结构验证，未推送，无远端 Actions 运行结果。
+本轮隔离 Milvus/PostgreSQL/Redis 容器、网络与匿名卷已清理，测试数据可重建；
+原始 stash/分支 bundle 备份保留，开发资源未操作。
+
+下一项是有界 revision Task context/跨 worker 续跑，随后激活/superseded 与 GC。
+生产新写入仍关闭，完整 M4 及 Checkpoint H/I 仍未完成。
 
 ## 后续产品范围
 

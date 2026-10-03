@@ -166,17 +166,18 @@ separator 配置不可被原地修改。
 - [x] 每通道最多两轮召回 / 2048 个 candidate，分别判活后才参与 RRF
 - [x] 判活失败或不完整映射拒绝查询，HTTP 返回安全 503
 - [x] Milvus dense/BM25/count 请求显式指定适配器一致性级别
-- [ ] 真实 Milvus 双客户端 Strong 验收（用例已添加，本轮中间件未运行）
+- [x] 真实 Milvus 双客户端 Strong 验收与 PostgreSQL 指针联合故障恢复
 - [x] 配置化装配 DocumentStore、默认关闭的读开关与资源配对校验
 - [ ] 旧 revision GC
 
 2026-10-03 读侧支持 `retrieval.revision_aware` 显式配置或注入 DocumentStore，默认
 不创建资源；CLI 已接线但生产配置未开启，新写入仍关闭。父块 key 必须与 child 的 KB/source/revision
-一致，缺失或错配退回 child 并记录诊断。Checkpoint I 仍待 Strong 与完整读写验收。
+一致，缺失或错配退回 child 并记录诊断。Checkpoint I 仍待完整生产读写验收。
 
-Strong 实测尝试使用隔离项目与 29530/29091 端口；Milvus 镜像已拉取，但 MinIO
-固定版本的 Docker Hub 来源 denied、官方 Quay 来源 401，未自行改用第三方镜像。
-需要可访问的同版本镜像源或隔离 Milvus 测试地址，不能把 mock 一致性传递算作实测。
+Strong 实测首次受 MinIO 固定镜像来源 denied/401 阻塞，随后依据官方 v2.6.23
+standalone 脚本，在隔离端口用内嵌 etcd/本地存储成功验收。真实 Milvus 集成
+44 passed，PG/Milvus 联合用例覆盖 partial-write/ready 隐藏、激活后六种检索组合
+即时可见与旧向量残留隔离。该拓扑只用于测试，不代替生产远程对象存储部署。
 
 ## Phase 4：出口验收
 

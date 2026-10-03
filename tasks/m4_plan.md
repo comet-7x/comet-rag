@@ -21,9 +21,10 @@ M4-T7 已完成：决策门已确认，DocumentStore Port、内存/PostgreSQL �
 T8 第一切片已实现 HierarchyBuilder、IndexPlanner 与 RevisionStager：父块/子向量分批
 幂等写入并核对计数，仅准备到 ready，不激活、不接入生产组合根。2026-10-03，T9
 读侧切片已支持 RRF 前有界判活、显式 parent 回填、故障诊断与 Strong 请求传递；
-支持默认关闭的配置化读开关/资源装配与显式注入；Strong 实测受 MinIO 镜像来源
-denied/401 阻塞，未自行改用第三方镜像。
-下一项完成 Strong 验收，再推进有界 revision Task context、
+支持默认关闭的配置化读开关/资源装配与显式注入。Strong 实测最初受 MinIO 镜像
+来源 denied/401 阻塞；随后改用固定版本官方内嵌 etcd/本地存储测试拓扑，真实 Milvus
+44 项集成测试和 PostgreSQL/Milvus 联合故障恢复通过，未改生产部署或使用第三方镜像。
+下一项推进有界 revision Task context、
 跨 worker 恢复、激活/superseded 与 GC。生产新写入保持关闭；IngestRunner 尚未切换。
 
 ## Dependency Graph
