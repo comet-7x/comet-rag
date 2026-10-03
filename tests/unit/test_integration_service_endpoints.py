@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 
 from tests.integration import conftest as integration
@@ -76,3 +80,39 @@ def test_missing_service_skips_locally_but_fails_when_required(
         monkeypatch.delenv("COMET_TEST_REQUIRE_SERVICES", raising=False)
         with pytest.raises(pytest.skip.Exception):
             integration._require("db.test", 15432, "test")
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_milvus_protocol_failure_obeys_strict_mode_and_closes_client(
+    required: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = Mock()
+    client.list_collections.side_effect = RuntimeError("database not found")
+    factory = Mock(return_value=client)
+    monkeypatch.setitem(sys.modules, "pymilvus", SimpleNamespace(MilvusClient=factory))
+    if required:
+        monkeypatch.setenv("COMET_TEST_REQUIRE_SERVICES", "1")
+        expected = pytest.fail.Exception
+    else:
+        monkeypatch.delenv("COMET_TEST_REQUIRE_SERVICES", raising=False)
+        expected = pytest.skip.Exception
+    try:
+        with pytest.raises(expected, match="不存在"):
+            integration._probe_milvus("zhihao_test_database")
+    except pytest.skip.Exception as exc:
+        raise AssertionError("严格 Milvus 验收不能静默 skip") from exc
+    client.close.assert_called_once()
+
+
+def test_milvus_probe_success_closes_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = Mock()
+    monkeypatch.setitem(
+        sys.modules,
+        "pymilvus",
+        SimpleNamespace(MilvusClient=Mock(return_value=client)),
+    )
+    assert (
+        integration._probe_milvus("zhihao_test_database")
+        == integration.MILVUS_URI
+    )
+    client.close.assert_called_once()

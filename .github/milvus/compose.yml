@@ -1,0 +1,25 @@
+# 固定版本官方 standalone_embed.sh 的测试拓扑，不替代生产 etcd/MinIO 部署。
+services:
+  milvus:
+    image: milvusdb/milvus:v2.6.23
+    command: [milvus, run, standalone]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_USE_EMBED: 'true'
+      ETCD_DATA_DIR: /var/lib/milvus/etcd
+      ETCD_CONFIG_PATH: /milvus/configs/embedEtcd.yaml
+      COMMON_STORAGETYPE: local
+      DEPLOY_MODE: STANDALONE
+    ports:
+      - '127.0.0.1:29530:19530'
+      - '127.0.0.1:29091:9091'
+    volumes:
+      - /var/lib/milvus
+      - ./embedEtcd.yaml:/milvus/configs/embedEtcd.yaml:ro
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:9091/healthz]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s

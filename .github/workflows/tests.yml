@@ -149,3 +149,59 @@ jobs:
           --cov=comet_rag --cov-append --cov-report=term-missing --cov-fail-under=70
       - name: 任务框架三层合并覆盖率至少 90%
         run: uv run coverage report --include="comet_rag/tasks/*" --fail-under=90
+
+  revision-integration:
+    name: 真实 Milvus 与 revision 可见性
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMET_TEST_POSTGRES_DSN: postgresql+asyncpg://comet:comet@localhost:5432/comet_revision_ci
+      COMET_TEST_MILVUS_URI: http://127.0.0.1:29530
+      COMET_TEST_REQUIRE_SERVICES: "1"
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: comet
+          POSTGRES_PASSWORD: comet
+          POSTGRES_DB: comet_revision_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U comet -d comet_revision_ci"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: 安装依赖
+        run: uv sync --all-groups --all-extras
+      - name: 启动固定版本隔离 Milvus
+        run: >-
+          docker compose -p comet-rag-milvus-ci -f .github/milvus/compose.yml
+          up -d --wait --wait-timeout 180
+      - name: 创建隔离向量测试库
+        run: |
+          uv run python -c '
+          import os
+          from pymilvus import MilvusClient
+          client = MilvusClient(uri=os.environ["COMET_TEST_MILVUS_URI"], timeout=10)
+          try:
+              client.create_database("zhihao_test_database")
+          finally:
+              client.close()
+          '
+      - name: 迁移独立 CI 数据库
+        run: uv run alembic -x "dsn=$COMET_TEST_POSTGRES_DSN" upgrade head
+      - name: 向量契约、Strong 与双存储故障恢复
+        run: >-
+          uv run pytest tests/integration/test_vectorstore_milvus.py
+          tests/integration/test_document_store_postgres.py
+          tests/integration/test_revision_lifecycle.py -m integration
+      - name: 失败时记录隔离服务日志
+        if: failure()
+        run: docker compose -p comet-rag-milvus-ci -f .github/milvus/compose.yml logs --tail 100
+      - name: 清理隔离服务与测试数据
+        if: always()
+        run: docker compose -p comet-rag-milvus-ci -f .github/milvus/compose.yml down --volumes

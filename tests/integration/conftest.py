@@ -1,8 +1,9 @@
 """集成测试夹具。
 
-**中间件没起时跳过，而不是失败。** 集成测试是可选的：核心依赖环境（CI 的
+**本地中间件没起时跳过。** 集成测试是可选的：核心依赖环境（CI 的
 core-only job、只想跑单元测试的贡献者）根本没有 docker，让它们红一片
 只会训练出"看到红色就忽略"的习惯，那比没有测试更糟。
+CI 设置 `COMET_TEST_REQUIRE_SERVICES=1` 时，连接/鉴权失败必须报错，不能静默 skip。
 
 起中间件：`docker compose up -d`
 """
@@ -144,20 +145,33 @@ def _milvus_unavailable_reason(exc: Exception, database: str) -> str:
     return f"Milvus 连接或鉴权失败：{type(exc).__name__}{suffix}"
 
 
-@pytest.fixture(scope="session")
-def milvus_uri(milvus_database: str) -> str:
+def _milvus_unavailable(reason: str) -> None:
+    if os.environ.get("COMET_TEST_REQUIRE_SERVICES") == "1":
+        pytest.fail(reason, pytrace=False)
+    pytest.skip(reason)
+
+
+def _probe_milvus(milvus_database: str) -> str:
     """用真实协议探活；裸 TCP 在代理、DNS 或 service mesh 下会误判。"""
+    client = None
     try:
         from pymilvus import MilvusClient
 
         client = MilvusClient(uri=MILVUS_URI, db_name=milvus_database, timeout=3.0)
         _ = cast("list[str]", client.list_collections(timeout=3.0))
-        client.close()
     except ImportError:
-        pytest.skip("Milvus 集成测试需要安装 comet-rag[milvus]")
+        _milvus_unavailable("Milvus 集成测试需要安装 comet-rag[milvus]")
     except Exception as exc:
-        pytest.skip(_milvus_unavailable_reason(exc, milvus_database))
+        _milvus_unavailable(_milvus_unavailable_reason(exc, milvus_database))
+    finally:
+        if client is not None:
+            client.close()
     return MILVUS_URI
+
+
+@pytest.fixture(scope="session")
+def milvus_uri(milvus_database: str) -> str:
+    return _probe_milvus(milvus_database)
 
 
 @pytest.fixture(scope="session")
