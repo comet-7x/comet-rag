@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T7 已完成；T8 准备与 T9 读侧切片已实现，生产 revision 链路未启用
+> 状态：M4-T7 已完成；T8 有界移交/ready 续跑与 T9 读侧切片已实现，生产未启用
 > 规格：`tasks/m4_spec.md` v1.8
 > 计划：`tasks/m4_plan.md` v1.8、`tasks/m4_t6_design.md`
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
@@ -145,14 +145,17 @@ separator 配置不可被原地修改。
 - [x] revision 相关稳定 ID 与 IndexPlan 写入
 - [x] HierarchyBuilder 保留 page/section 硬边界，父块不重叠、子块不跨父块
 - [x] RevisionStager 分批父块/窗口子向量写入、精确 count 与 ready 幂等重放
+- [x] UUID 一次持久化、窄 revision payload、CAS 内整份 context 字节上限
+- [x] CPU 父块落库后交接，IO 从 task_id/context 续跑到 ready，真实三后端验证
 - [ ] 父块、子向量、激活与旧版本回收按规格排序
 - [ ] 任一阶段失败只回滚本 revision，旧 active 数据仍可查询
 - [ ] 重试幂等，不产生重复可见记录
 - [ ] Task progress/context 保持有界并支持断点续跑
 
-2026-10-02 第一切片仅实现准备阶段，不激活、不接入生产组合根。activation、Task
-续跑、superseded 和 GC 尚未完成；按 T6 的发布顺序，必须先验收 T9 读侧判活，
-再启用 revision 写入口，不能把准备阶段通过当成 Checkpoint H 已通过。
+2026-10-03 第二切片完成有界移交与 ready 续跑；原文只在父块和移交数据提交成功后清除。
+IO 分批读取父块、复验完整指纹后才写向量，embedding 返回后仍检查所有权/取消。
+activation、superseded、GC 与生产 Task 全生命周期尚未完成，故完整 context/progress
+条目仍未勾选。不能把测试 kind 的 prepare-to-ready 成功当成生产 ingest 或 Checkpoint H。
 
 ### M4-T9 — 父块回填与检索兼容（M）
 

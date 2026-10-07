@@ -1,7 +1,7 @@
 # Implementation Plan: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T7 已完成；T8 准备与 T9 读侧切片已实现，生产切换未启用（v1.8）
-> 依据：`tasks/m4_spec.md` v1.8、`tasks/m4_t6_design.md`
+> 状态：M4-T7 已完成；T8 有界移交/ready 续跑与 T9 读侧切片已实现，生产未启用（v1.9）
+> 依据：`tasks/m4_spec.md` v1.9、`tasks/m4_t6_design.md`
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开始日期：2026-09-14
 > 分支：`feature/m4-hierarchical-indexing`（堆叠于尚未合入的 `feature/m4-chunking`）
@@ -24,8 +24,10 @@ T8 第一切片已实现 HierarchyBuilder、IndexPlanner 与 RevisionStager：�
 支持默认关闭的配置化读开关/资源装配与显式注入。Strong 实测最初受 MinIO 镜像
 来源 denied/401 阻塞；随后改用固定版本官方内嵌 etcd/本地存储测试拓扑，真实 Milvus
 44 项集成测试和 PostgreSQL/Milvus 联合故障恢复通过，未改生产部署或使用第三方镜像。
-下一项推进有界 revision Task context、
-跨 worker 恢复、激活/superseded 与 GC。生产新写入保持关闭；IngestRunner 尚未切换。
+T8 第二切片已实现 UUID 一次持久化、32 MiB 整份 context 限额及 CPU→IO 的窄 payload
+移交。真实 PG/Redis/Milvus 验收在停止 CPU worker 后，仅凭 task_id 和持久化 context
+续跑到 ready，并覆盖向量提交后响应丢失。下一项推进激活/响应丢失、superseded 与 GC，
+最后接入生产 IngestRunner；生产新写入保持关闭。
 
 ## Dependency Graph
 

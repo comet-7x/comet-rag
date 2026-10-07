@@ -113,7 +113,8 @@ ARQ 根据过去的截止时间算出负 job TTL。入库 runner 暴露已有流
 - [x] T9 读侧切片：有界 revision 判活、RRF 前过滤、父块批量回填与故障诊断。
 - [x] 配置化 DocumentStore/默认关闭的读开关与启动前资源配对校验。
 - [x] 真实 Milvus 双客户端 Strong 及 PostgreSQL/Milvus 可见性联合验收。
-- [ ] T8 后续：有界 Task context、跨 worker 续跑、激活/响应丢失与 superseded 收尾。
+- [x] T8 第二切片：有界 Task context、跨 worker ready 续跑与响应丢失重放。
+- [ ] T8 后续：激活/响应丢失、superseded 收尾与生产 IngestRunner 接线。
 - [ ] 写入、可见性判定、激活和旧版本回收一起验收。
 - [ ] 覆盖窗口写入失败、同源并发更新、过期执行者提交及回滚。
 
@@ -199,6 +200,35 @@ ready 不可见，激活后六种检索组合由独立客户端立即看到新�
 
 下一项是有界 revision Task context/跨 worker 续跑，随后激活/superseded 与 GC。
 生产新写入仍关闭，完整 M4 及 Checkpoint H/I 仍未完成。
+
+## 有界 revision 移交与 ready 续跑
+
+2026-10-03 实现 `TaskContext.put_bounded`：每轮 CAS 内按有限 JSON 的 UTF-8 字节数
+复验整份 context，保留所有权/取消守卫。没有更改 Task 持久化字段或核心 Port 接口。
+服务层 v1 移交数据只含 manifest 和窄 child payload；32 MiB 默认限额可由构造参数收紧。
+UUID 在任何外部写入前持久化，父块写完才清原文；IO 从 DocumentStore 分批读取父块、
+复验完整计划指纹，然后窗口 embedding/upsert/count 到 ready，不激活或注册生产 runner。
+
+真实 PG/Redis/Milvus 用例停止 CPU worker 并关闭其 SQL/Milvus 连接后启动独立 IO
+worker，仅凭 task_id/context 续跑，向量提交后响应丢失会重放同一 revision/generation。
+worker 在同一事件循环、连接独立；不是新增 fork/SIGKILL 验收，也不承诺 exactly-once。
+测试 kind 的成功只代表 prepare-to-ready；生产 ingest 必须等激活和收尾成功。
+
+禁用字节限额、漏掉 embedding 后围栏、跳过完整指纹复验、重复生成 UUID 四类缺陷
+分别使 2 项目标测试失败；恢复后 unit 2279 passed / 20 skipped / 1 xfailed，9.35s。
+三层合并 2439 passed（33.58s），无集成 skip；整体覆盖率 90.09%、tasks 95.57%。
+Ruff/Pyright/diff/core-only 导入检查通过；CI 已增加 Redis 服务，但尚未推送或远端运行。
+
+剩余项：激活/响应丢失、superseded、GC、生产 runner 接线与完整 Checkpoint H/I。
+
+2026-10-07 重启恢复后分批本地提交：`040a175` 通用字节守卫、`4e61ae6` revision
+续跑服务、`3cf7b18` 真实后端/CI 验收。第一批冷跑 10.78s 超时，复跑 9.16s；
+第二批 unit 2279 passed，9.77s。第三批暂存快照三层 2439 passed（35.39s），
+整体覆盖率 90.08%、tasks 95.45%，无集成 skip；静态/类型/diff 复验通过。
+未推送。隔离测试容器/网络/匿名卷已清理，开发资源未操作；两个原始 stash 保留。
+原删除分支前临时 bundle 在恢复时已不在，补做当前引用恢复 bundle，不视作原备份替代品。
+最终文档批次快照 2279 passed，首跑 10.41s、复跑 9.04s；冷启动仍有超 10s 波动，
+不能宣称单测耗时预算稳定满足，后续需观察/优化，不删用例来提速。
 
 ## 后续产品范围
 

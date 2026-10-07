@@ -1,9 +1,9 @@
 # Spec: M4 Chunking 与层级索引
 
-> 状态：M4-T7 DocumentStore 已完成（v1.8）
+> 状态：M4-T7 已完成；T8 有界移交/ready 续跑与 T9 读侧切片已实现，生产未启用（v1.9）
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开发分支：`feature/m4-hierarchical-indexing`（堆叠于 `feature/m4-chunking`）
-> 最后更新：2026-09-16
+> 最后更新：2026-10-03
 
 ## 1. 目标
 
@@ -522,3 +522,46 @@ M4-T6 已提交 schema/迁移/回滚设计，后半段决策门已于 2026-09-16
   重建；开发资源未改动，原始 stash 与分支 bundle 仍保留。
 - Strong 原阻塞已解除；下一项为 T8 有界 Task context、跨 worker 续跑、激活/
   superseded 与 GC。生产写入仍未接入，不宣称完整 Checkpoint H/I 或 M4 完成。
+
+## 23. M4-T8 有界移交与 ready 续跑（2026-10-03）
+
+- `aget_revision_key` 在外部写入前一次持久化 UUID4 hex，提交后响应丢失重用身份；
+  不新增 Task 持久化字段。`RevisionTaskStages` 是实验性服务编排，不注册生产 runner。
+- v1 context 只含 revision manifest、child 正文/位置/用户 metadata/parent ordinal；
+  ID、相邻关系与系统字段由确定性规则重建，不重复保存父块正文或整个 IndexPlan。
+  父块写完且 context 成功提交才清原文/blocks/旧 chunks；失败保留重建输入。
+- 默认整份 context 上限 32 MiB（构造参数可收紧）；外部写前预验，`put_bounded`
+  在每轮 CAS 重读后复验有限 JSON 的 UTF-8 字节数，包括不相关字段，拒绝 NaN/非 JSON。
+  超限明确报资源错误，不静默截断。该上限不是进程峰值内存预算：编码会有副本，IO 虽
+  分批读取父块，仍在内存汇总计划做完整 SHA 复验；生产接线需结合文档/并发预算。
+- IO 仅用移交 payload 和落库父块续跑，分批核对父块身份、完整 SHA、child 关系后
+  才访问向量库；embedding 返回后仍 checkpoint，再写向量/count/mark ready。
+  ready 响应丢失重放不再 embedding，staging 部分写入沿相同确定性 ID 重放。
+- 真实 PG/Redis/Milvus 两项联合测试通过；新增用例停止 CPU worker、关闭其连接后
+  用独立 IO SQL/Milvus 连接消费 Redis 中唯一的 task_id。向量提交后响应丢失重试，
+  chunking 只跑一次、generation 仍为 1、Strong count 为 4、active pointer 仍为空。
+  两个 worker 在同一测试进程运行；不把此项宣称为新增 fork 或进程崩溃验收。
+- 合并测试曾因导入带注册副作用的测试模块而重复注册 kind；提取无注册的 ARQ 支持
+  模块解决后，三层合并 2439 passed / 20 unit skips / 1 xfailed（33.58s），无集成 skip。
+  整体覆盖率 90.09%、tasks 95.57%。独立 unit 2279 passed（9.35s）；静态/类型/diff
+  与 core-only 导入检查通过。CI 增加 Redis 服务，未推送，无远端 Actions 结果。
+- 四类反向缺陷各使 2 项目标测试失败，恢复后通过：禁用 context 上限、漏掉模型
+  返回后围栏、跳过完整计划指纹、重试重新生成 UUID。没有删除或跳过失败测试。
+- 激活/响应丢失、superseded、GC、生产 IngestRunner 与完整 H/I 验收仍待实现。
+
+### 23.1 重启恢复与分批提交（2026-10-07）
+
+- 第一批 `040a175`：Task context CAS 字节守卫；暂存快照 2245 passed，冷启动
+  10.78s 超出单测耗时约定，复跑 9.16s。第二批 `4e61ae6`：revision 续跑服务，
+  独立快照 2279 passed（9.77s）。两批 Ruff 检查均通过。
+- 第三批 `3cf7b18`：真实后端移交/CI Redis。暂存快照三层 2439 passed、20 unit
+  skips、1 xfailed（35.39s），无集成 skip；整体覆盖率 90.08%、tasks 95.45%。
+  Ruff/Pyright/diff 复验通过，未推送；此前 10-03 数据保留为历史记录。
+- 最终文档批次快照 2279 passed，首跑 10.41s、复跑 9.04s；两次冷跑超 10s，
+  不能宣称耗时预算在冷启动下稳定满足，后续仍需观察/优化；未删除测试以提速。
+- 本轮隔离 Milvus/PostgreSQL/Redis 容器、网络和匿名测试卷已清理，数据可重建；
+  开发容器未操作。原临时 PG/Redis Compose 文件在恢复时已不在，先核对容器项目/
+  服务标签与挂载，再用同项目的清理配置执行 down，不匹配其他项目。
+- 两个原始 stash 仍在；早先 `/tmp` 的删除分支前 bundle 已不在，补做并验证当前引用
+  恢复 bundle。它不是当初完整备份的替代品，不宣称已恢复原删除分支清单。
+  core-only 导入产生的遥测临时文件移出仓库保存，不纳入提交。
