@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -56,6 +57,10 @@ type Outcome = Done | Handoff
 
 class TaskCancelled(Exception):
     """checkpoint 检测到取消请求时抛出，由执行器捕获并落成 CANCELLED。"""
+
+
+class TaskContextTooLarge(ValueError):
+    """有界 context 写入拒绝超限；CAS 重读后的合并结果也必须复验。"""
 
 
 class RetriableError(Exception):
@@ -150,6 +155,28 @@ class TaskContext:
     async def put(self, **values: Any) -> None:
         """往 context 里写中间态（必须 JSON 友好）。续跑就靠它。"""
         await self.store._put_context(self.task_id, values, guard=self._check_write)
+
+    async def put_bounded(self, max_bytes: int, /, **values: Any) -> None:
+        """在 CAS 内核验整份 JSON context；values 是业务无关的任意 JSON 结构。"""
+        if type(max_bytes) is not int or max_bytes <= 0:
+            raise ValueError("max_bytes 必须是正整数")
+
+        def guard(task: Task) -> None:
+            self._check_write(task)
+            size = len(
+                json.dumps(
+                    {**task.context, **values},
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+            if size > max_bytes:
+                raise TaskContextTooLarge(
+                    f"Task context 超过限制：{size} > {max_bytes} bytes"
+                )
+
+        await self.store._put_context(self.task_id, values, guard=guard)
 
     async def report(
         self, *, progress: float | None = None, message: str | None = None
