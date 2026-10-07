@@ -18,7 +18,6 @@ arq 的 `Worker` 可以直接在当前事件循环里跑（`async_run()`）。�
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
@@ -28,11 +27,10 @@ from arq import ArqRedis, create_pool
 from arq.connections import RedisSettings
 from arq.constants import result_key_prefix
 from arq.jobs import Job
-from arq.worker import Worker
 
 from comet_rag.infrastructure.persistence.sql import Database
 from comet_rag.infrastructure.persistence.task_store.postgres import PostgresTaskStore
-from comet_rag.infrastructure.task_execution.arq import JOB_NAME, ArqExecutor, run_task
+from comet_rag.infrastructure.task_execution.arq import JOB_NAME, ArqExecutor
 from comet_rag.tasks import (
     Done,
     InMemoryTaskStore,
@@ -45,6 +43,7 @@ from comet_rag.tasks import (
 )
 from tests.contracts.support import wait_for_terminal, wait_until
 from tests.contracts.task_executor import TaskExecutorContract
+from tests.integration.arq_support import _make_worker, _running
 from tests.integration.conftest import truncate_tables
 
 pytestmark = pytest.mark.integration
@@ -63,43 +62,6 @@ async def pool(redis_url: str) -> AsyncIterator[ArqRedis]:
         yield p
     finally:
         await p.aclose()
-
-
-def _make_worker(
-    pool: ArqRedis, queue: str, executor: ArqExecutor, *, max_jobs: int
-) -> Worker:
-    return Worker(
-        functions=[run_task],
-        redis_pool=pool,
-        queue_name=queue,
-        max_jobs=max_jobs,
-        # 默认 0.5s 会让每个用例都白等半秒；语义不受影响，只是轮询更勤
-        poll_delay=0.02,
-        handle_signals=False,  # 测试进程里抢信号会把 pytest 一起带走
-        ctx={"executor": executor},
-        # 重试归 TaskStore 管（attempts / max_attempts / 退避）。让 arq 也插一脚
-        # 会出现"库里记 2 次、实际跑了 6 次"，两套计数谁也不对。
-        retry_jobs=False,
-        max_tries=1,
-        keep_result=2,
-        log_results=False,
-    )
-
-
-@contextlib.asynccontextmanager
-async def _running(worker: Worker) -> AsyncIterator[Worker]:
-    runner = asyncio.create_task(worker.async_run())
-    try:
-        yield worker
-    finally:
-        runner.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await runner
-        # main 被取消不会带走已经起飞的 job 协程，得单独收
-        for job in list(worker.tasks.values()):
-            job.cancel()
-        if worker.tasks:
-            await asyncio.gather(*worker.tasks.values(), return_exceptions=True)
 
 
 # ── 契约 ───────────────────────────────────────────────────────────────────
