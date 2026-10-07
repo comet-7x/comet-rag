@@ -84,6 +84,35 @@ class IndexPlan:
         object.__setattr__(self, "vector_children", tuple(self.vector_children))
 
 
+@dataclass(frozen=True, slots=True)
+class IndexHandoff:
+    """CPU/IO 移交只携带 manifest 与 child，不重复持久化 parent 正文。"""
+
+    draft: RevisionDraft
+    vector_children: tuple[PlannedChild, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "vector_children", tuple(self.vector_children))
+
+    @classmethod
+    def from_plan(cls, plan: IndexPlan, *, task_id: str | None = None) -> IndexHandoff:
+        """在持久化或外部写入之前隔离并校验计划。"""
+        plan = _snapshot_plan(plan)
+        return cls(
+            RevisionDraft(
+                plan.key,
+                plan.plan_sha256,
+                len(plan.parents),
+                len(plan.vector_children),
+                plan.source,
+                plan.file_type,
+                plan.metadata,
+                task_id,
+            ),
+            plan.vector_children,
+        )
+
+
 def revision_chunk_id(key: RevisionKey, kind: str, ordinal: int) -> str:
     """revision 内确定性 ID；不得原地覆盖其他 revision 的块。"""
     if kind not in ("parent", "child") or type(ordinal) is not int or ordinal < 0:
@@ -337,57 +366,118 @@ class RevisionStager:
     ) -> StoredRevision:
         """失败保留本 revision 的 staging 供幂等重放，绝不覆盖或清理旧 active。"""
 
-        if type(embedding_dim) is not int or embedding_dim <= 0:
-            raise ValueError("embedding_dim 必须是正整数")
-        plan = _snapshot_plan(plan)
-
-        async def check() -> None:
-            if checkpoint is not None:
-                await checkpoint()
-
-        await check()
-        manifest = await self._documents.areserve_revision(
-            RevisionDraft(
-                plan.key,
-                plan.plan_sha256,
-                len(plan.parents),
-                len(plan.vector_children),
-                plan.source,
-                plan.file_type,
-                plan.metadata,
-                task_id,
-            )
+        _validate_dimension(embedding_dim)
+        handoff = await self.aprepare(plan, task_id=task_id, checkpoint=checkpoint)
+        return await self.aresume(
+            handoff, embedding_dim=embedding_dim, checkpoint=checkpoint
         )
-        if manifest.status not in (RevisionStatus.STAGING, RevisionStatus.READY):
-            raise RevisionConflict(plan.key, f"不能准备 {manifest.status} revision")
-        await self._vectors.aensure_collection(plan.key.kb_id, dim=embedding_dim)
+
+    async def aprepare(
+        self,
+        plan: IndexPlan,
+        /,
+        *,
+        task_id: str | None = None,
+        checkpoint: Callable[[], Awaitable[None]] | None = None,
+    ) -> IndexHandoff:
+        """父块全部写入后才能交接；失败重放同计划，不调用 embedding 或向量库。"""
+        plan = _snapshot_plan(plan)
+        handoff = IndexHandoff.from_plan(plan, task_id=task_id)
+        await _check(checkpoint)
+        manifest = await self._documents.areserve_revision(handoff.draft)
+        _require_open(manifest)
         if manifest.status is RevisionStatus.STAGING:
             for start in range(0, len(plan.parents), self._parent_batch):
-                await check()
-                batch = [
-                    StoredParent(
-                        plan.key,
-                        p.id,
-                        p.ordinal,
-                        p.text,
-                        p.start_char,
-                        p.end_char,
-                        p.previous_id,
-                        p.next_id,
-                        p.metadata,
+                await _check(checkpoint)
+                await self._documents.aput_parents(
+                    plan.key,
+                    [
+                        StoredParent(
+                            plan.key,
+                            p.id,
+                            p.ordinal,
+                            p.text,
+                            p.start_char,
+                            p.end_char,
+                            p.previous_id,
+                            p.next_id,
+                            p.metadata,
+                        )
+                        for p in plan.parents[start : start + self._parent_batch]
+                    ],
+                )
+        return handoff
+
+    async def aresume(
+        self,
+        handoff: IndexHandoff,
+        /,
+        *,
+        embedding_dim: int,
+        checkpoint: Callable[[], Awaitable[None]] | None = None,
+    ) -> StoredRevision:
+        """只依赖移交数据和已落库父块续跑；完整指纹复验早于任何向量写入。"""
+        _validate_dimension(embedding_dim)
+        handoff = _snapshot_handoff(handoff)
+        draft = handoff.draft
+        await _check(checkpoint)
+        manifest = await self._documents.areserve_revision(draft)
+        _require_open(manifest)
+        parents: list[PlannedParent] = []
+        for start in range(0, draft.parent_count, self._parent_batch):
+            await _check(checkpoint)
+            ids = [
+                revision_chunk_id(draft.key, "parent", ordinal)
+                for ordinal in range(
+                    start, min(start + self._parent_batch, draft.parent_count)
+                )
+            ]
+            stored = await self._documents.aget_parents(draft.key.kb_id, ids)
+            for ordinal, parent_id in enumerate(ids, start):
+                parent = stored.get(parent_id)
+                if parent is None:
+                    raise RevisionNotReady(draft.key, "移交父块缺失")
+                if (
+                    parent.key != draft.key
+                    or parent.parent_id != parent_id
+                    or parent.ordinal != ordinal
+                ):
+                    raise RevisionConflict(draft.key, "移交父块身份不一致")
+                parents.append(
+                    PlannedParent(
+                        parent.parent_id,
+                        parent.ordinal,
+                        parent.text,
+                        parent.start_char,
+                        parent.end_char,
+                        parent.previous_id,
+                        parent.next_id,
+                        parent.metadata,
                     )
-                    for p in plan.parents[start : start + self._parent_batch]
-                ]
-                await self._documents.aput_parents(plan.key, batch)
+                )
+        plan = _snapshot_plan(
+            IndexPlan(
+                draft.key,
+                draft.plan_sha256,
+                draft.source,
+                draft.file_type,
+                draft.metadata,
+                tuple(parents),
+                handoff.vector_children,
+            )
+        )
+        await _check(checkpoint)
+        await self._vectors.aensure_collection(plan.key.kb_id, dim=embedding_dim)
+        if manifest.status is RevisionStatus.STAGING:
             for start in range(0, len(plan.vector_children), self._window):
-                await check()
+                await _check(checkpoint)
                 batch = plan.vector_children[start : start + self._window]
                 vectors = await aembed_documents(
                     self._embedding,
                     [c.text for c in batch],
                     max_concurrency=self._concurrency,
                 )
-                await check()
+                await _check(checkpoint)
                 await self._vectors.aupsert(
                     plan.key.kb_id,
                     [
@@ -395,7 +485,7 @@ class RevisionStager:
                         for c, vector in zip(batch, vectors, strict=True)
                     ],
                 )
-        await check()
+        await _check(checkpoint)
         actual = await self._vectors.acount(
             plan.key.kb_id,
             filter={
@@ -407,5 +497,58 @@ class RevisionStager:
             raise RevisionNotReady(
                 plan.key, f"子向量计数 {actual} != {len(plan.vector_children)}"
             )
-        await check()
+        await _check(checkpoint)
         return await self._documents.amark_ready(plan.key)
+
+
+def _snapshot_handoff(handoff: IndexHandoff) -> IndexHandoff:
+    draft = replace(handoff.draft, metadata=_freeze(handoff.draft.metadata))
+    children = tuple(replace(c) for c in handoff.vector_children)
+    if draft.child_count != len(children) or draft.parent_count > len(children):
+        raise RevisionConflict(draft.key, "移交计数不一致")
+    dump_chunk_drafts(
+        [
+            ChunkDraft(c.text, c.ordinal, c.start_char, c.end_char, c.metadata)
+            for c in children
+        ]
+    )
+    parent_ids = {
+        revision_chunk_id(draft.key, "parent", i) for i in range(draft.parent_count)
+    }
+    if {c.parent_id for c in children if c.parent_id is not None} != parent_ids:
+        raise RevisionConflict(draft.key, "移交父块引用不完整")
+    if parent_ids and any(c.parent_id is None for c in children):
+        raise RevisionConflict(draft.key, "层级子块缺少父块")
+    ids = [c.id for c in children]
+    for ordinal, child in enumerate(children):
+        if child.id != revision_chunk_id(draft.key, "child", ordinal) or (
+            child.previous_id,
+            child.next_id,
+        ) != _adjacent(ids, ordinal):
+            raise RevisionConflict(draft.key, "移交子块 ID 或相邻关系不合法")
+        required = {
+            "document_revision": draft.key.revision_id,
+            "kb_id": draft.key.kb_id,
+            "source_id": draft.key.source_id,
+            "parent_id": child.parent_id,
+            "previous_id": child.previous_id,
+            "next_id": child.next_id,
+        }
+        if any(child.metadata.get(k) != v for k, v in required.items()):
+            raise RevisionConflict(draft.key, "移交子块系统字段不合法")
+    return IndexHandoff(draft, children)
+
+
+async def _check(checkpoint: Callable[[], Awaitable[None]] | None) -> None:
+    if checkpoint is not None:
+        await checkpoint()
+
+
+def _require_open(manifest: StoredRevision) -> None:
+    if manifest.status not in (RevisionStatus.STAGING, RevisionStatus.READY):
+        raise RevisionConflict(manifest.key, f"不能准备 {manifest.status} revision")
+
+
+def _validate_dimension(embedding_dim: int) -> None:
+    if type(embedding_dim) is not int or embedding_dim <= 0:
+        raise ValueError("embedding_dim 必须是正整数")

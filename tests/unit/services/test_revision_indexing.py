@@ -230,7 +230,7 @@ async def test_staging_checkpoint_stops_before_vector_write() -> None:
     async def checkpoint() -> None:
         nonlocal count
         count += 1
-        # reserve + two parent batches + embedding checkpoint + pre-upsert check.
+        # prepare 的 reserve/父批次之后，resume 的父块复验也必须经过检查点。
         if count == 5:
             raise RuntimeError("lease lost")
 
