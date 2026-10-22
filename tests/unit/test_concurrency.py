@@ -57,8 +57,9 @@ class RecordingEmbedding(MultimodalEmbeddingMixin, BaseEmbeddingModel):
 class AsyncRecordingEmbedding(AsyncMultimodalEmbeddingMixin, AsyncBaseEmbeddingModel):
     """异步替身有独立生命周期；不继承同步客户端或同步执行方法。"""
 
-    def __init__(self, delay: float = 0.01) -> None:
-        self.delay = delay
+    def __init__(self, overlap: int = 4) -> None:
+        # 先证明指定数量的请求同时在途，再释放这一轮；串行退化会明确超时。
+        self._overlap = asyncio.Barrier(overlap)
         self.live = 0
         self.peak = 0
         self.calls = 0
@@ -68,7 +69,9 @@ class AsyncRecordingEmbedding(AsyncMultimodalEmbeddingMixin, AsyncBaseEmbeddingM
         self.live += 1
         self.peak = max(self.peak, self.live)
         try:
-            await asyncio.sleep(self.delay)
+            async with asyncio.timeout(2):
+                await self._overlap.wait()
+                await asyncio.sleep(0)  # 单席位也保留真实排队/过载的竞争窗口。
         finally:
             self.live -= 1
         return [0.0]
@@ -101,16 +104,20 @@ class AsyncRecordingReranker(AsyncBaseReranker[str]):
 async def test_gate_caps_concurrency() -> None:
     gate = Gate(limit=3)
     live = peak = 0
+    overlap = asyncio.Barrier(3)
 
     async def work() -> None:
         nonlocal live, peak
         async with gate:
             live += 1
             peak = max(peak, live)
-            await asyncio.sleep(0.01)
+            async with asyncio.timeout(2):
+                await overlap.wait()
             live -= 1
 
-    await asyncio.gather(*(work() for _ in range(30)))
+    async with asyncio.TaskGroup() as requests:
+        for _ in range(30):
+            requests.create_task(work())
 
     assert peak == 3, f"并发峰值 {peak} ≠ 上限 3"
     assert gate.stats.in_flight == 0, "全部结束后还有在途，说明有名额没还回来"
@@ -216,12 +223,11 @@ async def test_per_call_fanout_alone_does_not_cap_the_service() -> None:
     """
     model = AsyncRecordingEmbedding()  # 不挂闸门 = 修复前的行为
 
-    await asyncio.gather(
-        *(
-            async_batch.embed_documents(model, ["x"] * 4, max_concurrency=4)
-            for _ in range(8)
-        )
-    )
+    async with asyncio.TaskGroup() as requests:
+        for _ in range(8):
+            requests.create_task(
+                async_batch.embed_documents(model, ["x"] * 4, max_concurrency=4)
+            )
 
     assert model.peak > 4, (
         "没挂闸门却把并发压在了 4 以内 —— 那这条用例已经证明不了什么了"
@@ -233,12 +239,11 @@ async def test_process_gate_caps_the_service_no_matter_how_many_tasks() -> None:
     model = AsyncRecordingEmbedding()
     model.bind_gate(Gate(limit=4))
 
-    await asyncio.gather(
-        *(
-            async_batch.embed_documents(model, ["x"] * 4, max_concurrency=4)
-            for _ in range(8)
-        )
-    )
+    async with asyncio.TaskGroup() as requests:
+        for _ in range(8):
+            requests.create_task(
+                async_batch.embed_documents(model, ["x"] * 4, max_concurrency=4)
+            )
 
     assert model.peak <= 4, f"并发峰值 {model.peak} 超过闸门上限 4"
     assert model.peak > 1, "并发度恒为 1 说明根本没并行，闸门测了个寂寞"
@@ -253,10 +258,12 @@ async def test_embedding_and_reranker_share_one_gate() -> None:
     model.bind_gate(gate)
     reranker.bind_gate(gate)
 
-    await asyncio.gather(
-        async_batch.embed_documents(model, ["x"] * 20, max_concurrency=20),
-        *(reranker.score("q", ["d"]) for _ in range(20)),
-    )
+    async with asyncio.TaskGroup() as requests:
+        requests.create_task(
+            async_batch.embed_documents(model, ["x"] * 20, max_concurrency=20)
+        )
+        for _ in range(20):
+            requests.create_task(reranker.score("q", ["d"]))
 
     assert model.peak <= 4, f"两条路合起来的并发峰值 {model.peak} 超过 4"
 
@@ -295,7 +302,7 @@ def test_gate_is_not_bypassable_by_subclasses() -> None:
 
 async def test_overload_propagates_instead_of_being_swallowed() -> None:
     """过载必须以异常形式传出去 —— 静默丢弃比报错糟得多（S4-1）。"""
-    model = AsyncRecordingEmbedding(delay=0.05)
+    model = AsyncRecordingEmbedding(overlap=1)
     model.bind_gate(Gate(limit=1, max_waiting=1))
 
     results = await asyncio.gather(
@@ -318,15 +325,15 @@ async def test_media_entry_is_gated_like_text() -> None:
 
     这条用例把文本与多模态混在一起打，只看**真实并发峰值**。
     """
-    model = AsyncRecordingEmbedding(delay=0.02)
+    model = AsyncRecordingEmbedding(overlap=2)
     gate = Gate(limit=2, max_waiting=64)
     model.bind_gate(gate)
 
     media = MediaResource(url="https://example.invalid/a.png")
-    await asyncio.gather(
-        *[model.embed(f"text-{i}") for i in range(6)],
-        *[model.embed_media(media) for _ in range(6)],
-    )
+    async with asyncio.TaskGroup() as requests:
+        for i in range(6):
+            requests.create_task(model.embed(f"text-{i}"))
+            requests.create_task(model.embed_media(media))
 
     assert model.calls == 12
     assert model.peak <= 2, f"闸门限 2，实际峰值 {model.peak} —— 多模态绕过了闸门"

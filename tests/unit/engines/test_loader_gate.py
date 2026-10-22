@@ -1,7 +1,7 @@
 """加载侧的进程级闸门。
 
 模型侧实测出过"配置写 4、实际并发 128"：每个任务各自守规矩，加起来不守。
-加载侧此前**完全没有**闸门，而 `ingestion.py` 每个任务调一次 `aload`，
+加载侧此前**完全没有**闸门，而 `ingestion.py` 每个任务调一次 `load`，
 `max_jobs=32` 就是 32 路对外抓取，没有任何上限。
 """
 
@@ -30,8 +30,9 @@ LoaderContent = LoadedResource
 class CountingLoader(AsyncBaseLoader):
     """记录真实并发峰值的替身。峰值是唯一要看的那个数。"""
 
-    def __init__(self, delay: float = 0.02) -> None:
-        self.delay = delay
+    def __init__(self, overlap: int = 1) -> None:
+        # 每轮明确凑齐重叠请求，不把机器调度速度当成“已经并发”的证据。
+        self._overlap = asyncio.Barrier(overlap)
         self.live = 0
         self.peak = 0
         self.calls = 0
@@ -41,7 +42,9 @@ class CountingLoader(AsyncBaseLoader):
         self.live += 1
         self.peak = max(self.peak, self.live)
         try:
-            await asyncio.sleep(self.delay)
+            async with asyncio.timeout(2):
+                await self._overlap.wait()
+                await asyncio.sleep(0)  # 单席位也要让其他调用进入闸门等待队列。
         finally:
             self.live -= 1
         return LoaderContent(path=Path("/dev/null"), source=SourceContent("x"))
@@ -56,10 +59,12 @@ async def test_process_gate_caps_loading_no_matter_how_many_tasks() -> None:
     不挂闸门时，32 个并发任务就是 32 路抓取 —— 每个任务都觉得自己只发了一个
     请求。真正该被约束的是**进程对外的总连接数**。
     """
-    loader = CountingLoader()
+    loader = CountingLoader(overlap=4)
     loader.bind_gate(Gate(limit=4))
 
-    await asyncio.gather(*(loader.load(SourceContent("s")) for _ in range(32)))
+    async with asyncio.TaskGroup() as requests:
+        for _ in range(32):
+            requests.create_task(loader.load(SourceContent("s")))
 
     assert loader.peak <= 4, f"并发峰值 {loader.peak} 超过闸门上限 4"
     assert loader.peak > 1, "峰值恒为 1 说明根本没并行，这条用例测了个寂寞"
@@ -68,15 +73,17 @@ async def test_process_gate_caps_loading_no_matter_how_many_tasks() -> None:
 
 async def test_without_a_gate_loading_is_unbounded() -> None:
     """对照组：没有闸门就是修复前的行为，用来证明上一条不是自证。"""
-    loader = CountingLoader()
+    loader = CountingLoader(overlap=32)
 
-    await asyncio.gather(*(loader.load(SourceContent("s")) for _ in range(32)))
+    async with asyncio.TaskGroup() as requests:
+        for _ in range(32):
+            requests.create_task(loader.load(SourceContent("s")))
 
     assert loader.peak > 4, "没挂闸门却被限住了，那上一条用例证明不了什么"
 
 
 async def test_gate_is_not_bypassable_by_subclasses() -> None:
-    """`aload` 是 final，子类只能实现 `_load` —— 结构上没有绕过的写法。"""
+    """`load` 是 final，子类只能实现 `_load` —— 结构上没有绕过的写法。"""
     assert getattr(AsyncBaseLoader.load, "__final__", False)
     assert getattr(AsyncBaseLoader._load, "__isabstractmethod__", False)  # noqa: SLF001
 
@@ -115,12 +122,13 @@ async def test_auto_loader_forwards_the_gate_instead_of_holding_it() -> None:
 
 
 async def test_routing_through_auto_loader_still_respects_the_cap() -> None:
-    leaf = CountingLoader()
+    leaf = CountingLoader(overlap=3)
     auto = _auto(leaf)
     auto.bind_gate(Gate(limit=3))
 
-    async with asyncio.timeout(10):
-        await asyncio.gather(*(auto.load(SourceContent("s")) for _ in range(24)))
+    async with asyncio.timeout(10), asyncio.TaskGroup() as requests:
+        for _ in range(24):
+            requests.create_task(auto.load(SourceContent("s")))
 
     assert leaf.peak <= 3, f"经 AutoLoader 路由后峰值 {leaf.peak} 超过 3"
     assert leaf.calls == 24
@@ -129,7 +137,7 @@ async def test_routing_through_auto_loader_still_respects_the_cap() -> None:
 @pytest.mark.parametrize("limit", [1, 2])
 async def test_batch_load_also_goes_through_the_gate(limit: int) -> None:
     """批量入口的 `max_concurrency` 与闸门叠加，取两者中更紧的那个。"""
-    leaf = CountingLoader()
+    leaf = CountingLoader(overlap=limit)
     auto = _auto(leaf)
     auto.bind_gate(Gate(limit=limit))
 
