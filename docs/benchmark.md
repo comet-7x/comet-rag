@@ -29,6 +29,29 @@ uv run pytest -m benchmark --bench-baseline before.json   # 打印增减
 
 ## 当前基线
 
+### DOCX 样式解析（2026-10-22）
+
+Python 3.12 / macOS / python-docx 1.2.0；同机比较改前副本与最终实现。先构建并加载
+文档，预热一次，再各取 7 次 `DocxParser.parse()` 的中位数；计时不包括建样本、
+保存或解压 DOCX。调用计数与 cProfile 单独采集，计时时不并行运行其他测试。
+
+| 固定样本 | 改前 | 改后 | `default_for` 调用次数 |
+|---|---:|---:|---:|
+| 300 行表格，每行 1 个有文本的单元格，声明跨度超出 3 列网格 | 403.35 ms | 16.79 ms | 2400 → 2 |
+| 同一段落的 300 个无直接格式 run | 402.52 ms | 11.00 ms | 2404 → 6 |
+
+表格沿用 `test_the_truncation_warning_is_one_per_table_not_one_per_row` 的构造方式，
+正文用一个段落连续 `add_run` 300 次；每次测量都比较完整解析结果。正文剩余的
+4 次默认样式扫描属于段落分类/标题判断，不再随同一段落内 run 数增加。本轮只优化
+已确认的格式热点，没有扩大到这些路径。
+
+两个样本约分别加速 24 倍与 37 倍，不能外推为所有 DOCX 的整体提升。
+`tests/unit/engines/test_docx_style_performance.py` 用 1 与 40 个 run/表格行比较
+扫描和继承访问次数来守住重复工作，而不将以上毫秒值设为 CI 阈值。全部 7 份
+DOCX 快照保持字节一致；行为边界与反向验证见 `tasks/v2_plan.md` 第六批。
+
+### 入库与检索
+
 采集环境：Python 3.12 / macOS / 全内存后端（`memory` vector store +
 `memory` task store + `inprocess` executor）。文档 200 段，`embed_batch_size=32`、
 `max_concurrency=16`。

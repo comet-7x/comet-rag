@@ -17,6 +17,8 @@ from docx.text.run import Run
 from loguru import logger
 from lxml import etree  # pyright: ignore[reportAttributeAccessIssue]
 
+from comet_rag.engines.documents.docx.formatting import RunFormat as _Fmt
+from comet_rag.engines.documents.docx.formatting import RunFormatResolver
 from comet_rag.engines.documents.docx.omml import oMath2Latex as _oMath2Latex
 from comet_rag.engines.documents.docx.types import (
     Block,
@@ -45,14 +47,6 @@ _MAX_TABLE_CELLS = 1_000_000
 _TRANSPARENT_INLINE: frozenset[str] = frozenset(
     {"bdo", "customXml", "dir", "fldSimple", "ins", "moveTo", "smartTag"}
 )
-
-
-@dataclass(frozen=True, eq=True)
-class _Fmt:
-    bold: bool = False
-    italic: bool = False
-    underline: bool = False
-    strikethrough: bool = False
 
 
 _PLAIN = _Fmt()
@@ -145,71 +139,6 @@ def _is_hidden_run(run: Run) -> bool:
     )
 
 
-def _resolve_style_bool(style_obj: Any, attr: str) -> bool | None:
-    """Walk the style inheritance chain and resolve a boolean font attribute."""
-    style = style_obj
-    while style is not None:
-        font = getattr(style, "font", None)
-        if font is not None:
-            if attr == "underline":
-                value = font.underline
-            elif attr == "strikethrough":
-                value = font.strike
-            else:
-                value = getattr(font, attr, None)
-            if value is not None:
-                return bool(value)
-        style = getattr(style, "base_style", None)
-    return None
-
-
-def _get_run_fmt(run: Run) -> _Fmt:
-    """Resolve run formatting with full style-inheritance chain."""
-
-    def resolve(attr: str) -> bool:
-        direct = (
-            run.underline
-            if attr == "underline"
-            else (
-                run.font.strike if attr == "strikethrough" else getattr(run, attr, None)
-            )
-        )
-        if direct is not None:
-            return bool(direct)
-
-        # Character-style chain — skip Hyperlink default style to avoid
-        # spurious underlines on every hyperlink run.
-        run_style = getattr(run, "style", None)
-        sid = str(getattr(run_style, "style_id", "") or "").lower()
-        sname = str(getattr(run_style, "name", "") or "").lower()
-        if "hyperlink" not in sid and "hyperlink" not in sname:
-            v = _resolve_style_bool(run_style, attr)
-            if v is not None:
-                return v
-
-        # Paragraph-style chain
-        parent = getattr(run, "_parent", None)
-        v = _resolve_style_bool(getattr(parent, "style", None), attr)
-        if v is not None:
-            return v
-        return False
-
-    underline = resolve("underline")
-    # CJK emphasis mark (w:em) also renders as an underline-like decoration
-    rpr = run._element.find(f"{{{_W}}}rPr")
-    if rpr is not None:
-        em = rpr.find(f"{{{_W}}}em")
-        if em is not None and em.get(_XML_VAL, "") not in ("", "none"):
-            underline = True
-
-    return _Fmt(
-        bold=resolve("bold"),
-        italic=resolve("italic"),
-        underline=underline,
-        strikethrough=resolve("strikethrough"),
-    )
-
-
 class DocxParser:
     """Parse a DocxDocument into a list of semantically typed blocks."""
 
@@ -235,10 +164,16 @@ class DocxParser:
         self._h_states: dict[int, tuple[list[str], list[int], list[int]]] = {}
         self._styles_root: Any = None
         self._footnotes: dict[int, str] | None = None
+        self._run_formats: RunFormatResolver | None = None
 
     def parse(self, document: DocxDocument) -> DocxParsedContent:
         with self._parse_lock:
-            return self._parse_unlocked(document)
+            self._run_formats = RunFormatResolver(document.elements)
+            try:
+                return self._parse_unlocked(document)
+            finally:
+                # 不跨解析保留样式缓存；失败或原文档修改后也必须重新读取。
+                self._run_formats = None
 
     def _parse_unlocked(self, document: DocxDocument) -> DocxParsedContent:
         self._doc = document.elements
@@ -376,6 +311,9 @@ class DocxParser:
         - m:oMath / m:oMathPara inline and block equations
         - Consecutive same-format runs are merged for compactness
         """
+        formats = self._run_formats
+        if formats is None:
+            raise RuntimeError("段落格式只能在 parse 生命周期内解析")
         elems: list[_Seg] = []
 
         # Field-code hyperlink tracking state
@@ -416,7 +354,7 @@ class DocxParser:
                         continue
                     h_text = h_run.text or ""
                     if h_text:
-                        elems.append((h_text, _get_run_fmt(h_run), url))
+                        elems.append((h_text, formats.resolve(h_run, paragraph), url))
                 continue
 
             if not isinstance(c, Run):
@@ -463,7 +401,7 @@ class DocxParser:
                 if c._element.find(f"{{{_W}}}t") is not None:
                     _field_text += c.text or ""
                     if _field_fmt is None:
-                        _field_fmt = _get_run_fmt(c)
+                        _field_fmt = formats.resolve(c, paragraph)
                 continue
 
             # Hidden run
@@ -484,7 +422,7 @@ class DocxParser:
             text = c.text or ""
             if not text:
                 continue
-            fmt = _get_run_fmt(c)
+            fmt = formats.resolve(c, paragraph)
 
             if fmt == _grp_fmt or _grp_fmt is None:
                 _grp_fmt = fmt

@@ -36,7 +36,7 @@ comet_rag/
 │   │   ├── common/      ZIP 等跨格式文档基础能力
 │   │   ├── markdown/    标题、代码围栏与 section span 分析
 │   │   ├── normalization/ 跨格式 Markdown 规范化
-│   │   └── docx/       converter · parser · cleaner · extractor · OMML
+│   │   └── docx/       converter · parser · formatting · cleaner · extractor · OMML
 │   ├── chunkers/       原子 Chunker · 参数画像
 │   │   └── strategies/ Markdown section · 真实页面组合策略
 │   ├── embedding/      批量排程，不发模型请求

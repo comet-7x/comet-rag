@@ -1,7 +1,7 @@
 # DOCX 解析底层逻辑笔记
 
 > 适用代码：`comet_rag/engines/documents/docx/`
-> 覆盖文件：`docx_parser.py` · `omml.py` · `latex_dict.py`
+> 覆盖文件：`parser.py` · `formatting.py` · `omml.py` · `latex_dict.py`
 
 ---
 
@@ -132,7 +132,7 @@ element.find(f"{{{_M}}}t")  # 找 <m:t>
 ## 第四层：`_walk` — 代码的核心骨架
 
 ```python
-# docx_parser.py
+# parser.py
 def _walk(self, container: Any) -> None:
     for child in container:  # 按 XML 的物理顺序遍历
         tag = _qname(child)  # 取 local name，如 "p" / "tbl" / "sdt"
@@ -163,42 +163,34 @@ def _qname(element: Any) -> str:
 
 ## 第五层：一个段落的处理流程
 
-`_handle_paragraph` 一次性完成了五件事：
+`_get_paragraph_elements()` 按 XML 顺序处理普通 run、Hyperlink、字段结果和公式，
+生成文字/格式/URL 元组或公式片段。`_build_rich_text()` 再合并为 Markdown；
+`_handle_paragraph()` 负责结合标题、编号与图片信息生成对应块。
 
-```
-1. 提取纯文本         _get_paragraph_text()
-      ↓
-2. 找出公式并标记     _handle_equations()
-      ↓ 返回带 <eq>…</eq> 标记的字符串
-3. 提取格式化元素     _get_paragraph_elements()
-      ↓ 返回 [(文字, 格式, URL), ...]
-4. 拼装富文本         _build_rich_text()
-      ↓ 返回 "**加粗** $公式$ 普通文字"
-5. 判断段落类型并输出 heading / list / equation / caption / text
-```
+### 格式解析与缓存边界
 
-**为什么要分「纯文本」和「格式化元素」两步提取？**
+`formatting.py::RunFormatResolver` 只处理 run 格式；文档遍历、段落分类与 Markdown
+输出仍由 `parser.py` 负责。每个属性的优先级保持为：
 
-公式识别（步骤 2）需要按照 XML 节点的位置顺序来插入公式标记，而格式化（步骤 3）是在 run 层面独立做的。两者最后在 `_build_rich_text` 里合并。
+1. run 直接格式。
+2. 字符样式及其继承链；样式 id 或名称含 `hyperlink` 时跳过整条字符样式链。
+3. 段落样式及其继承链。
+4. 都未定义时使用 `False`。
 
-### `_handle_equations` 的工作原理
+只有 `None` 表示继续继承，显式 `False` 会终止查找。有效的 `w:em` 最终将下划线
+标记置为 `True`。下划线目前不生成 Markdown 标记，`docDefaults` 也不参与既有
+格式解析；本次性能改造保留这两个边界。
 
-```python
-for subt in element.iter():
-    tag = _qname(subt)
-    if tag == "t" and f"{{{_M}}}" not in subt.tag:
-        # w:t → 普通文字，记录到 combined
-        only_texts.append(subt.text)
-        combined.append(subt.text)
-    elif "oMath" in subt.tag and "oMathPara" not in subt.tag:
-        # m:oMath → 公式，转换后以 <eq>…</eq> 标记插入
-        latex = self._convert_omath(subt)
-        marker = f"<eq>{latex}</eq>"
-        only_eqs.append(marker)
-        combined.append(marker)
-```
+python-docx 1.2.0 的默认样式查询会遍历样式表，旧实现对每个 run 的四个属性重复
+查询字符和段落样式。解析器现在按 `(style_id, style_type)` 缓存 SDK 查询结果，
+仍由 SDK 决定默认、缺失、错误类型和多个默认样式的回退规则；按样式 XML 元素与
+属性缓存继承结果，保留 `None` 与 `False` 的区别。查询与继承均按需执行，避免读取
+被直接格式遮住的非法样式值。
 
-`combined` 保持了「文字片段」和「公式标记」在段落中的原始顺序，最终用于精确拼接出带位置的字符串。
+缓存只属于一次 `parse()`，在现有解析锁内创建，成功或失败都在 `finally` 中释放。
+同一解析器处理新文档，或原文档修改样式后重新解析，都会重新读取样式；调用期间
+不得并发修改输入文档。正文、表格与两种链接路径使用同一解析器，页眉页脚仍走
+原来的纯文本提取。回归与反向验证记录见 `tasks/v2_plan.md` 第六批。
 
 ---
 
@@ -321,7 +313,7 @@ def do_r(self, elm: Any) -> str:
 ## 第七层：图片提取原理
 
 ```python
-# docx_parser.py _extract_images()
+# parser.py _extract_images()
 
 # 1. 找到 <w:drawing> 内的图片元素
 blip = drawing.find(f".//{qn('a:blip')}")
@@ -342,16 +334,18 @@ content = base64.b64encode(image_part.blob).decode()
 ## 代码知识地图
 
 ```
-docx_parser.py
+parser.py
 ├── DocxParser.parse()
 │   ├── _walk(body)                   ← 按 XML 顺序遍历，保证内容顺序
 │   │   ├── _handle_paragraph()
-│   │   │   ├── _get_paragraph_text()
-│   │   │   ├── _handle_equations()   ← 找 m:oMath，调 oMath2Latex
-│   │   │   ├── _get_paragraph_elements()  ← 处理 w:r / w:hyperlink / fldChar
-│   │   │   └── _build_rich_text()    ← 把公式标记和 Markdown 格式拼在一起
+│   │   │   ├── _get_paragraph_elements()  ← run / 链接 / 字段 / OMML
+│   │   │   └── _build_rich_text()    ← 文字格式与公式片段拼成 Markdown
 │   │   └── _handle_table()
 │   └── _add_headers_footers()        ← header/footer 存在 section，单独处理
+
+formatting.py
+├── RunFormat                        ← 四项已解析格式标记
+└── RunFormatResolver                ← 每次 parse 内的惰性样式查找与继承缓存
 
 omml.py
 ├── oMath2Latex                       ← 主转换器，入口

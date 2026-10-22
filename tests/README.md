@@ -58,6 +58,17 @@ class TestPostgresTaskStore(TaskStoreContract):
 快照存放在 `fixtures/docx/snapshots/*.json`，内容是 `DocxParser.parse()` 的
 完整输出（blocks + text）。
 
+样式缓存另有两组定向测试：
+
+```bash
+uv run pytest tests/unit/engines/test_docx_style_resolution.py tests/unit/engines/test_docx_style_performance.py
+```
+
+前者以手写结果验证格式优先级、默认/缺失样式、Hyperlink、字段结果、表格及解析后
+缓存释放；后者统计 python-docx 的默认样式扫描和继承链访问次数，确保重复 run
+不会重复解析相同样式，不设依赖硬件的毫秒阈值。性能对照见
+[性能基线](../docs/benchmark.md#docx-样式解析2026-10-22)。
+
 ### 更新快照
 
 ```bash
