@@ -2,8 +2,8 @@
 
 > 状态：方向已确认，分阶段执行；不得用本计划无边界扩大当前里程碑
 > 当前状态：M1～M3、仓库结构归一化及文档规范化前置重构已完成
-> 当前优先级：M4-T8 revision 双存储入库与故障矩阵
-> 最后更新：2026-09-15
+> 当前进度：V2 已完成现状校准、启动清理与检索边界改造，各批记录见 `tasks/v2_plan.md`；M4 生产闭环仍待完成
+> 最后更新：2026-10-22
 
 ## 1. 目的
 
@@ -54,7 +54,7 @@ Service 实现用例，Planner 生成后续执行所需的结构化计划。它�
 
 - `IngestionService` 编排 Loader、Extractor、Chunker、Embedding 与 Store；
 - `RetrievalService` 编排向量召回、关键词召回、融合与重排；
-- `IndexPlanner` 生成父块、子块及关系，不自己调用 Milvus；
+- `IndexPlanner` 将层级结果物化为带 revision ID 与 metadata 的索引计划，不自己调用 Milvus；
 - `HierarchyBuilder` 根据 Chunk 构建层级，不负责 Embedding HTTP 请求。
 
 ## 3. 目标整体链路
@@ -99,8 +99,8 @@ IndexPlan（父子块、关系、待向量化记录）
 查询：
 
 Query
-    ├──► EmbeddingPort ──► VectorSearchPort ──┐
-    └──► KeywordSearchPort ───────────────────┤
+    ├──► EmbeddingPort ──► AsyncVectorSearchPort ──┐
+    └──► AsyncKeywordSearchPort ───────────────────┤
                                               ▼
                                       FusionStrategy
                                               │
@@ -113,8 +113,9 @@ Query
 
 当前闭环是 `LoadedResource → DocumentExtractorPort → ExtractedDocument →
 DocumentNormalizationStrategy → NormalizedDocument → ChunkingStrategy → Chunker →
-Embedding → VectorStore`。`DocumentBlock` 由 M4 的页面、结构和 IndexPlan 用例反推，不提前建立
-没有消费者的万能块模型。
+Embedding → VectorStore`。M4 已按页面、结构和层级索引用例建立 `DocumentBlock`、
+`HierarchyBuilder` 与 `IndexPlan`；revision 入库切片只到 ready，生产链路仍为平坦入库。
+图中的独立 KeywordIndex、知识提取与 Graph 能力仍是未来方向，不是现有接口或本批任务。
 
 ## 4. 各部分的推荐边界
 
@@ -129,17 +130,17 @@ Embedding → VectorStore`。`DocumentBlock` 由 M4 的页面、结构和 IndexP
 | 固定、递归等原子分块方式 | `Chunker` | `engines/chunkers` | 纯计算；只消费字符串，生成带相对位置的块；当前 2 种，按真实算法扩展 2+N |
 | 按页、标题、父子块组合 | `ChunkingStrategy` | `engines/chunkers` / `engines/indexing` | 消费规范文档与结构事实，编排一个或多个 Chunker |
 | 语义切分 | `SemanticChunkingService` + `BreakpointStrategy` | `services` + `engines/chunkers` | Service 调 EmbeddingPort；engines 只计算相似度断点 |
-| 父子块、邻接关系、索引记录 | `IndexPlanner` / `HierarchyBuilder` | `engines/indexing` | 生成 `IndexPlan`，不直接写后端 |
+| 父子块、邻接关系、索引记录 | `HierarchyBuilder` / `IndexPlanner` | `engines/indexing` / `services/indexing.py` | 前者计算层级；后者物化 revision ID、metadata 与 `IndexPlan`，不直接写后端 |
 | 外部 LLM 实体关系抽取 | `KnowledgeExtractorPort` | `ports` + provider | 外部模型调用、错误和资源生命周期 |
 | 本地规则实体关系抽取 | `KnowledgeExtractionStrategy` | `engines` | 纯计算，不应伪装成外部 Port |
 | 文本/多模态向量化 | `EmbeddingPort` | `ports` | 隔离模型供应商与请求协议 |
 | 候选重排 | `RerankerPort` | `ports` | 失败时由检索 Service 降级，不拖垮读路径 |
-| ANN 存储与查询 | `VectorStorePort` / 现有 `BaseVectorStore` | 长期下沉 `ports` | 不允许 Milvus 表达式穿透结构化过滤契约 |
-| BM25/关键词索引 | `KeywordIndexPort`、`KeywordSearchPort` | `ports` | 隔离 Elasticsearch/Postgres 等后端 |
+| ANN 存储与查询 | `AsyncVectorStore` / `AsyncVectorSearchPort` | `ports/vector_store.py`（已落位） | 不允许 Milvus 表达式穿透结构化过滤契约 |
+| BM25/关键词索引 | `AsyncKeywordSearchPort`；写入复用 `AsyncVectorStore` | `ports/vector_store.py`（已落位） | 当前只有 Milvus 原生 BM25 与内存测试实现，不单设 KeywordIndexPort |
 | RRF、加权融合 | `FusionStrategy` | `engines/retrieval` | 纯计算，不访问存储 |
 | 混合检索 | `RetrievalService` | `services` | 并行召回、融合、重排和降级的用例编排 |
 | 图存储 | `GraphStorePort` | `ports` | 隔离 Neo4j 等具体查询语言 |
-| 任务、知识库持久化 | 现有 Store/Repository 契约 | `tasks` / repository 边界 | 保持已有契约测试，不在 M2 改动 |
+| 任务、知识库与文档持久化 | `TaskStore` / `KnowledgeBaseRepository` / `DocumentStore` | `tasks/store.py` / `ports/knowledge_base.py` / `ports/document_store.py` | 真实适配器位于 infrastructure，保留共享契约测试 |
 
 ## 5. Loader 的统一决策
 
@@ -229,9 +230,9 @@ HTTP 服务还是本地重型 SDK 接入，都放在 `infrastructure/extractors/
 纯计算转换规则可以下沉到 `engines/documents/ocr/`。
 
 `ExtractedDocument` 表示提取器映射后的通用结果，`NormalizedDocument` 表示可交给
-Chunker 的规范结果；二者之间统一经过 `DocumentNormalizationStrategy`。未来支持
-按页、bbox、图片资产或表格结构时，应由 M4 规格扩展 `DocumentBlock`，不能把 MinerU
-原始响应直接塞进通用值对象。
+Chunker 的规范结果；二者之间统一经过 `DocumentNormalizationStrategy`。M4 已通过
+`DocumentBlock` 接入真实页面和标题 section 的字符 span；bbox 与资产仍不在当前契约中。
+后续结构扩展应由具体用例和规格驱动，不能把 MinerU 原始响应直接塞进通用值对象。
 
 ## 7. Chunking、Hierarchy 与 Graph 的拆分
 
@@ -244,7 +245,7 @@ Chunker 的规范结果；二者之间统一经过 `DocumentNormalizationStrateg
 
 固定长度和递归分隔符是当前两种原子 Chunker；它们消费 `str`，输出相对于该字符串的
 ChunkDraft。语言、格式、size、overlap 与 separators 只是 ChunkProfile，不产生新类。
-按页、按标题等文档级 Strategy 消费 `NormalizedDocument` / 后续 `DocumentBlock`，
+按页、按标题等文档级 Strategy 消费 `NormalizedDocument` 及其 `DocumentBlock`，
 再编排一个或多个 Chunker，不写数据库。
 
 完整语义分块不是纯 Strategy：它需要通过 `EmbeddingPort` 发起外部调用，并受模型并发、
@@ -253,9 +254,10 @@ ChunkDraft。语言、格式、size、overlap 与 separators 只是 ChunkProfile
 
 ### 7.3 父子块计算属于 Strategy，写入决策属于 IndexPlanner
 
-纯 `HierarchicalChunkingStrategy` 可以用两组画像和一个或多个 Chunker 生成父块、子块及
-关系，但不能决定存储后端。`IndexPlanner` 再消费该结果，输出显式 `IndexPlan`，说明
-哪些块向量化、哪些块只存正文、检索命中后回填哪一层。
+`engines/indexing/HierarchyBuilder` 用父、子两组 Chunker 生成 `ChunkHierarchy`，
+保留页面/section 硬边界，不决定存储后端。`services/indexing.py` 的 `IndexPlanner`
+消费该结果，为 revision 物化稳定 ID、metadata 和 `IndexPlan`，说明哪些块向量化、
+哪些块只存正文。后续分批写入由 `RevisionStager` 编排 Port，当前只推进到 ready。
 
 ### 7.4 Graph 属于知识提取与图索引
 
@@ -270,8 +272,8 @@ Service 编排。
 
 ```text
 RetrievalService
-├── VectorSearchPort
-├── KeywordSearchPort
+├── AsyncVectorSearchPort
+├── AsyncKeywordSearchPort
 ├── FusionStrategy
 └── RerankerPort
 ```
@@ -282,7 +284,9 @@ RetrievalService
 - Reranker 是外部模型 Port；
 - 对 API 暴露的是稳定 `SearchRequest` / `SearchHit`，不是后端查询语法。
 
-这些接口在 M3 有真实 BM25 方案和过滤需求后再冻结，M2 不预先发明。
+这些边界已在 M3 随真实 BM25 和过滤需求落地：两路 Search Port 位于
+`ports/vector_store.py`，纯 RRF 位于 `engines/retrieval/fusion.py`。图中
+`FusionStrategy` 表示算法职责，当前无需为单一 RRF 实现新增基类。
 
 ## 9. 目标目录形态
 
@@ -297,6 +301,8 @@ comet_rag/
 │   ├── embedding.py
 │   ├── reranker.py
 │   ├── vector_store.py              # dense / keyword 契约与存储值对象
+│   ├── knowledge_base.py            # 知识库持久化契约
+│   ├── document_store.py            # revision manifest 与父块契约
 │   └── graph_store.py               # 后续里程碑
 ├── engines/
 │   ├── documents/
@@ -307,17 +313,13 @@ comet_rag/
 │   │       ├── parser.py
 │   │       └── cleaner.py
 │   ├── chunkers/
-│   │   ├── protocol.py
+│   │   ├── protocol.py              # Chunker / ChunkingStrategy
 │   │   ├── fixed.py
 │   │   ├── recursive.py
-│   │   ├── markdown.py
-│   │   ├── page.py
-│   │   └── breakpoints.py
+│   │   └── strategies/             # 已实现 markdown / page；语义断点仍待真实需求
 │   ├── indexing/
-│   │   ├── planner.py
 │   │   └── hierarchy.py
 │   └── retrieval/
-│       ├── hybrid.py
 │       └── fusion.py
 ├── infrastructure/
 │   ├── sources/                    # Local · HTTP · S3 · AutoLoader
@@ -328,11 +330,15 @@ comet_rag/
 │   │   ├── sql/
 │   │   ├── vector_store/
 │   │   ├── task_store/
-│   │   └── knowledge_base/
+│   │   ├── knowledge_base/
+│   │   └── document_store/
 │   └── task_execution/
 │       └── arq.py
 ├── services/
 │   ├── ingestion.py
+│   ├── indexing.py                  # IndexPlanner / IndexPlan / RevisionStager
+│   ├── revision_context.py          # 到 ready 的有界移交切片
+│   ├── revision_recall.py           # 判活与有界召回
 │   ├── pipeline.py
 │   └── retrieval.py
 ├── api/
@@ -342,8 +348,8 @@ comet_rag/
     └── bootstrap.py                  # 唯一跨层装配点
 ```
 
-上图中 M4 的 `chunkers/indexing` 细节仍是目标形态；其余结构归一化已按
-`repository_structure_spec.md` 执行，重构前的内部路径已删除。
+上图除标注的 Graph 等未来能力外均已落位；具体目录见 `docs/structure.md`。
+结构归一化已按 `repository_structure_spec.md` 执行，重构前的内部路径已删除。
 
 ## 10. 优先级与执行顺序
 
@@ -367,8 +373,8 @@ comet_rag/
 
 ### P2 — M3：由真实混合检索需求驱动
 
-M3 规格已冻结并完成：Milvus 原生 BM25 位于 `KeywordSearchPort` 后，RRF 是 engines
-内的纯计算 Strategy，Hybrid 由 RetrievalService 编排。`BaseVectorStore` 已下沉 ports，
+M3 规格已冻结并完成：Milvus 原生 BM25 位于 `AsyncKeywordSearchPort` 后，RRF 是 engines
+内的纯计算 Strategy，Hybrid 由 RetrievalService 编排。`AsyncVectorStore` 已下沉 ports，
 结构归一化阶段已删除内部旧路径；schema v2 不自动删除旧 collection。详细边界与成功标准见
 `tasks/m3_spec.md`，实施清单见 `tasks/m3_todo.md`。
 
@@ -376,9 +382,29 @@ M3 规格已冻结并完成：Milvus 原生 BM25 位于 `KeywordSearchPort` 后�
 
 M4 先完成带位置的 Chunk 契约、固定/递归策略、Pipeline/Task 单链路和 Markdown/Page
 结构感知。独立 schema 决策门已经通过，`DocumentStore` 与三表迁移已在 M4-T7 完成；
-`IndexPlan`、`HierarchyBuilder` 和 revision 双存储写入从 M4-T8 开始。GraphRAG 仍不在
-M4 范围。
+`IndexPlan`、`HierarchyBuilder`、有界移交与 ready 续跑、revision-aware 检索切片均已实现。
+DocumentStore 已有激活/回收原语，待完成的是生产激活/superseded、故障恢复、旧版本 GC
+和完整读写接线。GraphRAG 仍不在 M4 范围。
 详细顺序见 `tasks/m4_plan.md` 与 `tasks/m4_todo.md`。
+
+### V2 首批 — 先校准现状，再分离配置合并
+
+本批已按 `tasks/v2_refactoring_research.md` 完成：以当前代码、共享契约和 CI 校准文档，
+将 `build_context` 中的配置合并提取到 `composition/pipeline_config.py`，保持现有覆盖
+优先级、默认值和校验行为。实施验证与后续候选见 `tasks/v2_plan.md`。
+
+### V2 全仓执行模型与上游能力重估
+
+用户确认本轮一次完成双模式类及调用方迁移。实施不能只改名字：
+
+- 先核查项目最低支持版本的上游能力；原生异步网络 API 优先，不能因旧实现用了线程而继续保留。
+- 同步与异步实例各自拥有对应客户端，共享纯请求构造、解析和验证；公开方法同名。
+- 纯计算与值对象保持单一实现。已有纯异步任务服务不制造同步副本；共享 Gate 继续保护同一预算。
+- 线程只用于同步文件、DOCX、DNS/媒体准备等阻塞工作；取消和失败时先排干，再释放依赖。
+- Port、适配器、组合根、Hook、Pipeline、测试替身、文档示例作为同一迁移闭环；旧 `a` 前缀入口直接删除。
+
+证据矩阵、迁移说明见 [V2 执行模型重估](v2_async_reassessment.md)；批次验收见
+[V2 实施记录](v2_plan.md)。本轮不改变持久化 schema，也不启用尚未完成的 M4 生产闭环。
 
 ## 11. Port 创建门槛
 
@@ -391,7 +417,7 @@ M4 范围。
 - [ ] 有实现无关的契约测试，并做过反向验证；
 - [ ] 组合根是唯一选择具体实现的位置；
 - [ ] 不破坏 core-only 安装和依赖方向；
-- [ ] 若修改公开接口，已有兼容路径和迁移期限。
+- [ ] 若修改公开接口，已有明确迁移说明；V2 本轮按用户要求直接移除旧接口，不保留兼容别名。
 
 不满足这些条件时，优先使用具体类、内部函数或 Strategy，不创建占位 Port。
 
@@ -413,4 +439,4 @@ M4 范围。
 | 顶层 Parser/Converter 目录是否保留 | 否；格式专属代码归入 documents，ZIP 防护归入 documents/common |
 | Provider 私有辅助模块是否整理 | 已完成；模型适配器位于 `infrastructure/models`，MinerU 位于 `infrastructure/extractors` |
 | 完整语义分块是否是纯 Strategy | 否；Service 编排 EmbeddingPort，engines 只保留断点算法 |
-| 当前下一项工作 | M4-T8 HierarchyBuilder、IndexPlanner 与 revision 双存储写入 |
+| 当前下一项工作 | V2 各批结果和后续边界见 `tasks/v2_plan.md`；M4 生产激活、GC 与完整验收另按 M4 清单推进 |

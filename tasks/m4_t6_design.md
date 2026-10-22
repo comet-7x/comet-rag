@@ -343,7 +343,7 @@ abandoned / retired ── vector + parent GC complete ──► purged manifest
 ```
 
 revision-aware dense、BM25 search 以及激活前的 count 验证必须使用 Strong consistency。
-这是 Milvus adapter 的配置/调用细节，不把供应商一致性参数加入 `VectorSearchPort`。
+这是 Milvus adapter 的配置/调用细节，不把供应商一致性参数加入 `AsyncVectorSearchPort`。
 `max_revision_candidates` 默认 2048，必须小于 Milvus top-k 16384 硬上限。
 
 现有 collection 不需要立即重建：metadata 是已有 JSON 字段。旧向量没有
@@ -388,11 +388,13 @@ Hybrid 必须对 dense/keyword 两个列表分别判活后再做 RRF。否则旧
 
 ### 7.3 父块回填
 
-RRF/rerank 仍对子块执行。child 模式保持当前 top-k 行为；parent 模式遍历完整的已排序
-候选列表，按首次出现的 `parent_id` 去重，批量读取这些 parent，再截取 top-k 个不同父块，
-而不是先把 child 截成 top-k 后才去重。返回结果保留 `matched_child_id` 与 child score。
+RRF/rerank 仍对子块执行。child 模式保持当前 top-k 行为；parent 模式先对完整候选中的
+查询 `parent_id` 去重，批量读取 parent，再按 child 排名验证 KB/source/revision 身份。
+只有成功回填的父块结果才去重，保留首次匹配的 `matched_child_id` 与 child score，
+最后截取 top-k；不能先截断 child，也不能在验证前删除同 `parent_id` 的后续候选。
 父块读取失败时记录降级并返回原子 child，不让读路径整体失败。缺少单个 parent 是数据
-完整性错误：该项回退 child 并报警，不能静默丢结果。
+完整性错误：相关 child 各自保留并报警。错误引用不能抢占合法父块，也不能因同 ID
+的合法父块已经返回而被丢弃。
 
 ## 8. 写入协议
 
@@ -453,7 +455,7 @@ RRF/rerank 仍对子块执行。child 模式保持当前 top-k 行为；parent �
 - dense、keyword 在 fusion 前过滤，旧版本高分不能污染 RRF；
 - legacy source 在首次新 revision 激活前可见，激活后不可见；
 - 2048 个 stale candidate 后明确少返回且诊断，不发生第三次查询；
-- 两个独立 MilvusStore client 验证写后 Strong 可见；
+- 两个独立 AsyncMilvusStore client 验证写后 Strong 可见；
 - parent 去重、缺失与存储故障均降级到 child；
 - GC 中断后可重复，任何时刻 active revision 仍可检索。
 
@@ -467,7 +469,7 @@ RRF/rerank 仍对子块执行。child 模式保持当前 top-k 行为；parent �
 4. 再开启 revision 写入。Milvus 只增加 JSON metadata，无 collection schema migration；
 5. 观察 stale ratio、overfetch cap、GC backlog、Strong search P95 后再默认开启 hierarchy。
 
-配置约束：InMemoryVectorStore 配 InMemoryDocumentStore；Milvus 启用 revision 写时必须配
+配置约束：AsyncInMemoryVectorStore 配 InMemoryDocumentStore；Milvus 启用 revision 写时必须配
 PostgresDocumentStore，禁止使用重启即丢 active pointer 的内存实现。
 
 ### Rollback
