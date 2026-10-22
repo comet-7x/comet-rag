@@ -7,13 +7,13 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from comet_rag.composition.context import Context, wire_runners
+from comet_rag.composition.pipeline_config import resolve_pipeline_config
 from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.degradation import DegradationController, DegradationSettings
 from comet_rag.core.logging import logger
 from comet_rag.engines.documents.formats import resolve_detected_extension
 from comet_rag.engines.pipelines import (
-    DocxConfig,
     HookProvider,
     PipelineConfig,
     PipelineHooks,
@@ -627,46 +627,7 @@ def build_context(
         ],
         _hook_cleanups=hook_cleanups,
     )
-    limits = config.limits
-    configured_docx = DocxConfig(
-        max_archive_members=limits.docx_max_archive_members,
-        max_archive_member_bytes=limits.docx_max_archive_member_bytes,
-        max_archive_uncompressed_bytes=limits.docx_max_archive_uncompressed_bytes,
-        max_archive_compression_ratio=limits.docx_max_archive_compression_ratio,
-        max_archive_xml_elements=limits.docx_max_archive_xml_elements,
-        max_archive_xml_text_chars=limits.docx_max_archive_xml_text_chars,
-    )
-    if pipeline_config is None:
-        pipeline_config = PipelineConfig(
-            docx=configured_docx,
-            max_concurrency=limits.pipeline_concurrency,
-            embed_batch_size=limits.embed_batch_size,
-        )
-    else:
-        # Deployment limits supply DOCX defaults even when callers inject a
-        # PipelineConfig only to tune unrelated fields. Explicit DocxConfig
-        # fields remain deliberate per-run overrides.
-        docx_values = configured_docx.model_dump()
-        docx_values.update(
-            {
-                field: getattr(pipeline_config.docx, field)
-                for field in pipeline_config.docx.model_fields_set
-            }
-        )
-        # 与 docx 同样的规则：部署配置提供默认值，调用方**显式写过**的字段保留。
-        # `model_fields_set` 正是"显式写过"的那份名单 —— 用它而不是比对是否等于
-        # 默认值，否则调用方特意写了一个恰好等于默认值的数，会被当成没写过。
-        concurrency_overrides = {
-            field: value
-            for field, value in (
-                ("max_concurrency", limits.pipeline_concurrency),
-                ("embed_batch_size", limits.embed_batch_size),
-            )
-            if field not in pipeline_config.model_fields_set
-        }
-        pipeline_config = pipeline_config.model_copy(
-            update={"docx": DocxConfig(**docx_values), **concurrency_overrides}
-        )
+    pipeline_config = resolve_pipeline_config(config.limits, pipeline_config)
     wire_runners(context, ingest_config=pipeline_config)
 
     logger.info(
