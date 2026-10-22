@@ -90,7 +90,7 @@ async def test_engine_pools_connections(postgres_dsn: str) -> None:
         assert isinstance(pool, QueuePool), f"没有用连接池：{type(pool).__name__}"
         assert pool.checkedin() >= 1, "连接用完应归还池中而非丢弃"
     finally:
-        await db.aclose()
+        await db.close()
 
 
 # ── Milvus ─────────────────────────────────────────────────────────────────

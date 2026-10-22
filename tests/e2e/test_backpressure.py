@@ -28,8 +28,8 @@ from comet_rag.config.schemas import (
     LimitsConfig,
     ServerConfig,
 )
-from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.ports import ExtractedDocument
 from comet_rag.tasks import TaskStatus
 from tests.e2e.test_ingest_search import (
@@ -57,11 +57,11 @@ def document(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def hooks():
-    @PipelineHooks.extractor(STUB_TYPE)
+    @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
     def _extract(lc, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
-    PipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
+    AsyncPipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
 
     yield
 
@@ -69,9 +69,9 @@ def hooks():
 class SlowEmbedding(KeywordEmbedding):
     """慢到足以让任务堆起来 —— 处理能力远低于投递速度，正是要验的场景。"""
 
-    async def _aembed(self, data, **kwargs):
+    async def _embed(self, data, **kwargs):
         await asyncio.sleep(0.05)
-        return await super()._aembed(data, **kwargs)
+        return await super()._embed(data, **kwargs)
 
 
 def make_config() -> APPConfig:
@@ -100,7 +100,7 @@ async def client(document: Path) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(
         make_config(),
         embedding_model=SlowEmbedding(),
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
         pipeline_config=PipelineConfig(embed_batch_size=2, max_concurrency=4),
     )
     transport = httpx.ASGITransport(app=app)

@@ -47,7 +47,7 @@ from comet_rag.config.schemas import (
     SqlDatabaseConfig,
     VectorDatabaseConfig,
 )
-from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
+from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
 from comet_rag.infrastructure.persistence.sql import Database
 from comet_rag.infrastructure.task_execution.arq import LANE_QUEUES
 from comet_rag.ports import ExtractedDocument
@@ -85,11 +85,11 @@ def document(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def hooks() -> Any:
-    @PipelineHooks.extractor(STUB_TYPE)
+    @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
     def _extract(lc: Any, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
-    PipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
+    AsyncPipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
 
     yield
 
@@ -151,7 +151,7 @@ async def _worker_id_of(dsn: str, task_id: str) -> str | None:
                 )
             ).scalar_one()
     finally:
-        await db.aclose()
+        await db.close()
 
 
 async def _drain_queues(pool: ArqRedis) -> None:
@@ -216,7 +216,7 @@ async def _running(*workers: Worker) -> AsyncIterator[None]:
 async def _close_worker_context(worker: Worker) -> None:
     context = worker.ctx.get("context")
     if context is not None:
-        await context.aclose()
+        await context.close()
         worker.ctx.pop("context", None)
 
 
@@ -229,9 +229,7 @@ async def deployment(
     milvus_database: str,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, list[Worker]]]:
     await _clean(postgres_dsn)
-    config = make_config(
-        milvus_uri, milvus_database, f"ctworker_{uuid4().hex[:12]}"
-    )
+    config = make_config(milvus_uri, milvus_database, f"ctworker_{uuid4().hex[:12]}")
     # 用 config 里那份连接（db=15），不是 fixture 的 db=0 —— 否则清的是别人的队列
     redis_config = config.infrastructure_config.redis
     assert redis_config is not None, "make_config 必须配好 redis，否则本用例无从跑起"
@@ -251,7 +249,7 @@ async def deployment(
         app.router.lifespan_context(app),
     ):
         with contextlib.suppress(Exception):
-            await app.state.ctx.vector_store.adrop_collection(KB)
+            await app.state.ctx.vector_store.drop_collection(KB)
         async with _running(*workers):
             await _await_startup(*workers)
             # runner 注册表是**进程级全局**的，而这里三个 Context 挤在同一个
@@ -260,7 +258,7 @@ async def deployment(
             _wire_stub_runner(workers[-1], document)
             yield http, workers
         with contextlib.suppress(Exception):
-            await app.state.ctx.vector_store.adrop_collection(KB)
+            await app.state.ctx.vector_store.drop_collection(KB)
 
     await pool.aclose()
     await _clean(postgres_dsn)

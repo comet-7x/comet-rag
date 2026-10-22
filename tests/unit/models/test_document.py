@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from comet_rag.ports import (
+    AsyncDocumentExtractorPort,
     DocumentExtractionError,
     DocumentExtractorPort,
     DocumentProtocolError,
@@ -15,7 +16,10 @@ from comet_rag.ports import (
     NormalizedDocument,
     RetryableDocumentUpstreamError,
 )
-from tests.contracts.document_extractor import DocumentExtractorContract
+from tests.contracts.document_extractor import (
+    AsyncDocumentExtractorContract,
+    DocumentExtractorContract,
+)
 
 
 class FakeDocumentExtractor:
@@ -32,17 +36,35 @@ class FakeDocumentExtractor:
         self.calls.append((path, filename, media_type))
         return self.result
 
-    async def aextract(
+    def close(self) -> None:
+        self.closed = True
+
+
+class AsyncFakeDocumentExtractor:
+    def __init__(self, result: ExtractedDocument) -> None:
+        self.result = result
+        self.closed = False
+        self.calls: list[tuple[Path, str, str]] = []
+
+    async def extract(
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument:
         self.calls.append((path, filename, media_type))
         return self.result
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         self.closed = True
 
 
-class TestFakeDocumentExtractor(DocumentExtractorContract):
+class TestFakeDocumentExtractor(
+    DocumentExtractorContract, AsyncDocumentExtractorContract
+):
+    @pytest.fixture
+    def async_extractor(
+        self, expected_document: ExtractedDocument
+    ) -> AsyncFakeDocumentExtractor:
+        return AsyncFakeDocumentExtractor(expected_document)
+
     @pytest.fixture
     def expected_document(self) -> ExtractedDocument:
         return ExtractedDocument(markdown="# 标题\n\n正文", metadata={"page_count": 1})
@@ -60,6 +82,10 @@ def test_fake_satisfies_document_extractor_protocol() -> None:
     extractor = FakeDocumentExtractor(ExtractedDocument(markdown="正文"))
 
     assert isinstance(extractor, DocumentExtractorPort)
+    assert isinstance(
+        AsyncFakeDocumentExtractor(ExtractedDocument(markdown="正文")),
+        AsyncDocumentExtractorPort,
+    )
 
 
 def test_extracted_document_metadata_is_not_shared() -> None:

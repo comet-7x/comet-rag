@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from comet_rag.infrastructure.sources.s3 import S3Loader
+from comet_rag.infrastructure.sources.s3 import AsyncS3Loader
 from tests.integration import conftest as integration_fixtures
 
 pytestmark = pytest.mark.integration
@@ -67,21 +67,21 @@ async def test_s3_loader_round_trip_against_minio(minio_endpoint: str) -> None:
         await client.create_bucket(Bucket=bucket)
         await client.put_object(Bucket=bucket, Key=key, Body=payload)
 
-        loader = S3Loader(
+        loader = AsyncS3Loader(
             endpoint_url=minio_endpoint,
             access_key_id="minioadmin",
             secret_access_key="minioadmin",  # noqa: S106 - local test credential
         )
         try:
-            content = await loader.aload(f"s3://{bucket}/{key}")
+            content = await loader.load(f"s3://{bucket}/{key}")
             assert content.path.read_bytes() == payload
             assert content.metadata["bucket"] == bucket
             assert content.metadata["object_key"] == key
             assert content.metadata["file_type"] == "txt"
         finally:
-            await loader.acleanup()
+            await loader.cleanup()
             await client.delete_object(Bucket=bucket, Key=key)
             await client.delete_bucket(Bucket=bucket)
 
         assert not content.path.exists()
-        assert loader._async_client is None
+        assert loader._client is None

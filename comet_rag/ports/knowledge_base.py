@@ -60,22 +60,22 @@ class KnowledgeBaseRepository(ABC):
     """知识库元数据存储；实现必须通过统一契约测试。"""
 
     @abstractmethod
-    async def acreate(self, kb: KnowledgeBase) -> KnowledgeBase:
+    async def create(self, kb: KnowledgeBase) -> KnowledgeBase:
         """新建知识库，同 ID 已存在时拒绝。"""
 
     @abstractmethod
-    async def aget(self, kb_id: str) -> KnowledgeBase | None: ...
+    async def get(self, kb_id: str) -> KnowledgeBase | None: ...
 
     @abstractmethod
-    async def alist(self, *, limit: int = 50, offset: int = 0) -> list[KnowledgeBase]:
+    async def list(self, *, limit: int = 50, offset: int = 0) -> list[KnowledgeBase]:
         """按创建时间倒序返回知识库。"""
 
     @abstractmethod
-    async def adelete(self, kb_id: str) -> bool:
+    async def delete(self, kb_id: str) -> bool:
         """删除知识库并返回是否实际删除。"""
 
-    async def arequire(self, kb_id: str) -> KnowledgeBase:
-        kb = await self.aget(kb_id)
+    async def require(self, kb_id: str) -> KnowledgeBase:
+        kb = await self.get(kb_id)
         if kb is None:
             raise KnowledgeBaseNotFound(kb_id)
         return kb

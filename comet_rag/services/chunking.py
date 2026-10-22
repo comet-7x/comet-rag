@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TypeGuard
 
 from comet_rag.engines.chunkers import ChunkDraft
-from comet_rag.engines.pipelines import HookProvider, PipelineConfig, PipelineHooks
+from comet_rag.engines.pipelines import ChunkHookProvider, PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
 from comet_rag.ports import (
     DocumentBlock,
@@ -60,7 +60,7 @@ class ChunkingService:
     def __init__(
         self,
         config: PipelineConfig,
-        hooks: HookProvider | None = None,
+        hooks: ChunkHookProvider | None = None,
     ) -> None:
         self._config = config
         self._hooks = hooks or PipelineHooks
@@ -91,9 +91,7 @@ def _merge_chunk_metadata(
     for layer in (document, request):
         if layer:
             merged.update(
-                (key, value)
-                for key, value in layer.items()
-                if key not in protected
+                (key, value) for key, value in layer.items() if key not in protected
             )
     if chunk:
         merged.update(
@@ -187,9 +185,7 @@ def load_document_blocks(payload: object, /) -> tuple[DocumentBlock, ...]:
         end_char = item.get("end_char")
         page_number = item.get("page_number")
         if not isinstance(kind, str):
-            raise TypeError(
-                f"DocumentBlock Task payload 第 {index} 项 kind 必须是 str"
-            )
+            raise TypeError(f"DocumentBlock Task payload 第 {index} 项 kind 必须是 str")
         if not _is_int(ordinal):
             raise TypeError(
                 f"DocumentBlock Task payload 第 {index} 项 ordinal 必须是 int"

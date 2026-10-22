@@ -35,24 +35,28 @@ from comet_rag.config.schemas import (
 from comet_rag.core.concurrency import Gate
 from comet_rag.engines.documents.formats import ContentTypeMismatch
 from comet_rag.engines.pipelines import (
+    AsyncPipelineHooks,
     DocxConfig,
     PipelineConfig,
-    PipelineHooks,
 )
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.models.embedding.base import AsyncBaseEmbeddingModel
+from comet_rag.infrastructure.models.reranker.base import AsyncBaseReranker
 from comet_rag.infrastructure.persistence.document_store import InMemoryDocumentStore
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.infrastructure.sources import (
-    AutoLoader,
+    AsyncAutoLoader,
+    AsyncLocalLoader,
     LoaderContent,
-    LocalLoader,
     SourceContent,
 )
-from comet_rag.infrastructure.sources.s3 import S3Loader
-from comet_rag.pipeline import Pipeline
-from comet_rag.ports import ExtractedDocument, MediaResource, MultimodalEmbeddingPort
+from comet_rag.infrastructure.sources.s3 import AsyncS3Loader
+from comet_rag.pipeline import AsyncPipeline
+from comet_rag.ports import (
+    AsyncMultimodalEmbeddingPort,
+    ExtractedDocument,
+    MediaResource,
+)
 from comet_rag.ports.gate import GatedResource
 from comet_rag.services.ingestion import IngestRunner
 from tests.fixtures.pdf import build_minimal_pdf
@@ -80,31 +84,25 @@ def enable_mineru(config: APPConfig, **overrides: Any) -> None:
     )
 
 
-class FakeEmbedding(BaseEmbeddingModel):
+class FakeEmbedding(AsyncBaseEmbeddingModel):
     def __init__(self) -> None:
         self.closed = False
 
-    def _embed(self, data, **kwargs):  # pragma: no cover
+    async def _embed(self, data, **kwargs):
         return [0.0] * DIM
 
-    async def _aembed(self, data, **kwargs):
-        return [0.0] * DIM
-
-    async def close_client(self) -> None:
+    async def close(self) -> None:
         self.closed = True
 
 
-class FakeReranker(BaseReranker):
+class FakeReranker(AsyncBaseReranker):
     def __init__(self) -> None:
         self.closed = False
 
-    def _score(self, query, documents, **kwargs):  # pragma: no cover
+    async def _score(self, query, documents, **kwargs):  # pragma: no cover
         return []
 
-    async def _ascore(self, query, documents, **kwargs):  # pragma: no cover
-        return []
-
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         self.closed = True
 
 
@@ -117,19 +115,13 @@ class FakePdfExtractor(GatedResource):
         self.markdown = markdown
         self._close_order = close_order
 
-    def extract(
+    async def extract(
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument:
         self.calls.append((path, filename, media_type))
         return ExtractedDocument(markdown=self.markdown)
 
-    async def aextract(
-        self, path: Path, /, *, filename: str, media_type: str
-    ) -> ExtractedDocument:
-        self.calls.append((path, filename, media_type))
-        return ExtractedDocument(markdown=self.markdown)
-
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         self.closed = True
         if self._close_order is not None:
             self._close_order.append("mineru")
@@ -141,9 +133,11 @@ def embedding() -> FakeEmbedding:
 
 
 @pytest.fixture
-def context(embedding: FakeEmbedding):
-    return build_context(
-        make_config(), embedding_model=embedding, vector_store=InMemoryVectorStore()
+async def context(embedding: FakeEmbedding):
+    return await build_context(
+        make_config(),
+        embedding_model=embedding,
+        vector_store=AsyncInMemoryVectorStore(),
     )
 
 
@@ -154,17 +148,17 @@ async def test_built_embedding_model_receives_source_policy() -> None:
     """多模态 embedding 也会让模型服务抓取 URL，不能漏掉 SSRF 准入策略。
 
     先 `isinstance` 再调用，不是为了让类型检查闭嘴：`build_embedding_model`
-    的返回类型是 `EmbeddingPort`，而多模态是**可选能力**。这行断言同时把
+    的返回类型是 `AsyncEmbeddingPort`，而多模态是**可选能力**。这行断言同时把
     "当前配置装出来的模型确实支持图片"一并钉住 —— 哪天它退化成纯文本，
     这条 SSRF 用例会立刻失败而不是静静地不再检查任何东西。
     """
     model = build_embedding_model(make_config())
     try:
-        assert isinstance(model, MultimodalEmbeddingPort)
+        assert isinstance(model, AsyncMultimodalEmbeddingPort)
         with pytest.raises(CometRAGException, match="非公网地址"):
-            model.embed_media(MediaResource(url="http://127.0.0.1/metadata"))
+            await model.embed_media(MediaResource(url="http://127.0.0.1/metadata"))
     finally:
-        await model.aclose()
+        await model.close()
 
 
 async def test_built_embedding_model_rejects_local_image_by_default(
@@ -174,23 +168,23 @@ async def test_built_embedding_model_rejects_local_image_by_default(
     image.write_bytes(b"png-bytes")
     model = build_embedding_model(make_config())
     try:
-        assert isinstance(model, MultimodalEmbeddingPort)
+        assert isinstance(model, AsyncMultimodalEmbeddingPort)
         with pytest.raises(CometRAGException, match="未开放从服务器本地路径入库"):
-            model.embed_media(MediaResource(path=image, mimetype="image/png"))
+            await model.embed_media(MediaResource(path=image, mimetype="image/png"))
     finally:
-        await model.aclose()
+        await model.close()
 
 
 async def test_memory_backends_need_no_middleware(context) -> None:
     """全内存装配必须零外部依赖 —— 这是 plan"先内存后真实"成立的前提。"""
-    assert isinstance(context.vector_store, InMemoryVectorStore)
+    assert isinstance(context.vector_store, AsyncInMemoryVectorStore)
     assert context.document_store is None
     assert context.task_service is not None
     assert context.retrieval is not None
     assert context.retrieval._keyword_search is context.vector_store  # noqa: SLF001
     assert context.embedding_dim == DIM
 
-    await context.aclose()
+    await context.close()
 
 
 async def test_explicit_document_store_is_shared_and_closed(
@@ -199,16 +193,16 @@ async def test_explicit_document_store_is_shared_and_closed(
     class ClosingDocuments(InMemoryDocumentStore):
         closed = False
 
-        async def aclose(self) -> None:
+        async def close(self) -> None:
             self.closed = True
 
     documents = ClosingDocuments()
-    context = build_context(
+    context = await build_context(
         make_config(), embedding_model=embedding, document_store=documents
     )
     assert context.document_store is documents
     assert context.retrieval._document_store is documents  # noqa: SLF001 — 装配同一资源
-    await context.aclose()
+    await context.close()
     assert documents.closed
 
 
@@ -217,10 +211,10 @@ async def test_ingest_runner_is_registered(context) -> None:
 
     assert "ingest" in registered_kinds()
 
-    await context.aclose()
+    await context.close()
 
 
-def test_injected_pipeline_config_keeps_deployment_docx_limits(
+async def test_injected_pipeline_config_keeps_deployment_docx_limits(
     embedding: FakeEmbedding, monkeypatch
 ) -> None:
     config = make_config()
@@ -232,10 +226,10 @@ def test_injected_pipeline_config_keeps_deployment_docx_limits(
         captured["config"] = ingest_config
 
     monkeypatch.setattr("comet_rag.composition.bootstrap.wire_runners", capture_runners)
-    build_context(
+    context = await build_context(
         config,
         embedding_model=embedding,
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
         pipeline_config=PipelineConfig(chunk_size=321),
     )
 
@@ -243,9 +237,10 @@ def test_injected_pipeline_config_keeps_deployment_docx_limits(
     assert effective.chunk_size == 321
     assert effective.docx.max_archive_members == 17
     assert effective.docx.max_archive_xml_elements == 19
+    await context.close()
 
 
-def test_explicit_docx_pipeline_fields_override_deployment_defaults(
+async def test_explicit_docx_pipeline_fields_override_deployment_defaults(
     embedding: FakeEmbedding, monkeypatch
 ) -> None:
     config = make_config()
@@ -257,10 +252,10 @@ def test_explicit_docx_pipeline_fields_override_deployment_defaults(
         captured["config"] = ingest_config
 
     monkeypatch.setattr("comet_rag.composition.bootstrap.wire_runners", capture_runners)
-    build_context(
+    context = await build_context(
         config,
         embedding_model=embedding,
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
         pipeline_config=PipelineConfig(
             docx=DocxConfig(max_archive_members=23),
         ),
@@ -269,6 +264,7 @@ def test_explicit_docx_pipeline_fields_override_deployment_defaults(
     effective = captured["config"]
     assert effective.docx.max_archive_members == 23
     assert effective.docx.max_archive_xml_elements == 19
+    await context.close()
 
 
 async def test_s3_loader_is_assembled_only_from_infrastructure_config(
@@ -285,38 +281,38 @@ async def test_s3_loader_is_assembled_only_from_infrastructure_config(
         allow_s3=True, allowed_s3_buckets=["documents"]
     )
 
-    context = build_context(config, embedding_model=embedding)
+    context = await build_context(config, embedding_model=embedding)
     assert context.ingest_loader is not None
     object_loader = context.ingest_loader._resolve(  # noqa: SLF001
         SourceContent("s3://documents/report.txt")
     )
-    assert isinstance(object_loader, S3Loader)
+    assert isinstance(object_loader, AsyncS3Loader)
     assert object_loader._max_object_bytes == 1234  # noqa: SLF001
 
-    await context.aclose()
+    await context.close()
 
 
-def test_allowing_s3_without_connection_config_fails_at_startup(
+async def test_allowing_s3_without_connection_config_fails_at_startup(
     embedding: FakeEmbedding,
 ) -> None:
     config = make_config()
     config.ingest_policy = IngestPolicyConfig(allow_s3=True)
 
     with pytest.raises(ValueError, match="infrastructure_config.s3"):
-        build_context(config, embedding_model=embedding)
+        await build_context(config, embedding_model=embedding)
 
 
 async def test_mineru_is_not_built_or_registered_when_disabled(
     embedding: FakeEmbedding,
 ) -> None:
-    context = build_context(make_config(), embedding_model=embedding)
+    context = await build_context(make_config(), embedding_model=embedding)
 
     assert context.mineru_gate is None
     assert context.extracted_text_limits == {}
     with pytest.raises(ValueError, match="No extractor registered"):
-        PipelineHooks.get_extractor("pdf")
+        AsyncPipelineHooks.get_extractor("pdf")
 
-    await context.aclose()
+    await context.close()
 
 
 async def test_enabled_mineru_binds_an_independent_gate_and_pdf_hooks(
@@ -329,7 +325,7 @@ async def test_enabled_mineru_binds_an_independent_gate_and_pdf_hooks(
     config.limits.mineru_queue = 5
     config.limits.mineru_wait_timeout = 7.0
     extractor = FakePdfExtractor()
-    context = build_context(
+    context = await build_context(
         config,
         embedding_model=embedding,
         mineru_extractor=extractor,
@@ -350,10 +346,9 @@ async def test_enabled_mineru_binds_an_independent_gate_and_pdf_hooks(
         metadata={"file_name": "original.pdf", "file_type": "pdf"},
     )
     assert (
-        context.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig()).markdown
-        == "# PDF"
-    )
-    async_hook = context.pipeline_hooks.get_aextractor("pdf")
+        await context.pipeline_hooks.extract("pdf", content, PipelineConfig())
+    ).markdown == "# PDF"
+    async_hook = context.pipeline_hooks.get_extractor("pdf")
     assert async_hook is not None
     assert (await async_hook(content, PipelineConfig())).markdown == "# PDF"
     assert extractor.calls == [
@@ -361,7 +356,7 @@ async def test_enabled_mineru_binds_an_independent_gate_and_pdf_hooks(
         (path, "original.pdf", "application/pdf"),
     ]
 
-    await context.aclose()
+    await context.close()
     assert extractor.closed
     with pytest.raises(ValueError, match="No extractor registered"):
         context.pipeline_hooks.get_extractor("pdf")
@@ -375,10 +370,10 @@ async def test_mineru_hooks_are_isolated_between_contexts_and_disabled_restart(
     enable_mineru(enabled)
     first_extractor = FakePdfExtractor(markdown="# first")
     second_extractor = FakePdfExtractor(markdown="# second")
-    first = build_context(
+    first = await build_context(
         enabled, embedding_model=embedding, mineru_extractor=first_extractor
     )
-    second = build_context(
+    second = await build_context(
         enabled, embedding_model=embedding, mineru_extractor=second_extractor
     )
     path = build_minimal_pdf(tmp_path / "isolated.pdf")
@@ -389,45 +384,43 @@ async def test_mineru_hooks_are_isolated_between_contexts_and_disabled_restart(
     )
 
     assert (
-        first.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig()).markdown
-        == "# first"
-    )
+        await first.pipeline_hooks.extract("pdf", content, PipelineConfig())
+    ).markdown == "# first"
     assert (
-        second.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig()).markdown
-        == "# second"
-    )
+        await second.pipeline_hooks.extract("pdf", content, PipelineConfig())
+    ).markdown == "# second"
     with pytest.raises(ValueError, match="No extractor registered"):
-        PipelineHooks.get_extractor("pdf")
+        AsyncPipelineHooks.get_extractor("pdf")
 
-    await first.aclose()
-    disabled = build_context(make_config(), embedding_model=embedding)
+    await first.close()
+    disabled = await build_context(make_config(), embedding_model=embedding)
     assert first_extractor.closed
     assert not second_extractor.closed
     with pytest.raises(ValueError, match="No extractor registered"):
         disabled.pipeline_hooks.get_extractor("pdf")
     assert (
-        second.pipeline_hooks.get_extractor("pdf")(content, PipelineConfig()).markdown
-        == "# second"
-    )
+        await second.pipeline_hooks.extract("pdf", content, PipelineConfig())
+    ).markdown == "# second"
 
-    await second.aclose()
-    await disabled.aclose()
+    await second.close()
+    await disabled.close()
 
 
-async def test_pdf_pipeline_sync_and_async_use_the_document_extractor_port(
+async def test_async_pdf_pipeline_run_and_stream_use_the_document_extractor_port(
     tmp_path: Path,
 ) -> None:
     path = build_minimal_pdf(tmp_path / "report.pdf")
     extractor = FakePdfExtractor()
     wire_pdf_extractor(extractor)
-    pipeline = Pipeline(loader=LocalLoader(), config=PipelineConfig(chunk_overlap=0))
+    pipeline = AsyncPipeline(
+        loader=AsyncLocalLoader(), config=PipelineConfig(chunk_overlap=0)
+    )
 
-    sync_result = pipeline.run(path)
-    async_result = await pipeline.arun(path)
+    streamed = [chunk async for chunk in pipeline.stream_run(path)]
+    async_result = await pipeline.run(path)
 
-    assert sync_result.file_type == "pdf"
     assert async_result.file_type == "pdf"
-    assert [chunk.text for chunk in sync_result.chunks] == ["# PDF"]
+    assert [chunk.text for chunk in streamed] == ["# PDF"]
     assert [chunk.text for chunk in async_result.chunks] == ["# PDF"]
     assert [call[0] for call in extractor.calls] == [path, path]
 
@@ -446,8 +439,8 @@ async def test_pdf_content_is_rechecked_before_calling_the_extractor(
     )
 
     with pytest.raises(ContentTypeMismatch, match="pdf.*txt"):
-        PipelineHooks.get_extractor("pdf")(content, PipelineConfig())
-    async_hook = PipelineHooks.get_aextractor("pdf")
+        await AsyncPipelineHooks.extract("pdf", content, PipelineConfig())
+    async_hook = AsyncPipelineHooks.get_extractor("pdf")
     assert async_hook is not None
     with pytest.raises(ContentTypeMismatch, match="pdf.*txt"):
         await async_hook(content, PipelineConfig())
@@ -460,7 +453,7 @@ async def test_admin_limits_exposes_enabled_mineru_gate(
 ) -> None:
     config = make_config()
     enable_mineru(config)
-    context = build_context(
+    context = await build_context(
         config,
         embedding_model=embedding,
         mineru_extractor=FakePdfExtractor(),
@@ -472,7 +465,7 @@ async def test_admin_limits_exposes_enabled_mineru_gate(
     body = await admin_limits(request)  # type: ignore[arg-type]
 
     assert body["mineru_gate"]["limit"] == config.limits.mineru_concurrency
-    await context.aclose()
+    await context.close()
 
 
 async def test_mineru_builder_forwards_all_provider_settings() -> None:
@@ -507,17 +500,17 @@ async def test_mineru_builder_forwards_all_provider_settings() -> None:
     assert extractor._parse_timeout_seconds == 13.0  # noqa: SLF001
     assert extractor._max_response_bytes == 1024  # noqa: SLF001
     assert extractor._max_markdown_bytes == 512  # noqa: SLF001
-    await extractor.aclose()
+    await extractor.close()
 
 
-def test_enabled_mineru_propagates_pdf_task_context_limit(
+async def test_enabled_mineru_propagates_pdf_task_context_limit(
     embedding: FakeEmbedding,
 ) -> None:
     config = make_config()
     enable_mineru(config, max_response_bytes=2048, max_markdown_bytes=1024)
     config.limits.task_chunk_context_max_bytes = 4096
 
-    context = build_context(
+    context = await build_context(
         config,
         embedding_model=embedding,
         mineru_extractor=FakePdfExtractor(),
@@ -531,48 +524,51 @@ def test_enabled_mineru_propagates_pdf_task_context_limit(
     assert isinstance(runner, IngestRunner)
     assert runner._max_extracted_text_bytes_by_type == {"pdf": 1024}  # noqa: SLF001
     assert runner._max_chunk_context_bytes == 4096  # noqa: SLF001
+    await context.close()
 
 
 async def test_runner_registration_is_idempotent(embedding: FakeEmbedding) -> None:
     """应用重启（或测试反复装配）不该因重复注册而崩。"""
-    first = build_context(make_config(), embedding_model=embedding)
-    second = build_context(make_config(), embedding_model=embedding)
+    first = await build_context(make_config(), embedding_model=embedding)
+    second = await build_context(make_config(), embedding_model=embedding)
 
-    await first.aclose()
-    await second.aclose()
+    await first.close()
+    await second.close()
 
 
 async def test_reranker_is_optional(context) -> None:
     """没配 reranker 时检索仍可用，只是不重排。"""
     assert context.reranker is None
 
-    await context.aclose()
+    await context.close()
 
 
 async def test_explicit_reranker_is_used(embedding: FakeEmbedding) -> None:
     reranker = FakeReranker()
 
-    context = build_context(make_config(), embedding_model=embedding, reranker=reranker)
+    context = await build_context(
+        make_config(), embedding_model=embedding, reranker=reranker
+    )
 
     assert context.reranker is reranker
-    await context.aclose()
+    await context.close()
 
 
-def test_unknown_backend_is_rejected(embedding: FakeEmbedding) -> None:
+async def test_unknown_backend_is_rejected(embedding: FakeEmbedding) -> None:
     """配错后端要在启动时就炸，而不是等第一个请求进来才发现。"""
     config = make_config(vector_store=Backend.POSTGRES)
 
     with pytest.raises(ValueError, match="不支持的 vector_store"):
-        build_context(config, embedding_model=embedding)
+        await build_context(config, embedding_model=embedding)
 
 
-def test_milvus_backend_requires_connection_settings(
+async def test_milvus_backend_requires_connection_settings(
     embedding: FakeEmbedding,
 ) -> None:
     config = make_config(vector_store=Backend.MILVUS)
 
     with pytest.raises((ValueError, ImportError, ModuleNotFoundError)):
-        build_context(config, embedding_model=embedding)
+        await build_context(config, embedding_model=embedding)
 
 
 @pytest.mark.parametrize("revision_aware", [False, True])
@@ -584,12 +580,12 @@ def test_milvus_database_and_prefix_are_forwarded(
 
     captured: dict[str, Any] = {}
 
-    class FakeMilvusStore(InMemoryVectorStore):
+    class FakeMilvusStore(AsyncInMemoryVectorStore):
         def __init__(self, **kwargs: Any) -> None:
             super().__init__()
             captured.update(kwargs)
 
-    monkeypatch.setattr(milvus, "MilvusStore", FakeMilvusStore)
+    monkeypatch.setattr(milvus, "AsyncMilvusStore", FakeMilvusStore)
     config = make_config(vector_store=Backend.MILVUS)
     config.infrastructure_config.vector_database = VectorDatabaseConfig(
         endpoint="http://milvus.invalid:19530",
@@ -622,11 +618,11 @@ async def test_aclose_stops_executor_before_downstream(
     """
     order: list[str] = []
 
-    class RecordingStore(InMemoryVectorStore):
-        async def aclose(self) -> None:
+    class RecordingStore(AsyncInMemoryVectorStore):
+        async def close(self) -> None:
             order.append("vector_store")
 
-    context = build_context(
+    context = await build_context(
         make_config(), embedding_model=embedding, vector_store=RecordingStore()
     )
     original_shutdown = context.task_executor.shutdown
@@ -637,16 +633,18 @@ async def test_aclose_stops_executor_before_downstream(
 
     context.task_executor.shutdown = recording_shutdown  # type: ignore[method-assign]
 
-    await context.aclose()
+    await context.close()
 
     assert order == ["executor", "vector_store"]
 
 
 async def test_aclose_closes_models(embedding: FakeEmbedding) -> None:
     reranker = FakeReranker()
-    context = build_context(make_config(), embedding_model=embedding, reranker=reranker)
+    context = await build_context(
+        make_config(), embedding_model=embedding, reranker=reranker
+    )
 
-    await context.aclose()
+    await context.close()
 
     assert embedding.closed is True
     assert reranker.closed is True
@@ -657,14 +655,14 @@ async def test_aclose_stops_tasks_then_closes_mineru_before_downstream(
 ) -> None:
     order: list[str] = []
 
-    class RecordingStore(InMemoryVectorStore):
-        async def aclose(self) -> None:
+    class RecordingStore(AsyncInMemoryVectorStore):
+        async def close(self) -> None:
             order.append("vector_store")
 
     config = make_config()
     enable_mineru(config)
     extractor = FakePdfExtractor(close_order=order)
-    context = build_context(
+    context = await build_context(
         config,
         embedding_model=embedding,
         vector_store=RecordingStore(),
@@ -678,7 +676,7 @@ async def test_aclose_stops_tasks_then_closes_mineru_before_downstream(
 
     context.task_executor.shutdown = recording_shutdown  # type: ignore[method-assign]
 
-    await context.aclose()
+    await context.close()
 
     assert order[:3] == ["executor", "mineru", "vector_store"]
 
@@ -688,29 +686,29 @@ async def test_one_failing_resource_does_not_block_the_rest(
 ) -> None:
     """一个坏掉的连接不该让进程留下一堆泄漏资源。"""
 
-    class ExplodingStore(InMemoryVectorStore):
-        async def aclose(self) -> None:
+    class ExplodingStore(AsyncInMemoryVectorStore):
+        async def close(self) -> None:
             raise RuntimeError("关闭时炸了")
 
-    context = build_context(
+    context = await build_context(
         make_config(), embedding_model=embedding, vector_store=ExplodingStore()
     )
 
-    await context.aclose()  # 不抛即通过
+    await context.close()  # 不抛即通过
 
     assert embedding.closed is True, "上游炸了，下游仍必须被释放"
 
 
 async def test_aclose_is_idempotent(context) -> None:
     """关停路径可能被走两次（异常 + finally），不能第二次就炸。"""
-    await context.aclose()
-    await context.aclose()
+    await context.close()
+    await context.close()
 
 
 # ── 闸门必须由组合根挂上（spec S4-2）──────────────────────────────────────
 
 
-def test_build_context_binds_one_gate_to_both_models() -> None:
+async def test_abuild_context_binds_one_gate_to_both_models() -> None:
     """闸门只在组合根这一处挂。**漏挂不会报错，只是限流悄悄失效** ——
     所以必须有一条用例盯着这个动作本身。
 
@@ -719,11 +717,11 @@ def test_build_context_binds_one_gate_to_both_models() -> None:
     实际上没有任何东西守着。
     """
     embedding, reranker = FakeEmbedding(), FakeReranker()
-    context = build_context(
+    context = await build_context(
         make_config(),
         embedding_model=embedding,
         reranker=reranker,
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
     )
 
     gate = context.model_gate
@@ -731,9 +729,10 @@ def test_build_context_binds_one_gate_to_both_models() -> None:
     assert embedding._gate is gate, "embedding 模型没挂上闸门 —— 它会裸调模型服务"  # noqa: SLF001
     assert reranker._gate is gate, "reranker 没挂上闸门"  # noqa: SLF001
     assert gate.stats.limit == make_config().limits.model_concurrency
+    await context.close()
 
 
-def test_injected_test_doubles_get_the_gate_too() -> None:
+async def test_injected_test_doubles_get_the_gate_too() -> None:
     """注入进来的替身同样要挂闸门。
 
     否则测试跑的是"没有闸门"那条路、生产跑的是另一条 —— 两边行为不一致，
@@ -741,13 +740,16 @@ def test_injected_test_doubles_get_the_gate_too() -> None:
     """
     embedding = FakeEmbedding()
     assert embedding._gate is None  # noqa: SLF001
-    build_context(
-        make_config(), embedding_model=embedding, vector_store=InMemoryVectorStore()
+    context = await build_context(
+        make_config(),
+        embedding_model=embedding,
+        vector_store=AsyncInMemoryVectorStore(),
     )
     assert embedding._gate is not None  # noqa: SLF001
+    await context.close()
 
 
-def test_startup_fails_when_the_gate_does_not_stick() -> None:
+async def test_startup_fails_when_the_gate_does_not_stick() -> None:
     """**闸门没挂上就拒绝启动**（PR 评审 #9/#12）。
 
     静态守卫拦得住仓库内直接 new 模型的写法，但拦不住**注入进来的实现**：
@@ -762,31 +764,31 @@ def test_startup_fails_when_the_gate_does_not_stick() -> None:
             return None
 
     with pytest.raises(RuntimeError, match="没有正确挂上并发闸门"):
-        build_context(
+        await build_context(
             make_config(),
             embedding_model=SilentlyUngated(),
-            vector_store=InMemoryVectorStore(),
+            vector_store=AsyncInMemoryVectorStore(),
         )
 
 
-def test_reranker_is_checked_too() -> None:
+async def test_reranker_is_checked_too() -> None:
     class SilentlyUngatedReranker(FakeReranker):
         def bind_gate(self, gate) -> None:
             return None
 
     with pytest.raises(RuntimeError, match="没有正确挂上并发闸门"):
-        build_context(
+        await build_context(
             make_config(),
             embedding_model=FakeEmbedding(),
             reranker=SilentlyUngatedReranker(),
-            vector_store=InMemoryVectorStore(),
+            vector_store=AsyncInMemoryVectorStore(),
         )
 
 
 # ── 并发配置必须真的到达管道 ───────────────────────────────────────────────
 
 
-def test_pipeline_concurrency_reaches_the_runner_from_config() -> None:
+async def test_pipeline_concurrency_reaches_the_runner_from_config() -> None:
     """**YAML 里调并发，必须真的作用到管道上。**
 
     此前 `bootstrap` 造 `PipelineConfig(docx=configured_docx)` 时只接了 docx
@@ -807,8 +809,10 @@ def test_pipeline_concurrency_reaches_the_runner_from_config() -> None:
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr("comet_rag.composition.bootstrap.wire_runners", capture)
-        build_context(
-            config, embedding_model=FakeEmbedding(), vector_store=InMemoryVectorStore()
+        context = await build_context(
+            config,
+            embedding_model=FakeEmbedding(),
+            vector_store=AsyncInMemoryVectorStore(),
         )
 
     assert captured
@@ -816,9 +820,10 @@ def test_pipeline_concurrency_reaches_the_runner_from_config() -> None:
     assert wired is not None
     assert wired.max_concurrency == 3
     assert wired.embed_batch_size == 7
+    await context.close()
 
 
-def test_explicit_pipeline_config_wins_over_deployment_limits() -> None:
+async def test_explicit_pipeline_config_wins_over_deployment_limits() -> None:
     """调用方显式写过的字段不被部署配置盖掉 —— 与 docx 那套规则一致。"""
     config = make_config()
     config.limits.pipeline_concurrency = 3
@@ -830,10 +835,10 @@ def test_explicit_pipeline_config_wins_over_deployment_limits() -> None:
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr("comet_rag.composition.bootstrap.wire_runners", capture)
-        build_context(
+        context = await build_context(
             config,
             embedding_model=FakeEmbedding(),
-            vector_store=InMemoryVectorStore(),
+            vector_store=AsyncInMemoryVectorStore(),
             pipeline_config=PipelineConfig(max_concurrency=9),
         )
 
@@ -842,24 +847,25 @@ def test_explicit_pipeline_config_wins_over_deployment_limits() -> None:
     assert wired.max_concurrency == 9, "显式写的 9 被部署配置盖掉了"
     # 没写过的那个仍然跟随部署配置
     assert wired.embed_batch_size == config.limits.embed_batch_size
+    await context.close()
 
 
-def test_loader_gate_is_bound_to_the_leaves_not_the_router() -> None:
+async def test_loader_gate_is_bound_to_the_leaves_not_the_router() -> None:
     """**加载侧也必须有进程级闸门，且挂在真正发请求的那一层。**
 
-    `ingestion.py` 每个任务调一次 `aload`，`max_jobs=32` 就是 32 路对外抓取 ——
+    `ingestion.py` 每个任务调一次 `load`，`max_jobs=32` 就是 32 路对外抓取 ——
     加载侧此前完全没有上限。
 
-    闸门挂在叶子而不是 `AutoLoader`：后者只是路由器，两层都持有会让一次加载
+    闸门挂在叶子而不是 `AsyncAutoLoader`：后者只是路由器，两层都持有会让一次加载
     取两次许可（上限为 1 时实测死锁）。
     """
-    context = build_context(
+    context = await build_context(
         make_config(),
         embedding_model=FakeEmbedding(),
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
     )
     loader = context.ingest_loader
-    assert isinstance(loader, AutoLoader)
+    assert isinstance(loader, AsyncAutoLoader)
 
     assert loader._gate is None, "路由器不该持有闸门"  # noqa: SLF001
     leaf_loaders = [route.loader for route in loader.routes]
@@ -872,9 +878,10 @@ def test_loader_gate_is_bound_to_the_leaves_not_the_router() -> None:
     assert len(leaf_gates) == 1 and None not in leaf_gates, (
         f"叶子 loader 的闸门不一致或没挂上：{leaf_gates}"
     )
+    await context.close()
 
 
-def test_loader_and_model_gates_are_separate_budgets() -> None:
+async def test_loader_and_model_gates_are_separate_budgets() -> None:
     """**加载闸门与模型闸门是两份预算。**
 
     模型闸门护 GPU 排队位，加载闸门护本机文件描述符与对外连接数，合理值差一个
@@ -887,11 +894,11 @@ def test_loader_and_model_gates_are_separate_budgets() -> None:
     config.limits.loader_concurrency = 3
     config.limits.model_concurrency = 9
 
-    context = build_context(
-        config, embedding_model=FakeEmbedding(), vector_store=InMemoryVectorStore()
+    context = await build_context(
+        config, embedding_model=FakeEmbedding(), vector_store=AsyncInMemoryVectorStore()
     )
     loader = context.ingest_loader
-    assert isinstance(loader, AutoLoader)
+    assert isinstance(loader, AsyncAutoLoader)
 
     leaf_loaders = [route.loader for route in loader.routes]
     assert all(isinstance(leaf, GatedResource) for leaf in leaf_loaders)
@@ -908,3 +915,4 @@ def test_loader_and_model_gates_are_separate_budgets() -> None:
     assert isinstance(loader_gate, Gate)
     assert loader_gate.stats.limit == 3
     assert context.model_gate.stats.limit == 9
+    await context.close()

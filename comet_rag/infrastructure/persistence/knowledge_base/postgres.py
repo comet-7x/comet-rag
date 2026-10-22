@@ -34,7 +34,7 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
     def __init__(self, database: Database) -> None:
         self._db = database
 
-    async def acreate(self, kb: KnowledgeBase) -> KnowledgeBase:
+    async def create(self, kb: KnowledgeBase) -> KnowledgeBase:
         try:
             async with self._db.transaction() as session:
                 session.add(
@@ -54,12 +54,12 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
             raise KnowledgeBaseExists(kb.kb_id) from exc
         return kb
 
-    async def aget(self, kb_id: str) -> KnowledgeBase | None:
+    async def get(self, kb_id: str) -> KnowledgeBase | None:
         async with self._db.session() as session:
             row = await session.get(KnowledgeBaseRow, kb_id)
             return _to_domain(row) if row else None
 
-    async def alist(self, *, limit: int = 50, offset: int = 0) -> list[KnowledgeBase]:
+    async def list(self, *, limit: int = 50, offset: int = 0) -> list[KnowledgeBase]:
         async with self._db.session() as session:
             result = await session.execute(
                 select(KnowledgeBaseRow)
@@ -69,7 +69,7 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
             )
             return [_to_domain(row) for row in result.scalars()]
 
-    async def adelete(self, kb_id: str) -> bool:
+    async def delete(self, kb_id: str) -> bool:
         async with self._db.transaction() as session:
             result = await session.execute(
                 delete(KnowledgeBaseRow).where(KnowledgeBaseRow.kb_id == kb_id)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any, Literal, final
@@ -9,8 +8,11 @@ from httpx import AsyncClient, Client
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, Field
 
+from comet_rag.engines.offload import run_sync
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.models.embedding.base import (
+    AsyncBaseEmbeddingModel,
+    AsyncMultimodalEmbeddingMixin,
     BaseEmbeddingModel,
     MultimodalEmbeddingMixin,
 )
@@ -100,21 +102,20 @@ class DetokenizeResponse(BaseModel):
     prompt: str = Field(..., description="从 Token ID 序列还原出的原始文本内容")
 
 
-class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
-    def __init__(
+class _QwenEmbeddingFormat:
+    """共享配置、请求词汇与媒体准入逻辑；不持有 HTTP 客户端。"""
+
+    def _configure(
         self,
         base_url: str,
         model_name: str,
         api_key: str,
         output_dim: int | None = None,
         max_model_len: int | None = None,
-        async_client: AsyncClient | None = None,
-        sync_client: Client | None = None,
         image_url_validator: ImageReferenceValidator | None = None,
         local_image_validator: ImageReferenceValidator | None = None,
         max_local_image_bytes: int = DEFAULT_MAX_LOCAL_IMAGE_BYTES,
     ) -> None:
-        """创建适配器；仅关闭内部创建的客户端。"""
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
         self._api_key = api_key
@@ -123,15 +124,6 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         self._image_url_validator = image_url_validator
         self._local_image_validator = local_image_validator
         self._max_local_image_bytes = max_local_image_bytes
-
-        self._owns_async_client = async_client is None
-        self._owns_sync_client = sync_client is None
-        self.async_client = (
-            async_client if async_client is not None else AsyncClient(timeout=60.0)
-        )
-        self.sync_client = (
-            sync_client if sync_client is not None else Client(timeout=60.0)
-        )
 
     def _get_headers(self) -> dict[str, str]:
         """构造认证请求头；调用方不能通过任意参数覆盖凭据。"""
@@ -228,6 +220,27 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
             "add_special_tokens": add_special_tokens,
         }
 
+    def _build_tokenize_request(
+        self,
+        embedding_data: EmbeddingData,
+        *,
+        continue_final_message: bool,
+        return_token_strs: bool,
+        options: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "model": self._model_name,
+            "messages": self._create_messages_params(
+                text=embedding_data.text,
+                image_url=embedding_data.image_url,
+                continue_final_message=continue_final_message,
+                system_prompt=Qwen3VLEmbeddingModelSystemPrompt.COMMON,
+            ),
+            "continue_final_message": continue_final_message,
+            "return_token_strs": return_token_strs,
+            **options,
+        }
+
     @staticmethod
     def _parse_embedding_response(data: dict[str, Any]) -> list[float]:
         """解析响应，**始终**还原成浮点数组。
@@ -289,6 +302,61 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
 
         return messages
 
+    def _validate_output_dim(self, embedding: list[float]) -> int:
+        if not isinstance(embedding, list):
+            raise ValueError("模型在 encoding_format=float 时返回了非浮点向量")
+        actual_dim = len(embedding)
+
+        if self._output_dim is None:
+            self._output_dim = actual_dim
+        elif self._output_dim != actual_dim:
+            raise ValueError(
+                f"{self.__class__.__name__} | get_output_dim | 模型输出维度冲突: 配置为 {self._output_dim}, 但模型实际输出为 {actual_dim}"
+            )
+
+        return self._output_dim
+
+    def _validate_max_model_len(self, response: TokenizeResponse) -> int:
+        actual_len = response.max_model_len
+
+        if self._max_model_len is None:
+            self._max_model_len = actual_len
+        elif self._max_model_len != actual_len:
+            raise ValueError(
+                f"{self.__class__.__name__} | get_max_model_len | 模型最大输入长度冲突: 配置为 {self._max_model_len}, 但模型实际返回为 {actual_len}"
+            )
+        return self._max_model_len
+
+
+class Qwen3VLEmbeddingModel(
+    _QwenEmbeddingFormat, MultimodalEmbeddingMixin, BaseEmbeddingModel
+):
+    def __init__(
+        self,
+        base_url: str,
+        model_name: str,
+        api_key: str,
+        output_dim: int | None = None,
+        max_model_len: int | None = None,
+        client: Client | None = None,
+        image_url_validator: ImageReferenceValidator | None = None,
+        local_image_validator: ImageReferenceValidator | None = None,
+        max_local_image_bytes: int = DEFAULT_MAX_LOCAL_IMAGE_BYTES,
+    ) -> None:
+        """只创建当前执行模式的客户端；外部注入客户端仍由调用方持有。"""
+        self._configure(
+            base_url,
+            model_name,
+            api_key,
+            output_dim,
+            max_model_len,
+            image_url_validator,
+            local_image_validator,
+            max_local_image_bytes,
+        )
+        self._owns_client = client is None
+        self.client = client if client is not None else Client(timeout=60.0)
+
     def _embed(
         self,
         embedding_data: (
@@ -313,7 +381,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
                 add_special_tokens=add_special_tokens,
                 options=kwargs,
             )
-            response = self.sync_client.post(
+            response = self.client.post(
                 url=f"{self._base_url}/embeddings",
                 headers=self._get_headers(),
                 json=payload,
@@ -323,46 +391,6 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         except Exception as e:
             error_msg = (
                 f"{self.__class__.__name__} | embed 方法操作发生非预期错误：{str(e)}"
-            )
-            raise CometRAGException(error_msg) from e
-
-    async def _aembed(
-        self,
-        embedding_data: (
-            EmbeddingData | str | MediaResource | Sequence[TextContent | ImageContent]
-        ),
-        system_prompt: (
-            Qwen3VLEmbeddingModelSystemPrompt | str
-        ) = Qwen3VLEmbeddingModelSystemPrompt.COMMON,
-        encoding_format: EncodingFormat = EncodingFormat.FLOAT,
-        continue_final_message: bool = True,
-        add_special_tokens: bool = True,
-        **kwargs: Any,
-    ) -> list[float]:
-        """异步编码文本或图片；本地读取在线程中执行。"""
-        try:
-            embedding_data = await asyncio.to_thread(
-                self._normalize_input,
-                embedding_data,
-            )
-            payload = self._build_embedding_request(
-                embedding_data,
-                system_prompt=system_prompt,
-                encoding_format=encoding_format,
-                continue_final_message=continue_final_message,
-                add_special_tokens=add_special_tokens,
-                options=kwargs,
-            )
-            response = await self.async_client.post(
-                url=f"{self._base_url}/embeddings",
-                headers=self._get_headers(),
-                json=payload,
-            )
-            response.raise_for_status()
-            return self._parse_embedding_response(response.json())
-        except Exception as e:
-            error_msg = (
-                f"{self.__class__.__name__} | aembed 方法操作发生非预期错误：{str(e)}"
             )
             raise CometRAGException(error_msg) from e
 
@@ -376,29 +404,13 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         """
         return self._embed(data, **kwargs)
 
-    async def _aembed_media(
-        self, data: MediaResource | ContentInput, /, **kwargs: Any
-    ) -> list[float]:
-        # 闸门已由 `aembed_media` 持有，这里调未加闸的 `_aembed`
-        return await self._aembed(data, **kwargs)
-
     def embed_image(self, image: MediaResource, /, **kwargs: Any) -> list[float]:
         """生成单张图片的向量。"""
         return self.embed_media(image, **kwargs)
 
-    async def aembed_image(self, image: MediaResource, /, **kwargs: Any) -> list[float]:
-        """异步生成单张图片的向量。"""
-        return await self.aembed_media(image, **kwargs)
-
     def embed_content(self, content: ContentInput, /, **kwargs: Any) -> list[float]:
         """生成文本、图片或二者组合内容的向量。"""
         return self.embed_media(content, **kwargs)
-
-    async def aembed_content(
-        self, content: ContentInput, /, **kwargs: Any
-    ) -> list[float]:
-        """异步生成文本、图片或二者组合内容的向量。"""
-        return await self.aembed_media(content, **kwargs)
 
     @final
     def tokenize(
@@ -438,22 +450,16 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
         """执行一次同步 tokenize 请求；公开入口负责获取闸门名额。"""
         try:
             embedding_data = self._prepare_embedding_data(embedding_data)
-            messages = self._create_messages_params(
-                text=embedding_data.text,
-                image_url=embedding_data.image_url,
+            payload = self._build_tokenize_request(
+                embedding_data,
                 continue_final_message=continue_final_message,
-                system_prompt=Qwen3VLEmbeddingModelSystemPrompt.COMMON,
+                return_token_strs=return_token_strs,
+                options=kwargs,
             )
-            response = self.sync_client.post(
+            response = self.client.post(
                 f"{self._base_url.removesuffix('/v1')}/tokenize",
                 headers=self._get_headers(),
-                json={
-                    "model": self._model_name,
-                    "messages": messages,
-                    "continue_final_message": continue_final_message,
-                    "return_token_strs": return_token_strs,
-                    **kwargs,
-                },
+                json=payload,
             )
             response.raise_for_status()
             data = response.json()
@@ -464,72 +470,6 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
             error_msg = (
                 f"{self.__class__.__name__} | tokenize 方法操作发生非预期错误：{str(e)}"
             )
-            raise CometRAGException(error_msg) from e
-
-    @final
-    async def atokenize(
-        self,
-        embedding_data: EmbeddingData,
-        continue_final_message: bool = False,
-        return_token_strs: bool = False,
-        **kwargs: Any,
-    ) -> TokenizeResponse:
-        """
-        异步编码 tokens 对应的文本
-
-        Args:
-            embedding_data (EmbeddingData): 嵌入数据
-            continue_final_message (bool): 是否继续最后一条消息，默认为 `False`
-            return_token_strs (bool): 是否返回 token 字符串，默认为 `False`
-
-        Returns:
-            TokenizeResponse: tokenize 响应
-        """
-        return await self._through_gate(
-            lambda: self._atokenize(
-                embedding_data,
-                continue_final_message=continue_final_message,
-                return_token_strs=return_token_strs,
-                **kwargs,
-            )
-        )
-
-    async def _atokenize(
-        self,
-        embedding_data: EmbeddingData,
-        continue_final_message: bool = False,
-        return_token_strs: bool = False,
-        **kwargs: Any,
-    ) -> TokenizeResponse:
-        """执行一次异步 tokenize 请求；公开入口负责获取闸门名额。"""
-        try:
-            embedding_data = await asyncio.to_thread(
-                self._prepare_embedding_data, embedding_data
-            )
-            messages = self._create_messages_params(
-                text=embedding_data.text,
-                image_url=embedding_data.image_url,
-                continue_final_message=continue_final_message,
-                system_prompt=Qwen3VLEmbeddingModelSystemPrompt.COMMON,
-            )
-            response = await self.async_client.post(
-                f"{self._base_url.removesuffix('/v1')}/tokenize",
-                headers=self._get_headers(),
-                json={
-                    "model": self._model_name,
-                    "messages": messages,
-                    "continue_final_message": continue_final_message,
-                    "return_token_strs": return_token_strs,
-                    **kwargs,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            return TokenizeResponse(**data)
-
-        except Exception as e:
-            error_msg = f"{self.__class__.__name__} | atokenize 方法操作发生非预期错误：{str(e)}"
             raise CometRAGException(error_msg) from e
 
     @final
@@ -548,7 +488,7 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
     ) -> DetokenizeResponse:
         """执行一次同步 detokenize 请求。"""
         try:
-            response = self.sync_client.post(
+            response = self.client.post(
                 f"{self._base_url.removesuffix('/v1')}/detokenize",
                 headers=self._get_headers(),
                 json={
@@ -566,23 +506,185 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
             error_msg = f"{self.__class__.__name__} | detokenize 方法操作发生非预期错误：{str(e)}"
             raise CometRAGException(error_msg) from e
 
+    def get_output_dim(self) -> int:
+        """请求模型并校验输出维度；请求同样受闸门保护。"""
+        embedding = self.embed("hello", encoding_format=EncodingFormat.FLOAT)
+        return self._validate_output_dim(embedding)
+
+    def get_max_model_len(self) -> int:
+        """请求模型并校验最大输入长度。"""
+        response = self.tokenize(EmbeddingData(text="hello"))
+        return self._validate_max_model_len(response)
+
+    def close(self) -> None:
+        if self._owns_client:
+            self.client.close()
+
+
+class AsyncQwen3VLEmbeddingModel(
+    _QwenEmbeddingFormat, AsyncMultimodalEmbeddingMixin, AsyncBaseEmbeddingModel
+):
+    def __init__(
+        self,
+        base_url: str,
+        model_name: str,
+        api_key: str,
+        output_dim: int | None = None,
+        max_model_len: int | None = None,
+        client: AsyncClient | None = None,
+        image_url_validator: ImageReferenceValidator | None = None,
+        local_image_validator: ImageReferenceValidator | None = None,
+        max_local_image_bytes: int = DEFAULT_MAX_LOCAL_IMAGE_BYTES,
+    ) -> None:
+        """只创建当前执行模式的客户端；外部注入客户端仍由调用方持有。"""
+        self._configure(
+            base_url,
+            model_name,
+            api_key,
+            output_dim,
+            max_model_len,
+            image_url_validator,
+            local_image_validator,
+            max_local_image_bytes,
+        )
+        self._owns_client = client is None
+        self.client = client if client is not None else AsyncClient(timeout=60.0)
+
+    async def _embed(
+        self,
+        embedding_data: (
+            EmbeddingData | str | MediaResource | Sequence[TextContent | ImageContent]
+        ),
+        system_prompt: (
+            Qwen3VLEmbeddingModelSystemPrompt | str
+        ) = Qwen3VLEmbeddingModelSystemPrompt.COMMON,
+        encoding_format: EncodingFormat = EncodingFormat.FLOAT,
+        continue_final_message: bool = True,
+        add_special_tokens: bool = True,
+        **kwargs: Any,
+    ) -> list[float]:
+        """异步编码文本或图片；本地读取在线程中执行。"""
+        try:
+            embedding_data = await run_sync(
+                self._normalize_input,
+                embedding_data,
+            )
+            payload = self._build_embedding_request(
+                embedding_data,
+                system_prompt=system_prompt,
+                encoding_format=encoding_format,
+                continue_final_message=continue_final_message,
+                add_special_tokens=add_special_tokens,
+                options=kwargs,
+            )
+            response = await self.client.post(
+                url=f"{self._base_url}/embeddings",
+                headers=self._get_headers(),
+                json=payload,
+            )
+            response.raise_for_status()
+            return self._parse_embedding_response(response.json())
+        except Exception as e:
+            error_msg = (
+                f"{self.__class__.__name__} | embed 方法操作发生非预期错误：{str(e)}"
+            )
+            raise CometRAGException(error_msg) from e
+
+    async def _embed_media(
+        self, data: MediaResource | ContentInput, /, **kwargs: Any
+    ) -> list[float]:
+        # 闸门已由 `embed_media` 持有，这里调未加闸的 `_embed`
+        return await self._embed(data, **kwargs)
+
+    async def embed_image(self, image: MediaResource, /, **kwargs: Any) -> list[float]:
+        """异步生成单张图片的向量。"""
+        return await self.embed_media(image, **kwargs)
+
+    async def embed_content(
+        self, content: ContentInput, /, **kwargs: Any
+    ) -> list[float]:
+        """异步生成文本、图片或二者组合内容的向量。"""
+        return await self.embed_media(content, **kwargs)
+
     @final
-    async def adetokenize(
+    async def tokenize(
+        self,
+        embedding_data: EmbeddingData,
+        continue_final_message: bool = False,
+        return_token_strs: bool = False,
+        **kwargs: Any,
+    ) -> TokenizeResponse:
+        """
+        异步编码 tokens 对应的文本
+
+        Args:
+            embedding_data (EmbeddingData): 嵌入数据
+            continue_final_message (bool): 是否继续最后一条消息，默认为 `False`
+            return_token_strs (bool): 是否返回 token 字符串，默认为 `False`
+
+        Returns:
+            TokenizeResponse: tokenize 响应
+        """
+        return await self._through_gate(
+            lambda: self._tokenize(
+                embedding_data,
+                continue_final_message=continue_final_message,
+                return_token_strs=return_token_strs,
+                **kwargs,
+            )
+        )
+
+    async def _tokenize(
+        self,
+        embedding_data: EmbeddingData,
+        continue_final_message: bool = False,
+        return_token_strs: bool = False,
+        **kwargs: Any,
+    ) -> TokenizeResponse:
+        """执行一次异步 tokenize 请求；公开入口负责获取闸门名额。"""
+        try:
+            embedding_data = await run_sync(
+                self._prepare_embedding_data, embedding_data
+            )
+            payload = self._build_tokenize_request(
+                embedding_data,
+                continue_final_message=continue_final_message,
+                return_token_strs=return_token_strs,
+                options=kwargs,
+            )
+            response = await self.client.post(
+                f"{self._base_url.removesuffix('/v1')}/tokenize",
+                headers=self._get_headers(),
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            return TokenizeResponse(**data)
+
+        except Exception as e:
+            error_msg = (
+                f"{self.__class__.__name__} | tokenize 方法操作发生非预期错误：{str(e)}"
+            )
+            raise CometRAGException(error_msg) from e
+
+    @final
+    async def detokenize(
         self,
         tokens: list[int],
         **kwargs: Any,
     ) -> DetokenizeResponse:
         """异步还原 token；与其他模型请求共用进程级闸门。"""
-        return await self._through_gate(lambda: self._adetokenize(tokens, **kwargs))
+        return await self._through_gate(lambda: self._detokenize(tokens, **kwargs))
 
-    async def _adetokenize(
+    async def _detokenize(
         self,
         tokens: list[int],
         **kwargs: Any,
     ) -> DetokenizeResponse:
         """执行一次异步 detokenize 请求。"""
         try:
-            response = await self.async_client.post(
+            response = await self.client.post(
                 f"{self._base_url.removesuffix('/v1')}/detokenize",
                 headers=self._get_headers(),
                 json={
@@ -597,44 +699,19 @@ class Qwen3VLEmbeddingModel(MultimodalEmbeddingMixin, BaseEmbeddingModel):
             return DetokenizeResponse(**data)
 
         except Exception as e:
-            error_msg = f"{self.__class__.__name__} | adetokenize 方法操作发生非预期错误：{str(e)}"
+            error_msg = f"{self.__class__.__name__} | detokenize 方法操作发生非预期错误：{str(e)}"
             raise CometRAGException(error_msg) from e
 
-    def get_output_dim(self) -> int:
-        """获取并校验输出维度"""
-        # 走公开入口：这是一次真实请求，同样该占闸门名额。传裸字符串而不是
-        # `EmbeddingData(text=...)` —— `_normalize_input` 对两者等价，而前者
-        # 与基类声明的 `str` 契约一致。
-        embedding = self.embed("hello", encoding_format=EncodingFormat.FLOAT)
-        if not isinstance(embedding, list):
-            raise ValueError("模型在 encoding_format=float 时返回了非浮点向量")
-        actual_dim = len(embedding)
+    async def get_output_dim(self) -> int:
+        """请求模型并校验输出维度；请求同样受闸门保护。"""
+        embedding = await self.embed("hello", encoding_format=EncodingFormat.FLOAT)
+        return self._validate_output_dim(embedding)
 
-        if self._output_dim is None:
-            self._output_dim = actual_dim
-        elif self._output_dim != actual_dim:
-            raise ValueError(
-                f"{self.__class__.__name__} | get_output_dim | 模型输出维度冲突: 配置为 {self._output_dim}, 但模型实际输出为 {actual_dim}"
-            )
+    async def get_max_model_len(self) -> int:
+        """请求模型并校验最大输入长度。"""
+        response = await self.tokenize(EmbeddingData(text="hello"))
+        return self._validate_max_model_len(response)
 
-        return self._output_dim
-
-    def get_max_model_len(self) -> int:
-        """读取并校验模型允许的最大输入长度。"""
-        response = self.tokenize(EmbeddingData(text="hello"))
-        actual_len = response.max_model_len
-
-        if self._max_model_len is None:
-            self._max_model_len = actual_len
-        elif self._max_model_len != actual_len:
-            raise ValueError(
-                f"{self.__class__.__name__} | get_max_model_len | 模型最大输入长度冲突: 配置为 {self._max_model_len}, 但模型实际返回为 {actual_len}"
-            )
-        return self._max_model_len
-
-    async def aclose(self) -> None:
-        """仅关闭由当前适配器创建的同步与异步客户端。"""
-        if self._owns_async_client:
-            await self.async_client.aclose()
-        if self._owns_sync_client:
-            self.sync_client.close()
+    async def close(self) -> None:
+        if self._owns_client:
+            await self.client.aclose()

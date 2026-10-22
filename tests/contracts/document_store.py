@@ -66,10 +66,10 @@ def make_parents(key: RevisionKey, count: int = 1) -> list[StoredParent]:
 async def make_ready(
     store: DocumentStore, draft: RevisionDraft
 ) -> tuple[RevisionDraft, list[StoredParent]]:
-    await store.areserve_revision(draft)
+    await store.reserve_revision(draft)
     parents = make_parents(draft.key, draft.parent_count)
-    await store.aput_parents(draft.key, parents)
-    await store.amark_ready(draft.key)
+    await store.put_parents(draft.key, parents)
+    await store.mark_ready(draft.key)
     return draft, parents
 
 
@@ -81,29 +81,27 @@ class DocumentStoreContract:
     async def test_reserve_allocates_monotonic_generation(
         self, store: DocumentStore
     ) -> None:
-        first = await store.areserve_revision(make_draft("revision-1"))
-        second = await store.areserve_revision(make_draft("revision-2"))
+        first = await store.reserve_revision(make_draft("revision-1"))
+        second = await store.reserve_revision(make_draft("revision-2"))
 
         assert (first.generation, second.generation) == (1, 2)
         assert first.status is RevisionStatus.STAGING
 
-    async def test_reserve_same_plan_is_idempotent(
-        self, store: DocumentStore
-    ) -> None:
+    async def test_reserve_same_plan_is_idempotent(self, store: DocumentStore) -> None:
         draft = make_draft()
 
-        first = await store.areserve_revision(draft)
-        second = await store.areserve_revision(draft)
+        first = await store.reserve_revision(draft)
+        second = await store.reserve_revision(draft)
 
         assert second == first
 
     async def test_reserve_same_id_with_changed_plan_is_rejected(
         self, store: DocumentStore
     ) -> None:
-        await store.areserve_revision(make_draft())
+        await store.reserve_revision(make_draft())
 
         with pytest.raises(RevisionConflict):
-            await store.areserve_revision(
+            await store.reserve_revision(
                 make_draft(plan_sha256="b" * 64, child_count=3)
             )
 
@@ -111,8 +109,8 @@ class DocumentStoreContract:
         self, store: DocumentStore
     ) -> None:
         first, second = await asyncio.gather(
-            store.areserve_revision(make_draft("revision-1")),
-            store.areserve_revision(make_draft("revision-2")),
+            store.reserve_revision(make_draft("revision-1")),
+            store.reserve_revision(make_draft("revision-2")),
         )
 
         assert {first.generation, second.generation} == {1, 2}
@@ -123,7 +121,7 @@ class DocumentStoreContract:
         draft = make_draft()
 
         first, second = await asyncio.gather(
-            store.areserve_revision(draft), store.areserve_revision(draft)
+            store.reserve_revision(draft), store.reserve_revision(draft)
         )
 
         assert first == second
@@ -133,12 +131,12 @@ class DocumentStoreContract:
         self, store: DocumentStore
     ) -> None:
         draft = make_draft(parent_count=2)
-        await store.areserve_revision(draft)
+        await store.reserve_revision(draft)
         parents = make_parents(draft.key, 2)
 
-        await store.aput_parents(draft.key, parents)
-        await store.aput_parents(draft.key, parents)
-        loaded = await store.aget_parents(KB, [parent.parent_id for parent in parents])
+        await store.put_parents(draft.key, parents)
+        await store.put_parents(draft.key, parents)
+        loaded = await store.get_parents(KB, [parent.parent_id for parent in parents])
 
         assert set(loaded) == {parent.parent_id for parent in parents}
         assert loaded[parents[1].parent_id] == parents[1]
@@ -147,9 +145,9 @@ class DocumentStoreContract:
         self, store: DocumentStore
     ) -> None:
         draft = make_draft()
-        await store.areserve_revision(draft)
+        await store.reserve_revision(draft)
         parent = make_parents(draft.key)[0]
-        await store.aput_parents(draft.key, [parent])
+        await store.put_parents(draft.key, [parent])
 
         changed = StoredParent(
             key=parent.key,
@@ -160,23 +158,23 @@ class DocumentStoreContract:
             end_char=parent.end_char,
         )
         with pytest.raises(RevisionConflict):
-            await store.aput_parents(draft.key, [changed])
+            await store.put_parents(draft.key, [changed])
 
     async def test_parent_from_another_revision_is_rejected(
         self, store: DocumentStore
     ) -> None:
         draft = make_draft()
-        await store.areserve_revision(draft)
+        await store.reserve_revision(draft)
         foreign = make_parents(RevisionKey(KB, SOURCE, "other"))[0]
 
         with pytest.raises(RevisionConflict):
-            await store.aput_parents(draft.key, [foreign])
+            await store.put_parents(draft.key, [foreign])
 
     async def test_mark_ready_requires_exact_parent_chain(
         self, store: DocumentStore
     ) -> None:
         draft = make_draft(parent_count=2)
-        await store.areserve_revision(draft)
+        await store.reserve_revision(draft)
         parents = make_parents(draft.key, 2)
         broken = StoredParent(
             key=parents[1].key,
@@ -188,19 +186,19 @@ class DocumentStoreContract:
             previous_id=None,
             next_id=None,
         )
-        await store.aput_parents(draft.key, [parents[0], broken])
+        await store.put_parents(draft.key, [parents[0], broken])
 
         with pytest.raises(RevisionNotReady):
-            await store.amark_ready(draft.key)
+            await store.mark_ready(draft.key)
 
     async def test_ready_and_activation_are_idempotent(
         self, store: DocumentStore
     ) -> None:
         draft, _ = await make_ready(store, make_draft())
-        assert (await store.amark_ready(draft.key)).status is RevisionStatus.READY
+        assert (await store.mark_ready(draft.key)).status is RevisionStatus.READY
 
-        first = await store.aactivate_revision(draft.key)
-        second = await store.aactivate_revision(draft.key)
+        first = await store.activate_revision(draft.key)
+        second = await store.activate_revision(draft.key)
 
         assert first.active.status is RevisionStatus.ACTIVE
         assert second.already_active is True
@@ -210,12 +208,12 @@ class DocumentStoreContract:
         self, store: DocumentStore
     ) -> None:
         first, _ = await make_ready(store, make_draft("revision-1"))
-        await store.aactivate_revision(first.key)
+        await store.activate_revision(first.key)
         second, _ = await make_ready(store, make_draft("revision-2"))
 
-        activated = await store.aactivate_revision(second.key)
-        active = await store.aget_active_revisions(KB, [SOURCE, "unknown"])
-        cleanup = await store.alist_cleanup_candidates(limit=10)
+        activated = await store.activate_revision(second.key)
+        active = await store.get_active_revisions(KB, [SOURCE, "unknown"])
+        cleanup = await store.list_cleanup_candidates(limit=10)
 
         assert activated.previous_revision_id == first.key.revision_id
         assert active == {SOURCE: second.key.revision_id, "unknown": None}
@@ -226,12 +224,12 @@ class DocumentStoreContract:
     ) -> None:
         old, _ = await make_ready(store, make_draft("revision-old"))
         new, _ = await make_ready(store, make_draft("revision-new"))
-        await store.aactivate_revision(new.key)
+        await store.activate_revision(new.key)
 
         with pytest.raises(StaleRevision):
-            await store.aactivate_revision(old.key)
+            await store.activate_revision(old.key)
 
-        assert await store.aget_active_revisions(KB, [SOURCE]) == {
+        assert await store.get_active_revisions(KB, [SOURCE]) == {
             SOURCE: new.key.revision_id
         }
 
@@ -242,8 +240,8 @@ class DocumentStoreContract:
         new, _ = await make_ready(store, make_draft("revision-new"))
 
         outcomes = await asyncio.gather(
-            store.aactivate_revision(old.key),
-            store.aactivate_revision(new.key),
+            store.activate_revision(old.key),
+            store.activate_revision(new.key),
             return_exceptions=True,
         )
 
@@ -252,7 +250,7 @@ class DocumentStoreContract:
             and not isinstance(outcome, StaleRevision)
             for outcome in outcomes
         )
-        assert await store.aget_active_revisions(KB, [SOURCE]) == {
+        assert await store.get_active_revisions(KB, [SOURCE]) == {
             SOURCE: new.key.revision_id
         }
 
@@ -261,8 +259,8 @@ class DocumentStoreContract:
     ) -> None:
         draft, parents = await make_ready(store, make_draft())
 
-        assert await store.aget_parents("another-kb", [parents[0].parent_id]) == {}
-        assert (await store.aget_parents(KB, [parents[0].parent_id]))[
+        assert await store.get_parents("another-kb", [parents[0].parent_id]) == {}
+        assert (await store.get_parents(KB, [parents[0].parent_id]))[
             parents[0].parent_id
         ].key == draft.key
 
@@ -270,46 +268,44 @@ class DocumentStoreContract:
         self, store: DocumentStore
     ) -> None:
         draft = make_draft()
-        await store.areserve_revision(draft)
+        await store.reserve_revision(draft)
 
-        await store.aabandon_revision(draft.key)
-        await store.aabandon_revision(draft.key)
+        await store.abandon_revision(draft.key)
+        await store.abandon_revision(draft.key)
 
-        assert await store.alist_cleanup_candidates(limit=1) == [draft.key]
+        assert await store.list_cleanup_candidates(limit=1) == [draft.key]
 
     async def test_active_revision_cannot_be_abandoned_or_purged(
         self, store: DocumentStore
     ) -> None:
         draft, _ = await make_ready(store, make_draft())
-        await store.aactivate_revision(draft.key)
+        await store.activate_revision(draft.key)
 
         with pytest.raises(ActiveRevisionDeletion):
-            await store.aabandon_revision(draft.key)
+            await store.abandon_revision(draft.key)
         with pytest.raises(ActiveRevisionDeletion):
-            await store.apurge_inactive_revision(draft.key)
+            await store.purge_inactive_revision(draft.key)
 
     async def test_purge_removes_parents_but_keeps_tombstone(
         self, store: DocumentStore
     ) -> None:
         draft = make_draft()
         _, parents = await make_ready(store, draft)
-        await store.aabandon_revision(draft.key)
+        await store.abandon_revision(draft.key)
 
-        await store.apurge_inactive_revision(draft.key)
-        await store.apurge_inactive_revision(draft.key)
-        replay = await store.areserve_revision(draft)
+        await store.purge_inactive_revision(draft.key)
+        await store.purge_inactive_revision(draft.key)
+        replay = await store.reserve_revision(draft)
 
-        assert await store.aget_parents(KB, [parents[0].parent_id]) == {}
+        assert await store.get_parents(KB, [parents[0].parent_id]) == {}
         assert replay.status is RevisionStatus.PURGED
         assert replay.generation == 1
         with pytest.raises(RevisionNotReady):
-            await store.aactivate_revision(draft.key)
+            await store.activate_revision(draft.key)
 
-    async def test_cleanup_limit_must_be_positive(
-        self, store: DocumentStore
-    ) -> None:
+    async def test_cleanup_limit_must_be_positive(self, store: DocumentStore) -> None:
         with pytest.raises(ValueError):
-            await store.alist_cleanup_candidates(limit=0)
+            await store.list_cleanup_candidates(limit=0)
 
     async def test_inputs_are_copied_at_value_boundary(
         self, store: DocumentStore
@@ -328,9 +324,9 @@ class DocumentStoreContract:
         )
         metadata["version"] = 2
         parent_metadata["page"] = 2
-        await store.areserve_revision(draft)
-        await store.aput_parents(draft.key, [parent])
+        await store.reserve_revision(draft)
+        await store.put_parents(draft.key, [parent])
 
-        loaded = (await store.aget_parents(KB, [parent.parent_id]))[parent.parent_id]
+        loaded = (await store.get_parents(KB, [parent.parent_id]))[parent.parent_id]
         assert draft.metadata["version"] == 1
         assert loaded.metadata["page"] == 1

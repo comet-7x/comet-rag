@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, cast, final
 
+from comet_rag.engines.offload import run_sync
 from comet_rag.infrastructure.models.base import GatedModel
 from comet_rag.ports.content import (
     ContentInput,
@@ -15,62 +15,11 @@ from comet_rag.ports.content import (
     RerankDocument,
     TextContent,
 )
-from comet_rag.ports.reranker import RerankerPort
+from comet_rag.ports.reranker import AsyncRerankerPort, RerankerPort
 
 
-class BaseReranker[ProviderInput](GatedModel, ABC):
-    """Reranker 适配器的共享实现。"""
-
-    # ── 适配器必须实现的两个扩展点 ─────────────────────────────────────────
-
-    @abstractmethod
-    async def _ascore(
-        self,
-        query: ProviderInput,
-        documents: Sequence[ProviderInput],
-        **kwargs: Any,
-    ) -> list[float]:
-        """适配器真正执行异步打分请求的地方。"""
-
-    @abstractmethod
-    def _score(
-        self,
-        query: ProviderInput,
-        documents: Sequence[ProviderInput],
-        **kwargs: Any,
-    ) -> list[float]:
-        """适配器真正执行同步打分请求的地方。
-
-        入参已是供应商格式（由 ``_to_provider_input`` 翻译），所以类型随适配器
-        而定。
-        """
-
-    @final
-    def score(
-        self,
-        query: ProviderInput,
-        documents: Sequence[ProviderInput],
-        **kwargs: Any,
-    ) -> list[float]:
-        """同步低层打分接口。受闸门保护，不可覆写。
-
-        同步入口同样必须经模板方法取闸门，否则 ``rank()`` 会绕过进程级预算。
-        """
-        return self._through_gate_sync(lambda: self._score(query, documents, **kwargs))
-
-    @final
-    async def ascore(
-        self,
-        query: ProviderInput,
-        documents: Sequence[ProviderInput],
-        **kwargs: Any,
-    ) -> list[float]:
-        """异步低层打分接口。受闸门保护，不可覆写。"""
-        return await self._through_gate(
-            lambda: self._ascore(query, documents, **kwargs)
-        )
-
-    # ── 供应商格式翻译 ─────────────────────────────────────────────────────
+class _RerankerTransform[ProviderInput]:
+    """共享内容转换与结果排序，不持有客户端或执行请求。"""
 
     def _to_provider_input(self, content: ContentInput) -> ProviderInput:
         """把共享内容类型转换成供应商输入；纯文本模型使用默认实现。
@@ -89,8 +38,6 @@ class BaseReranker[ProviderInput](GatedModel, ABC):
         if len(text_parts) == len(content):
             return cast("ProviderInput", "\n".join(text_parts))
         raise TypeError("不支持的重排内容类型")
-
-    # ── 排序 ───────────────────────────────────────────────────────────────
 
     @staticmethod
     def _normalize_documents(
@@ -124,7 +71,44 @@ class BaseReranker[ProviderInput](GatedModel, ABC):
         ranked.sort(key=lambda item: (-item.score, item.index))
         return ranked if top_k is None else ranked[:top_k]
 
-    # ── 面向使用者的公共入口 ───────────────────────────────────────────────
+    def _translate(
+        self, query: ContentInput, documents: Sequence[RerankDocument]
+    ) -> tuple[ProviderInput, list[ProviderInput]]:
+        """一次性翻译 query 与全部候选；同步，供 `rank` 直接用、异步 `rank` 转线程用。"""
+        return (
+            self._to_provider_input(query),
+            [self._to_provider_input(document.content) for document in documents],
+        )
+
+
+class BaseReranker[ProviderInput](_RerankerTransform[ProviderInput], GatedModel, ABC):
+    """同步重排模板。"""
+
+    @abstractmethod
+    def _score(
+        self,
+        query: ProviderInput,
+        documents: Sequence[ProviderInput],
+        **kwargs: Any,
+    ) -> list[float]:
+        """适配器真正执行同步打分请求的地方。
+
+        入参已是供应商格式（由 ``_to_provider_input`` 翻译），所以类型随适配器
+        而定。
+        """
+
+    @final
+    def score(
+        self,
+        query: ProviderInput,
+        documents: Sequence[ProviderInput],
+        **kwargs: Any,
+    ) -> list[float]:
+        """同步低层打分接口。受闸门保护，不可覆写。
+
+        同步入口同样必须经模板方法取闸门，否则 ``rank()`` 会绕过进程级预算。
+        """
+        return self._through_gate_sync(lambda: self._score(query, documents, **kwargs))
 
     @final
     def rank(
@@ -142,8 +126,36 @@ class BaseReranker[ProviderInput](GatedModel, ABC):
         scores = self.score(provider_query, provider_documents, **kwargs)
         return self._ranked(normalized, scores, top_k)
 
+    def close(self) -> None:
+        """无资源适配器沿用空操作。"""
+
+
+class AsyncBaseReranker[ProviderInput](
+    _RerankerTransform[ProviderInput], GatedModel, ABC
+):
+    """异步重排模板。"""
+
+    @abstractmethod
+    async def _score(
+        self,
+        query: ProviderInput,
+        documents: Sequence[ProviderInput],
+        **kwargs: Any,
+    ) -> list[float]:
+        """适配器真正执行异步打分请求的地方。"""
+
     @final
-    async def arank(
+    async def score(
+        self,
+        query: ProviderInput,
+        documents: Sequence[ProviderInput],
+        **kwargs: Any,
+    ) -> list[float]:
+        """异步低层打分接口。受闸门保护，不可覆写。"""
+        return await self._through_gate(lambda: self._score(query, documents, **kwargs))
+
+    @final
+    async def rank(
         self,
         query: ContentInput,
         documents: Sequence[str | RerankDocument],
@@ -154,29 +166,20 @@ class BaseReranker[ProviderInput](GatedModel, ABC):
     ) -> list[RankedDocument]:
         """异步重排并返回携带原始候选的有序结果。
 
-        翻译放进 `to_thread`：`_to_provider_input` 对多模态输入要读本地文件并
+        翻译交给 `run_sync`：`_to_provider_input` 对多模态输入要读本地文件并
         做 Base64 编码（见 Qwen 适配器）。留在事件循环里，一批大图片会把整个
         进程的协程**全部**堵住 —— 而且堵的是请求发出**之前**那一段，连闸门
         的排队统计都看不见它。
         """
         normalized = self._normalize_documents(documents)
-        provider_query, provider_documents = await asyncio.to_thread(
+        provider_query, provider_documents = await run_sync(
             self._translate, query, normalized
         )
-        scores = await self.ascore(provider_query, provider_documents, **kwargs)
+        scores = await self.score(provider_query, provider_documents, **kwargs)
         return self._ranked(normalized, scores, top_k)
 
-    def _translate(
-        self, query: ContentInput, documents: Sequence[RerankDocument]
-    ) -> tuple[ProviderInput, list[ProviderInput]]:
-        """一次性翻译 query 与全部候选；同步，供 `rank` 直接用、`arank` 转线程用。"""
-        return (
-            self._to_provider_input(query),
-            [self._to_provider_input(document.content) for document in documents],
-        )
-
-    async def aclose(self) -> None:
-        return None
+    async def close(self) -> None:
+        """无资源适配器沿用空操作。"""
 
 
-__all__ = ["BaseReranker", "RerankerPort"]
+__all__ = ["BaseReranker", "AsyncBaseReranker", "RerankerPort", "AsyncRerankerPort"]

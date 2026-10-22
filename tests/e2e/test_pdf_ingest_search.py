@@ -21,15 +21,15 @@ from comet_rag.config.schemas import (
     ServerConfig,
 )
 from comet_rag.engines.pipelines import PipelineConfig
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.models.embedding.base import AsyncBaseEmbeddingModel
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.infrastructure.sources import (
-    AutoLoader,
-    LoaderRoute,
-    LocalLoader,
-    URLLoader,
+    AsyncAutoLoader,
+    AsyncLoaderRoute,
+    AsyncLocalLoader,
+    AsyncURLLoader,
 )
-from comet_rag.infrastructure.sources.s3 import S3Loader
+from comet_rag.infrastructure.sources.s3 import AsyncS3Loader
 from comet_rag.ports import ExtractedDocument, RetryableDocumentUpstreamError
 from comet_rag.ports.gate import GatedResource
 from comet_rag.tasks import InMemoryTaskStore, InProcessExecutor, TaskStatus
@@ -57,7 +57,7 @@ PDF_MARKDOWN = """## 正文
 KEYWORDS = ("正文检索词", "表格检索词", "公式检索词", "第一段正文")
 
 
-class KeywordEmbedding(BaseEmbeddingModel):
+class KeywordEmbedding(AsyncBaseEmbeddingModel):
     def __init__(self, *, fail_times: int = 0) -> None:
         self.fail_times = fail_times
 
@@ -69,10 +69,7 @@ class KeywordEmbedding(BaseEmbeddingModel):
                 vector[index] = 1.0
         return vector
 
-    def _embed(self, data: str, **kwargs: Any) -> list[float]:
-        return self._vector(data)
-
-    async def _aembed(self, data: str, **kwargs: Any) -> list[float]:
+    async def _embed(self, data: str, **kwargs: Any) -> list[float]:
         if self.fail_times:
             self.fail_times -= 1
             raise httpx.ConnectTimeout("注入的 embedding 超时")
@@ -87,13 +84,7 @@ class FakePdfExtractor(GatedResource):
         self.started = asyncio.Event()
         self.cancelled = 0
 
-    def extract(
-        self, path: Path, /, *, filename: str, media_type: str
-    ) -> ExtractedDocument:
-        self.calls.append((path, filename, media_type))
-        return ExtractedDocument(markdown=PDF_MARKDOWN)
-
-    async def aextract(
+    async def extract(
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument:
         self.calls.append((path, filename, media_type))
@@ -109,7 +100,7 @@ class FakePdfExtractor(GatedResource):
                 raise
         return ExtractedDocument(markdown=PDF_MARKDOWN)
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         return None
 
 
@@ -183,20 +174,20 @@ async def running_pdf_app(
     s3_dir = tmp_path / "s3"
     url_dir.mkdir()
     s3_dir.mkdir()
-    loader = AutoLoader(
+    loader = AsyncAutoLoader(
         [
-            LoaderRoute.schemes(
+            AsyncLoaderRoute.schemes(
                 "s3",
-                S3Loader(
+                AsyncS3Loader(
                     download_dir=s3_dir,
-                    async_client=AsyncS3Client(pdf),
+                    client=AsyncS3Client(pdf),
                 ),
                 {"s3", "minio"},
             ),
-            LoaderRoute.local(LocalLoader()),
-            LoaderRoute.schemes(
+            AsyncLoaderRoute.local(AsyncLocalLoader()),
+            AsyncLoaderRoute.schemes(
                 "url",
-                URLLoader(download_dir=url_dir, async_client=url_client),
+                AsyncURLLoader(download_dir=url_dir, client=url_client),
                 {"http", "https"},
             ),
         ]
@@ -206,7 +197,7 @@ async def running_pdf_app(
     app = create_app(
         _config(tmp_path),
         embedding_model=embedding or KeywordEmbedding(),
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
         task_store=task_store,
         task_executor=executor,
         ingest_loader=loader,

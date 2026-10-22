@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.ports import Filter, SearchHit
 from tests.contracts.keyword_search import (
     DIM,
@@ -18,11 +18,11 @@ from tests.contracts.keyword_search import (
 class TestInMemoryKeywordSearch(KeywordSearchContract):
     @pytest.fixture
     async def store(self) -> KeywordSearchStore:
-        return InMemoryVectorStore()
+        return AsyncInMemoryVectorStore()
 
 
-class _FilterIgnoringStore(InMemoryVectorStore):
-    async def asearch_keywords(
+class _FilterIgnoringStore(AsyncInMemoryVectorStore):
+    async def search_keywords(
         self,
         kb_id: str,
         query: str,
@@ -31,16 +31,14 @@ class _FilterIgnoringStore(InMemoryVectorStore):
         filter: Filter | None = None,
     ) -> list[SearchHit]:
         del filter
-        return await super().asearch_keywords(
-            kb_id, query, top_k=top_k, filter=None
-        )
+        return await super().search_keywords(kb_id, query, top_k=top_k, filter=None)
 
 
 async def test_contract_detects_an_implementation_that_ignores_filter() -> None:
     """故意注入过滤缺陷，证明契约断言会失败而不是恒真。"""
     store = _FilterIgnoringStore()
-    await store.aensure_collection(KB, dim=DIM)
-    await store.aupsert(KB, keyword_records())
+    await store.ensure_collection(KB, dim=DIM)
+    await store.upsert(KB, keyword_records())
 
     with pytest.raises(AssertionError):
         await KeywordSearchContract().test_filter_by_equality(store, KB)

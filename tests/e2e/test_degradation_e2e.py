@@ -25,9 +25,9 @@ from comet_rag.config.schemas import (
 )
 from comet_rag.core.degradation import Level
 from comet_rag.core.logging import logger
-from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
+from comet_rag.infrastructure.models.reranker.base import AsyncBaseReranker
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.ports import ExtractedDocument
 from tests.e2e.test_ingest_search import (
     DIM,
@@ -44,17 +44,14 @@ pytestmark = pytest.mark.e2e
 KB = "kb-degrade"
 
 
-class FlakyReranker(BaseReranker):
+class FlakyReranker(AsyncBaseReranker):
     """可以被切成"总是超时"的重排。超时是模型服务过载最典型的表现。"""
 
     def __init__(self) -> None:
         self.failing = False
         self.calls = 0
 
-    def _score(self, query, documents, **kwargs):  # pragma: no cover
-        return []
-
-    async def _ascore(self, query, documents, **kwargs) -> list[float]:
+    async def _score(self, query, documents, **kwargs) -> list[float]:
         self.calls += 1
         if self.failing:
             raise TimeoutError("模型服务超时")
@@ -74,11 +71,11 @@ def document(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def hooks():
-    @PipelineHooks.extractor(STUB_TYPE)
+    @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
     def _extract(lc, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
-    PipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
+    AsyncPipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
 
     yield
 
@@ -112,7 +109,7 @@ async def app_and_client(
         make_config(),
         embedding_model=KeywordEmbedding(),
         reranker=reranker,
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
         pipeline_config=PipelineConfig(embed_batch_size=2, max_concurrency=4),
     )
     transport = httpx.ASGITransport(app=app)

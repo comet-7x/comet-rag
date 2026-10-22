@@ -38,7 +38,7 @@ class RevisionRecall:
         self._store = document_store
         self._cap = max_candidates
 
-    async def arecall(
+    async def recall(
         self,
         kb_id: str,
         *,
@@ -109,7 +109,7 @@ class RevisionRecall:
         if not sources:
             return [], damaged
         try:
-            active = await self._store.aget_active_revisions(kb_id, list(sources))
+            active = await self._store.get_active_revisions(kb_id, list(sources))
         except Exception as exc:  # noqa: BLE001 — 判活失败绝不 fail-open
             logger.opt(exception=exc).error("revision 判活存储不可用")
             raise RevisionVisibilityError("revision visibility unavailable") from exc

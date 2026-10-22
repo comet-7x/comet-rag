@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any, Literal
@@ -8,6 +7,7 @@ from typing import Any, Literal
 from httpx import AsyncClient, Client
 from pydantic import BaseModel, Field
 
+from comet_rag.engines.offload import run_sync
 from comet_rag.exceptions import CometRAGException
 from comet_rag.infrastructure.models.media import (
     DEFAULT_MAX_LOCAL_IMAGE_BYTES,
@@ -15,7 +15,10 @@ from comet_rag.infrastructure.models.media import (
     prepare_image_reference,
     prepare_media_resource,
 )
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.models.reranker.base import (
+    AsyncBaseReranker,
+    BaseReranker,
+)
 from comet_rag.ports import ContentInput, ImageContent, TextContent
 
 
@@ -122,47 +125,24 @@ class RerankResponse(BaseModel):
     results: list[RerankResult] = Field(..., description="重排结果")
 
 
-class Qwen3VLReranker(BaseReranker[str | ScoreMultiModalParam]):
-    def __init__(
+class _QwenRerankFormat:
+    """共享配置、请求词汇与媒体准入逻辑；不持有 HTTP 客户端。"""
+
+    def _configure(
         self,
         base_url: str,
         model_name: str,
         api_key: str,
-        async_client: AsyncClient | None = None,
-        sync_client: Client | None = None,
         image_url_validator: ImageReferenceValidator | None = None,
         local_image_validator: ImageReferenceValidator | None = None,
         max_local_image_bytes: int = DEFAULT_MAX_LOCAL_IMAGE_BYTES,
     ) -> None:
-        """创建 Qwen3-VL 重排服务适配器。
-
-        Args:
-            base_url (str): 模型服务地址
-            model_name (str): 模型名称
-            api_key (str): 模型服务 api_key
-            async_client (AsyncClient | None): 异步请求连接，默认为 None
-            sync_client (Client | None): 同步请求连接，默认为 None
-            image_url_validator: 远程图片 URL 准入策略
-            local_image_validator: 本地图片路径准入策略
-            max_local_image_bytes: 本地图片读取上限；转换 Base64 前执行
-
-        传入的客户端由调用方持有，本适配器只关闭自己创建的客户端。
-        """
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
         self._api_key = api_key
         self._image_url_validator = image_url_validator
         self._local_image_validator = local_image_validator
         self._max_local_image_bytes = max_local_image_bytes
-
-        self._owns_async_client = async_client is None
-        self._owns_sync_client = sync_client is None
-        self.async_client = (
-            async_client if async_client is not None else AsyncClient(timeout=60.0)
-        )
-        self.sync_client = (
-            sync_client if sync_client is not None else Client(timeout=60.0)
-        )
 
     def _to_provider_input(self, content: ContentInput) -> str | ScoreMultiModalParam:
         """把公共内容块转换成 Qwen 私有请求 DTO。"""
@@ -180,8 +160,8 @@ class Qwen3VLReranker(BaseReranker[str | ScoreMultiModalParam]):
                 resource = part.resource
                 # 这里**故意**只把路径/URL 原样搬进 DTO，不在此处校验：准入检查
                 # 统一由 `_prepare_inputs` → `_prepare_multimodal_content` 做，
-                # 而 `score`/`_ascore` 两个入口都必经它（`_ascore` 还把它放进
-                # `to_thread`，因为 DNS 解析与读本地文件都是同步 I/O）。
+                # 而 同步/异步 `score` 入口都必经它（异步路径还把它放进
+                # `run_sync`，因为 DNS 解析与读本地文件都是同步 I/O）。
                 #
                 # 校验点只有一个，是刻意的：无论调用方走公共的 `ContentInput`
                 # 还是直接递供应商 DTO，都落到同一道关卡上，不会出现"两条路两
@@ -305,19 +285,32 @@ class Qwen3VLReranker(BaseReranker[str | ScoreMultiModalParam]):
             for result in sorted(response.results, key=lambda result: result.index)
         ]
 
-    def _post_sync(self, rerank_request: dict[str, Any]) -> dict[str, Any]:
-        rerank_response = self.sync_client.post(
-            url=f"{self._base_url}/rerank",
-            json=rerank_request,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-            },
-        )
-        rerank_response.raise_for_status()
-        return rerank_response.json()
 
-    async def _post_async(self, rerank_request: dict[str, Any]) -> dict[str, Any]:
-        rerank_response = await self.async_client.post(
+class Qwen3VLReranker(_QwenRerankFormat, BaseReranker[str | ScoreMultiModalParam]):
+    def __init__(
+        self,
+        base_url: str,
+        model_name: str,
+        api_key: str,
+        client: Client | None = None,
+        image_url_validator: ImageReferenceValidator | None = None,
+        local_image_validator: ImageReferenceValidator | None = None,
+        max_local_image_bytes: int = DEFAULT_MAX_LOCAL_IMAGE_BYTES,
+    ) -> None:
+        """只创建当前执行模式的客户端；外部注入客户端仍由调用方持有。"""
+        self._configure(
+            base_url,
+            model_name,
+            api_key,
+            image_url_validator,
+            local_image_validator,
+            max_local_image_bytes,
+        )
+        self._owns_client = client is None
+        self.client = client if client is not None else Client(timeout=60.0)
+
+    def _post(self, rerank_request: dict[str, Any]) -> dict[str, Any]:
+        rerank_response = self.client.post(
             url=f"{self._base_url}/rerank",
             json=rerank_request,
             headers={
@@ -336,7 +329,7 @@ class Qwen3VLReranker(BaseReranker[str | ScoreMultiModalParam]):
         try:
             query, documents = self._prepare_inputs(query, documents)
             rerank_request = self._build_rerank_request(query, documents, **kwargs)
-            response_json = self._post_sync(rerank_request)
+            response_json = self._post(rerank_request)
             return self._extract_scores(
                 response_json,
                 expected_count=self._document_count(documents),
@@ -349,7 +342,48 @@ class Qwen3VLReranker(BaseReranker[str | ScoreMultiModalParam]):
             )
             raise CometRAGException(error_msg) from e
 
-    async def _ascore(
+    def close(self) -> None:
+        if self._owns_client:
+            self.client.close()
+
+
+class AsyncQwen3VLReranker(
+    _QwenRerankFormat, AsyncBaseReranker[str | ScoreMultiModalParam]
+):
+    def __init__(
+        self,
+        base_url: str,
+        model_name: str,
+        api_key: str,
+        client: AsyncClient | None = None,
+        image_url_validator: ImageReferenceValidator | None = None,
+        local_image_validator: ImageReferenceValidator | None = None,
+        max_local_image_bytes: int = DEFAULT_MAX_LOCAL_IMAGE_BYTES,
+    ) -> None:
+        """只创建当前执行模式的客户端；外部注入客户端仍由调用方持有。"""
+        self._configure(
+            base_url,
+            model_name,
+            api_key,
+            image_url_validator,
+            local_image_validator,
+            max_local_image_bytes,
+        )
+        self._owns_client = client is None
+        self.client = client if client is not None else AsyncClient(timeout=60.0)
+
+    async def _post(self, rerank_request: dict[str, Any]) -> dict[str, Any]:
+        rerank_response = await self.client.post(
+            url=f"{self._base_url}/rerank",
+            json=rerank_request,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+            },
+        )
+        rerank_response.raise_for_status()
+        return rerank_response.json()
+
+    async def _score(
         self,
         query: str | ScoreMultiModalParam,
         documents: str | ScoreMultiModalParam | Sequence[str | ScoreMultiModalParam],
@@ -357,11 +391,9 @@ class Qwen3VLReranker(BaseReranker[str | ScoreMultiModalParam]):
     ) -> list[float]:
         try:
             # DNS 与本地文件读取都是同步 I/O，不能在事件循环上执行。
-            query, documents = await asyncio.to_thread(
-                self._prepare_inputs, query, documents
-            )
+            query, documents = await run_sync(self._prepare_inputs, query, documents)
             rerank_request = self._build_rerank_request(query, documents, **kwargs)
-            response_json = await self._post_async(rerank_request)
+            response_json = await self._post(rerank_request)
             return self._extract_scores(
                 response_json,
                 expected_count=self._document_count(documents),
@@ -370,13 +402,10 @@ class Qwen3VLReranker(BaseReranker[str | ScoreMultiModalParam]):
             raise
         except Exception as e:
             error_msg = (
-                f"{self.__class__.__name__} | ascore | 方法操作发生非预期错误：{str(e)}"
+                f"{self.__class__.__name__} | score | 方法操作发生非预期错误：{str(e)}"
             )
             raise CometRAGException(error_msg) from e
 
-    async def aclose(self) -> None:
-        """仅关闭由当前适配器创建的同步与异步客户端。"""
-        if self._owns_async_client:
-            await self.async_client.aclose()
-        if self._owns_sync_client:
-            self.sync_client.close()
+    async def close(self) -> None:
+        if self._owns_client:
+            await self.client.aclose()

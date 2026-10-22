@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # 按文档顺序解析 DOCX；格式语义见 docs/docx_parser_internals.md。
-import asyncio
 import base64
 import re
 import threading
@@ -220,7 +219,7 @@ class DocxParser:
         heading_numbers: bool = False,
         max_table_cells: int = _MAX_TABLE_CELLS,
     ) -> None:
-        # 解析状态目前保存在实例上；同步 parse 与 aparse(to_thread) 必须共用
+        # 解析状态目前保存在实例上；所有调用 parse 的线程必须共用
         # 这一把锁，否则同一实例的两个文档会互相重置 `_blocks` / 编号状态。
         self._parse_lock = threading.Lock()
         self._max_table_cells = max_table_cells
@@ -258,10 +257,6 @@ class DocxParser:
         self._add_headers_footers()
 
         return DocxParsedContent(blocks=self._blocks, metadata=document.metadata)
-
-    async def aparse(self, document: DocxDocument) -> DocxParsedContent:
-        """在线程中执行 python-docx/lxml 的同步解析，避免阻塞事件循环。"""
-        return await asyncio.to_thread(self.parse, document)
 
     def _walk(self, container: Any) -> None:
         for _, child in enumerate(container):

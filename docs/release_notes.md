@@ -1,9 +1,41 @@
 # 版本说明
 
-## Unreleased — 目录与文档处理边界重构
+## Unreleased — V2 执行模式与职责重构
 
-本轮在已完成的 M3 混合检索基础上收敛目录，并为 M4 冻结统一文档输入。以下变更
-包含 Python API 与部署兼容性调整，升级前必须处理。
+V2 优先清楚的资源所有权与调用边界。本轮是 Python API 的破坏性变更，所有仓内
+调用与示例一并迁移，不保留旧 `a*` 方法或导入别名。数据库和向量数据格式不因这次
+同步/异步拆分改变；下文已有的 M3/M4 schema 迁移要求仍独立成立。
+
+### 同步与异步 API 分离
+
+| 旧用法 | V2 用法 |
+|---|---|
+| 同一模型的 `embed/aembed`、`rank/arank`、`describe/adescribe` | `Foo` / `AsyncFoo` 两个类型，同名 `embed`、`rank`、`describe` |
+| 一个实例注入 `sync_client=` 和 `async_client=` | 每实例仅注入本模式的 `client=`，外部客户端仍归调用方 |
+| `Pipeline.arun/astream_run/abatch_run` | `AsyncPipeline.run/stream_run/batch_run`；流式用 `async for` |
+| `PipelineHooks.aextractor` | `AsyncPipelineHooks.extractor` 注册异步函数；同步函数显式用 `sync_extractor` |
+| `PipelineHooks` 作为类使用 | `HookRegistry` / `AsyncHookRegistry` 为类型；两个默认 Hooks 是独立实例 |
+| `aembed_documents` | 异步导入 `engines.embedding.async_batch.embed_documents`；同步导入 `engines.embedding.batch.embed_documents` |
+| Loader 的 `aload/abatch_load/acleanup` | `AsyncFooLoader.load/batch_load/cleanup`；同步类只提供同步操作 |
+| `BaseVectorStore`、`MilvusStore`、`InMemoryVectorStore` | `AsyncVectorStore`、`AsyncMilvusStore`、`AsyncInMemoryVectorStore`，方法使用 `search/upsert/...` |
+| `await abuild_context(...)`、`context.aclose()` | `await build_context(...)`、`await context.close()` |
+| 纯异步领域接口的 `a*` 方法 | `DocumentStore`、`KnowledgeBaseRepository`、`RevisionStager` 等保留类型名，使用同名无前缀异步方法 |
+
+同步模型 `close()` 直接完成；异步模型 `close()` 必须等待。Pipeline 仅关闭自己创建
+的默认 Loader，不接管注入模型；服务 Context 按组合根所有权规则统一管理资源。
+同步/异步 DTO 与纯计算实现继续共享。`DocxConverter`、`DocxParser`、分块算法没有
+无 I/O 的 Async 副本；异步提取器负责必要的线程卸载。
+
+### 原生异步与取消
+
+PyMilvus 2.6.17 已支持本项目需要的异步管理 API；移除了同步管理客户端与其线程
+包装，只保留 `AsyncMilvusClient`。该 SDK 惰性连接，连通性失败从构造阶段移动到
+首次被等待的 RPC。启动成功和进程健康探针不再能被误读为 Milvus 连通性证明。
+
+HTTPX、OpenAI 与 aioboto3 的网络操作保持原生异步。必须调用同步文件/DNS/解析代码
+时才在线程中执行；取消等待线程结束，避免提前删除输入文件。无法强制中断线程，
+因此慢磁盘、DNS 或同步扩展也会延长取消完成时间。执行模式与本地上游版本证据见
+[V2 异步能力复核](../tasks/v2_async_reassessment.md)。
 
 ### Python 导入路径收敛
 
@@ -15,7 +47,7 @@
 
 ### 文档 Hook 返回值变更
 
-`PipelineHooks.extractor()` 与 `aextractor()` 注册的函数现在必须返回
+`PipelineHooks.extractor()` 与 `AsyncPipelineHooks.extractor()` 注册的函数现在必须返回
 `ExtractedDocument`，不再直接返回字符串。Pipeline 会统一转换为
 `NormalizedDocument` 后再交给文档级 Chunking Strategy；Strategy 把 Markdown 交给
 原子 Chunker，避免 DOCX、MinerU 与后续 PDF/OCR 各自维护一套跨格式空白和编码规则。

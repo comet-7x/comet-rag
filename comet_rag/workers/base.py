@@ -39,7 +39,7 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     setup_logging(module_files={"workers": "worker", "services": "services"})
 
     config: APPConfig = ctx.get("config") or get_config()
-    context = build_context(
+    context = await build_context(
         config, executor_lane=profile.lane, **ctx.get("build_kwargs", {})
     )
     ctx["context"] = context
@@ -60,11 +60,15 @@ async def on_startup(ctx: dict[str, Any]) -> None:
 
 
 async def on_shutdown(ctx: dict[str, Any]) -> None:
-    """逆序释放。`Context.aclose()` 会先停执行器（让在途任务落到一致状态），
+    """逆序释放。`Context.close()` 会先停执行器（让在途任务落到一致状态），
     再拆下游连接 —— 顺序反了会让在跑的任务撞上"连接已关闭"。"""
     context = ctx.get("context")
     if context is not None:
-        await context.aclose()
+        if ctx.get("context") is context:
+            del ctx["context"]
+        if ctx.get("executor") is context.task_executor:
+            del ctx["executor"]
+        await context.close()
         logger.info(f"worker 已关停 name={ctx['profile'].name}")
 
 

@@ -132,9 +132,7 @@ class StoredParent:
         if self.end_char <= self.start_char:
             raise ValueError("StoredParent.end_char 必须大于 start_char")
         if self.previous_id is not None:
-            _require_text(
-                self.previous_id, "StoredParent.previous_id", max_length=64
-            )
+            _require_text(self.previous_id, "StoredParent.previous_id", max_length=64)
         if self.next_id is not None:
             _require_text(self.next_id, "StoredParent.next_id", max_length=64)
         if self.parent_id in (self.previous_id, self.next_id):
@@ -196,40 +194,40 @@ class DocumentStore(ABC):
     """文档版本与父块存储；具体实现必须通过共享契约测试。"""
 
     @abstractmethod
-    async def areserve_revision(self, draft: RevisionDraft) -> StoredRevision: ...
+    async def reserve_revision(self, draft: RevisionDraft) -> StoredRevision: ...
 
     @abstractmethod
-    async def aput_parents(
+    async def put_parents(
         self, revision: RevisionKey, parents: Sequence[StoredParent]
     ) -> None: ...
 
     @abstractmethod
-    async def amark_ready(self, revision: RevisionKey) -> StoredRevision: ...
+    async def mark_ready(self, revision: RevisionKey) -> StoredRevision: ...
 
     @abstractmethod
-    async def aactivate_revision(self, revision: RevisionKey) -> Activation: ...
+    async def activate_revision(self, revision: RevisionKey) -> Activation: ...
 
     @abstractmethod
-    async def aget_active_revisions(
+    async def get_active_revisions(
         self, kb_id: str, source_ids: Sequence[str]
     ) -> dict[str, str | None]: ...
 
     @abstractmethod
-    async def aget_parents(
+    async def get_parents(
         self, kb_id: str, parent_ids: Sequence[str]
     ) -> dict[str, StoredParent]: ...
 
     @abstractmethod
-    async def aabandon_revision(self, revision: RevisionKey) -> None: ...
+    async def abandon_revision(self, revision: RevisionKey) -> None: ...
 
     @abstractmethod
-    async def alist_cleanup_candidates(self, *, limit: int) -> list[RevisionKey]: ...
+    async def list_cleanup_candidates(self, *, limit: int) -> list[RevisionKey]: ...
 
     @abstractmethod
-    async def apurge_inactive_revision(self, revision: RevisionKey) -> None:
+    async def purge_inactive_revision(self, revision: RevisionKey) -> None:
         """清除父块并保留 purged manifest，防止旧任务复活。"""
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         """释放自身持有的资源；注入的共享 Database 不归适配器关闭。"""
         return None
 

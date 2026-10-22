@@ -100,33 +100,37 @@ class LoadedResource:
 
 @runtime_checkable
 class SourceLoaderPort(Protocol):
-    """把来源规范化为受管本地文件的跨层契约。
-
-    具体实现可以提供额外选项，但路由器与 Pipeline 只能依赖这里的公共参数。
-    批量调用要求显式传并发预算；具体类可以为直接用户提供有理由的默认值。
-    """
+    """同步来源加载；批量调用的并发预算由调用方指定。"""
 
     def load(self, source: SourceContent | str) -> LoadedResource: ...
 
-    async def aload(self, source: SourceContent | str) -> LoadedResource: ...
-
     def batch_load(
-        self,
-        sources: list[SourceContent] | list[str],
-        *,
-        max_concurrency: int,
-    ) -> list[LoadedResource]: ...
-
-    async def abatch_load(
-        self,
-        sources: list[SourceContent] | list[str],
-        *,
-        max_concurrency: int,
+        self, sources: list[SourceContent] | list[str], *, max_concurrency: int
     ) -> list[LoadedResource]: ...
 
     def cleanup(self) -> None: ...
 
-    async def acleanup(self) -> None: ...
+    def close(self) -> None: ...
 
 
-__all__ = ["LoadedResource", "SourceContent", "SourceLoaderPort"]
+@runtime_checkable
+class AsyncSourceLoaderPort(Protocol):
+    """异步来源加载；实现必须在退出时排干已启动的文件操作。"""
+
+    async def load(self, source: SourceContent | str) -> LoadedResource: ...
+
+    async def batch_load(
+        self, sources: list[SourceContent] | list[str], *, max_concurrency: int
+    ) -> list[LoadedResource]: ...
+
+    async def cleanup(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+
+__all__ = [
+    "AsyncSourceLoaderPort",
+    "LoadedResource",
+    "SourceContent",
+    "SourceLoaderPort",
+]

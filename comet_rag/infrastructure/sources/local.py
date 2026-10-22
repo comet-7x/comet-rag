@@ -1,42 +1,42 @@
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any
 
-from comet_rag.infrastructure.sources.base import BaseLoader
+from comet_rag.engines.offload import run_sync
+from comet_rag.infrastructure.sources.base import AsyncBaseLoader, BaseLoader
 from comet_rag.infrastructure.sources.file_info import build_file_metadata
 from comet_rag.ports.source import LoadedResource, SourceContent
 
-LoaderContent = LoadedResource
+
+def _load_local(source: SourceContent | str) -> LoadedResource:
+    source = source if isinstance(source, SourceContent) else SourceContent(source)
+    if not source.is_local:
+        raise ValueError(
+            f"LocalLoader only handles local paths, got: {source.source!r}"
+        )
+    return LoadedResource(
+        path=Path(source.source),
+        source=source,
+        is_temp=False,
+        metadata=build_file_metadata(Path(source.source), source),
+    )
 
 
 class LocalLoader(BaseLoader):
-    def _build_metadata(self, source: SourceContent) -> dict[str, Any]:
-        return build_file_metadata(Path(source.source), source)
-
-    def _load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
+    def _load(self, source: SourceContent | str, **kwargs: Any) -> LoadedResource:
         self._reject_unsupported(kwargs)
-        if isinstance(source, str):
-            source = SourceContent(source)
-        if not source.is_local:
-            raise ValueError(
-                f"LocalLoader only handles local paths, got: {source.source!r}"
-            )
-        return LoaderContent(
-            path=Path(source.source),
-            source=source,
-            is_temp=False,
-            metadata=self._build_metadata(source),
-        )
-
-    async def _aload(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
-        self._reject_unsupported(kwargs)
-        # 调**未加闸**的 `_load`：闸门已由外壳 `aload` 持有。走公开的 `load`
-        # 会在工作线程里再申请一次同一份预算 —— 上限为 1 时当场死锁（实测
-        # admitted=2 然后挂死），上限大时白白吃掉一半名额。与
-        # `AutoLoader.bind_gate` 里说的是同一个失效模式。
-        return await asyncio.to_thread(self._load, source)
+        return _load_local(source)
 
     def cleanup(self) -> None:
+        pass
+
+
+class AsyncLocalLoader(AsyncBaseLoader):
+    async def _load(self, source: SourceContent | str, **kwargs: Any) -> LoadedResource:
+        self._reject_unsupported(kwargs)
+        # 只卸载未加闸的文件计算；公开 load 已持有许可，不能再次申请。
+        return await run_sync(_load_local, source)
+
+    async def cleanup(self) -> None:
         pass

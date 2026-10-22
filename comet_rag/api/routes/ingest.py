@@ -1,7 +1,10 @@
 """入库：提交异步任务并返回受理凭据。"""
 
+from __future__ import annotations
+
 from fastapi import APIRouter, status
 
+from ...engines.offload import run_sync
 from ...services.ingestion import INGEST_KIND
 from ..deps import AdmissionDep, SourcePolicyDep, TaskServiceDep
 from ..schemas.ingest import IngestAccepted, IngestSubmit
@@ -23,7 +26,8 @@ async def submit_ingest(
     # **在建任务之前**校验来源：建完再拒等于白建一条，还会污染积压统计；
     # 更要紧的是那时 worker 可能已经把它捞走开始读文件了。
     if policy is not None:
-        policy.check(payload.source)
+        # DNS 与本地路径解析会阻塞；取消时仍须等准入线程结束，且不能继续建任务。
+        await run_sync(policy.check, payload.source)
 
     task = await tasks.submit(
         INGEST_KIND,

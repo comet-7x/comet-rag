@@ -1,7 +1,7 @@
 """异步 SQL 引擎与会话工厂。
 
 引擎是**应用级单例**：它持有连接池，每个请求新建一个等于没有池化
-（spec S4-4 的同款问题）。故由 `Context` 持有、`aclose()` 时释放。
+（spec S4-4 的同款问题）。故由 `Context` 持有、`close()` 时释放。
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ class Database:
         async with self._sessionmaker() as session, session.begin():
             yield session
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         await self._engine.dispose()
 
 

@@ -1,101 +1,108 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
 
 from comet_rag.infrastructure.models.embedding.base import (
+    AsyncBaseEmbeddingModel,
+    AsyncMultimodalEmbeddingMixin,
     BaseEmbeddingModel,
     MultimodalEmbeddingMixin,
 )
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.models.reranker.base import (
+    AsyncBaseReranker,
+    BaseReranker,
+)
 from comet_rag.ports import (
+    AsyncEmbeddingPort,
+    AsyncMultimodalEmbeddingPort,
+    AsyncRerankerPort,
     EmbeddingPort,
     MultimodalEmbeddingPort,
     RerankerPort,
 )
+from comet_rag.ports.content import ContentInput, MediaResource
 
 
 class EchoEmbedding(BaseEmbeddingModel):
-    def _embed(self, data: Any, **kwargs: Any) -> Any:
-        return data
+    def _embed(self, data: str, /, **kwargs: Any) -> list[float]:
+        return [float(len(data))]
 
-    async def _aembed(self, data: Any, /, **kwargs: Any) -> Any:
-        return data
+
+class AsyncEchoEmbedding(AsyncBaseEmbeddingModel):
+    async def _embed(self, data: str, /, **kwargs: Any) -> list[float]:
+        return [float(len(data))]
 
 
 class EchoMultimodalEmbedding(MultimodalEmbeddingMixin, EchoEmbedding):
-    def _embed_media(self, data: Any, /, **kwargs: Any) -> Any:
-        return data
+    def _embed_media(
+        self, data: MediaResource | ContentInput, /, **kwargs: Any
+    ) -> list[float]:
+        return [1.0]
 
-    async def _aembed_media(self, data: Any, /, **kwargs: Any) -> Any:
-        return data
+
+class AsyncEchoMultimodalEmbedding(AsyncMultimodalEmbeddingMixin, AsyncEchoEmbedding):
+    async def _embed_media(
+        self, data: MediaResource | ContentInput, /, **kwargs: Any
+    ) -> list[float]:
+        return [1.0]
 
 
 class EchoReranker(BaseReranker[str]):
-    def _score(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
-        return [0.0] * len(list(documents))
+    def _score(
+        self, query: str, documents: Sequence[str], **kwargs: Any
+    ) -> list[float]:
+        return [0.0] * len(documents)
 
-    async def _ascore(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
-        return [0.0] * len(list(documents))
+
+class AsyncEchoReranker(AsyncBaseReranker[str]):
+    async def _score(
+        self, query: str, documents: Sequence[str], **kwargs: Any
+    ) -> list[float]:
+        return [0.0] * len(documents)
 
 
 async def test_empty_batch_needs_no_round_trip() -> None:
-    model = EchoEmbedding()
-
-    assert model.embed_batch([]) == []
-    assert await model.aembed_batch([]) == []
+    assert EchoEmbedding().embed_batch([]) == []
+    assert await AsyncEchoEmbedding().embed_batch([]) == []
 
 
 async def test_declaring_batch_limit_without_implementing_it_is_refused() -> None:
-    """**声明了批量能力却没实现，必须炸。**
-
-    默认的 `_embed_batch` 一次只发一篇。如果子类把 `batch_limit` 调大却忘了
-    覆写它，静默的后果是在**一个闸门名额里串行发 N 个请求** —— 限流数字还是
-    对的，吞吐掉到 1/N，而且没有任何迹象。这种"能跑但慢十倍"的缺陷比崩溃
-    难查得多，所以宁可拒绝。
-    """
+    """声明批量能力不能退化成在一个闸门名额里串行发送多个请求。"""
 
     class Liar(EchoEmbedding):
         batch_limit = 8
 
-    model = Liar()
-    assert model.embed_batch(["one"]) == ["one"]  # 一篇仍然走得通
+    class AsyncLiar(AsyncEchoEmbedding):
+        batch_limit = 8
 
+    assert Liar().embed_batch(["one"]) == [[3.0]]
+    assert await AsyncLiar().embed_batch(["one"]) == [[3.0]]
     with pytest.raises(NotImplementedError, match="batch_limit=8"):
-        model.embed_batch(["a", "b"])
+        Liar().embed_batch(["a", "b"])
     with pytest.raises(NotImplementedError, match="batch_limit=8"):
-        await model.aembed_batch(["a", "b"])
+        await AsyncLiar().embed_batch(["a", "b"])
 
 
 async def test_resource_free_model_uses_noop_close() -> None:
-    await EchoEmbedding().aclose()
-
-
-# ── 契约与实现的分界 ───────────────────────────────────────────────────────
+    assert EchoEmbedding().close() is None
+    assert EchoReranker().close() is None
+    assert await AsyncEchoEmbedding().close() is None
+    assert await AsyncEchoReranker().close() is None
 
 
 def test_base_classes_satisfy_their_ports() -> None:
-    """基类不继承 Port，所以"是否满足契约"必须另有人来验。
-
-    Port 是 Protocol，实现侧靠**形状**匹配。少一个方法不会有任何继承层面的
-    报错，只会在装配处的类型检查里冒出来 —— 而那要等到有人真去改 bootstrap。
-    这条用例把两个方向都钉住：基类实现了契约，Port 也没有偷偷长出基类没有
-    的方法。
-    """
+    """Protocol 只看形状，执行模式由静态类型与专门的协程检查保证。"""
     assert isinstance(EchoEmbedding(), EmbeddingPort)
+    assert isinstance(AsyncEchoEmbedding(), AsyncEmbeddingPort)
     assert isinstance(EchoReranker(), RerankerPort)
+    assert isinstance(AsyncEchoReranker(), AsyncRerankerPort)
 
 
 def test_multimodal_capability_is_structural_not_advertised() -> None:
-    """**纯文本模型不得通过多模态能力检查。**
-
-    `MultimodalEmbeddingPort` 是 runtime_checkable 的，而 Protocol 的
-    `isinstance` 只看方法在不在、不看它做什么。所以只要基类给纯文本模型留
-    一个"默认抛 TypeError"的 `embed_media`，这个检查就永远返回 True ——
-    调用方据此分发，然后在运行时炸掉，协议等于没有。
-
-    能力做成 mixin 之后，答案是结构性的：不继承就真的没有那个方法。
-    """
     assert not isinstance(EchoEmbedding(), MultimodalEmbeddingPort)
     assert isinstance(EchoMultimodalEmbedding(), MultimodalEmbeddingPort)
+    assert not isinstance(AsyncEchoEmbedding(), AsyncMultimodalEmbeddingPort)
+    assert isinstance(AsyncEchoMultimodalEmbedding(), AsyncMultimodalEmbeddingPort)

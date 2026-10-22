@@ -154,9 +154,7 @@ def test_legacy_adapter_rejects_invalid_results(bad_result: object) -> None:
 
 def test_document_chunker_registration_is_case_insensitive() -> None:
     @PipelineHooks.document_chunker("PDF")
-    def chunk(
-        document: NormalizedDocument, config: PipelineConfig
-    ) -> list[ChunkDraft]:
+    def chunk(document: NormalizedDocument, config: PipelineConfig) -> list[ChunkDraft]:
         return [ChunkDraft(text=document.markdown, ordinal=0)]
 
     assert PipelineHooks.get_document_chunker("pdf") is chunk
@@ -184,9 +182,7 @@ def test_document_chunker_snapshot_is_not_a_live_view() -> None:
     state = PipelineHooks.snapshot()
 
     @PipelineHooks.document_chunker("temporary")
-    def chunk(
-        document: NormalizedDocument, config: PipelineConfig
-    ) -> list[ChunkDraft]:
+    def chunk(document: NormalizedDocument, config: PipelineConfig) -> list[ChunkDraft]:
         return [ChunkDraft(text=document.markdown, ordinal=0)]
 
     PipelineHooks.restore(state)
@@ -198,5 +194,5 @@ def test_document_chunker_snapshot_is_not_a_live_view() -> None:
 def test_hooks_state_keeps_legacy_positional_constructor() -> None:
     state = HooksState({}, {})
 
-    assert state.async_extractors == {}
+    assert not hasattr(state, "async_extractors")
     assert state.document_chunkers == {}

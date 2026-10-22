@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from typing import Any
 
 from comet_rag.engines.defaults import DEFAULT_EMBED_FANOUT
-from comet_rag.ports.embedding import EmbeddingPort
+from comet_rag.ports.embedding import AsyncEmbeddingPort, EmbeddingPort
 
 #: 兼容旧名。约束的是**一次调度内**的并发，进程级总量由闸门另行控制 ——
 #: 两者是不同的旋钮，叠加生效。数字与理由都在 `engines/defaults.py`。
@@ -15,7 +14,9 @@ DEFAULT_MODEL_BATCH_CONCURRENCY = DEFAULT_EMBED_FANOUT
 
 
 def _plan(
-    model: EmbeddingPort, documents: Sequence[str], max_concurrency: int
+    model: EmbeddingPort | AsyncEmbeddingPort,
+    documents: Sequence[str],
+    max_concurrency: int,
 ) -> list[Sequence[str]]:
     """按模型声明的 ``batch_limit`` 把文档切成"每块恰好一次请求"。"""
     if max_concurrency <= 0:
@@ -66,36 +67,4 @@ def embed_documents(
         return _joined([future.result() for future in futures], len(documents))
 
 
-async def aembed_documents(
-    model: EmbeddingPort,
-    documents: Sequence[str],
-    /,
-    *,
-    max_concurrency: int = DEFAULT_MODEL_BATCH_CONCURRENCY,
-    **kwargs: Any,
-) -> list[list[float]]:
-    """异步批量生成文档向量，结果顺序与输入一致。
-
-    每一块都是一次真实请求，各自穿过模型的进程级闸门；这里的信号量只额外
-    压住**本次调度**的宽度。
-    """
-    blocks = _plan(model, documents, max_concurrency)
-    if not blocks:
-        return []
-
-    semaphore = asyncio.Semaphore(min(max_concurrency, len(blocks)))
-
-    async def _limited(block: Sequence[str]) -> list[list[float]]:
-        async with semaphore:
-            return await model.aembed_batch(block, **kwargs)
-
-    return _joined(
-        await asyncio.gather(*[_limited(block) for block in blocks]), len(documents)
-    )
-
-
-__all__ = [
-    "DEFAULT_MODEL_BATCH_CONCURRENCY",
-    "aembed_documents",
-    "embed_documents",
-]
+__all__ = ["DEFAULT_MODEL_BATCH_CONCURRENCY", "embed_documents"]

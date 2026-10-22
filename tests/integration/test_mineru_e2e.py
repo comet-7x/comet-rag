@@ -26,8 +26,8 @@ from comet_rag.config.schemas import (
     ServerConfig,
 )
 from comet_rag.engines.pipelines import PipelineConfig
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.models.embedding.base import AsyncBaseEmbeddingModel
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.tasks import Task, TaskStatus
 from tests.contracts.support import wait_for_terminal
 from tests.fixtures.pdf import build_minimal_pdf, build_scanned_pdf
@@ -38,13 +38,10 @@ DIM = 3
 KB = "kb-mineru-integration"
 
 
-class ConstantEmbedding(BaseEmbeddingModel):
+class ConstantEmbedding(AsyncBaseEmbeddingModel):
     """真实测试只替换模型服务，避免把 MinerU 验收绑定到另一块 GPU。"""
 
-    def _embed(self, data: str, **kwargs: Any) -> list[float]:
-        return [1.0, 0.0, 0.0]
-
-    async def _aembed(self, data: str, **kwargs: Any) -> list[float]:
+    async def _embed(self, data: str, **kwargs: Any) -> list[float]:
         return [1.0, 0.0, 0.0]
 
 
@@ -206,7 +203,7 @@ async def test_real_mineru_text_and_scanned_pdf_task_chain(
     app = create_app(
         config,
         embedding_model=ConstantEmbedding(),
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
         pipeline_config=PipelineConfig(chunk_size=512, chunk_overlap=0),
     )
     transport = httpx.ASGITransport(app=app)

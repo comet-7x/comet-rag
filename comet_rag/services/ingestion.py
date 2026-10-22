@@ -16,17 +16,21 @@ from comet_rag.engines.documents.normalization import (
     DocumentNormalizationStrategy,
     MarkdownDocumentNormalizer,
 )
-from comet_rag.engines.embedding.batch import aembed_documents
-from comet_rag.engines.pipelines import HookProvider, PipelineConfig, PipelineHooks
+from comet_rag.engines.embedding.async_batch import embed_documents
+from comet_rag.engines.pipelines import (
+    AsyncHookProvider,
+    AsyncPipelineHooks,
+    PipelineConfig,
+)
 from comet_rag.ports import (
-    BaseVectorStore,
+    AsyncEmbeddingPort,
+    AsyncSourceLoaderPort,
+    AsyncVectorStore,
     DocumentResourceLimitExceeded,
-    EmbeddingPort,
     LoadedResource,
     NormalizedDocument,
     RetryableDocumentUpstreamError,
     SourceContent,
-    SourceLoaderPort,
     VectorRecord,
 )
 from comet_rag.services.chunking import (
@@ -133,12 +137,12 @@ class IngestRunner:
     def __init__(
         self,
         *,
-        embedding_model: EmbeddingPort,
-        vector_store: BaseVectorStore,
+        embedding_model: AsyncEmbeddingPort,
+        vector_store: AsyncVectorStore,
         knowledge_base: KnowledgeBaseService,
-        loader: SourceLoaderPort,
+        loader: AsyncSourceLoaderPort,
         config: PipelineConfig | None = None,
-        hooks: HookProvider | None = None,
+        hooks: AsyncHookProvider | None = None,
         normalizer: DocumentNormalizationStrategy | None = None,
         max_extracted_text_bytes_by_type: Mapping[str, int] | None = None,
         max_chunk_context_bytes: int = DEFAULT_MAX_CHUNK_CONTEXT_BYTES,
@@ -148,7 +152,7 @@ class IngestRunner:
         self._kb = knowledge_base
         self._loader = loader
         self._config = config or PipelineConfig()
-        self._hooks = hooks or PipelineHooks
+        self._hooks = hooks or AsyncPipelineHooks
         self._normalizer = normalizer or MarkdownDocumentNormalizer()
         self._chunking = ChunkingService(self._config, self._hooks)
         if max_chunk_context_bytes <= 0:
@@ -209,9 +213,9 @@ class IngestRunner:
         try:
             # 下载也属于 extracting 阶段，必须位于同一个异常分类边界内。
             # 否则连接超时会绕过 _classify，第一次失败就把任务判死。
-            loader_content = await self._loader.aload(SourceContent(request.source))
+            loader_content = await self._loader.load(SourceContent(request.source))
             file_type = str(loader_content.metadata.get("file_type", "")).lower()
-            extracted = await self._hooks.aextract(
+            extracted = await self._hooks.extract(
                 file_type, loader_content, self._config
             )
             self._validate_extracted_text_size(extracted.markdown, file_type)
@@ -298,7 +302,7 @@ class IngestRunner:
         if previous <= new_count:
             return
         stale = [chunk_id(source_id, index) for index in range(new_count, previous)]
-        await self._vector_store.adelete(kb_id, ids=stale)
+        await self._vector_store.delete(kb_id, ids=stale)
         logger.info(f"清理旧版本多余的 {len(stale)} 块 source_id={source_id[:12]}")
 
     async def _index(self, ctx: TaskContext) -> Done:
@@ -323,13 +327,13 @@ class IngestRunner:
         kb = await self._kb.resolve_for_ingest(request.kb_id)
 
         try:
-            await self._vector_store.aensure_collection(
+            await self._vector_store.ensure_collection(
                 request.kb_id, dim=kb.embedding_dim
             )
 
             # 旧版本有多少块 —— 用来算写完之后该清掉哪些尾巴。
             # **必须在写之前数**：写完之后新旧混在一起就分不出来了。
-            previous = await self._vector_store.acount(
+            previous = await self._vector_store.count(
                 request.kb_id, filter={"source_id": source_id}
             )
 
@@ -351,7 +355,7 @@ class IngestRunner:
             for start in range(0, len(chunks), window):
                 await ctx.checkpoint()
                 batch = chunks[start : start + window]
-                embeddings = await aembed_documents(
+                embeddings = await embed_documents(
                     self._embedding_model,
                     [chunk.text for chunk in batch],
                     max_concurrency=self._config.max_concurrency,
@@ -365,7 +369,7 @@ class IngestRunner:
                     )
                     for chunk, embedding in zip(batch, embeddings, strict=True)
                 ]
-                await self._vector_store.aupsert(request.kb_id, records)
+                await self._vector_store.upsert(request.kb_id, records)
                 written += len(records)
                 await ctx.report(
                     progress=0.66 + 0.34 * written / max(len(chunks), 1),

@@ -1,6 +1,6 @@
 # Pipeline 使用笔记
 
-本文档记录公共入口 `comet_rag.pipeline` 及其配置的用法，涵盖基本使用、流式输出、批量处理、自定义 Hook 扩展，以及底层模块的独立使用方式。DOCX 是纯库内置能力；PDF 需要外部 MinerU，并由服务组合根或库调用方显式注册。
+本文档记录公共入口 `comet_rag.pipeline` 的 `Pipeline` / `AsyncPipeline` 及其配置的用法，涵盖基本使用、流式输出、批量处理、自定义 Hook 扩展，以及底层模块的独立使用方式。DOCX 是纯库内置能力；PDF 需要外部 MinerU，并由服务组合根或库调用方显式注册。
 
 ---
 
@@ -25,25 +25,29 @@
 from comet_rag.pipeline import Pipeline
 
 # 使用默认配置（chunk_size=2000, chunk_overlap=200）
-pipeline = Pipeline()
-result = pipeline.run("path/to/document.docx")
+with Pipeline() as pipeline:
+    result = pipeline.run("path/to/document.docx")
 
 print(f"共 {len(result.chunks)} 个 chunk")
 for chunk in result.chunks:
     print(chunk.text[:100])
 ```
 
-异步版本：
+异步版本使用独立的 `AsyncPipeline`，方法仍叫 `run`。旧 `arun`、`astream_run`、
+`abatch_run` 已移除。默认 Loader 由 Pipeline 创建，`with` / `async with` 或相应的
+`close()` 负责释放；外部注入的 Loader、模型仍由调用方管理。
+
+异步示例：
 
 ```python
 import asyncio
-from comet_rag.pipeline import Pipeline
+from comet_rag.pipeline import AsyncPipeline
 
 
 async def main():
-    pipeline = Pipeline()
-    result = await pipeline.arun("path/to/document.docx")
-    print(len(result.chunks))
+    async with AsyncPipeline() as pipeline:
+        result = await pipeline.run("path/to/document.docx")
+        print(len(result.chunks))
 
 
 asyncio.run(main())
@@ -98,13 +102,15 @@ embedding_model = Qwen3VLEmbeddingModel(
     api_key="EMPTY",
 )
 
-pipeline = Pipeline(
-    config=PipelineConfig(embed=True),
-    embedding_model=embedding_model,
-)
-
-result = pipeline.run("document.docx")
-print(result.chunks[0].embedding)  # list[float]
+try:
+    with Pipeline(
+        config=PipelineConfig(embed=True),
+        embedding_model=embedding_model,
+    ) as pipeline:
+        result = pipeline.run("document.docx")
+        print(result.chunks[0].embedding)  # list[float]
+finally:
+    embedding_model.close()
 ```
 
 ---
@@ -114,28 +120,36 @@ print(result.chunks[0].embedding)  # list[float]
 适合大文件场景，每个 chunk 处理完立即 yield，无需等待全部完成。
 
 ```python
-# 同步流式
-for chunk in pipeline.stream_run("document.docx"):
-    print(f"chunk {chunk.metadata['chunk_index']}: {chunk.text[:80]}")
+from comet_rag.pipeline import Pipeline
+
+with Pipeline() as pipeline:
+    for chunk in pipeline.stream_run("document.docx"):
+        print(f"chunk {chunk.metadata['chunk_index']}: {chunk.text[:80]}")
 ```
 
 ```python
-# 异步流式
+import asyncio
+from comet_rag.pipeline import AsyncPipeline
+
+
 async def stream():
-    async for chunk in pipeline.astream_run("document.docx"):
-        print(chunk.text[:80])
+    async with AsyncPipeline() as pipeline:
+        async for chunk in pipeline.stream_run("document.docx"):
+            print(chunk.text[:80])
 
 
 asyncio.run(stream())
 ```
 
-> **注意**：`astream_run` 返回的是 `AsyncGenerator`，需要用 `async for` 迭代，不能 `await`。
+> **注意**：`AsyncPipeline.stream_run` 返回的是 `AsyncGenerator`，需要用 `async for` 迭代，不能 `await`。
 
 ---
 
 ## 4. 批量处理
 
 ```python
+from comet_rag.pipeline import AsyncPipeline, Pipeline
+
 sources = [
     "docs/report_2024.docx",
     "docs/manual.docx",
@@ -143,10 +157,12 @@ sources = [
 ]
 
 # 同步批量（线程池并发）
-results = pipeline.batch_run(sources)
+with Pipeline() as pipeline:
+    results = pipeline.batch_run(sources)
 
-# 异步批量（asyncio 并发）
-results = await pipeline.abatch_run(sources)
+# 在 async def 或支持顶层 await 的环境中执行
+async with AsyncPipeline() as async_pipeline:
+    async_results = await async_pipeline.batch_run(sources)
 
 for result in results:
     print(
@@ -201,7 +217,12 @@ class Chunk:
 
 ## 6. 自定义 Hook 扩展新格式
 
-Pipeline 内部通过 `PipelineHooks` 注册表分发处理逻辑。增加新格式只需注册两个 hook：
+`HookRegistry` / `AsyncHookRegistry` 是同步和异步注册表类型；
+`PipelineHooks` / `AsyncPipelineHooks` 是各自的默认注册表**实例**，无需也不能再构造。
+`Pipeline` 与 `AsyncPipeline` 分别读取对应默认实例。需要局部配置时调用 `.fork()`，
+或创建新的空注册表后通过 `hooks=` 注入；注册一个表不会自动修改另一个表。
+
+增加新格式时注册以下 Hook：
 
 - **extractor**：`(LoadedResource, PipelineConfig) → ExtractedDocument`，负责把文件映射为通用提取结果
 - **document_chunker**（可选）：`(NormalizedDocument, PipelineConfig) → list[ChunkDraft]`，自定义分块策略；不注册时按 page/section 事实选择内置策略，无结构才回退 `RecursiveChunker`
@@ -257,8 +278,38 @@ def chunk_markdown(
 注册之后，`Pipeline` 无需任何修改即可处理这些格式：
 
 ```python
-result = Pipeline().run("README.md")
+from comet_rag.pipeline import Pipeline
+
+with Pipeline() as pipeline:
+    result = pipeline.run("README.md")  # 使用前一段注册的同步 Markdown Hook
 ```
+
+异步流水线接入同步文件提取函数时，必须显式使用 `sync_extractor()`。
+它将同步提取移到线程，取消时先等线程结束，再允许释放正在读取的临时文件。
+纯计算分块函数继续共用同步实现，无需增加 Async 副本：
+
+```python
+from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
+from comet_rag.loaders import LoadedResource
+from comet_rag.pipeline import AsyncPipeline
+from comet_rag.ports import ExtractedDocument
+
+hooks = AsyncPipelineHooks.fork()
+
+
+@hooks.sync_extractor("txt", "log")
+def extract_text(content: LoadedResource, config: PipelineConfig) -> ExtractedDocument:
+    return ExtractedDocument(markdown=content.path.read_text(encoding="utf-8"))
+
+
+async def read_text():
+    async with AsyncPipeline(hooks=hooks) as pipeline:
+        return await pipeline.run("notes.txt")
+```
+
+如果提取器已有原生异步实现，使用 `@hooks.extractor(...)` 注册 `async def`；
+同步注册表的 `.extractor(...)` 则只注册同步函数。默认异步表也支持
+`@AsyncPipelineHooks.sync_extractor(...)`，但局部 `fork()` 更容易明确修改范围。
 
 ---
 
@@ -300,21 +351,23 @@ def extract_docx_with_headers(
 ```python
 from comet_rag.loaders import AutoLoader, SourceContent
 
-loader = AutoLoader.default()
-lc = loader.load(SourceContent("document.docx"))
-print(lc.path, lc.metadata)
-lc.cleanup()  # URL/S3 下载的临时文件在消费后立即释放
-
-# with 语句自动 cleanup
 with AutoLoader.default() as loader:
-    lc = loader.load("document.docx")
-    # 并发上限是显式参数；默认安全上限为 10，生产环境应按资源预算调整
+    content = loader.load(SourceContent("document.docx"))
+    try:
+        print(content.path, content.metadata)
+    finally:
+        content.cleanup()  # 及时释放单个下载结果；本地原始文件不会被删除
+
+    # 并发上限是显式参数；生产环境应按资源预算调整
     items = loader.batch_load(["a.txt", "b.txt"], max_concurrency=4)
+    for item in items:
+        item.cleanup()
 ```
 
-异步上下文会调用统一的 `acleanup()` 契约。`AutoLoader` 会按实际 loader
-对批量输入分组，因此 `URLLoader` 可以复用连接池，本地或自定义 loader 也能
-保留自己的并发策略。
+同步与异步 Loader 分别使用 `AutoLoader` / `AsyncAutoLoader`，方法同名为
+`load`、`batch_load`、`cleanup`；异步 Loader 的这些方法都要等待。
+`LoadedResource` 是共用的值对象，单个结果的 `content.cleanup()` 仍为同步本地释放。
+路由器按叶子 Loader 对批量输入分组，使 URL 连接池可复用，并保留各来源的并发策略。
 
 `AutoLoader` 只暴露所有 Loader 共有的 `source` 和 `max_concurrency` 参数。
 需要 `download_config`、自定义 HTTP client 等 URL 专用选项时，应直接使用
@@ -339,27 +392,28 @@ MinIO/S3 适配器仍在基础设施层，但用户无需寻找第二个内部�
 时才需要安装 `server`（或 `all`）extra：
 
 ```python
-from comet_rag.loaders import AutoLoader, LoaderRoute, S3Loader
+import asyncio
+from comet_rag.loaders import AsyncAutoLoader, AsyncLoaderRoute, AsyncS3Loader
 
 
 async def load_from_object_storage():
-    routes = AutoLoader.default_routes()
+    routes = AsyncAutoLoader.default_routes()
     routes.insert(
         0,
-        LoaderRoute.schemes(
+        AsyncLoaderRoute.schemes(
             "object-storage",
-            S3Loader(
-                endpoint_url="http://127.0.0.1:9000",
+            AsyncS3Loader(
+                endpoint_url="http://127.0.0.1:9010",
                 access_key_id="minioadmin",
                 secret_access_key="minioadmin",
             ),
             {"s3", "minio"},
         ),
     )
-    async with AutoLoader(routes) as loader:
-        content = await loader.aload("s3://documents/report.pdf")
+    async with AsyncAutoLoader(routes) as loader:
+        content = await loader.load("s3://documents/report.pdf")
         try:
-            return content.path.read_bytes()
+            return await asyncio.to_thread(content.path.read_bytes)
         finally:
             content.cleanup()
 ```
@@ -372,8 +426,8 @@ async def load_from_object_storage():
 ```python
 from comet_rag.engines.documents.docx import DocxCleaner, DocxConverter, DocxParser
 
-# lc 来自 Loader
-doc = DocxConverter(lc).to_docx()
+# content 来自 Loader；使用期间须保持 LoadedResource 有效
+doc = DocxConverter(content).to_docx()
 parsed = DocxParser().parse(doc)
 
 # 获取结构化 blocks（保留语义层级）
@@ -496,8 +550,8 @@ section 策略，绝不通过搜索重复文本来猜页边界。
 ## 10. PDF 与外部 MinerU
 
 `engines` 不会在 import 时偷偷连接外部服务。参考服务在
-`composition/bootstrap.py` 中根据配置创建 `MinerUDocumentExtractor`，同时注册
-同步和异步 PDF Hook；因此启用 `infrastructure_config.mineru.enabled` 后，
+`composition/bootstrap.py` 中根据配置创建 `AsyncMinerUDocumentExtractor`，向该
+Context 的异步注册表注册 PDF Hook；因此启用 `infrastructure_config.mineru.enabled` 后，
 `POST /ingest` 的 Local、URL 和 S3 PDF 都走同一条链路。
 
 库调用方也可以显式完成同样的装配。异步入口不会阻塞事件循环，更适合外部解析：
@@ -505,23 +559,31 @@ section 策略，绝不通过搜索重复文本来猜页边界。
 ```python
 import asyncio
 
-from comet_rag.composition.bootstrap import wire_pdf_extractor
-from comet_rag.engines.pipelines import PipelineHooks
-from comet_rag.infrastructure.extractors import MinerUDocumentExtractor
-from comet_rag.pipeline import Pipeline
+from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
+from comet_rag.infrastructure.extractors import AsyncMinerUDocumentExtractor
+from comet_rag.loaders import LoadedResource
+from comet_rag.pipeline import AsyncPipeline
+from comet_rag.ports import ExtractedDocument
 
 
 async def parse_pdf():
-    extractor = MinerUDocumentExtractor(
+    extractor = AsyncMinerUDocumentExtractor(
         "http://127.0.0.1:8989",
         backend="vlm-http-client",
     )
+    hooks = AsyncPipelineHooks.fork()
+
+    @hooks.extractor("pdf")
+    async def extract_pdf(content: LoadedResource, config: PipelineConfig) -> ExtractedDocument:
+        return await extractor.extract(
+            content.path, filename=content.path.name, media_type="application/pdf",
+        )
+
     try:
-        with PipelineHooks.temporary():
-            wire_pdf_extractor(extractor)
-            return await Pipeline().arun("document.pdf")
+        async with AsyncPipeline(hooks=hooks) as pipeline:
+            return await pipeline.run("document.pdf")
     finally:
-        await extractor.aclose()
+        await extractor.close()
 
 
 result = asyncio.run(parse_pdf())

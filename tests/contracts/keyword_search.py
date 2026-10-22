@@ -1,4 +1,4 @@
-"""`KeywordSearchPort` 的后端无关行为契约。
+"""`AsyncKeywordSearchPort` 的后端无关行为契约。
 
 契约只约束匹配、隔离、过滤和排序等语义，不约束跨实现分数相等。内存实现使用
 轻量 tokenizer，Milvus 使用 chinese analyzer；尤其 CJK 分词与 BM25 分数会不同。
@@ -12,9 +12,9 @@ from typing import Protocol
 import pytest
 
 from comet_rag.ports import (
+    AsyncKeywordSearchPort,
     CollectionNotFound,
     Filter,
-    KeywordSearchPort,
     VectorRecord,
 )
 
@@ -22,16 +22,16 @@ DIM = 4
 KB = "kb-keyword-contract"
 
 
-class KeywordSearchStore(KeywordSearchPort, Protocol):
+class KeywordSearchStore(AsyncKeywordSearchPort, Protocol):
     """契约准备数据所需的最小生命周期能力。"""
 
-    async def aensure_collection(self, kb_id: str, *, dim: int) -> None: ...
+    async def ensure_collection(self, kb_id: str, *, dim: int) -> None: ...
 
-    async def aupsert(
+    async def upsert(
         self, kb_id: str, records: Sequence[VectorRecord]
     ) -> list[str]: ...
 
-    async def adrop_collection(self, kb_id: str) -> None: ...
+    async def drop_collection(self, kb_id: str) -> None: ...
 
 
 def keyword_records() -> list[VectorRecord]:
@@ -66,19 +66,19 @@ class KeywordSearchContract:
 
     @pytest.fixture
     async def kb(self, store: KeywordSearchStore) -> AsyncIterator[str]:
-        await store.aensure_collection(KB, dim=DIM)
+        await store.ensure_collection(KB, dim=DIM)
         yield KB
-        await store.adrop_collection(KB)
+        await store.drop_collection(KB)
 
     @pytest.fixture
     async def populated(self, store: KeywordSearchStore, kb: str) -> str:
-        await store.aupsert(kb, keyword_records())
+        await store.upsert(kb, keyword_records())
         return kb
 
     async def test_chinese_term_matches_expected_document(
         self, store: KeywordSearchStore, populated: str
     ) -> None:
-        hits = await store.asearch_keywords(populated, "量子纠缠", top_k=3)
+        hits = await store.search_keywords(populated, "量子纠缠", top_k=3)
 
         assert [hit.id for hit in hits] == ["zh"]
         assert hits[0].score > 0
@@ -86,30 +86,28 @@ class KeywordSearchContract:
     async def test_english_identifier_matches_expected_document(
         self, store: KeywordSearchStore, populated: str
     ) -> None:
-        hits = await store.asearch_keywords(populated, "TraitObject", top_k=3)
+        hits = await store.search_keywords(populated, "TraitObject", top_k=3)
 
         assert [hit.id for hit in hits] == ["en"]
 
     async def test_no_matching_term_returns_empty(
         self, store: KeywordSearchStore, populated: str
     ) -> None:
-        assert await store.asearch_keywords(populated, "OpenTelemetry") == []
+        assert await store.search_keywords(populated, "OpenTelemetry") == []
 
     async def test_whitespace_query_returns_empty_after_collection_check(
         self, store: KeywordSearchStore, kb: str
     ) -> None:
-        assert await store.asearch_keywords(kb, " \n\t ") == []
+        assert await store.search_keywords(kb, " \n\t ") == []
 
     async def test_missing_collection_is_not_treated_as_empty(
         self, store: KeywordSearchStore
     ) -> None:
         with pytest.raises(CollectionNotFound):
-            await store.asearch_keywords("missing-keyword-kb", "量子")
+            await store.search_keywords("missing-keyword-kb", "量子")
 
-    async def test_top_k_is_enforced(
-        self, store: KeywordSearchStore, kb: str
-    ) -> None:
-        await store.aupsert(
+    async def test_top_k_is_enforced(self, store: KeywordSearchStore, kb: str) -> None:
+        await store.upsert(
             kb,
             [
                 VectorRecord(
@@ -121,19 +119,19 @@ class KeywordSearchContract:
             ],
         )
 
-        assert len(await store.asearch_keywords(kb, "检索术语", top_k=2)) == 2
+        assert len(await store.search_keywords(kb, "检索术语", top_k=2)) == 2
 
     @pytest.mark.parametrize("top_k", [0, -1])
     async def test_non_positive_top_k_is_rejected(
         self, store: KeywordSearchStore, kb: str, top_k: int
     ) -> None:
         with pytest.raises(ValueError, match="top_k"):
-            await store.asearch_keywords(kb, "量子", top_k=top_k)
+            await store.search_keywords(kb, "量子", top_k=top_k)
 
     async def test_equal_scores_are_ordered_by_id(
         self, store: KeywordSearchStore, kb: str
     ) -> None:
-        await store.aupsert(
+        await store.upsert(
             kb,
             [
                 VectorRecord(
@@ -149,7 +147,7 @@ class KeywordSearchContract:
             ],
         )
 
-        hits = await store.asearch_keywords(kb, "完全相同术语", top_k=2)
+        hits = await store.search_keywords(kb, "完全相同术语", top_k=2)
 
         assert [hit.id for hit in hits] == ["a", "b"]
         assert hits[0].score == pytest.approx(hits[1].score)
@@ -157,7 +155,7 @@ class KeywordSearchContract:
     async def test_filter_by_equality(
         self, store: KeywordSearchStore, populated: str
     ) -> None:
-        hits = await store.asearch_keywords(
+        hits = await store.search_keywords(
             populated, "Rust TraitObject", filter={"language": "zh"}
         )
 
@@ -167,9 +165,7 @@ class KeywordSearchContract:
         self, store: KeywordSearchStore, populated: str
     ) -> None:
         filter: Filter = {"source": ["rust.md", "physics.docx"]}
-        hits = await store.asearch_keywords(
-            populated, "TraitObject", filter=filter
-        )
+        hits = await store.search_keywords(populated, "TraitObject", filter=filter)
 
         assert [hit.id for hit in hits] == ["en"]
         assert hits[0].text == "Rust TraitObject memory layout"
@@ -179,9 +175,9 @@ class KeywordSearchContract:
         self, store: KeywordSearchStore, populated: str
     ) -> None:
         other = "kb-keyword-other"
-        await store.aensure_collection(other, dim=DIM)
+        await store.ensure_collection(other, dim=DIM)
         try:
-            await store.aupsert(
+            await store.upsert(
                 other,
                 [
                     VectorRecord(
@@ -192,11 +188,11 @@ class KeywordSearchContract:
                 ],
             )
 
-            hits = await store.asearch_keywords(populated, "量子纠缠")
+            hits = await store.search_keywords(populated, "量子纠缠")
 
             assert [hit.id for hit in hits] == ["zh"]
         finally:
-            await store.adrop_collection(other)
+            await store.drop_collection(other)
 
 
 __all__ = [

@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from comet_rag.core.logging import logger
-from comet_rag.ports import BaseVectorStore
+from comet_rag.ports import AsyncVectorStore
 from comet_rag.ports.knowledge_base import (
     KnowledgeBase,
     KnowledgeBaseExists,
@@ -59,7 +59,7 @@ class KnowledgeBaseService:
         self,
         *,
         repository: KnowledgeBaseRepository,
-        vector_store: BaseVectorStore,
+        vector_store: AsyncVectorStore,
         embedding_model: str,
         embedding_dim: int,
     ) -> None:
@@ -74,11 +74,11 @@ class KnowledgeBaseService:
         幂等是必需的 —— 客户端常在每次入库前"确保库存在"，
         不幂等就得让每个调用方自己先查后建，那是把竞态推给调用方。
         """
-        existing = await self._repo.aget(spec.kb_id)
+        existing = await self._repo.get(spec.kb_id)
         if existing is not None:
             # 模型变了要拒绝，不能悄悄沿用旧库（spec A12）
             existing.assert_model_matches(self._model)
-            await self._store.aensure_collection(
+            await self._store.ensure_collection(
                 existing.kb_id, dim=existing.embedding_dim
             )
             return await self._view(existing)
@@ -92,15 +92,15 @@ class KnowledgeBaseService:
         )
         # 先建 collection 再写元数据：反过来的话，建表失败会留下一条
         # 指向不存在 collection 的元数据，之后每次入库都报 CollectionNotFound。
-        await self._store.aensure_collection(kb.kb_id, dim=kb.embedding_dim)
+        await self._store.ensure_collection(kb.kb_id, dim=kb.embedding_dim)
         try:
-            created = await self._repo.acreate(kb)
+            created = await self._repo.create(kb)
         except KnowledgeBaseExists:
             # 另一个并发请求赢得了主键竞争。读取赢家并执行与顺序重试完全
             # 相同的兼容性检查；同模型则幂等返回，不同模型仍按 A12 拒绝。
-            created = await self._repo.arequire(kb.kb_id)
+            created = await self._repo.require(kb.kb_id)
             created.assert_model_matches(self._model)
-            await self._store.aensure_collection(
+            await self._store.ensure_collection(
                 created.kb_id, dim=created.embedding_dim
             )
             return await self._view(created)
@@ -111,21 +111,21 @@ class KnowledgeBaseService:
         return await self._view(created)
 
     async def get(self, kb_id: str) -> KnowledgeBaseView:
-        return await self._view(await self._repo.arequire(kb_id))
+        return await self._view(await self._repo.require(kb_id))
 
     async def list(
         self, *, limit: int = 50, offset: int = 0
     ) -> list[KnowledgeBaseView]:
-        rows = await self._repo.alist(limit=limit, offset=offset)
+        rows = await self._repo.list(limit=limit, offset=offset)
         return [await self._view(row) for row in rows]
 
     async def delete(self, kb_id: str) -> bool:
         """删库。先删向量、后删元数据 —— 反过来会留下无主向量。"""
-        kb = await self._repo.aget(kb_id)
+        kb = await self._repo.get(kb_id)
         if kb is None:
             return False
-        await self._store.adrop_collection(kb_id)
-        deleted = await self._repo.adelete(kb_id)
+        await self._store.drop_collection(kb_id)
+        deleted = await self._repo.delete(kb_id)
         logger.info(f"知识库已删除 kb={kb_id}")
         return deleted
 
@@ -135,19 +135,19 @@ class KnowledgeBaseService:
         这是 A12 的执行点。维度不符会被向量库拦下，但**同维度的不同模型**
         谁也拦不住 —— 只有这里能。
         """
-        kb = await self._repo.arequire(kb_id)
+        kb = await self._repo.require(kb_id)
         kb.assert_model_matches(self._model)
         return kb
 
     async def resolve_for_search(self, kb_id: str) -> KnowledgeBase:
         """检索前执行与入库相同的模型一致性守卫。"""
-        kb = await self._repo.arequire(kb_id)
+        kb = await self._repo.require(kb_id)
         kb.assert_model_matches(self._model)
         return kb
 
     async def _view(self, kb: KnowledgeBase) -> KnowledgeBaseView:
         try:
-            count = await self._store.acount(kb.kb_id)
+            count = await self._store.count(kb.kb_id)
         except Exception as exc:  # noqa: BLE001 —— 统计失败不该让查询整个失败
             logger.warning(f"统计 kb={kb.kb_id} 的 chunk 数失败：{exc!r}")
             count = -1

@@ -219,7 +219,7 @@ async def truncate_tables(target: Any, *tables: str) -> None:
         )
     finally:
         if own:
-            await db.aclose()
+            await db.close()
 
 
 @pytest.fixture
@@ -235,4 +235,4 @@ async def database(postgres_dsn: str) -> AsyncIterator:
     try:
         yield db
     finally:
-        await db.aclose()
+        await db.close()

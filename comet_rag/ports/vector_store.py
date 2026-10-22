@@ -14,7 +14,7 @@ class VectorStoreError(RuntimeError):
 
 class CollectionNotFound(VectorStoreError):
     def __init__(self, kb_id: str) -> None:
-        super().__init__(f"知识库 {kb_id!r} 尚未创建，请先调用 aensure_collection()")
+        super().__init__(f"知识库 {kb_id!r} 尚未创建，请先调用 ensure_collection()")
         self.kb_id = kb_id
 
 
@@ -87,10 +87,10 @@ def matches_filter(metadata: dict[str, Any], filter: Filter | None) -> bool:
 
 
 @runtime_checkable
-class VectorSearchPort(Protocol):
+class AsyncVectorSearchPort(Protocol):
     """只读向量检索能力，避免查询服务依赖完整存储生命周期。"""
 
-    async def asearch(
+    async def search(
         self,
         kb_id: str,
         query_embedding: Sequence[float],
@@ -101,10 +101,10 @@ class VectorSearchPort(Protocol):
 
 
 @runtime_checkable
-class KeywordSearchPort(Protocol):
+class AsyncKeywordSearchPort(Protocol):
     """后端无关的关键词召回能力。"""
 
-    async def asearch_keywords(
+    async def search_keywords(
         self,
         kb_id: str,
         query: str,
@@ -114,19 +114,19 @@ class KeywordSearchPort(Protocol):
     ) -> list[SearchHit]: ...
 
 
-class BaseVectorStore(ABC):
+class AsyncVectorStore(ABC):
     """完整向量存储契约；实现必须通过统一契约测试。"""
 
     @abstractmethod
-    async def aensure_collection(self, kb_id: str, *, dim: int) -> None:
+    async def ensure_collection(self, kb_id: str, *, dim: int) -> None:
         """幂等准备知识库；已存在但维度不符时拒绝操作。"""
 
     @abstractmethod
-    async def aupsert(self, kb_id: str, records: Sequence[VectorRecord]) -> list[str]:
+    async def upsert(self, kb_id: str, records: Sequence[VectorRecord]) -> list[str]:
         """按 ID 写入或覆盖，并在返回时保证数据可查。"""
 
     @abstractmethod
-    async def asearch(
+    async def search(
         self,
         kb_id: str,
         query_embedding: Sequence[float],
@@ -137,7 +137,7 @@ class BaseVectorStore(ABC):
         """在指定知识库内按余弦相似度检索。"""
 
     @abstractmethod
-    async def adelete(
+    async def delete(
         self,
         kb_id: str,
         *,
@@ -147,28 +147,28 @@ class BaseVectorStore(ABC):
         """删除并返回删除条数；ID 与过滤条件至少提供一个。"""
 
     @abstractmethod
-    async def adrop_collection(self, kb_id: str) -> None:
+    async def drop_collection(self, kb_id: str) -> None:
         """幂等删除整个知识库。"""
 
     @abstractmethod
-    async def acount(self, kb_id: str, *, filter: Filter | None = None) -> int:
+    async def count(self, kb_id: str, *, filter: Filter | None = None) -> int:
         """统计记录数，用于入库校验与配额控制。"""
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         """释放连接；无资源的实现沿用空操作。"""
         return None
 
 
 __all__ = [
-    "BaseVectorStore",
+    "AsyncVectorStore",
     "CollectionNotFound",
     "CollectionSchemaMismatch",
     "DimensionMismatch",
     "Filter",
-    "KeywordSearchPort",
+    "AsyncKeywordSearchPort",
     "SearchHit",
     "VectorRecord",
-    "VectorSearchPort",
+    "AsyncVectorSearchPort",
     "VectorStoreError",
     "matches_filter",
 ]

@@ -134,7 +134,7 @@ class PostgresDocumentStore(DocumentStore):
     def __init__(self, database: Database) -> None:
         self._db = database
 
-    async def areserve_revision(self, draft: RevisionDraft) -> StoredRevision:
+    async def reserve_revision(self, draft: RevisionDraft) -> StoredRevision:
         try:
             async with self._db.transaction() as session:
                 now = Time.utcnow()
@@ -169,8 +169,7 @@ class PostgresDocumentStore(DocumentStore):
                 existing = (
                     await session.execute(
                         select(DocumentRevisionRow).where(
-                            DocumentRevisionRow.revision_id
-                            == draft.key.revision_id
+                            DocumentRevisionRow.revision_id == draft.key.revision_id
                         )
                     )
                 ).scalar_one_or_none()
@@ -209,7 +208,7 @@ class PostgresDocumentStore(DocumentStore):
         except IntegrityError as exc:
             raise RevisionConflict(draft.key, "数据库唯一键或外键冲突") from exc
 
-    async def aput_parents(
+    async def put_parents(
         self, revision: RevisionKey, parents: Sequence[StoredParent]
     ) -> None:
         batch = tuple(parents)
@@ -221,10 +220,7 @@ class PostgresDocumentStore(DocumentStore):
                 for parent in batch:
                     if parent.key != revision:
                         raise RevisionConflict(revision, "父块属于另一个 revision")
-                    if (
-                        parent.parent_id in seen_ids
-                        or parent.ordinal in seen_ordinals
-                    ):
+                    if parent.parent_id in seen_ids or parent.ordinal in seen_ordinals:
                         raise RevisionConflict(
                             revision, "父块批次包含重复 ID 或 ordinal"
                         )
@@ -278,9 +274,7 @@ class PostgresDocumentStore(DocumentStore):
                     await session.execute(
                         select(func.count())
                         .select_from(DocumentParentRow)
-                        .where(
-                            DocumentParentRow.revision_id == revision.revision_id
-                        )
+                        .where(DocumentParentRow.revision_id == revision.revision_id)
                     )
                 ).scalar_one()
                 if current_count + len(new_parents) > row.parent_count:
@@ -308,7 +302,7 @@ class PostgresDocumentStore(DocumentStore):
         except IntegrityError as exc:
             raise RevisionConflict(revision, "数据库唯一键或外键冲突") from exc
 
-    async def amark_ready(self, revision: RevisionKey) -> StoredRevision:
+    async def mark_ready(self, revision: RevisionKey) -> StoredRevision:
         async with self._db.transaction() as session:
             row = await _revision_row(session, revision, for_update=True)
             status = RevisionStatus(row.status)
@@ -337,7 +331,7 @@ class PostgresDocumentStore(DocumentStore):
             await session.flush()
             return _to_revision(row)
 
-    async def aactivate_revision(self, revision: RevisionKey) -> Activation:
+    async def activate_revision(self, revision: RevisionKey) -> Activation:
         async with self._db.transaction() as session:
             document = (
                 await session.execute(
@@ -403,7 +397,7 @@ class PostgresDocumentStore(DocumentStore):
                 active=_to_revision(target), previous_revision_id=previous_id
             )
 
-    async def aget_active_revisions(
+    async def get_active_revisions(
         self, kb_id: str, source_ids: Sequence[str]
     ) -> dict[str, str | None]:
         sources = tuple(dict.fromkeys(source_ids))
@@ -421,7 +415,7 @@ class PostgresDocumentStore(DocumentStore):
                 result[source_id] = active_revision_id
             return result
 
-    async def aget_parents(
+    async def get_parents(
         self, kb_id: str, parent_ids: Sequence[str]
     ) -> dict[str, StoredParent]:
         ids = tuple(dict.fromkeys(parent_ids))
@@ -438,7 +432,7 @@ class PostgresDocumentStore(DocumentStore):
             ).scalars()
             return {row.parent_id: _to_parent(row) for row in rows}
 
-    async def aabandon_revision(self, revision: RevisionKey) -> None:
+    async def abandon_revision(self, revision: RevisionKey) -> None:
         async with self._db.transaction() as session:
             row = await _revision_row(session, revision, for_update=True)
             status = RevisionStatus(row.status)
@@ -453,7 +447,7 @@ class PostgresDocumentStore(DocumentStore):
             row.status = RevisionStatus.ABANDONED.value
             row.updated_at = Time.utcnow()
 
-    async def alist_cleanup_candidates(self, *, limit: int) -> list[RevisionKey]:
+    async def list_cleanup_candidates(self, *, limit: int) -> list[RevisionKey]:
         _require_positive_limit(limit)
         async with self._db.session() as session:
             rows = (
@@ -476,7 +470,7 @@ class PostgresDocumentStore(DocumentStore):
             ).scalars()
             return [_key(row) for row in rows]
 
-    async def apurge_inactive_revision(self, revision: RevisionKey) -> None:
+    async def purge_inactive_revision(self, revision: RevisionKey) -> None:
         async with self._db.transaction() as session:
             row = await _revision_row(session, revision, for_update=True)
             status = RevisionStatus(row.status)

@@ -13,16 +13,19 @@ from pathlib import Path
 
 import pytest
 
-from comet_rag.engines.pipelines import HooksState, PipelineConfig, PipelineHooks
+from comet_rag.engines.pipelines import (
+    AsyncPipelineHooks,
+    HooksState,
+    PipelineConfig,
+    PipelineHooks,
+)
 from comet_rag.ports import ExtractedDocument, NormalizedDocument
 from comet_rag.ports.source import LoadedResource, SourceContent
 
 LoaderContent = LoadedResource
 
 
-def _stub_extractor(
-    lc: LoaderContent, config: PipelineConfig
-) -> ExtractedDocument:
+def _stub_extractor(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
     return ExtractedDocument(markdown="stub")
 
 
@@ -63,44 +66,32 @@ def test_one_hook_can_serve_multiple_types() -> None:
 async def test_async_extractor_dispatches_by_file_type(
     loader_content: LoaderContent,
 ) -> None:
-    async def extract(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    async def extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown="async")
 
-    PipelineHooks.aextractor("ZZZ")(extract)
+    AsyncPipelineHooks.extractor("ZZZ")(extract)
 
-    assert PipelineHooks.get_aextractor("zzz") is extract
+    assert AsyncPipelineHooks.get_extractor("zzz") is extract
     assert (
-        (
-            await PipelineHooks.aextract("zzz", loader_content, PipelineConfig())
-        ).markdown
-        == "async"
-    )
+        await AsyncPipelineHooks.extract("zzz", loader_content, PipelineConfig())
+    ).markdown == "async"
 
 
 async def test_async_extractor_is_preferred_over_sync(
     loader_content: LoaderContent,
 ) -> None:
-    def forbidden(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    def forbidden(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         raise AssertionError("异步入口不应调用同步 Hook")
 
-    async def extract(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    async def extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown="async")
 
     PipelineHooks.extractor("zzz")(forbidden)
-    PipelineHooks.aextractor("zzz")(extract)
+    AsyncPipelineHooks.extractor("zzz")(extract)
 
     assert (
-        (
-            await PipelineHooks.aextract("zzz", loader_content, PipelineConfig())
-        ).markdown
-        == "async"
-    )
+        await AsyncPipelineHooks.extract("zzz", loader_content, PipelineConfig())
+    ).markdown == "async"
 
 
 async def test_async_extraction_falls_back_to_one_thread_call(
@@ -113,9 +104,9 @@ async def test_async_extraction_falls_back_to_one_thread_call(
         hook_threads.append(threading.get_ident())
         return ExtractedDocument(markdown="sync")
 
-    PipelineHooks.extractor("zzz")(extract)
+    AsyncPipelineHooks.sync_extractor("zzz")(extract)
 
-    result = await PipelineHooks.aextract("zzz", loader_content, PipelineConfig())
+    result = await AsyncPipelineHooks.extract("zzz", loader_content, PipelineConfig())
 
     assert result.markdown == "sync"
     assert len(hook_threads) == 1
@@ -129,7 +120,8 @@ def test_unknown_extractor_raises_with_helpful_message() -> None:
 
 
 def test_unknown_async_extractor_returns_none() -> None:
-    assert PipelineHooks.get_aextractor("从未注册过") is None
+    with pytest.raises(ValueError, match="No extractor"):
+        AsyncPipelineHooks.get_extractor("从未注册过")
 
 
 def test_chunker_falls_back_when_unregistered() -> None:
@@ -229,7 +221,8 @@ def test_registrations_do_not_leak_between_tests() -> None:
     """上面两个用例都注册过 txt，到这里必须已经不存在。"""
     with pytest.raises(ValueError):
         PipelineHooks.get_extractor("txt")
-    assert PipelineHooks.get_aextractor("txt") is None
+    with pytest.raises(ValueError, match="No extractor"):
+        AsyncPipelineHooks.get_extractor("txt")
 
 
 # ── snapshot / restore / temporary ─────────────────────────────────────────
@@ -240,9 +233,7 @@ def test_temporary_restores_on_exit() -> None:
 
     with PipelineHooks.temporary():
 
-        def override(
-            lc: LoaderContent, config: PipelineConfig
-        ) -> ExtractedDocument:
+        def override(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
             return ExtractedDocument(markdown="覆盖版")
 
         PipelineHooks.extractor("docx")(override)
@@ -282,20 +273,19 @@ def test_snapshot_is_not_a_live_view() -> None:
 
 
 def test_snapshot_restores_async_extractors() -> None:
-    state = PipelineHooks.snapshot()
+    state = AsyncPipelineHooks.snapshot()
 
-    async def extract(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    async def extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown="async")
 
-    PipelineHooks.aextractor("www")(extract)
-    PipelineHooks.restore(state)
+    AsyncPipelineHooks.extractor("www")(extract)
+    AsyncPipelineHooks.restore(state)
 
-    assert PipelineHooks.get_aextractor("www") is None
+    with pytest.raises(ValueError, match="No extractor"):
+        AsyncPipelineHooks.get_extractor("www")
 
 
 def test_hooks_state_keeps_original_positional_constructor() -> None:
     state = HooksState({"zzz": _stub_extractor}, {"zzz": _stub_chunker})
 
-    assert state.async_extractors == {}
+    assert not hasattr(state, "async_extractors")

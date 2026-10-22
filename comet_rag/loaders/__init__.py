@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from comet_rag.infrastructure.sources import (
+    AsyncAutoLoader,
+    AsyncBaseLoader,
+    AsyncLoaderRoute,
+    AsyncLocalLoader,
+    AsyncURLLoader,
     AutoLoader,
     BaseLoader,
     DownloadRequestConfig,
@@ -15,16 +20,20 @@ from comet_rag.infrastructure.sources import (
     SourceContent,
     URLLoader,
 )
-from comet_rag.ports import SourceLoaderPort
+from comet_rag.ports.source import AsyncSourceLoaderPort, SourceLoaderPort
 
 if TYPE_CHECKING:
     from comet_rag.infrastructure.sources.s3 import (
+        AsyncMinioLoader,
+        AsyncS3Loader,
         MinioLoader,
         ObjectTooLarge,
         S3Loader,
     )
 
-_S3_EXPORTS = frozenset({"MinioLoader", "ObjectTooLarge", "S3Loader"})
+_S3_EXPORTS = frozenset(
+    {"AsyncMinioLoader", "AsyncS3Loader", "MinioLoader", "ObjectTooLarge", "S3Loader"}
+)
 
 
 def __getattr__(name: str) -> Any:
@@ -42,6 +51,14 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "AsyncAutoLoader",
+    "AsyncBaseLoader",
+    "AsyncLoaderRoute",
+    "AsyncLocalLoader",
+    "AsyncURLLoader",
+    "AsyncSourceLoaderPort",
+    "AsyncS3Loader",
+    "AsyncMinioLoader",
     "AutoLoader",
     "BaseLoader",
     "DownloadRequestConfig",

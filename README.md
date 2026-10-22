@@ -24,8 +24,8 @@ pip install comet-rag        # 只装 pydantic / httpx / lxml / python-docx 一�
 from comet_rag.engines.pipelines import PipelineConfig
 from comet_rag.pipeline import Pipeline
 
-pipeline = Pipeline(config=PipelineConfig(chunk_size=2000, chunk_overlap=200))
-result = pipeline.run("报告.docx")
+with Pipeline(config=PipelineConfig(chunk_size=2000, chunk_overlap=200)) as pipeline:
+    result = pipeline.run("报告.docx")
 
 print(f"共 {len(result.chunks)} 个 chunk")
 for chunk in result.chunks:
@@ -86,16 +86,19 @@ uv run comet-rag worker embedder        # IO 密集：向量化 / 写库
 **worker 按负载特征分，不按业务名词分。** preprocessor 靠加进程扩、embedder
 靠加并发扩 —— 反过来会真的更慢，且症状是"上游变慢了"，很难联想到自己身上。
 
-**并发闸门做在适配器基类的模板方法里。** `aembed()` / `aembed_media()` /
-`aembed_batch()` 都是 `@final`，子类只能实现下面那层 `_aembed()` 等，所以
+**并发闸门做在适配器基类的模板方法里。** 同步与异步模型分别使用 `Foo` / `AsyncFoo`，同名 `embed()` / `embed_media()` /
+`embed_batch()` 都是 `@final`，子类只实现内部 `_embed()` 等扩展点，所以
 "绕过闸门"在类型层面就没有写法。换成"包一层 wrapper"只是约定 —— 谁直接调
 底层都能绕过去且不报错，而闸门恰恰是静默失效型的保护。
 
 **核心抽象各有一套与实现无关的契约测试**。`InMemoryTaskStore` 与
-`PostgresTaskStore`、`InProcessExecutor` 与 `ArqExecutor`、`InMemoryVectorStore`
-与 `MilvusStore`、`InMemoryDocumentStore` 与 `PostgresDocumentStore` 分别跑同一套断言；
+`PostgresTaskStore`、`InProcessExecutor` 与 `ArqExecutor`、`AsyncInMemoryVectorStore`
+与 `AsyncMilvusStore`、`InMemoryDocumentStore` 与 `PostgresDocumentStore` 分别跑同一套断言；
 关键词召回也由两种向量库实现共享同一套契约 —— "换后端行为不变"这句话靠断言兑现，
 不靠文档。
+
+V2 的 Python API 按执行模式分离；旧 `a*` 入口不再保留，迁移方式见
+[版本说明](docs/release_notes.md) 和 [模型用法](docs/model_usage.md)。
 
 更多见 [docs/architecture.md](docs/architecture.md)；目录结构与流程图见
 [docs/structure.md](docs/structure.md)；升级中的破坏性变更见

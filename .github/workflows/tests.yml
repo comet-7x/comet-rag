@@ -27,15 +27,16 @@ jobs:
           from comet_rag.engines.chunkers import RecursiveChunker
           from comet_rag.engines.indexing import HierarchyBuilder
           from comet_rag.ports import NormalizedDocument
-          from comet_rag.loaders import AutoLoader, LocalLoader
-          from comet_rag.pipeline import Pipeline
+          from comet_rag.loaders import AsyncAutoLoader, AsyncLocalLoader, AutoLoader, LocalLoader
+          from comet_rag.pipeline import AsyncPipeline, Pipeline
           import sys
           chunks = RecursiveChunker(chunk_size=50, chunk_overlap=10).chunk('x' * 300)
           assert len(chunks) > 1, f'300 字符按 50 切却只得到 {len(chunks)} 块'
           assert all(len(c) <= 50 for c in chunks), '有块超过了 chunk_size'
           hierarchy = HierarchyBuilder(RecursiveChunker(100), RecursiveChunker(50)).split(NormalizedDocument(markdown='x' * 300))
           assert len(hierarchy.parents) == 3 and len(hierarchy.children) == 6
-          assert AutoLoader and LocalLoader
+          assert AutoLoader and LocalLoader and AsyncAutoLoader and AsyncLocalLoader
+          assert Pipeline and AsyncPipeline
           assert 'comet_rag.infrastructure.sources.s3' not in sys.modules
           print(f'核心依赖下引擎可用 ✓（{len(chunks)} 块）')
           "

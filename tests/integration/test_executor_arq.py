@@ -279,8 +279,8 @@ async def split_pair(
         await producer.shutdown(timeout=10.0)
         await consumer.shutdown(timeout=10.0)
     finally:
-        await db_producer.aclose()
-        await db_consumer.aclose()
+        await db_producer.close()
+        await db_consumer.close()
         await _clean(postgres_dsn)
 
 

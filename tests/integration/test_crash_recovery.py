@@ -107,7 +107,7 @@ async def store(postgres_dsn: str) -> AsyncIterator[PostgresTaskStore]:
     try:
         yield PostgresTaskStore(db)
     finally:
-        await db.aclose()
+        await db.close()
         await truncate_tables(postgres_dsn, "tasks")
 
 

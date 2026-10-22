@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 from pathlib import Path
 
 from loguru import logger
 
+from comet_rag.engines.concurrency import map_concurrently
+from comet_rag.engines.defaults import DEFAULT_EMBED_FANOUT
 from comet_rag.engines.documents.docx.types import Block, DocxParsedContent
-from comet_rag.ports.vision import VisionDescriptionPort
+from comet_rag.engines.documents.docx.vision import validate_vision_model
+from comet_rag.engines.offload import run_sync
+from comet_rag.ports.vision import AsyncVisionDescriptionPort, VisionDescriptionPort
 
 _IMAGE_MIME_TYPES = {
     "jpg": "image/jpeg",
@@ -51,88 +54,10 @@ def _image_format(value: object) -> tuple[str, str] | None:
     return (extension, mime_type) if mime_type is not None else None
 
 
-class DocxCleaner:
-    def __init__(
-        self,
-        include_headers_footers: bool = False,
-        include_images: bool = True,
-        vision_model: VisionDescriptionPort | None = None,
-    ):
-        """
-        Initialize a DocxCleaner for converting DOCX content to Markdown with configurable filtering and optional vision-based image descriptions.
-
-        Parameters:
-            include_headers_footers (bool): Whether to include header and footer blocks. Defaults to False.
-            include_images (bool): Whether to include image blocks. Defaults to True.
-            vision_model: Optional image-description model.
-        """
+class _DocxRendering:
+    def __init__(self, *, include_headers_footers: bool, include_images: bool) -> None:
         self._include_headers_footers = include_headers_footers
         self._include_images = include_images
-        self._vision_model = vision_model
-
-    def clean_to_markdown(
-        self,
-        parse_content: DocxParsedContent,
-        output_dir: Path | None = None,
-        filename: str = "result",
-    ) -> str:
-        """
-        Convert parsed document content to Markdown with optional vision-based image descriptions and file output.
-
-        Converts each document block to Markdown text. Image blocks are described using the configured vision model if available; otherwise, placeholders are used. When output_dir is specified, writes the Markdown to a file and saves any images to disk.
-
-        Parameters:
-            parse_content: The document content to convert.
-            output_dir: Directory for saving the Markdown file and images. If None, no output files are written.
-            filename: Name for the output Markdown file, without extension.
-
-        Returns:
-            The generated Markdown string.
-        """
-        parts: list[str] = []
-        image_blocks: list[Block] = []
-        for block in self.clean_to_blocks(parse_content):
-            if block.get("type") == "image":
-                image_blocks.append(block)
-                if self._vision_model is not None:
-                    text = self._describe_image_block_sync(block)
-                else:
-                    text = self._block_to_markdown(block)
-            else:
-                text = self._block_to_markdown(block)
-            if text:
-                parts.append(text)
-        result = "\n\n".join(parts)
-        if output_dir is not None:
-            self._write_markdown_and_images(result, output_dir, filename, image_blocks)
-        return result
-
-    async def aclean_to_markdown(
-        self,
-        parse_content: DocxParsedContent,
-        output_dir: Path | None = None,
-        filename: str = "result",
-    ) -> str:
-        """异步生成 Markdown；未配置视觉模型时在线程中调用同步实现。"""
-        if self._vision_model is None:
-            return await asyncio.to_thread(
-                self.clean_to_markdown, parse_content, output_dir, filename
-            )
-        blocks = self.clean_to_blocks(parse_content)
-        results = await asyncio.gather(
-            *(self._process_block_markdown(b) for b in blocks)
-        )
-        result = "\n\n".join(r for r in results if r)
-        if output_dir is not None:
-            image_blocks = [b for b in blocks if b.get("type") == "image"]
-            await asyncio.to_thread(
-                self._write_markdown_and_images,
-                result,
-                output_dir,
-                filename,
-                image_blocks,
-            )
-        return result
 
     def clean_to_blocks(self, parse_content: DocxParsedContent) -> list[Block]:
         """
@@ -150,77 +75,6 @@ class DocxCleaner:
                 continue
             result.append(block)
         return result
-
-    async def aclean_to_blocks(self, parse_content: DocxParsedContent) -> list[Block]:
-        """
-        Filters blocks from parsed content according to the configuration.
-
-        Headers, footers, or images are excluded based on the include_headers_footers and include_images settings.
-
-        Returns:
-            A list of filtered blocks.
-        """
-        return await asyncio.to_thread(self.clean_to_blocks, parse_content)
-
-    def _describe_image_block_sync(self, block: Block) -> str:
-        """
-        Generate a text description for an image block.
-
-        Returns:
-            A text description from the vision model, or a placeholder string in the form "[image]" or "[image: alt_text]".
-        """
-        content = block.get("content", "")
-        fmt = block.get("format", "png")
-        alt = block.get("alt_text") or block.get("name", "")
-        if not content or self._vision_model is None:
-            return f"[image: {alt}]" if alt else "[image]"
-        image_format = _image_format(fmt)
-        if image_format is None:
-            logger.warning(f"Unsupported image format {fmt!r}; using placeholder")
-            return f"[image: {alt}]" if alt else "[image]"
-        _, mime_type = image_format
-        try:
-            return self._vision_model.describe(content, mime_type)
-        except Exception as exc:
-            logger.warning(f"Vision model failed for image '{alt}': {exc}")
-            return f"[image: {alt}]" if alt else "[image]"
-
-    async def _describe_image_block_async(self, block: Block) -> str:
-        """
-        Generate a text description for an image block.
-
-        Uses a vision model to produce a description if available; returns a placeholder
-        if the model is unavailable or fails.
-
-        Returns:
-            str: A text description of the image.
-        """
-        content = block.get("content", "")
-        fmt = block.get("format", "png")
-        alt = block.get("alt_text") or block.get("name", "")
-        if not content or self._vision_model is None:
-            return f"[image: {alt}]" if alt else "[image]"
-        image_format = _image_format(fmt)
-        if image_format is None:
-            logger.warning(f"Unsupported image format {fmt!r}; using placeholder")
-            return f"[image: {alt}]" if alt else "[image]"
-        _, mime_type = image_format
-        try:
-            return await self._vision_model.adescribe(content, mime_type)
-        except Exception as exc:
-            logger.warning(f"Vision model failed for image '{alt}': {exc}")
-            return f"[image: {alt}]" if alt else "[image]"
-
-    async def _process_block_markdown(self, block: Block) -> str:
-        """
-        Convert a block to Markdown, using image descriptions for image blocks.
-
-        Returns:
-                str: A Markdown representation of the block.
-        """
-        if block.get("type") == "image":
-            return await self._describe_image_block_async(block)
-        return self._block_to_markdown(block)
 
     def _write_markdown_and_images(
         self,
@@ -346,3 +200,161 @@ class DocxCleaner:
                 marker = f"{i}." if is_ordered else "-"
                 lines.append(f"{prefix}{marker} {item.get('content', '')}")
         return "\n".join(lines)
+
+
+class DocxCleaner(_DocxRendering):
+    def __init__(
+        self,
+        include_headers_footers: bool = False,
+        include_images: bool = True,
+        vision_model: VisionDescriptionPort | None = None,
+    ) -> None:
+        super().__init__(
+            include_headers_footers=include_headers_footers,
+            include_images=include_images,
+        )
+        validate_vision_model(vision_model, asynchronous=False)
+        self._vision_model = vision_model
+
+    def clean_to_markdown(
+        self,
+        parse_content: DocxParsedContent,
+        output_dir: Path | None = None,
+        filename: str = "result",
+    ) -> str:
+        """
+        Convert parsed document content to Markdown with optional vision-based image descriptions and file output.
+
+        Converts each document block to Markdown text. Image blocks are described using the configured vision model if available; otherwise, placeholders are used. When output_dir is specified, writes the Markdown to a file and saves any images to disk.
+
+        Parameters:
+            parse_content: The document content to convert.
+            output_dir: Directory for saving the Markdown file and images. If None, no output files are written.
+            filename: Name for the output Markdown file, without extension.
+
+        Returns:
+            The generated Markdown string.
+        """
+        parts: list[str] = []
+        image_blocks: list[Block] = []
+        for block in self.clean_to_blocks(parse_content):
+            if block.get("type") == "image":
+                image_blocks.append(block)
+                if self._vision_model is not None:
+                    text = self._describe_image_block(block)
+                else:
+                    text = self._block_to_markdown(block)
+            else:
+                text = self._block_to_markdown(block)
+            if text:
+                parts.append(text)
+        result = "\n\n".join(parts)
+        if output_dir is not None:
+            self._write_markdown_and_images(result, output_dir, filename, image_blocks)
+        return result
+
+    def _describe_image_block(self, block: Block) -> str:
+        """
+        Generate a text description for an image block.
+
+        Returns:
+            A text description from the vision model, or a placeholder string in the form "[image]" or "[image: alt_text]".
+        """
+        content = block.get("content", "")
+        fmt = block.get("format", "png")
+        alt = block.get("alt_text") or block.get("name", "")
+        if not content or self._vision_model is None:
+            return f"[image: {alt}]" if alt else "[image]"
+        image_format = _image_format(fmt)
+        if image_format is None:
+            logger.warning(f"Unsupported image format {fmt!r}; using placeholder")
+            return f"[image: {alt}]" if alt else "[image]"
+        _, mime_type = image_format
+        try:
+            return self._vision_model.describe(content, mime_type)
+        except Exception as exc:
+            logger.warning(f"Vision model failed for image '{alt}': {exc}")
+            return f"[image: {alt}]" if alt else "[image]"
+
+
+class AsyncDocxCleaner(_DocxRendering):
+    def __init__(
+        self,
+        include_headers_footers: bool = False,
+        include_images: bool = True,
+        vision_model: AsyncVisionDescriptionPort | None = None,
+    ) -> None:
+        super().__init__(
+            include_headers_footers=include_headers_footers,
+            include_images=include_images,
+        )
+        validate_vision_model(vision_model, asynchronous=True)
+        self._vision_model = vision_model
+
+    async def clean_to_markdown(
+        self,
+        parse_content: DocxParsedContent,
+        output_dir: Path | None = None,
+        filename: str = "result",
+    ) -> str:
+        """异步生成 Markdown；未配置视觉模型时在线程中调用同步实现。"""
+        if self._vision_model is None:
+            renderer = DocxCleaner(
+                include_headers_footers=self._include_headers_footers,
+                include_images=self._include_images,
+            )
+            return await run_sync(
+                renderer.clean_to_markdown, parse_content, output_dir, filename
+            )
+        blocks = self.clean_to_blocks(parse_content)
+        results = await map_concurrently(
+            self._process_block_markdown, blocks, limit=DEFAULT_EMBED_FANOUT
+        )
+        result = "\n\n".join(r for r in results if r)
+        if output_dir is not None:
+            image_blocks = [b for b in blocks if b.get("type") == "image"]
+            await run_sync(
+                self._write_markdown_and_images,
+                result,
+                output_dir,
+                filename,
+                image_blocks,
+            )
+        return result
+
+    async def _describe_image_block(self, block: Block) -> str:
+        """
+        Generate a text description for an image block.
+
+        Uses a vision model to produce a description if available; returns a placeholder
+        if the model is unavailable or fails.
+
+        Returns:
+            str: A text description of the image.
+        """
+        content = block.get("content", "")
+        fmt = block.get("format", "png")
+        alt = block.get("alt_text") or block.get("name", "")
+        if not content or self._vision_model is None:
+            return f"[image: {alt}]" if alt else "[image]"
+        image_format = _image_format(fmt)
+        if image_format is None:
+            logger.warning(f"Unsupported image format {fmt!r}; using placeholder")
+            return f"[image: {alt}]" if alt else "[image]"
+        _, mime_type = image_format
+        try:
+            return await self._vision_model.describe(content, mime_type)
+        except Exception as exc:
+            logger.warning(f"Vision model failed for image '{alt}': {exc}")
+            return f"[image: {alt}]" if alt else "[image]"
+
+    async def _process_block_markdown(self, block: Block) -> str:
+        """
+        Convert a block to Markdown, using image descriptions for image blocks.
+
+        Returns:
+                str: A Markdown representation of the block.
+        """
+        if block.get("type") == "image" and self._vision_model is not None:
+            return await self._describe_image_block(block)
+        return self._block_to_markdown(block)

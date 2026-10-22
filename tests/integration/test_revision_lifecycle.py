@@ -9,7 +9,7 @@ from arq.jobs import Job
 
 from comet_rag.engines.chunkers import FixedSizeChunker
 from comet_rag.engines.indexing import HierarchyBuilder
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.models.embedding.base import AsyncBaseEmbeddingModel
 from comet_rag.infrastructure.persistence.document_store.postgres import (
     PostgresDocumentStore,
 )
@@ -18,7 +18,7 @@ from comet_rag.infrastructure.persistence.knowledge_base.postgres import (
 )
 from comet_rag.infrastructure.persistence.sql import Database
 from comet_rag.infrastructure.persistence.task_store.postgres import PostgresTaskStore
-from comet_rag.infrastructure.persistence.vector_store.milvus import MilvusStore
+from comet_rag.infrastructure.persistence.vector_store.milvus import AsyncMilvusStore
 from comet_rag.infrastructure.task_execution.arq import ArqExecutor
 from comet_rag.ports import NormalizedDocument, VectorRecord
 from comet_rag.ports.document_store import RevisionKey, RevisionStatus
@@ -29,7 +29,7 @@ from comet_rag.services.retrieval import (
     SearchMode,
     SearchQuery,
 )
-from comet_rag.services.revision_context import RevisionTaskStages, aget_revision_key
+from comet_rag.services.revision_context import RevisionTaskStages, get_revision_key
 from comet_rag.tasks import (
     Done,
     RetriableError,
@@ -47,17 +47,17 @@ from tests.integration.conftest import truncate_tables
 pytestmark = pytest.mark.integration
 
 
-class _Embedding(BaseEmbeddingModel):
+class _Embedding(AsyncBaseEmbeddingModel):
     calls = 0
 
-    def _embed(self, data, **kwargs) -> list[float]:
+    def _vector(self, data, **kwargs) -> list[float]:
         return [1.0, 0.0]
 
-    async def _aembed(self, data, **kwargs) -> list[float]:
+    async def _embed(self, data, **kwargs) -> list[float]:
         self.calls += 1
-        return self._embed(data)
+        return self._vector(data)
 
-    async def close_client(self) -> None:
+    async def close(self) -> None:
         return None
 
 
@@ -114,10 +114,10 @@ async def test_pg_pointer_and_independent_strong_milvus_survive_partial_write(
 ) -> None:
     await truncate_tables(database, "knowledge_bases")
     prefix = f"ctcycle_{uuid4().hex[:12]}"
-    writer = MilvusStore(
+    writer = AsyncMilvusStore(
         endpoint=milvus_uri, database_name=milvus_database, prefix=prefix
     )
-    reader = MilvusStore(
+    reader = AsyncMilvusStore(
         endpoint=milvus_uri,
         database_name=milvus_database,
         prefix=prefix,
@@ -143,11 +143,11 @@ async def test_pg_pointer_and_independent_strong_milvus_survive_partial_write(
         embed_window=1,
     )
     try:
-        await PostgresKnowledgeBaseRepository(database).acreate(
+        await PostgresKnowledgeBaseRepository(database).create(
             make_kb(old.key.kb_id, embedding_dim=2)
         )
-        await writer.aensure_collection(old.key.kb_id, dim=2)
-        await writer.aupsert(
+        await writer.ensure_collection(old.key.kb_id, dim=2)
+        await writer.upsert(
             old.key.kb_id,
             [
                 VectorRecord(
@@ -155,44 +155,44 @@ async def test_pg_pointer_and_independent_strong_milvus_survive_partial_write(
                 )
             ],
         )
-        await stager.astage(old, embedding_dim=2)
+        await stager.stage(old, embedding_dim=2)
         before = await service.search(
             SearchQuery(kb_id=old.key.kb_id, query="量子纠缠")
         )
         assert [hit.id for hit in before.chunks] == ["legacy"]
-        await documents.aactivate_revision(old.key)
+        await documents.activate_revision(old.key)
         await _assert_visible(service, old)
 
-        upsert = writer.aupsert
+        upsert = writer.upsert
 
         async def lose_response(kb_id, records):
             await upsert(kb_id, records)
             raise ConnectionError("response lost after vector commit")
 
-        monkeypatch.setattr(writer, "aupsert", lose_response)
+        monkeypatch.setattr(writer, "upsert", lose_response)
         with pytest.raises(ConnectionError, match="response lost"):
-            await stager.astage(new, embedding_dim=2)
+            await stager.stage(new, embedding_dim=2)
         await _assert_visible(service, old)
-        monkeypatch.setattr(writer, "aupsert", upsert)
-        ready = await stager.astage(new, embedding_dim=2)
+        monkeypatch.setattr(writer, "upsert", upsert)
+        ready = await stager.stage(new, embedding_dim=2)
         assert ready.status is RevisionStatus.READY and ready.generation == 2
         await _assert_visible(service, old)
-        await documents.aactivate_revision(new.key)
+        await documents.activate_revision(new.key)
         await _assert_visible(service, new)
         assert (
-            await reader.acount(old.key.kb_id, filter={"document_revision": "old"}) == 4
+            await reader.count(old.key.kb_id, filter={"document_revision": "old"}) == 4
         )
         # 再建独立连接仍看见新 pointer；这里没有 flush/sleep 等待可见性。
-        assert await read_documents.aget_active_revisions(
-            old.key.kb_id, ["source"]
-        ) == {"source": "new"}
+        assert await read_documents.get_active_revisions(old.key.kb_id, ["source"]) == {
+            "source": "new"
+        }
     finally:
         try:
-            await writer.adrop_collection(old.key.kb_id)
+            await writer.drop_collection(old.key.kb_id)
         finally:
-            await reader.aclose()
-            await writer.aclose()
-            await read_database.aclose()
+            await reader.close()
+            await writer.close()
+            await read_database.close()
             await truncate_tables(database, "knowledge_bases")
 
 
@@ -229,13 +229,13 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
         retry_backoff=0.01,
     )
     prefix = f"cthandoff_{unique}"
-    cpu_vectors = MilvusStore(
+    cpu_vectors = AsyncMilvusStore(
         endpoint=milvus_uri,
         database_name=milvus_database,
         prefix=prefix,
         consistency_level="Strong",
     )
-    io_vectors = MilvusStore(
+    io_vectors = AsyncMilvusStore(
         endpoint=milvus_uri,
         database_name=milvus_database,
         prefix=prefix,
@@ -265,23 +265,21 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
     async def prepare(ctx: TaskContext) -> None:
         snapshot = await ctx.snapshot()
         if "revision_index" in snapshot.context:
-            await cpu_stages.aprepare(ctx)
+            await cpu_stages.prepare(ctx)
             return
-        key = await aget_revision_key(
-            ctx, kb_id="kb-revision-cycle", source_id="source"
-        )
+        key = await get_revision_key(ctx, kb_id="kb-revision-cycle", source_id="source")
         hierarchy = HierarchyBuilder(FixedSizeChunker(20), FixedSizeChunker(10)).split(
             NormalizedDocument(markdown=snapshot.context["text"])
         )
         plan = IndexPlanner().plan(
             hierarchy, key=key, source="fixture.md", file_type="md"
         )
-        await cpu_stages.aprepare(ctx, plan)
+        await cpu_stages.prepare(ctx, plan)
 
     @flow.stage("indexing", lane="io")
     async def stage(ctx: TaskContext) -> Done:
         try:
-            ready = await io_stages.astage(ctx, embedding_dim=2)
+            ready = await io_stages.stage(ctx, embedding_dim=2)
         except ConnectionError as exc:
             raise RetriableError("模拟向量提交后响应丢失") from exc
         # 测试 kind 只承诺 prepare-to-ready，不代表生产 ingest 已完成激活。
@@ -294,7 +292,7 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
         )
 
     register(kind)(flow)
-    upsert = io_vectors.aupsert
+    upsert = io_vectors.upsert
     failed = False
 
     async def lose_first_response(kb_id, records):
@@ -305,9 +303,9 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
             raise ConnectionError("response lost after commit")
         return result
 
-    monkeypatch.setattr(io_vectors, "aupsert", lose_first_response)
+    monkeypatch.setattr(io_vectors, "upsert", lose_first_response)
     try:
-        await PostgresKnowledgeBaseRepository(database).acreate(
+        await PostgresKnowledgeBaseRepository(database).create(
             make_kb("kb-revision-cycle", embedding_dim=2)
         )
         task = await producer_store.create(
@@ -326,8 +324,8 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
 
             await wait_until(handed_off, timeout=15, message="revision CPU 未完成移交")
         await cpu.shutdown(timeout=5)
-        await cpu_db.aclose()
-        await cpu_vectors.aclose()
+        await cpu_db.close()
+        await cpu_vectors.close()
         handed = await producer_store.require(task.task_id)
         assert handed.context["text"] is None and handed.attempts == 0
         revision = handed.context["revision_key"]["revision_id"]
@@ -346,14 +344,14 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
         }
         assert [s.stage for s in done.stage_history].count("chunking") == 1
         assert (
-            await io_vectors.acount(
+            await io_vectors.count(
                 "kb-revision-cycle",
                 filter={"source_id": "source", "document_revision": revision},
             )
             == 4
         )
         assert io_model.calls == 5
-        assert await PostgresDocumentStore(database).aget_active_revisions(
+        assert await PostgresDocumentStore(database).get_active_revisions(
             "kb-revision-cycle", ["source"]
         ) == {"source": None}
     finally:
@@ -361,12 +359,12 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
         await cpu.shutdown(timeout=5)
         await io.shutdown(timeout=5)
         try:
-            await io_vectors.adrop_collection("kb-revision-cycle")
+            await io_vectors.drop_collection("kb-revision-cycle")
         finally:
-            await cpu_vectors.aclose()
-            await io_vectors.aclose()
-            await cpu_db.aclose()
-            await io_db.aclose()
+            await cpu_vectors.close()
+            await io_vectors.close()
+            await cpu_db.close()
+            await io_db.close()
             await pool.delete(*lanes.values())
             await pool.aclose()
             await truncate_tables(database, "tasks", "knowledge_bases")

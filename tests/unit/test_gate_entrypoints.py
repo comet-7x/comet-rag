@@ -37,25 +37,45 @@ from typing import Any
 import pytest
 
 from comet_rag.core.concurrency import Gate
-from comet_rag.infrastructure.extractors.mineru import MinerUDocumentExtractor
+from comet_rag.infrastructure.extractors.mineru import (
+    AsyncMinerUDocumentExtractor,
+    MinerUDocumentExtractor,
+)
 from comet_rag.infrastructure.models.embedding.base import (
+    AsyncBaseEmbeddingModel,
+    AsyncMultimodalEmbeddingMixin,
     BaseEmbeddingModel,
     MultimodalEmbeddingMixin,
 )
 from comet_rag.infrastructure.models.embedding.openai import (
+    AsyncOpenAIEmbeddingModel,
     OpenAIEmbeddingModel,
 )
 from comet_rag.infrastructure.models.embedding.qwen3_vl import (
+    AsyncQwen3VLEmbeddingModel,
     DetokenizeResponse,
     EmbeddingData,
     Qwen3VLEmbeddingModel,
     TokenizeResponse,
 )
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.models.reranker.base import (
+    AsyncBaseReranker,
+    BaseReranker,
+)
 from comet_rag.infrastructure.models.reranker.qwen3_vl import (
+    AsyncQwen3VLReranker,
     Qwen3VLReranker,
 )
+from comet_rag.infrastructure.models.vision.openai import (
+    AsyncOpenAIVisionModel,
+    OpenAIVisionModel,
+)
 from comet_rag.infrastructure.sources import (
+    AsyncAutoLoader,
+    AsyncBaseLoader,
+    AsyncLoaderRoute,
+    AsyncLocalLoader,
+    AsyncURLLoader,
     AutoLoader,
     BaseLoader,
     LoaderContent,
@@ -64,83 +84,113 @@ from comet_rag.infrastructure.sources import (
     SourceContent,
     URLLoader,
 )
-from comet_rag.infrastructure.sources.s3 import S3Loader
+from comet_rag.infrastructure.sources.s3 import AsyncS3Loader, S3Loader
 from comet_rag.ports import ExtractedDocument, MediaResource
 from comet_rag.ports.gate import GatedResource
 
 #: 四类的含义见模块文档。改动这张表时请连同理由一起写。
 CLASSIFICATION: dict[type, dict[str, set[str]]] = {
     BaseEmbeddingModel: {
-        "direct": {
-            "embed",
-            "embed_batch",
-            "embed_document",
-            "embed_query",
-            "aembed",
-            "aembed_batch",
-        },
-        # 走 `aembed`，由它进闸门
-        "indirect": {"aembed_document", "aembed_query"},
+        "direct": {"embed", "embed_batch", "embed_document", "embed_query"},
+        "indirect": set(),
         "delegated": set(),
-        "exempt": {"aclose"},
+        "exempt": {"close"},
+    },
+    AsyncBaseEmbeddingModel: {
+        "direct": {"embed", "embed_batch"},
+        "indirect": {"embed_document", "embed_query"},
+        "delegated": set(),
+        "exempt": {"close"},
     },
     MultimodalEmbeddingMixin: {
-        "direct": {"embed_media", "aembed_media"},
+        "direct": {"embed_media"},
+        "indirect": set(),
+        "delegated": set(),
+        "exempt": set(),
+    },
+    AsyncMultimodalEmbeddingMixin: {
+        "direct": {"embed_media"},
         "indirect": set(),
         "delegated": set(),
         "exempt": set(),
     },
     BaseReranker: {
-        "direct": {"score", "ascore"},
-        # 翻译成供应商格式之后走 `score`/`ascore`
-        "indirect": {"rank", "arank"},
+        "direct": {"score"},
+        "indirect": {"rank"},
         "delegated": set(),
-        "exempt": {"aclose"},
+        "exempt": {"close"},
+    },
+    AsyncBaseReranker: {
+        "direct": {"score"},
+        "indirect": {"rank"},
+        "delegated": set(),
+        "exempt": {"close"},
     },
     BaseLoader: {
-        "direct": {"load", "aload"},
-        # 每个来源各走一次 `load`/`aload`，所以是每次请求一个名额
-        "indirect": {"batch_load", "abatch_load"},
+        "direct": {"load"},
+        "indirect": {"batch_load"},
         "delegated": set(),
-        "exempt": {"cleanup", "acleanup"},
+        "exempt": {"cleanup", "close"},
+    },
+    AsyncBaseLoader: {
+        "direct": {"load"},
+        "indirect": {"batch_load"},
+        "delegated": set(),
+        "exempt": {"cleanup", "close"},
     },
     Qwen3VLEmbeddingModel: {
-        # 供应商专属 token API 同样会发 HTTP 请求，不能躲在具体类里绕过预算。
-        "direct": {"tokenize", "atokenize", "detokenize", "adetokenize"},
+        "direct": {"detokenize", "tokenize"},
         "indirect": {
-            "embed_image",
-            "aembed_image",
             "embed_content",
-            "aembed_content",
-            "get_output_dim",
+            "embed_image",
             "get_max_model_len",
+            "get_output_dim",
         },
         "delegated": set(),
-        "exempt": {"aclose"},
+        "exempt": {"close"},
+    },
+    AsyncQwen3VLEmbeddingModel: {
+        "direct": {"detokenize", "tokenize"},
+        "indirect": {
+            "embed_content",
+            "embed_image",
+            "get_max_model_len",
+            "get_output_dim",
+        },
+        "delegated": set(),
+        "exempt": {"close"},
     },
     URLLoader: {
-        # 为了复用 client，批量实现绕过 BaseLoader.batch_load，必须在这里自己进闸。
-        "direct": {"abatch_load"},
+        "direct": set(),
         "indirect": set(),
-        # 同步逐请求闸门位于 `_batch_load_with` 的 worker 中。
         "delegated": {"batch_load"},
-        "exempt": {"cleanup", "acleanup", "aclose"},
+        "exempt": {"cleanup"},
+    },
+    AsyncURLLoader: {
+        "direct": {"batch_load"},
+        "indirect": set(),
+        "delegated": set(),
+        "exempt": {"cleanup"},
     },
     AutoLoader: {
         "direct": set(),
         "indirect": set(),
-        # 路由器自己不持有闸门；名额由匹配到的叶子 loader 获取。
-        "delegated": {"batch_load", "abatch_load"},
-        "exempt": {
-            "bind_gate",
-            "cleanup",
-            "acleanup",
-            "aclose",
-            "default",
-            "default_routes",
-        },
+        "delegated": {"batch_load"},
+        "exempt": {"cleanup", "default", "default_routes"},
+    },
+    AsyncAutoLoader: {
+        "direct": set(),
+        "indirect": set(),
+        "delegated": {"batch_load"},
+        "exempt": {"cleanup", "default", "default_routes"},
     },
     LocalLoader: {
+        "direct": set(),
+        "indirect": set(),
+        "delegated": set(),
+        "exempt": {"cleanup"},
+    },
+    AsyncLocalLoader: {
         "direct": set(),
         "indirect": set(),
         "delegated": set(),
@@ -150,34 +200,57 @@ CLASSIFICATION: dict[type, dict[str, set[str]]] = {
         "direct": set(),
         "indirect": set(),
         "delegated": set(),
-        "exempt": {"cleanup", "acleanup", "aclose"},
+        "exempt": {"cleanup"},
+    },
+    AsyncS3Loader: {
+        "direct": set(),
+        "indirect": set(),
+        "delegated": set(),
+        "exempt": {"cleanup"},
     },
     OpenAIEmbeddingModel: {
         "direct": set(),
         "indirect": set(),
         "delegated": set(),
-        "exempt": {"aclose"},
+        "exempt": {"close"},
+    },
+    AsyncOpenAIEmbeddingModel: {
+        "direct": set(),
+        "indirect": set(),
+        "delegated": set(),
+        "exempt": {"close"},
     },
     Qwen3VLReranker: {
         "direct": set(),
         "indirect": set(),
         "delegated": set(),
-        "exempt": {"aclose"},
+        "exempt": {"close"},
     },
-    MinerUDocumentExtractor: {
-        # 一次许可覆盖 health、上传、轮询与结果读取的完整远端解析生命周期。
-        "direct": {"extract", "aextract"},
+    AsyncQwen3VLReranker: {
+        "direct": set(),
         "indirect": set(),
         "delegated": set(),
-        "exempt": {"aclose"},
+        "exempt": {"close"},
+    },
+    MinerUDocumentExtractor: {
+        "direct": {"extract"},
+        "indirect": set(),
+        "delegated": set(),
+        "exempt": {"close"},
+    },
+    AsyncMinerUDocumentExtractor: {
+        "direct": {"extract"},
+        "indirect": set(),
+        "delegated": set(),
+        "exempt": {"close"},
     },
 }
 
-#: delegated 不能只凭分类表口头承诺；每个入口都要指出真实委派目标。
+#: URL 批量由 worker 分别取闸；路由器由叶子取闸，避免重复占用名额。
 DELEGATION_TARGETS: dict[tuple[type, str], str] = {
     (URLLoader, "batch_load"): "_batch_load_with",
     (AutoLoader, "batch_load"): "batch_load",
-    (AutoLoader, "abatch_load"): "abatch_load",
+    (AsyncAutoLoader, "batch_load"): "batch_load",
 }
 
 
@@ -498,6 +571,61 @@ def test_all_gated_classes_are_covered() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("sync_class", "async_class"),
+    [
+        (BaseEmbeddingModel, AsyncBaseEmbeddingModel),
+        (MultimodalEmbeddingMixin, AsyncMultimodalEmbeddingMixin),
+        (BaseReranker, AsyncBaseReranker),
+        (OpenAIEmbeddingModel, AsyncOpenAIEmbeddingModel),
+        (Qwen3VLEmbeddingModel, AsyncQwen3VLEmbeddingModel),
+        (Qwen3VLReranker, AsyncQwen3VLReranker),
+        (OpenAIVisionModel, AsyncOpenAIVisionModel),
+        (BaseLoader, AsyncBaseLoader),
+        (LocalLoader, AsyncLocalLoader),
+        (URLLoader, AsyncURLLoader),
+        (S3Loader, AsyncS3Loader),
+        (AutoLoader, AsyncAutoLoader),
+        (MinerUDocumentExtractor, AsyncMinerUDocumentExtractor),
+    ],
+    ids=lambda cls: cls.__name__,
+)
+def test_public_execution_methods_have_one_mode_per_type(
+    sync_class: type, async_class: type
+) -> None:
+    """拆分类型的执行面不能重新混入另一种模式或旧式 a 前缀入口。"""
+    legacy_entries = {
+        "aembed",
+        "aembed_batch",
+        "aembed_query",
+        "aembed_document",
+        "aembed_media",
+        "aembed_image",
+        "aembed_content",
+        "ascore",
+        "arank",
+        "aload",
+        "abatch_load",
+        "aextract",
+        "adescribe",
+        "atokenize",
+        "adetokenize",
+        "acleanup",
+        "aclose",
+    }
+    # 构造路由与绑定预算不执行 I/O；它们在两类上都保持同步。
+    configuration_methods = {"bind_gate", "default", "default_routes"}
+    for cls, expected_async in ((sync_class, False), (async_class, True)):
+        names = {name for name in dir(cls) if not name.startswith("_")}
+        assert not names & legacy_entries, f"{cls.__name__} 暴露了旧双模执行入口"
+        for name in names - configuration_methods:
+            method = getattr(cls, name)
+            if callable(method):
+                assert inspect.iscoroutinefunction(method) is expected_async, (
+                    f"{cls.__name__}.{name} 的执行模式与类型契约不符"
+                )
+
+
 def test_ast_discovery_covers_non_top_level_gated_classes() -> None:
     """发现器不能遗漏非顶层类，也不能混淆不同作用域里的同名别名。"""
     module = ast.parse(
@@ -585,7 +713,9 @@ class _StubEmbedding(BaseEmbeddingModel):
     def _embed(self, data: str, /, **kwargs: Any) -> list[float]:
         return [0.0]
 
-    async def _aembed(self, data: str, /, **kwargs: Any) -> list[float]:
+
+class _StubAsyncEmbedding(AsyncBaseEmbeddingModel):
+    async def _embed(self, data: str, /, **kwargs: Any) -> list[float]:
         return [0.0]
 
 
@@ -593,7 +723,9 @@ class _StubMultimodal(MultimodalEmbeddingMixin, _StubEmbedding):
     def _embed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
         return [0.0]
 
-    async def _aembed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
+
+class _StubAsyncMultimodal(AsyncMultimodalEmbeddingMixin, _StubAsyncEmbedding):
+    async def _embed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
         return [0.0]
 
 
@@ -601,7 +733,9 @@ class _StubReranker(BaseReranker[str]):
     def _score(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
         return [0.0] * len(list(documents))
 
-    async def _ascore(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
+
+class _StubAsyncReranker(AsyncBaseReranker[str]):
+    async def _score(self, query: str, documents: Any, **kwargs: Any) -> list[float]:
         return [0.0] * len(list(documents))
 
 
@@ -609,10 +743,15 @@ class _StubLoader(BaseLoader):
     def _load(self, source: Any, **kwargs: Any) -> LoaderContent:
         return LoaderContent(path=Path("/dev/null"), source=SourceContent("x"))
 
-    async def _aload(self, source: Any, **kwargs: Any) -> LoaderContent:
-        return self._load(source)
-
     def cleanup(self) -> None:
+        return None
+
+
+class _StubAsyncLoader(AsyncBaseLoader):
+    async def _load(self, source: Any, **kwargs: Any) -> LoaderContent:
+        return LoaderContent(path=Path("/dev/null"), source=SourceContent("x"))
+
+    async def cleanup(self) -> None:
         return None
 
 
@@ -623,58 +762,40 @@ class _StubQwen(Qwen3VLEmbeddingModel):
         self._output_dim: int | None = None
         self._max_model_len: int | None = None
 
-    def _embed(
-        self,
-        embedding_data: Any,
-        system_prompt: Any = None,
-        encoding_format: Any = None,
-        continue_final_message: bool = True,
-        add_special_tokens: bool = True,
-        **kwargs: Any,
-    ) -> list[float]:
-        return [0.0]
-
-    async def _aembed(
-        self,
-        embedding_data: Any,
-        system_prompt: Any = None,
-        encoding_format: Any = None,
-        continue_final_message: bool = True,
-        add_special_tokens: bool = True,
-        **kwargs: Any,
-    ) -> list[float]:
+    def _embed(self, embedding_data: Any, *args: Any, **kwargs: Any) -> list[float]:
         return [0.0]
 
     def _embed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
         return [0.0]
 
-    async def _aembed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
-        return [0.0]
-
     def _tokenize(
-        self,
-        embedding_data: EmbeddingData,
-        continue_final_message: bool = False,
-        return_token_strs: bool = False,
-        **kwargs: Any,
-    ) -> TokenizeResponse:
-        return TokenizeResponse(count=1, max_model_len=1024, tokens=[1])
-
-    async def _atokenize(
-        self,
-        embedding_data: EmbeddingData,
-        continue_final_message: bool = False,
-        return_token_strs: bool = False,
-        **kwargs: Any,
+        self, embedding_data: EmbeddingData, *args: Any, **kwargs: Any
     ) -> TokenizeResponse:
         return TokenizeResponse(count=1, max_model_len=1024, tokens=[1])
 
     def _detokenize(self, tokens: list[int], **kwargs: Any) -> DetokenizeResponse:
         return DetokenizeResponse(prompt="x")
 
-    async def _adetokenize(
-        self, tokens: list[int], **kwargs: Any
-    ) -> DetokenizeResponse:
+
+class _StubAsyncQwen(AsyncQwen3VLEmbeddingModel):
+    def __init__(self) -> None:
+        self._output_dim: int | None = None
+        self._max_model_len: int | None = None
+
+    async def _embed(
+        self, embedding_data: Any, *args: Any, **kwargs: Any
+    ) -> list[float]:
+        return [0.0]
+
+    async def _embed_media(self, data: Any, /, **kwargs: Any) -> list[float]:
+        return [0.0]
+
+    async def _tokenize(
+        self, embedding_data: EmbeddingData, *args: Any, **kwargs: Any
+    ) -> TokenizeResponse:
+        return TokenizeResponse(count=1, max_model_len=1024, tokens=[1])
+
+    async def _detokenize(self, tokens: list[int], **kwargs: Any) -> DetokenizeResponse:
         return DetokenizeResponse(prompt="x")
 
 
@@ -682,9 +803,6 @@ class _StubURLLoader(URLLoader):
     """保留 URLLoader 的批量外壳，但把真实下载替换成内存结果。"""
 
     def _shared_client(self) -> Any:
-        return object()
-
-    def _shared_async_client(self) -> Any:
         return object()
 
     def _load_impl(
@@ -696,7 +814,12 @@ class _StubURLLoader(URLLoader):
     ) -> LoaderContent:
         return LoaderContent(path=Path("/dev/null"), source=SourceContent("x"))
 
-    async def _aload_impl(
+
+class _StubAsyncURLLoader(AsyncURLLoader):
+    def _shared_client(self) -> Any:
+        return object()
+
+    async def _load_impl(
         self,
         source: SourceContent | str,
         *,
@@ -717,7 +840,12 @@ class _StubMinerU(MinerUDocumentExtractor):
     ) -> ExtractedDocument:
         return ExtractedDocument(markdown="x")
 
-    async def _aextract(
+
+class _StubAsyncMinerU(AsyncMinerUDocumentExtractor):
+    def __init__(self) -> None:
+        pass
+
+    async def _extract(
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument:
         return ExtractedDocument(markdown="x")
@@ -726,6 +854,16 @@ class _StubMinerU(MinerUDocumentExtractor):
 def _stub_auto_loader() -> AutoLoader:
     return AutoLoader(
         [LoaderRoute(name="all", matcher=lambda _source: True, loader=_StubLoader())]
+    )
+
+
+def _stub_async_auto_loader() -> AsyncAutoLoader:
+    return AsyncAutoLoader(
+        [
+            AsyncLoaderRoute(
+                name="all", matcher=lambda _source: True, loader=_StubAsyncLoader()
+            )
+        ]
     )
 
 
@@ -783,44 +921,50 @@ SYNC_INVOCATIONS: list[tuple[str, Any, int]] = [
 #: 不由这张表驱动。于是"守卫覆盖了每个登记入口"这句话当时是假的：新加一个
 #: 异步入口就会零行为覆盖，而元守卫不会吭声（评审指出）。
 ASYNC_INVOCATIONS: list[tuple[str, Any, int]] = [
-    ("BaseEmbeddingModel.aembed", lambda m: m.aembed("x"), 1),
-    ("BaseEmbeddingModel.aembed_query", lambda m: m.aembed_query("x"), 1),
-    ("BaseEmbeddingModel.aembed_document", lambda m: m.aembed_document("x"), 1),
-    ("BaseEmbeddingModel.aembed_batch", lambda m: m.aembed_batch(["x"]), 1),
-    ("MultimodalEmbeddingMixin.aembed_media", lambda m: m.aembed_media("x"), 1),
-    ("BaseReranker.ascore", lambda m: m.ascore("q", ["d"]), 1),
-    ("BaseReranker.arank", lambda m: m.arank("q", ["d"]), 1),
-    ("BaseLoader.aload", lambda m: m.aload("s"), 1),
+    ("AsyncBaseEmbeddingModel.embed", lambda m: m.embed("x"), 1),
+    ("AsyncBaseEmbeddingModel.embed_query", lambda m: m.embed_query("x"), 1),
+    ("AsyncBaseEmbeddingModel.embed_document", lambda m: m.embed_document("x"), 1),
+    ("AsyncBaseEmbeddingModel.embed_batch", lambda m: m.embed_batch(["x"]), 1),
+    ("AsyncMultimodalEmbeddingMixin.embed_media", lambda m: m.embed_media("x"), 1),
+    ("AsyncBaseReranker.score", lambda m: m.score("q", ["d"]), 1),
+    ("AsyncBaseReranker.rank", lambda m: m.rank("q", ["d"]), 1),
+    ("AsyncBaseLoader.load", lambda m: m.load("s"), 1),
     (
-        "BaseLoader.abatch_load",
-        lambda m: m.abatch_load(["a", "b", "c"], max_concurrency=2),
+        "AsyncBaseLoader.batch_load",
+        lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2),
         3,
     ),
     (
-        "Qwen3VLEmbeddingModel.atokenize",
-        lambda m: m.atokenize(EmbeddingData(text="x")),
+        "AsyncQwen3VLEmbeddingModel.tokenize",
+        lambda m: m.tokenize(EmbeddingData(text="x")),
         1,
     ),
-    ("Qwen3VLEmbeddingModel.adetokenize", lambda m: m.adetokenize([1]), 1),
+    ("AsyncQwen3VLEmbeddingModel.detokenize", lambda m: m.detokenize([1]), 1),
     (
-        "Qwen3VLEmbeddingModel.aembed_image",
-        lambda m: m.aembed_image(MediaResource(data=b"x", mimetype="image/png")),
+        "AsyncQwen3VLEmbeddingModel.embed_image",
+        lambda m: m.embed_image(MediaResource(data=b"x", mimetype="image/png")),
         1,
     ),
-    ("Qwen3VLEmbeddingModel.aembed_content", lambda m: m.aembed_content("x"), 1),
+    ("AsyncQwen3VLEmbeddingModel.embed_content", lambda m: m.embed_content("x"), 1),
+    ("AsyncQwen3VLEmbeddingModel.get_output_dim", lambda m: m.get_output_dim(), 1),
     (
-        "URLLoader.abatch_load",
-        lambda m: m.abatch_load(["a", "b", "c"], max_concurrency=2),
+        "AsyncQwen3VLEmbeddingModel.get_max_model_len",
+        lambda m: m.get_max_model_len(),
+        1,
+    ),
+    (
+        "AsyncURLLoader.batch_load",
+        lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2),
         3,
     ),
     (
-        "AutoLoader.abatch_load",
-        lambda m: m.abatch_load(["a", "b", "c"], max_concurrency=2),
+        "AsyncAutoLoader.batch_load",
+        lambda m: m.batch_load(["a", "b", "c"], max_concurrency=2),
         3,
     ),
     (
-        "MinerUDocumentExtractor.aextract",
-        lambda m: m.aextract(
+        "AsyncMinerUDocumentExtractor.extract",
+        lambda m: m.extract(
             Path("/dev/null"), filename="x.pdf", media_type="application/pdf"
         ),
         1,
@@ -828,6 +972,14 @@ ASYNC_INVOCATIONS: list[tuple[str, Any, int]] = [
 ]
 
 _STUBS: dict[str, Any] = {
+    "AsyncBaseEmbeddingModel": _StubAsyncEmbedding,
+    "AsyncMultimodalEmbeddingMixin": _StubAsyncMultimodal,
+    "AsyncBaseReranker": _StubAsyncReranker,
+    "AsyncBaseLoader": _StubAsyncLoader,
+    "AsyncQwen3VLEmbeddingModel": _StubAsyncQwen,
+    "AsyncURLLoader": _StubAsyncURLLoader,
+    "AsyncAutoLoader": _stub_async_auto_loader,
+    "AsyncMinerUDocumentExtractor": _StubAsyncMinerU,
     "BaseEmbeddingModel": _StubEmbedding,
     "MultimodalEmbeddingMixin": _StubMultimodal,
     "BaseReranker": _StubReranker,

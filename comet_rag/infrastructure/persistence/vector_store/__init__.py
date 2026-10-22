@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from .memory import InMemoryVectorStore, cosine_similarity
+from .memory import AsyncInMemoryVectorStore, cosine_similarity
 
-__all__ = ["InMemoryVectorStore", "cosine_similarity"]
+__all__ = ["AsyncInMemoryVectorStore", "cosine_similarity"]

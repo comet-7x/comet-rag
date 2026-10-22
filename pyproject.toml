@@ -32,7 +32,7 @@ milvus = ["pymilvus>=2.6.17,<2.7"]
 server = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
-    "python-multipart>=0.0.9",  # FastAPI 接文件上传（POST /ingest）必需
+    "python-multipart>=0.0.9",  # 表单解析扩展；当前 /ingest 只收 JSON，依赖精简另行评估
     # AsyncSession / async Alembic 在 macOS arm64 也需要 greenlet；[asyncio]
     # 让该依赖不再依赖 SQLAlchemy wheel 的平台 marker 偶然命中。
     "sqlalchemy[asyncio]>=2.0.0",

@@ -17,9 +17,17 @@ from comet_rag.engines.documents.formats import (
     is_allowed_extension,
     resolve_detected_extension,
 )
-from comet_rag.infrastructure.sources import AutoLoader, LoaderRoute, LocalLoader
+from comet_rag.infrastructure.sources import (
+    AsyncAutoLoader,
+    AsyncLoaderRoute,
+    AsyncLocalLoader,
+    AutoLoader,
+    LoaderRoute,
+    LocalLoader,
+)
 from comet_rag.infrastructure.sources.base import (
     DEFAULT_MAX_CONCURRENCY,
+    AsyncBaseLoader,
     BaseLoader,
 )
 from comet_rag.ports.source import LoadedResource, SourceContent
@@ -27,7 +35,7 @@ from comet_rag.ports.source import LoadedResource, SourceContent
 LoaderContent = LoadedResource
 
 
-class RecordingLoader(BaseLoader):
+class _RecordingResults:
     def __init__(self, name: str) -> None:
         self.name = name
         self.batch_limits: list[int] = []
@@ -45,12 +53,9 @@ class RecordingLoader(BaseLoader):
             metadata={"loader": self.name},
         )
 
-    def _load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
-        return self._result(source)
 
-    async def _aload(
-        self, source: SourceContent | str, *args, **kwargs
-    ) -> LoaderContent:
+class RecordingLoader(_RecordingResults, BaseLoader):
+    def _load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         return self._result(source)
 
     def batch_load(
@@ -63,7 +68,17 @@ class RecordingLoader(BaseLoader):
         self.batch_limits.append(max_concurrency)
         return [self._result(source) for source in sources]
 
-    async def abatch_load(
+    def cleanup(self) -> None:
+        self.cleanup_calls += 1
+
+
+class AsyncRecordingLoader(_RecordingResults, AsyncBaseLoader):
+    async def _load(
+        self, source: SourceContent | str, *args, **kwargs
+    ) -> LoaderContent:
+        return self._result(source)
+
+    async def batch_load(
         self,
         sources: list[SourceContent] | list[str],
         *,
@@ -73,47 +88,27 @@ class RecordingLoader(BaseLoader):
         self.async_batch_limits.append(max_concurrency)
         return [self._result(source) for source in sources]
 
-    def cleanup(self) -> None:
-        self.cleanup_calls += 1
-
-    async def acleanup(self) -> None:
+    async def cleanup(self) -> None:
         self.async_cleanup_calls += 1
-
-
-class LegacyCloseLoader(BaseLoader):
-    def __init__(self) -> None:
-        self.sync_cleanup_calls = 0
-        self.async_close_calls = 0
-
-    def _load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
-        normalized = (
-            source if isinstance(source, SourceContent) else SourceContent(source)
-        )
-        return LoaderContent(path=Path("legacy"), source=normalized)
-
-    async def _aload(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
-        return self._load(source)
-
-    def cleanup(self) -> None:
-        self.sync_cleanup_calls += 1
-
-    async def aclose(self) -> None:
-        self.async_close_calls += 1
 
 
 def _scheme_route(scheme: str, loader: BaseLoader) -> LoaderRoute:
     return LoaderRoute.schemes(scheme, loader, {scheme})
 
 
+def _async_scheme_route(scheme: str, loader: AsyncBaseLoader) -> AsyncLoaderRoute:
+    return AsyncLoaderRoute.schemes(scheme, loader, {scheme})
+
+
 def test_batch_concurrency_is_an_explicit_public_parameter() -> None:
-    for method in (BaseLoader.batch_load, BaseLoader.abatch_load):
+    for method in (BaseLoader.batch_load, AsyncBaseLoader.batch_load):
         parameter = inspect.signature(method).parameters["max_concurrency"]
         assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
         assert parameter.default == DEFAULT_MAX_CONCURRENCY
 
 
 async def test_async_context_manager_uses_async_cleanup_contract() -> None:
-    loader = RecordingLoader("async")
+    loader = AsyncRecordingLoader("async")
 
     async with loader:
         pass
@@ -122,25 +117,26 @@ async def test_async_context_manager_uses_async_cleanup_contract() -> None:
     assert loader.cleanup_calls == 0
 
 
-async def test_auto_loader_preserves_legacy_async_close_contract() -> None:
-    legacy = LegacyCloseLoader()
-    loader = AutoLoader(routes=[_scheme_route("legacy", legacy)])
+async def test_auto_loader_uses_explicit_async_cleanup_contract() -> None:
+    leaf = AsyncRecordingLoader("async")
+    loader = AsyncAutoLoader(routes=[_async_scheme_route("custom", leaf)])
 
-    await loader.acleanup()
+    await loader.close()
 
-    assert legacy.async_close_calls == 1
-    assert legacy.sync_cleanup_calls == 0
+    assert leaf.async_cleanup_calls == 1
+    assert leaf.cleanup_calls == 0
 
 
 async def test_local_loader_rejects_unsupported_options(tmp_path: Path) -> None:
     source = tmp_path / "document.txt"
     source.write_text("content", encoding="utf-8")
     loader = LocalLoader()
+    async_loader = AsyncLocalLoader()
 
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         loader.load(source, unsupported=True)  # type: ignore[call-arg]
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        await loader.aload(source, unsupported=True)  # type: ignore[call-arg]
+        await async_loader.load(source, unsupported=True)  # type: ignore[call-arg]
 
 
 def test_custom_minio_route_uses_extensible_source_scheme() -> None:
@@ -199,26 +195,34 @@ async def test_auto_loader_rejects_loader_specific_options_at_router_boundary() 
         routes=[_scheme_route("alpha", alpha), _scheme_route("beta", beta)]
     )
     untyped_loader: Any = loader
+    async_alpha = AsyncRecordingLoader("alpha")
+    async_beta = AsyncRecordingLoader("beta")
+    untyped_async_loader: Any = AsyncAutoLoader(
+        routes=[
+            _async_scheme_route("alpha", async_alpha),
+            _async_scheme_route("beta", async_beta),
+        ]
+    )
 
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         untyped_loader.load("alpha://bucket/1", download_config=object())
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        await untyped_loader.aload("alpha://bucket/1", download_config=object())
+        await untyped_async_loader.load("alpha://bucket/1", download_config=object())
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         untyped_loader.batch_load(
             ["alpha://bucket/1", "beta://bucket/2"],
             download_config=object(),
         )
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        await untyped_loader.abatch_load(
+        await untyped_async_loader.batch_load(
             ["alpha://bucket/1", "beta://bucket/2"],
             download_config=object(),
         )
 
     assert alpha.batch_limits == []
     assert beta.batch_limits == []
-    assert alpha.async_batch_limits == []
-    assert beta.async_batch_limits == []
+    assert async_alpha.async_batch_limits == []
+    assert async_beta.async_batch_limits == []
 
 
 def test_auto_loader_groups_mixed_batch_and_restores_input_order() -> None:
@@ -245,15 +249,18 @@ def test_auto_loader_groups_mixed_batch_and_restores_input_order() -> None:
 async def test_auto_loader_uses_specialized_async_batch_and_cleans_shared_once() -> (
     None
 ):
-    shared = RecordingLoader("shared")
-    loader = AutoLoader(
-        routes=[_scheme_route("first", shared), _scheme_route("second", shared)]
+    shared = AsyncRecordingLoader("shared")
+    loader = AsyncAutoLoader(
+        routes=[
+            _async_scheme_route("first", shared),
+            _async_scheme_route("second", shared),
+        ]
     )
 
-    results = await loader.abatch_load(
+    results = await loader.batch_load(
         ["first://bucket/1", "second://bucket/2"], max_concurrency=3
     )
-    await loader.acleanup()
+    await loader.cleanup()
 
     assert [result.metadata["loader"] for result in results] == ["shared", "shared"]
     assert shared.async_batch_limits == [3]

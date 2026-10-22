@@ -67,8 +67,8 @@ uv run pytest -m benchmark --bench-baseline before.json   # 打印增减
 窗口化并发下实测 88.05 ms，加速比 11.65×。
 断言阈值取 `serial / 4`，离实测值很远，换机器也不会假红。
 
-守的是 T9 修好的那件事（修复前 `astream_run` 并发峰值恒为 1）。
-反向验证：把 `_index` 改回逐条 `await aembed()`，实测 1097 ms，用例立刻变红。
+守的是 T9 修好的那件事（修复前 异步 `stream_run` 并发峰值恒为 1）。
+反向验证：把 `_index` 改回逐条 `await embed()`，实测 1097 ms，用例立刻变红。
 
 ### 关于重排的耗时
 

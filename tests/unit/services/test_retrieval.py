@@ -10,12 +10,12 @@ from typing import Any
 
 import pytest
 
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.models.embedding.base import AsyncBaseEmbeddingModel
+from comet_rag.infrastructure.models.reranker.base import AsyncBaseReranker
 from comet_rag.infrastructure.persistence.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.ports import CollectionSchemaMismatch, VectorRecord
 from comet_rag.ports.knowledge_base import EmbeddingModelChanged
 from comet_rag.services import retrieval as retrieval_module
@@ -38,7 +38,7 @@ OTHER_KB = "kb-other"
 # ── 测试替身 ───────────────────────────────────────────────────────────────
 
 
-class KeywordEmbeddingModel(BaseEmbeddingModel):
+class KeywordEmbeddingModel(AsyncBaseEmbeddingModel):
     """把文本映射到三个关键词维度上，让"谁该排第一"可预测。
 
     维度含义：[包含"苹果", 包含"香蕉", 常数]
@@ -54,19 +54,15 @@ class KeywordEmbeddingModel(BaseEmbeddingModel):
             0.1,
         ]
 
-    def _embed(self, data, **kwargs) -> list[float]:
+    async def _embed(self, data, **kwargs) -> list[float]:
         self.calls += 1
         return self._vector(str(data))
 
-    async def _aembed(self, data, **kwargs) -> list[float]:
-        self.calls += 1
-        return self._vector(str(data))
-
-    async def close_client(self) -> None:  # pragma: no cover
+    async def close(self) -> None:  # pragma: no cover
         return None
 
 
-class ReversingReranker(BaseReranker):
+class ReversingReranker(AsyncBaseReranker):
     """把向量召回的顺序整个倒过来 —— 重排是否真的生效一目了然。"""
 
     def __init__(self) -> None:
@@ -75,10 +71,7 @@ class ReversingReranker(BaseReranker):
         self.failure: Exception | None = None
         self.wrong_length = False
 
-    def _score(self, query, documents, **kwargs) -> list[float]:  # pragma: no cover
-        raise NotImplementedError
-
-    async def _ascore(self, query, documents, **kwargs) -> list[float]:
+    async def _score(self, query, documents, **kwargs) -> list[float]:
         self.calls += 1
         self.last_documents = list(documents)
         if self.failure is not None:
@@ -102,19 +95,19 @@ def reranker() -> ReversingReranker:
 
 
 @pytest.fixture
-async def store(model: KeywordEmbeddingModel) -> InMemoryVectorStore:
-    vs = InMemoryVectorStore()
-    await vs.aensure_collection(KB, dim=DIM)
-    await vs.aensure_collection(OTHER_KB, dim=DIM)
+async def store(model: KeywordEmbeddingModel) -> AsyncInMemoryVectorStore:
+    vs = AsyncInMemoryVectorStore()
+    await vs.ensure_collection(KB, dim=DIM)
+    await vs.ensure_collection(OTHER_KB, dim=DIM)
 
     async def add(kb: str, rid: str, text: str, **metadata: Any) -> None:
-        await vs.aupsert(
+        await vs.upsert(
             kb,
             [
                 VectorRecord(
                     id=rid,
                     text=text,
-                    embedding=await model.aembed(text),
+                    embedding=await model.embed(text),
                     metadata={"kb_id": kb, **metadata},
                 )
             ],
@@ -176,7 +169,7 @@ async def test_top_k_limits_results(model, store) -> None:
 
 
 async def test_empty_knowledge_base_returns_nothing(model, store) -> None:
-    await store.aensure_collection("kb-empty", dim=DIM)
+    await store.ensure_collection("kb-empty", dim=DIM)
 
     result = await service(model, store).search(
         SearchQuery(kb_id="kb-empty", query="苹果")
@@ -244,7 +237,7 @@ async def test_default_mode_remains_dense(model, store, monkeypatch) -> None:
     async def unexpected_keyword_call(*args, **kwargs):
         raise AssertionError("默认 dense 不应调用关键词通道")
 
-    monkeypatch.setattr(store, "asearch_keywords", unexpected_keyword_call)
+    monkeypatch.setattr(store, "search_keywords", unexpected_keyword_call)
 
     result = await service(model, store).search(
         SearchQuery(kb_id=KB, query="苹果", top_k=3)
@@ -319,7 +312,7 @@ async def test_keyword_capability_is_required_only_by_modes_that_use_it(
         vector_store=store,
     )
 
-    with pytest.raises(KeywordSearchUnavailable, match="KeywordSearchPort"):
+    with pytest.raises(KeywordSearchUnavailable, match="AsyncKeywordSearchPort"):
         await without_keyword.search(SearchQuery(kb_id=KB, query="苹果", mode=mode))
 
 
@@ -327,8 +320,8 @@ async def test_hybrid_uses_same_fetch_k_and_filter_for_each_channel(
     model, store, monkeypatch
 ) -> None:
     calls: dict[str, tuple[int, object]] = {}
-    dense_search = store.asearch
-    keyword_search = store.asearch_keywords
+    dense_search = store.search
+    keyword_search = store.search_keywords
 
     async def recording_dense(*args, top_k=5, filter=None, **kwargs):
         calls["dense"] = (top_k, filter)
@@ -338,8 +331,8 @@ async def test_hybrid_uses_same_fetch_k_and_filter_for_each_channel(
         calls["keyword"] = (top_k, filter)
         return await keyword_search(*args, top_k=top_k, filter=filter, **kwargs)
 
-    monkeypatch.setattr(store, "asearch", recording_dense)
-    monkeypatch.setattr(store, "asearch_keywords", recording_keyword)
+    monkeypatch.setattr(store, "search", recording_dense)
+    monkeypatch.setattr(store, "search_keywords", recording_keyword)
 
     await service(model, store).search(
         SearchQuery(
@@ -381,7 +374,7 @@ async def test_hybrid_dense_failure_degrades_to_keyword_and_logs(
     async def fail_dense(*args, **kwargs):
         raise TimeoutError("embedding timeout with private endpoint")
 
-    monkeypatch.setattr(store, "asearch", fail_dense)
+    monkeypatch.setattr(store, "search", fail_dense)
     monkeypatch.setattr(retrieval_module, "logger", log)
 
     result = await service(model, store).search(
@@ -409,7 +402,7 @@ async def test_hybrid_keyword_failure_degrades_to_dense(
     async def fail_keyword(*args, **kwargs):
         raise ConnectionError("keyword backend unavailable")
 
-    monkeypatch.setattr(store, "asearch_keywords", fail_keyword)
+    monkeypatch.setattr(store, "search_keywords", fail_keyword)
 
     result = await service(model, store).search(
         SearchQuery(kb_id=KB, query="苹果", mode=SearchMode.HYBRID)
@@ -443,8 +436,8 @@ async def test_hybrid_raises_one_error_when_both_channels_fail(
     async def fail_keyword(*args, **kwargs):
         raise ConnectionError("keyword connection reset")
 
-    monkeypatch.setattr(store, "asearch", fail_dense)
-    monkeypatch.setattr(store, "asearch_keywords", fail_keyword)
+    monkeypatch.setattr(store, "search", fail_dense)
+    monkeypatch.setattr(store, "search_keywords", fail_keyword)
     monkeypatch.setattr(retrieval_module, "logger", log)
 
     with pytest.raises(HybridRecallFailed) as caught:
@@ -476,7 +469,7 @@ async def test_hybrid_does_not_hide_schema_or_parameter_errors(
     async def fail_keyword(*args, **kwargs):
         raise failure
 
-    monkeypatch.setattr(store, "asearch_keywords", fail_keyword)
+    monkeypatch.setattr(store, "search_keywords", fail_keyword)
 
     with pytest.raises(type(failure)) as caught:
         await service(model, store).search(
@@ -494,7 +487,7 @@ async def test_explicit_keyword_mode_never_falls_back_to_dense(
     async def fail_keyword(*args, **kwargs):
         raise TimeoutError("keyword timeout")
 
-    monkeypatch.setattr(store, "asearch_keywords", fail_keyword)
+    monkeypatch.setattr(store, "search_keywords", fail_keyword)
 
     with pytest.raises(TimeoutError, match="keyword timeout"):
         await service(model, store).search(
@@ -517,8 +510,8 @@ async def test_explicit_dense_mode_never_falls_back_to_keyword(
         keyword_called = True
         return []
 
-    monkeypatch.setattr(store, "asearch", fail_dense)
-    monkeypatch.setattr(store, "asearch_keywords", record_keyword)
+    monkeypatch.setattr(store, "search", fail_dense)
+    monkeypatch.setattr(store, "search_keywords", record_keyword)
 
     with pytest.raises(TimeoutError, match="dense timeout"):
         await service(model, store).search(
@@ -627,12 +620,12 @@ async def test_misaligned_rerank_scores_degrade(model, store, reranker) -> None:
 
     assert result.reranked is False
     assert len(result.chunks) == 3
-    # BaseReranker 在返回给 Service 前就拒绝数量不一致，因此表现为请求失败。
+    # AsyncBaseReranker 在返回给 Service 前就拒绝数量不一致，因此表现为请求失败。
     assert result.degradations[-1].reason == "request_failed"
 
 
 async def test_rerank_is_skipped_when_nothing_recalled(model, store, reranker) -> None:
-    await store.aensure_collection("kb-empty", dim=DIM)
+    await store.ensure_collection("kb-empty", dim=DIM)
 
     await service(model, store, reranker).search(
         SearchQuery(kb_id="kb-empty", query="苹果")

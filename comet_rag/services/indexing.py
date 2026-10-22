@@ -8,9 +8,9 @@ from types import MappingProxyType
 
 from comet_rag.engines.chunkers import ChunkDraft
 from comet_rag.engines.defaults import DEFAULT_EMBED_FANOUT, DEFAULT_EMBED_WINDOW
-from comet_rag.engines.embedding.batch import aembed_documents
+from comet_rag.engines.embedding.async_batch import embed_documents
 from comet_rag.engines.indexing import ChunkHierarchy
-from comet_rag.ports import BaseVectorStore, EmbeddingPort, VectorRecord
+from comet_rag.ports import AsyncEmbeddingPort, AsyncVectorStore, VectorRecord
 from comet_rag.ports.document_store import (
     DocumentStore,
     RevisionConflict,
@@ -339,8 +339,8 @@ class RevisionStager:
         self,
         *,
         document_store: DocumentStore,
-        vector_store: BaseVectorStore,
-        embedding_model: EmbeddingPort,
+        vector_store: AsyncVectorStore,
+        embedding_model: AsyncEmbeddingPort,
         parent_batch_size: int = DEFAULT_PARENT_BATCH_SIZE,
         embed_window: int = DEFAULT_EMBED_WINDOW,
         max_concurrency: int = DEFAULT_EMBED_FANOUT,
@@ -355,7 +355,7 @@ class RevisionStager:
         self._window = embed_window
         self._concurrency = max_concurrency
 
-    async def astage(
+    async def stage(
         self,
         plan: IndexPlan,
         /,
@@ -367,12 +367,12 @@ class RevisionStager:
         """失败保留本 revision 的 staging 供幂等重放，绝不覆盖或清理旧 active。"""
 
         _validate_dimension(embedding_dim)
-        handoff = await self.aprepare(plan, task_id=task_id, checkpoint=checkpoint)
-        return await self.aresume(
+        handoff = await self.prepare(plan, task_id=task_id, checkpoint=checkpoint)
+        return await self.resume(
             handoff, embedding_dim=embedding_dim, checkpoint=checkpoint
         )
 
-    async def aprepare(
+    async def prepare(
         self,
         plan: IndexPlan,
         /,
@@ -384,12 +384,12 @@ class RevisionStager:
         plan = _snapshot_plan(plan)
         handoff = IndexHandoff.from_plan(plan, task_id=task_id)
         await _check(checkpoint)
-        manifest = await self._documents.areserve_revision(handoff.draft)
+        manifest = await self._documents.reserve_revision(handoff.draft)
         _require_open(manifest)
         if manifest.status is RevisionStatus.STAGING:
             for start in range(0, len(plan.parents), self._parent_batch):
                 await _check(checkpoint)
-                await self._documents.aput_parents(
+                await self._documents.put_parents(
                     plan.key,
                     [
                         StoredParent(
@@ -408,7 +408,7 @@ class RevisionStager:
                 )
         return handoff
 
-    async def aresume(
+    async def resume(
         self,
         handoff: IndexHandoff,
         /,
@@ -421,7 +421,7 @@ class RevisionStager:
         handoff = _snapshot_handoff(handoff)
         draft = handoff.draft
         await _check(checkpoint)
-        manifest = await self._documents.areserve_revision(draft)
+        manifest = await self._documents.reserve_revision(draft)
         _require_open(manifest)
         parents: list[PlannedParent] = []
         for start in range(0, draft.parent_count, self._parent_batch):
@@ -432,7 +432,7 @@ class RevisionStager:
                     start, min(start + self._parent_batch, draft.parent_count)
                 )
             ]
-            stored = await self._documents.aget_parents(draft.key.kb_id, ids)
+            stored = await self._documents.get_parents(draft.key.kb_id, ids)
             for ordinal, parent_id in enumerate(ids, start):
                 parent = stored.get(parent_id)
                 if parent is None:
@@ -467,18 +467,18 @@ class RevisionStager:
             )
         )
         await _check(checkpoint)
-        await self._vectors.aensure_collection(plan.key.kb_id, dim=embedding_dim)
+        await self._vectors.ensure_collection(plan.key.kb_id, dim=embedding_dim)
         if manifest.status is RevisionStatus.STAGING:
             for start in range(0, len(plan.vector_children), self._window):
                 await _check(checkpoint)
                 batch = plan.vector_children[start : start + self._window]
-                vectors = await aembed_documents(
+                vectors = await embed_documents(
                     self._embedding,
                     [c.text for c in batch],
                     max_concurrency=self._concurrency,
                 )
                 await _check(checkpoint)
-                await self._vectors.aupsert(
+                await self._vectors.upsert(
                     plan.key.kb_id,
                     [
                         VectorRecord(c.id, c.text, vector, dict(c.metadata))
@@ -486,7 +486,7 @@ class RevisionStager:
                     ],
                 )
         await _check(checkpoint)
-        actual = await self._vectors.acount(
+        actual = await self._vectors.count(
             plan.key.kb_id,
             filter={
                 "source_id": plan.key.source_id,
@@ -498,7 +498,7 @@ class RevisionStager:
                 plan.key, f"子向量计数 {actual} != {len(plan.vector_children)}"
             )
         await _check(checkpoint)
-        return await self._documents.amark_ready(plan.key)
+        return await self._documents.mark_ready(plan.key)
 
 
 def _snapshot_handoff(handoff: IndexHandoff) -> IndexHandoff:

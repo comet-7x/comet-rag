@@ -91,10 +91,10 @@ class _DeadlineReader:
         return self._stream.tell()
 
 
-class MinerUDocumentExtractor(GatedResource):
-    """外部 `mineru-api` / `mineru-router` 的有界 HTTP 适配器。"""
+class _MinerUProtocol:
+    """共享协议、资源预算与结果校验；执行模型由具体适配器选择。"""
 
-    def __init__(
+    def _configure(
         self,
         base_url: str,
         *,
@@ -110,10 +110,6 @@ class MinerUDocumentExtractor(GatedResource):
         parse_timeout_seconds: float = DEFAULT_PARSE_TIMEOUT_SECONDS,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         max_markdown_bytes: int = DEFAULT_MAX_MARKDOWN_BYTES,
-        sync_client: httpx.Client | None = None,
-        async_client: httpx.AsyncClient | None = None,
-        sleep: SyncSleeper = time.sleep,
-        asleep: AsyncSleeper = asyncio.sleep,
         clock: Clock = time.monotonic,
     ) -> None:
         base_url = validate_http_endpoint(base_url, name="MinerU base_url")
@@ -145,14 +141,7 @@ class MinerUDocumentExtractor(GatedResource):
         self._parse_timeout_seconds = parse_timeout_seconds
         self._max_response_bytes = max_response_bytes
         self._max_markdown_bytes = max_markdown_bytes
-        self._sleep = sleep
-        self._asleep = asleep
         self._clock = clock
-
-        self._owns_sync_client = sync_client is None
-        self._owns_async_client = async_client is None
-        self.sync_client = sync_client or httpx.Client()
-        self.async_client = async_client or httpx.AsyncClient()
 
     @staticmethod
     def _require_positive(name: str, value: float) -> None:
@@ -199,24 +188,6 @@ class MinerUDocumentExtractor(GatedResource):
             )
         raise DocumentUpstreamError(f"MinerU {operation} 返回确定性 HTTP {status_code}")
 
-    def _read_response(self, response: httpx.Response, deadline: float) -> bytes:
-        self._check_declared_size(response)
-        content = bytearray()
-        for chunk in response.iter_bytes():
-            self._remaining(deadline)
-            self._check_accumulated_size(len(content) + len(chunk))
-            content.extend(chunk)
-        return bytes(content)
-
-    async def _aread_response(self, response: httpx.Response, deadline: float) -> bytes:
-        self._check_declared_size(response)
-        content = bytearray()
-        async for chunk in response.aiter_bytes():
-            self._remaining(deadline)
-            self._check_accumulated_size(len(content) + len(chunk))
-            content.extend(chunk)
-        return bytes(content)
-
     def _check_declared_size(self, response: httpx.Response) -> None:
         content_length = response.headers.get("content-length")
         if content_length is None:
@@ -250,67 +221,6 @@ class MinerUDocumentExtractor(GatedResource):
         else:
             detail = "网络错误"
         return RetryableDocumentUpstreamError(f"MinerU {operation} {detail}：{exc!s}")
-
-    def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        operation: str,
-        deadline: float,
-        upload: bool = False,
-        task_may_be_missing: bool = False,
-        **kwargs: Any,
-    ) -> _BufferedResponse:
-        try:
-            with self.sync_client.stream(
-                method,
-                self._url(path),
-                timeout=self._timeout(deadline, upload=upload),
-                follow_redirects=False,
-                **kwargs,
-            ) as response:
-                self._raise_for_status(
-                    response.status_code,
-                    operation,
-                    task_may_be_missing=task_may_be_missing,
-                )
-                return _BufferedResponse(
-                    response.status_code, self._read_response(response, deadline)
-                )
-        except httpx.RequestError as exc:
-            raise self._transport_error(exc, operation, upload=upload) from exc
-
-    async def _arequest(
-        self,
-        method: str,
-        path: str,
-        *,
-        operation: str,
-        deadline: float,
-        upload: bool = False,
-        task_may_be_missing: bool = False,
-        **kwargs: Any,
-    ) -> _BufferedResponse:
-        try:
-            async with self.async_client.stream(
-                method,
-                self._url(path),
-                timeout=self._timeout(deadline, upload=upload),
-                follow_redirects=False,
-                **kwargs,
-            ) as response:
-                self._raise_for_status(
-                    response.status_code,
-                    operation,
-                    task_may_be_missing=task_may_be_missing,
-                )
-                return _BufferedResponse(
-                    response.status_code,
-                    await self._aread_response(response, deadline),
-                )
-        except httpx.RequestError as exc:
-            raise self._transport_error(exc, operation, upload=upload) from exc
 
     @staticmethod
     def _payload(response: _BufferedResponse, operation: str) -> Mapping[str, Any]:
@@ -406,9 +316,10 @@ class MinerUDocumentExtractor(GatedResource):
                 f"{markdown_size} > {self._max_markdown_bytes} bytes"
             )
         pages = extract_mineru_pages(result.get("content_list"))
-        if pages is not None and "\n\n".join(
-            page.markdown for page in pages
-        ) != markdown:
+        if (
+            pages is not None
+            and "\n\n".join(page.markdown for page in pages) != markdown
+        ):
             pages = None
         return ExtractedDocument(
             markdown=markdown,
@@ -421,6 +332,89 @@ class MinerUDocumentExtractor(GatedResource):
             pages=pages or (),
         )
 
+
+class MinerUDocumentExtractor(_MinerUProtocol, GatedResource):
+    """外部 MinerU HTTP 协议的同步适配器。"""
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        backend: str = "pipeline",
+        parse_method: str = "auto",
+        language: str = "ch",
+        formula: bool = True,
+        table: bool = True,
+        connect_timeout_seconds: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
+        request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        upload_timeout_seconds: float = DEFAULT_UPLOAD_TIMEOUT_SECONDS,
+        poll_interval_seconds: float = 1.0,
+        parse_timeout_seconds: float = DEFAULT_PARSE_TIMEOUT_SECONDS,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        max_markdown_bytes: int = DEFAULT_MAX_MARKDOWN_BYTES,
+        client: httpx.Client | None = None,
+        sleep: SyncSleeper = time.sleep,
+        clock: Clock = time.monotonic,
+    ) -> None:
+        self._configure(
+            base_url,
+            backend=backend,
+            parse_method=parse_method,
+            language=language,
+            formula=formula,
+            table=table,
+            connect_timeout_seconds=connect_timeout_seconds,
+            request_timeout_seconds=request_timeout_seconds,
+            upload_timeout_seconds=upload_timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            parse_timeout_seconds=parse_timeout_seconds,
+            max_response_bytes=max_response_bytes,
+            max_markdown_bytes=max_markdown_bytes,
+            clock=clock,
+        )
+        self._sleep = sleep
+        self._owns_client = client is None
+        self.client = client if client is not None else httpx.Client()
+
+    def _read_response(self, response: httpx.Response, deadline: float) -> bytes:
+        self._check_declared_size(response)
+        content = bytearray()
+        for chunk in response.iter_bytes():
+            self._remaining(deadline)
+            self._check_accumulated_size(len(content) + len(chunk))
+            content.extend(chunk)
+        return bytes(content)
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        operation: str,
+        deadline: float,
+        upload: bool = False,
+        task_may_be_missing: bool = False,
+        **kwargs: Any,
+    ) -> _BufferedResponse:
+        try:
+            with self.client.stream(
+                method,
+                self._url(path),
+                timeout=self._timeout(deadline, upload=upload),
+                follow_redirects=False,
+                **kwargs,
+            ) as response:
+                self._raise_for_status(
+                    response.status_code,
+                    operation,
+                    task_may_be_missing=task_may_be_missing,
+                )
+                return _BufferedResponse(
+                    response.status_code, self._read_response(response, deadline)
+                )
+        except httpx.RequestError as exc:
+            raise self._transport_error(exc, operation, upload=upload) from exc
+
     def _submit(
         self,
         path: Path,
@@ -432,27 +426,6 @@ class MinerUDocumentExtractor(GatedResource):
         with path.open("rb") as stream:
             upload = _DeadlineReader(stream, lambda: self._remaining(deadline))
             response = self._request(
-                "POST",
-                "/tasks",
-                operation="task submission",
-                deadline=deadline,
-                upload=True,
-                data=self._form_data(),
-                files={"files": (filename, upload, media_type)},
-            )
-        return self._submitted_task(response)
-
-    async def _asubmit(
-        self,
-        path: Path,
-        *,
-        filename: str,
-        media_type: str,
-        deadline: float,
-    ) -> _SubmittedTask:
-        with path.open("rb") as stream:
-            upload = _DeadlineReader(stream, lambda: self._remaining(deadline))
-            response = await self._arequest(
                 "POST",
                 "/tasks",
                 operation="task submission",
@@ -477,40 +450,11 @@ class MinerUDocumentExtractor(GatedResource):
                 return
             self._sleep(min(self._poll_interval_seconds, self._remaining(deadline)))
 
-    async def _await(self, task: _SubmittedTask, deadline: float) -> None:
-        task_id = quote(task.task_id, safe="")
-        while True:
-            response = await self._arequest(
-                "GET",
-                f"/tasks/{task_id}",
-                operation="task status",
-                deadline=deadline,
-                task_may_be_missing=True,
-            )
-            if self._task_status(response, task.task_id) == "completed":
-                return
-            await self._asleep(
-                min(self._poll_interval_seconds, self._remaining(deadline))
-            )
-
     def _result(
         self, task: _SubmittedTask, server_info: _ServerInfo, deadline: float
     ) -> ExtractedDocument:
         task_id = quote(task.task_id, safe="")
         response = self._request(
-            "GET",
-            f"/tasks/{task_id}/result",
-            operation="task result",
-            deadline=deadline,
-            task_may_be_missing=True,
-        )
-        return self._document(response, server_info)
-
-    async def _aresult(
-        self, task: _SubmittedTask, server_info: _ServerInfo, deadline: float
-    ) -> ExtractedDocument:
-        task_id = quote(task.task_id, safe="")
-        response = await self._arequest(
             "GET",
             f"/tasks/{task_id}/result",
             operation="task result",
@@ -546,7 +490,154 @@ class MinerUDocumentExtractor(GatedResource):
                 )
         raise AssertionError("unreachable")
 
-    async def _aextract(
+    @final
+    def extract(
+        self, path: Path, /, *, filename: str, media_type: str
+    ) -> ExtractedDocument:
+        """同步提取入口；共享预算只在这一层申请一次。"""
+        return self._through_gate_sync(
+            lambda: self._extract(path, filename=filename, media_type=media_type)
+        )
+
+    def close(self) -> None:
+        if self._owns_client:
+            self.client.close()
+
+
+class AsyncMinerUDocumentExtractor(_MinerUProtocol, GatedResource):
+    """外部 MinerU HTTP 协议的原生异步适配器。"""
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        backend: str = "pipeline",
+        parse_method: str = "auto",
+        language: str = "ch",
+        formula: bool = True,
+        table: bool = True,
+        connect_timeout_seconds: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
+        request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        upload_timeout_seconds: float = DEFAULT_UPLOAD_TIMEOUT_SECONDS,
+        poll_interval_seconds: float = 1.0,
+        parse_timeout_seconds: float = DEFAULT_PARSE_TIMEOUT_SECONDS,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        max_markdown_bytes: int = DEFAULT_MAX_MARKDOWN_BYTES,
+        client: httpx.AsyncClient | None = None,
+        sleep: AsyncSleeper = asyncio.sleep,
+        clock: Clock = time.monotonic,
+    ) -> None:
+        self._configure(
+            base_url,
+            backend=backend,
+            parse_method=parse_method,
+            language=language,
+            formula=formula,
+            table=table,
+            connect_timeout_seconds=connect_timeout_seconds,
+            request_timeout_seconds=request_timeout_seconds,
+            upload_timeout_seconds=upload_timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            parse_timeout_seconds=parse_timeout_seconds,
+            max_response_bytes=max_response_bytes,
+            max_markdown_bytes=max_markdown_bytes,
+            clock=clock,
+        )
+        self._sleep = sleep
+        self._owns_client = client is None
+        self.client = client if client is not None else httpx.AsyncClient()
+
+    async def _read_response(self, response: httpx.Response, deadline: float) -> bytes:
+        self._check_declared_size(response)
+        content = bytearray()
+        async for chunk in response.aiter_bytes():
+            self._remaining(deadline)
+            self._check_accumulated_size(len(content) + len(chunk))
+            content.extend(chunk)
+        return bytes(content)
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        operation: str,
+        deadline: float,
+        upload: bool = False,
+        task_may_be_missing: bool = False,
+        **kwargs: Any,
+    ) -> _BufferedResponse:
+        try:
+            async with self.client.stream(
+                method,
+                self._url(path),
+                timeout=self._timeout(deadline, upload=upload),
+                follow_redirects=False,
+                **kwargs,
+            ) as response:
+                self._raise_for_status(
+                    response.status_code,
+                    operation,
+                    task_may_be_missing=task_may_be_missing,
+                )
+                return _BufferedResponse(
+                    response.status_code,
+                    await self._read_response(response, deadline),
+                )
+        except httpx.RequestError as exc:
+            raise self._transport_error(exc, operation, upload=upload) from exc
+
+    async def _submit(
+        self,
+        path: Path,
+        *,
+        filename: str,
+        media_type: str,
+        deadline: float,
+    ) -> _SubmittedTask:
+        with path.open("rb") as stream:
+            upload = _DeadlineReader(stream, lambda: self._remaining(deadline))
+            response = await self._request(
+                "POST",
+                "/tasks",
+                operation="task submission",
+                deadline=deadline,
+                upload=True,
+                data=self._form_data(),
+                files={"files": (filename, upload, media_type)},
+            )
+        return self._submitted_task(response)
+
+    async def _wait(self, task: _SubmittedTask, deadline: float) -> None:
+        task_id = quote(task.task_id, safe="")
+        while True:
+            response = await self._request(
+                "GET",
+                f"/tasks/{task_id}",
+                operation="task status",
+                deadline=deadline,
+                task_may_be_missing=True,
+            )
+            if self._task_status(response, task.task_id) == "completed":
+                return
+            await self._sleep(
+                min(self._poll_interval_seconds, self._remaining(deadline))
+            )
+
+    async def _result(
+        self, task: _SubmittedTask, server_info: _ServerInfo, deadline: float
+    ) -> ExtractedDocument:
+        task_id = quote(task.task_id, safe="")
+        response = await self._request(
+            "GET",
+            f"/tasks/{task_id}/result",
+            operation="task result",
+            deadline=deadline,
+            task_may_be_missing=True,
+        )
+        return self._document(response, server_info)
+
+    async def _extract(
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument:
         deadline = self._clock() + self._parse_timeout_seconds
@@ -554,24 +645,24 @@ class MinerUDocumentExtractor(GatedResource):
             # HTTPX 的 read/write timeout 只限制相邻块的静默时间；外层 deadline
             # 才能中断持续缓慢但一直有流量的上传或下载。
             async with asyncio.timeout(self._parse_timeout_seconds):
-                health = await self._arequest(
+                health = await self._request(
                     "GET", "/health", operation="health", deadline=deadline
                 )
                 server_info = self._server_info(health)
-                task = await self._asubmit(
+                task = await self._submit(
                     path, filename=filename, media_type=media_type, deadline=deadline
                 )
                 for attempt in range(2):
                     try:
-                        await self._await(task, deadline)
-                        return await self._aresult(task, server_info, deadline)
+                        await self._wait(task, deadline)
+                        return await self._result(task, server_info, deadline)
                     except _RemoteTaskMissing as exc:
                         if attempt == 1:
                             raise RetryableDocumentUpstreamError(
                                 "MinerU 远端任务连续丢失，已停止重提"
                             ) from exc
                         self._remaining(deadline)
-                        task = await self._asubmit(
+                        task = await self._submit(
                             path,
                             filename=filename,
                             media_type=media_type,
@@ -584,29 +675,21 @@ class MinerUDocumentExtractor(GatedResource):
         raise AssertionError("unreachable")
 
     @final
-    def extract(
-        self, path: Path, /, *, filename: str, media_type: str
-    ) -> ExtractedDocument:
-        """同步提取入口；服务装配后与异步入口共用 MinerU 闸门。"""
-        return self._through_gate_sync(
-            lambda: self._extract(path, filename=filename, media_type=media_type)
-        )
-
-    @final
-    async def aextract(
+    async def extract(
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument:
         """异步提取入口；等待许可期间取消不会泄漏闸门名额。"""
         return await self._through_gate(
-            lambda: self._aextract(path, filename=filename, media_type=media_type)
+            lambda: self._extract(path, filename=filename, media_type=media_type)
         )
 
-    async def aclose(self) -> None:
-        """只关闭当前适配器创建的客户端。"""
-        if self._owns_async_client:
-            await self.async_client.aclose()
-        if self._owns_sync_client:
-            self.sync_client.close()
+    async def close(self) -> None:
+        if self._owns_client:
+            await self.client.aclose()
 
 
-__all__ = ["MINERU_API_PROTOCOL_VERSION", "MinerUDocumentExtractor"]
+__all__ = [
+    "MINERU_API_PROTOCOL_VERSION",
+    "MinerUDocumentExtractor",
+    "AsyncMinerUDocumentExtractor",
+]

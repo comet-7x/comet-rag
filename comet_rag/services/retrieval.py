@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any, cast
@@ -14,19 +14,21 @@ from comet_rag.core.degradation import DegradationController
 from comet_rag.core.logging import logger
 from comet_rag.engines.retrieval import FusedHit, reciprocal_rank_fusion
 from comet_rag.ports import (
+    AsyncEmbeddingPort,
+    AsyncKeywordSearchPort,
+    AsyncRerankerPort,
+    AsyncVectorSearchPort,
     CollectionNotFound,
     CollectionSchemaMismatch,
     DimensionMismatch,
-    EmbeddingPort,
     Filter,
-    KeywordSearchPort,
     RerankDocument,
-    RerankerPort,
     SearchHit,
-    VectorSearchPort,
 )
-from comet_rag.ports.document_store import DocumentStore
+from comet_rag.ports.document_store import DocumentStore, StoredParent
 from comet_rag.services.knowledge_base import KnowledgeBaseService
+from comet_rag.services.recall_execution import run_recall_channels
+from comet_rag.services.reranking import InvalidRerankResult, validate_ranking
 from comet_rag.services.revision_recall import (
     RevisionRecall,
     RevisionVisibilityError,
@@ -186,11 +188,11 @@ class RetrievalService:
     def __init__(
         self,
         *,
-        embedding_model: EmbeddingPort,
-        vector_store: VectorSearchPort,
-        keyword_search: KeywordSearchPort | None = None,
+        embedding_model: AsyncEmbeddingPort,
+        vector_store: AsyncVectorSearchPort,
+        keyword_search: AsyncKeywordSearchPort | None = None,
         knowledge_base: KnowledgeBaseService | None = None,
-        reranker: RerankerPort | None = None,
+        reranker: AsyncRerankerPort | None = None,
         degradation: DegradationController | None = None,
         document_store: DocumentStore | None = None,
         max_revision_candidates: int = 2048,
@@ -283,7 +285,7 @@ class RetrievalService:
         keyword_search = self._keyword_search
         if keyword_search is None:
             raise KeywordSearchUnavailable(
-                f"mode={query.mode.value} 需要 KeywordSearchPort，"
+                f"mode={query.mode.value} 需要 AsyncKeywordSearchPort，"
                 "请在组合根装配关键词检索实现"
             )
 
@@ -309,24 +311,20 @@ class RetrievalService:
         self,
         query: SearchQuery,
         *,
-        keyword_search: KeywordSearchPort,
+        keyword_search: AsyncKeywordSearchPort,
         fetch_k: int,
         filter: Filter | None,
     ) -> _RecallResult:
-        dense_result, keyword_result = await asyncio.gather(
-            self._dense_hits(query, fetch_k=fetch_k, filter=filter),
-            self._keyword_hits(
+        dense_result, keyword_result = await run_recall_channels(
+            dense=lambda: self._dense_hits(query, fetch_k=fetch_k, filter=filter),
+            keyword=lambda: self._keyword_hits(
                 query,
                 keyword_search=keyword_search,
                 fetch_k=fetch_k,
                 filter=filter,
             ),
-            return_exceptions=True,
+            must_propagate=_must_propagate,
         )
-
-        for result in (dense_result, keyword_result):
-            if isinstance(result, BaseException) and _must_propagate(result):
-                raise result
 
         dense_error = dense_result if isinstance(dense_result, BaseException) else None
         keyword_error = (
@@ -394,11 +392,11 @@ class RetrievalService:
         fetch_k: int,
         filter: Filter | None,
     ) -> VisibleRecall:
-        embedding = await self._embedding_model.aembed_query(query.query)
+        embedding = await self._embedding_model.embed_query(query.query)
         return await self._visible_hits(
             query.kb_id,
             fetch_k=fetch_k,
-            recall=lambda limit: self._vector_store.asearch(
+            recall=lambda limit: self._vector_store.search(
                 query.kb_id,
                 embedding,
                 top_k=limit,
@@ -410,14 +408,14 @@ class RetrievalService:
         self,
         query: SearchQuery,
         *,
-        keyword_search: KeywordSearchPort,
+        keyword_search: AsyncKeywordSearchPort,
         fetch_k: int,
         filter: Filter | None,
     ) -> VisibleRecall:
         return await self._visible_hits(
             query.kb_id,
             fetch_k=fetch_k,
-            recall=lambda limit: keyword_search.asearch_keywords(
+            recall=lambda limit: keyword_search.search_keywords(
                 query.kb_id,
                 query.query,
                 top_k=limit,
@@ -433,7 +431,7 @@ class RetrievalService:
         recall: Callable[[int], Awaitable[list[SearchHit]]],
     ) -> VisibleRecall:
         if self._revision_recall is not None:
-            return await self._revision_recall.arecall(
+            return await self._revision_recall.recall(
                 kb_id, fetch_k=fetch_k, recall=recall
             )
         hits = await recall(fetch_k)
@@ -446,22 +444,17 @@ class RetrievalService:
         kb_id: str,
         candidates: list[RetrievedChunk],
     ) -> tuple[list[RetrievedChunk], RetrievalDegradation | None]:
-        # 先遍历完整 child 排名再去重，不能把多个同父命中浪费成多个 top-k 槽。
-        unique: list[RetrievedChunk] = []
-        seen: set[str] = set()
+        parent_ids: dict[str, None] = {}
         for child in candidates:
             parent_id = child.metadata.get("parent_id")
-            if not isinstance(parent_id, str) or not parent_id:
-                unique.append(child)
-            elif parent_id not in seen:
-                seen.add(parent_id)
-                unique.append(child)
-        if not seen:
-            return unique, None
+            if isinstance(parent_id, str) and parent_id:
+                parent_ids[parent_id] = None
+        if not parent_ids:
+            return candidates, None
         try:
             if self._document_store is None:
                 raise RevisionVisibilityError("parent lookup requires DocumentStore")
-            parents = await self._document_store.aget_parents(kb_id, list(seen))
+            parents = await self._document_store.get_parents(kb_id, list(parent_ids))
         except Exception as exc:  # noqa: BLE001 — 正文回填失败可退回已判活 child
             logger.opt(exception=exc).warning("父块回填失败，退回 child")
             return candidates, RetrievalDegradation(
@@ -469,48 +462,7 @@ class RetrievalService:
                 "request_failed",
                 type(exc).__name__,
             )
-        result: list[RetrievedChunk] = []
-        damaged = False
-        for child in unique:
-            parent_id = child.metadata.get("parent_id")
-            if not isinstance(parent_id, str) or not parent_id:
-                result.append(child)
-                continue
-            parent = parents.get(parent_id)
-            if parent is None or (
-                parent.parent_id != parent_id
-                or parent.key.kb_id != kb_id
-                or parent.key.source_id != child.metadata.get("source_id")
-                or parent.key.revision_id != child.metadata.get("document_revision")
-            ):
-                damaged = True
-                result.append(child)
-                continue
-            # 位置与相邻关系属于 parent；所有检索/重排分数仍属于命中 child。
-            metadata = {
-                **child.metadata,
-                **parent.metadata,
-                "kb_id": kb_id,
-                "source_id": parent.key.source_id,
-                "document_revision": parent.key.revision_id,
-                "parent_id": parent_id,
-                "chunk_start": parent.start_char,
-                "chunk_end": parent.end_char,
-                "chunk_index": parent.ordinal,
-                "previous_id": parent.previous_id,
-                "next_id": parent.next_id,
-            }
-            # child 总数不是 parent 总数；Port 不提供 manifest 时不要伪造它。
-            metadata.pop("total_chunks", None)
-            result.append(
-                replace(
-                    child,
-                    id=parent_id,
-                    text=parent.text,
-                    metadata=metadata,
-                    matched_child_id=child.id,
-                )
-            )
+        result, damaged = _expand_parents(kb_id, candidates, parents)
         if damaged:
             logger.warning("父块缺失或 revision/KB 不匹配，相关项退回 child")
         return result, (
@@ -565,85 +517,101 @@ class RetrievalService:
 
     @staticmethod
     async def _rerank(
-        reranker: RerankerPort, query: str, candidates: list[RetrievedChunk]
+        reranker: AsyncRerankerPort, query: str, candidates: list[RetrievedChunk]
     ) -> tuple[list[RetrievedChunk], bool, RetrievalDegradation | None]:
-        """重排并返回结果、执行状态及安全降级诊断。
-
-        重排失败时**降级返回原始召回结果**，而不是让整个查询失败 ——
-        检索是读路径，给出稍差的结果远好过给不出结果。降级必须留下日志，
-        否则线上质量下滑无人察觉（spec S4-5）。
-
-        显式返回布尔而非让调用方比对列表身份：后者能跑通但极易在重构中失效。
-        reranker 由调用方传入而非从 self 取，省掉一个"此处它必不为 None"的断言。
-        """
+        """重排故障回退原候选；响应校验与物化同属降级边界，取消仍传播。"""
         try:
-            ranked = await reranker.arank(
+            result = await reranker.rank(
                 query,
                 [
                     RerankDocument(
                         id=candidate.id,
                         content=candidate.text,
-                        metadata=candidate.metadata,
+                        # 失败后仍要返回原始候选，不能把其可变元数据借给适配器。
+                        metadata=deepcopy(candidate.metadata),
                     )
                     for candidate in candidates
                 ],
             )
-        except Exception as exc:  # noqa: BLE001 —— 任何重排故障都降级
-            logger.warning(f"重排失败，降级为原始召回结果：{exc!r}")
-            return (
-                candidates,
-                False,
-                RetrievalDegradation(
-                    stage=RetrievalStage.RERANKER,
-                    reason="request_failed",
-                    error_type=type(exc).__name__,
-                ),
-            )
+            ranked = validate_ranking(result, candidate_count=len(candidates))
+            rescored = [
+                replace(candidates[item.index], score=item.score) for item in ranked
+            ]
+        except InvalidRerankResult as exc:
+            reason, error_type = exc.reason, None
+            logger.warning("重排返回值无效，降级为原始召回结果 reason={}", reason)
+        except Exception as exc:  # noqa: BLE001 —— 返回值处理失败也属于重排故障
+            reason, error_type = "request_failed", type(exc).__name__
+            logger.warning("重排失败，降级为原始召回结果：{!r}", exc)
+        else:
+            return rescored, True, None
+        return (
+            candidates,
+            False,
+            RetrievalDegradation(
+                stage=RetrievalStage.RERANKER,
+                reason=reason,
+                error_type=error_type,
+            ),
+        )
 
-        if len(ranked) != len(candidates):
-            logger.warning(
-                f"重排返回 {len(ranked)} 个结果但候选有 {len(candidates)} 个，"
-                f"结果不可对齐，降级为原始召回结果"
-            )
-            return (
-                candidates,
-                False,
-                RetrievalDegradation(
-                    stage=RetrievalStage.RERANKER,
-                    reason="result_count_mismatch",
-                ),
-            )
 
-        indexes = [item.index for item in ranked]
-        if sorted(indexes) != list(range(len(candidates))):
-            logger.warning(
-                f"重排结果索引 {indexes} 无法与 {len(candidates)} 个候选对齐，"
-                "降级为原始召回结果"
-            )
-            return (
-                candidates,
-                False,
-                RetrievalDegradation(
-                    stage=RetrievalStage.RERANKER,
-                    reason="result_index_mismatch",
-                ),
-            )
+def _expand_parents(
+    kb_id: str,
+    candidates: list[RetrievedChunk],
+    parents: Mapping[str, StoredParent],
+) -> tuple[list[RetrievedChunk], bool]:
+    """只合并成功回填的父块；身份错误或缺失时保留每个已判活 child。"""
+    result: list[RetrievedChunk] = []
+    emitted: set[str] = set()
+    damaged = False
+    for child in candidates:
+        parent_id = child.metadata.get("parent_id")
+        if not isinstance(parent_id, str) or not parent_id:
+            result.append(child)
+            continue
+        parent = parents.get(parent_id)
+        if parent is None or (
+            parent.parent_id != parent_id
+            or parent.key.kb_id != kb_id
+            or parent.key.source_id != child.metadata.get("source_id")
+            or parent.key.revision_id != child.metadata.get("document_revision")
+        ):
+            damaged = True
+            result.append(child)
+            continue
+        # 必须先核对身份：错误引用既不能抢占正确父块，也不能被同 ID 的父块吞掉。
+        if parent_id in emitted:
+            continue
+        emitted.add(parent_id)
+        result.append(_parent_chunk(child, parent))
+    return result, damaged
 
-        rescored = [
-            RetrievedChunk(
-                id=candidates[item.index].id,
-                text=candidates[item.index].text,
-                score=item.score,
-                metadata=candidates[item.index].metadata,
-                vector_score=candidates[item.index].vector_score,
-                keyword_score=candidates[item.index].keyword_score,
-                fusion_score=candidates[item.index].fusion_score,
-                vector_rank=candidates[item.index].vector_rank,
-                keyword_rank=candidates[item.index].keyword_rank,
-            )
-            for item in ranked
-        ]
-        return rescored, True, None
+
+def _parent_chunk(child: RetrievedChunk, parent: StoredParent) -> RetrievedChunk:
+    # 位置与相邻关系属于 parent；所有检索/重排分数仍属于命中 child。
+    metadata = {
+        **child.metadata,
+        **parent.metadata,
+        "kb_id": parent.key.kb_id,
+        "source_id": parent.key.source_id,
+        "document_revision": parent.key.revision_id,
+        "parent_id": parent.parent_id,
+        "chunk_start": parent.start_char,
+        "chunk_end": parent.end_char,
+        "chunk_index": parent.ordinal,
+        "previous_id": parent.previous_id,
+        "next_id": parent.next_id,
+    }
+    # child 总数不是 parent 总数；Port 不提供 manifest 时不要伪造它。
+    metadata.pop("total_chunks", None)
+    return replace(
+        child,
+        id=parent.parent_id,
+        text=parent.text,
+        metadata=metadata,
+        matched_child_id=child.id,
+    )
 
 
 _NON_DEGRADABLE_RECALL_ERRORS = (

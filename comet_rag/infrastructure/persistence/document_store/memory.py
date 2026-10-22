@@ -42,7 +42,7 @@ class InMemoryDocumentStore(DocumentStore):
         self._parents: dict[str, StoredParent] = {}
         self._lock = asyncio.Lock()
 
-    async def areserve_revision(self, draft: RevisionDraft) -> StoredRevision:
+    async def reserve_revision(self, draft: RevisionDraft) -> StoredRevision:
         async with self._lock:
             owner = self._revision_ids.get(draft.key.revision_id)
             if owner is not None and owner != draft.key:
@@ -75,7 +75,7 @@ class InMemoryDocumentStore(DocumentStore):
             self._revision_ids[draft.key.revision_id] = draft.key
             return revision
 
-    async def aput_parents(
+    async def put_parents(
         self, revision: RevisionKey, parents: Sequence[StoredParent]
     ) -> None:
         batch = tuple(parents)
@@ -94,7 +94,9 @@ class InMemoryDocumentStore(DocumentStore):
                 existing = self._parents.get(parent.parent_id)
                 if existing is not None:
                     if existing != parent:
-                        raise RevisionConflict(revision, "相同 parent_id 的内容发生变化")
+                        raise RevisionConflict(
+                            revision, "相同 parent_id 的内容发生变化"
+                        )
                     continue
                 ordinal_owner = next(
                     (
@@ -118,7 +120,7 @@ class InMemoryDocumentStore(DocumentStore):
             for parent in batch:
                 self._parents.setdefault(parent.parent_id, parent)
 
-    async def amark_ready(self, revision: RevisionKey) -> StoredRevision:
+    async def mark_ready(self, revision: RevisionKey) -> StoredRevision:
         async with self._lock:
             row = self._require_revision(revision)
             if row.status in (RevisionStatus.READY, RevisionStatus.ACTIVE):
@@ -139,7 +141,7 @@ class InMemoryDocumentStore(DocumentStore):
             self._revisions[revision] = ready
             return ready
 
-    async def aactivate_revision(self, revision: RevisionKey) -> Activation:
+    async def activate_revision(self, revision: RevisionKey) -> Activation:
         async with self._lock:
             target = self._require_revision(revision)
             document = self._documents[(revision.kb_id, revision.source_id)]
@@ -185,7 +187,7 @@ class InMemoryDocumentStore(DocumentStore):
             document.active_revision_id = revision.revision_id
             return Activation(active=active, previous_revision_id=previous_id)
 
-    async def aget_active_revisions(
+    async def get_active_revisions(
         self, kb_id: str, source_ids: Sequence[str]
     ) -> dict[str, str | None]:
         async with self._lock:
@@ -196,7 +198,7 @@ class InMemoryDocumentStore(DocumentStore):
                 for source_id in dict.fromkeys(source_ids)
             }
 
-    async def aget_parents(
+    async def get_parents(
         self, kb_id: str, parent_ids: Sequence[str]
     ) -> dict[str, StoredParent]:
         async with self._lock:
@@ -207,7 +209,7 @@ class InMemoryDocumentStore(DocumentStore):
                 and parent.key.kb_id == kb_id
             }
 
-    async def aabandon_revision(self, revision: RevisionKey) -> None:
+    async def abandon_revision(self, revision: RevisionKey) -> None:
         async with self._lock:
             row = self._require_revision(revision)
             if row.status is RevisionStatus.ACTIVE:
@@ -225,7 +227,7 @@ class InMemoryDocumentStore(DocumentStore):
                 updated_at=now,
             )
 
-    async def alist_cleanup_candidates(self, *, limit: int) -> list[RevisionKey]:
+    async def list_cleanup_candidates(self, *, limit: int) -> list[RevisionKey]:
         if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
             raise ValueError("limit 必须是正整数")
         async with self._lock:
@@ -233,14 +235,13 @@ class InMemoryDocumentStore(DocumentStore):
                 (
                     row
                     for row in self._revisions.values()
-                    if row.status
-                    in (RevisionStatus.RETIRED, RevisionStatus.ABANDONED)
+                    if row.status in (RevisionStatus.RETIRED, RevisionStatus.ABANDONED)
                 ),
                 key=lambda row: (row.updated_at, row.generation),
             )
             return [row.key for row in rows[:limit]]
 
-    async def apurge_inactive_revision(self, revision: RevisionKey) -> None:
+    async def purge_inactive_revision(self, revision: RevisionKey) -> None:
         async with self._lock:
             row = self._require_revision(revision)
             if row.status is RevisionStatus.ACTIVE:

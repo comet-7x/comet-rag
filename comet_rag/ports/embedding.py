@@ -23,28 +23,17 @@ class EmbeddingTask(StrEnum):
 
 @runtime_checkable
 class EmbeddingPort(Protocol):
-    """应用层可使用的 Embedding 契约。"""
+    """同步模型边界；资源关闭也在调用线程完成。"""
 
-    #: 一次请求最多能装多少篇文档。``1`` 表示服务端不支持批量，只能一条一发。
-    #:
-    #: 这是模型**声明能力**，不是模型**决定策略**：它只回答"我一次最多能吃
-    #: 几个"，至于要不要装满、几个请求并发发出去，由调度方决定。
+    #: 声明单请求容量；调度方决定分批方式与并发数。
     batch_limit: int
 
     def embed_query(self, query: str, /, **kwargs: Any) -> list[float]:
         """生成检索查询向量。"""
         ...
 
-    async def aembed_query(self, query: str, /, **kwargs: Any) -> list[float]:
-        """异步生成检索查询向量。"""
-        ...
-
     def embed_document(self, document: str, /, **kwargs: Any) -> list[float]:
         """生成单篇待检索文档的向量。"""
-        ...
-
-    async def aembed_document(self, document: str, /, **kwargs: Any) -> list[float]:
-        """异步生成单篇待检索文档的向量。"""
         ...
 
     def embed_batch(
@@ -56,7 +45,29 @@ class EmbeddingPort(Protocol):
         """
         ...
 
-    async def aembed_batch(
+    def bind_gate(self, gate: AsyncGate | None) -> None:
+        """绑定进程级并发闸门；由组合根调用，业务代码不碰。"""
+        ...
+
+    def close(self) -> None: ...
+
+
+@runtime_checkable
+class AsyncEmbeddingPort(Protocol):
+    """异步模型边界；网络调用与资源关闭都可等待。"""
+
+    #: 声明单请求容量；调度方决定分批方式与并发数。
+    batch_limit: int
+
+    async def embed_query(self, query: str, /, **kwargs: Any) -> list[float]:
+        """异步生成检索查询向量。"""
+        ...
+
+    async def embed_document(self, document: str, /, **kwargs: Any) -> list[float]:
+        """异步生成单篇待检索文档的向量。"""
+        ...
+
+    async def embed_batch(
         self, documents: Sequence[str], /, **kwargs: Any
     ) -> list[list[float]]:
         """``embed_batch`` 的异步版本；同样是恰好一次往返。"""
@@ -66,26 +77,31 @@ class EmbeddingPort(Protocol):
         """绑定进程级并发闸门；由组合根调用，业务代码不碰。"""
         ...
 
-    async def aclose(self) -> None:
-        """释放适配器资源。"""
-        ...
+    async def close(self) -> None: ...
 
 
 @runtime_checkable
 class MultimodalEmbeddingPort(Protocol):
-    """图片与图文混合输入的可选结构性能力。"""
+    """同步图片与图文混合输入能力。"""
 
     def embed_media(
         self, data: MediaResource | ContentInput, /, **kwargs: Any
     ) -> list[float]: ...
 
-    async def aembed_media(
+
+@runtime_checkable
+class AsyncMultimodalEmbeddingPort(Protocol):
+    """异步图片与图文混合输入能力。"""
+
+    async def embed_media(
         self, data: MediaResource | ContentInput, /, **kwargs: Any
     ) -> list[float]: ...
 
 
 __all__ = [
     "EmbeddingPort",
+    "AsyncEmbeddingPort",
     "EmbeddingTask",
     "MultimodalEmbeddingPort",
+    "AsyncMultimodalEmbeddingPort",
 ]

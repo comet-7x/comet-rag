@@ -14,13 +14,12 @@ from pymilvus import (
     DataType,
     Function,
     FunctionType,
-    MilvusClient,
 )
 from pymilvus.client.types import LoadState
 
 from comet_rag.core.logging import logger
 from comet_rag.ports import (
-    BaseVectorStore,
+    AsyncVectorStore,
     CollectionNotFound,
     CollectionSchemaMismatch,
     DimensionMismatch,
@@ -172,7 +171,7 @@ def _schema_mismatches(
     return problems
 
 
-class MilvusStore(BaseVectorStore):
+class AsyncMilvusStore(AsyncVectorStore):
     def __init__(
         self,
         *,
@@ -190,8 +189,8 @@ class MilvusStore(BaseVectorStore):
         if replica_number <= 0:
             raise ValueError("replica_number 必须是正整数")
         token = api_key or ""
-        self._sync = MilvusClient(uri=endpoint, token=token, db_name=database_name)
-        self._async = AsyncMilvusClient(
+        # SDK 惰性连接：配置在构造时校验，连通性错误在首次 awaited 操作暴露。
+        self._client = AsyncMilvusClient(
             uri=endpoint, token=token, db_name=database_name
         )
         self._prefix = prefix
@@ -216,19 +215,17 @@ class MilvusStore(BaseVectorStore):
     async def _describe(self, name: str) -> dict[str, Any]:
         return cast(
             "dict[str, Any]",
-            await asyncio.to_thread(self._sync.describe_collection, name),
+            await self._client.describe_collection(name),
         )
 
     async def _sparse_indexes(self, name: str) -> list[dict[str, Any]]:
         index_names = cast(
             "list[str]",
-            await asyncio.to_thread(self._sync.list_indexes, name, field_name=_SPARSE),
+            await self._client.list_indexes(name, field_name=_SPARSE),
         )
         indexes: list[dict[str, Any]] = []
         for index_name in index_names:
-            description = await asyncio.to_thread(
-                self._sync.describe_index, name, index_name
-            )
+            description = await self._client.describe_index(name, index_name)
             # list_indexes 与 describe_index 之间索引可能被并发删除。把 SDK 的
             # None 当成“当前未就绪”，交给 schema 校验输出稳定的领域错误。
             if isinstance(description, dict):
@@ -243,19 +240,12 @@ class MilvusStore(BaseVectorStore):
         raise CollectionSchemaMismatch(kb_id, [f"缺少 {_DENSE} 字段"])
 
     async def _dim_of(self, kb_id: str) -> int:
-        """校验已有 collection 并读回向量维度。
-
-        同步客户端的调用一律放在线程中：`has_collection` /
-        `describe_collection` 都是真网络请求，直接在事件循环上调，Milvus 一慢
-        就会把整个进程堵住 —— API 的其他请求、runner 的取消检查点、worker 的
-        心跳全部跟着停摆。**心跳停摆会被租约回收误判成 worker 已死**，
-        于是一次 Milvus 抖动被放大成任务被重复执行。
-        """
+        """只缓存已通过 schema 校验的维度；联网检查由 SDK 原生异步执行。"""
         cached = self._dims.get(kb_id)
         if cached is not None:
             return cached
         name = self._name(kb_id)
-        if not await asyncio.to_thread(self._sync.has_collection, name):
+        if not await self._client.has_collection(name):
             raise CollectionNotFound(kb_id)
         dim = await self._validated_dim(name, kb_id)
         self._dims[kb_id] = dim
@@ -301,22 +291,21 @@ class MilvusStore(BaseVectorStore):
         self._dims.pop(kb_id, None)
         result = cast(
             "dict[str, Any]",
-            await asyncio.to_thread(self._sync.get_load_state, name),
+            await self._client.get_load_state(name),
         )
         state = result.get("state")
         if state == LoadState.NotExist:
             raise CollectionNotFound(kb_id)
         if state != LoadState.Loaded:
-            # load_collection 本身会同步等待服务端完成；对 NotLoad 与 Loading
+            # SDK 的 load_collection 会等待服务端完成；对 NotLoad 与 Loading
             # 都主动调用，避免依赖另一个可能已经退出的创建进程。
-            await asyncio.to_thread(
-                self._sync.load_collection,
+            await self._client.load_collection(
                 name,
                 replica_number=self._replica_number,
             )
             result = cast(
                 "dict[str, Any]",
-                await asyncio.to_thread(self._sync.get_load_state, name),
+                await self._client.get_load_state(name),
             )
             state = result.get("state")
         if state == LoadState.Loaded:
@@ -327,17 +316,17 @@ class MilvusStore(BaseVectorStore):
             f"Milvus collection 加载调用结束但状态不是 Loaded kb={kb_id} state={state}"
         )
 
-    async def aensure_collection(self, kb_id: str, *, dim: int) -> None:
+    async def ensure_collection(self, kb_id: str, *, dim: int) -> None:
         if dim <= 0:
             raise ValueError(f"维度必须为正整数，收到 {dim}")
         name = self._name(kb_id)
 
-        if await asyncio.to_thread(self._sync.has_collection, name):
+        if await self._client.has_collection(name):
             await self._ensure_existing_ready(name, kb_id, dim)
             return
 
         # 这两个是纯本地构造（不打网络），留在事件循环上没问题
-        schema = self._sync.create_schema(auto_id=False, enable_dynamic_field=False)
+        schema = self._client.create_schema(auto_id=False, enable_dynamic_field=False)
         schema.add_field(_ID, DataType.VARCHAR, is_primary=True, max_length=128)
         schema.add_field(
             _TEXT,
@@ -358,7 +347,7 @@ class MilvusStore(BaseVectorStore):
             )
         )
 
-        index = self._sync.prepare_index_params()
+        index = self._client.prepare_index_params()
         index.add_index(
             field_name=_DENSE, index_type="AUTOINDEX", metric_type=self._metric
         )
@@ -369,8 +358,7 @@ class MilvusStore(BaseVectorStore):
         )
 
         try:
-            await asyncio.to_thread(
-                self._sync.create_collection,
+            await self._client.create_collection(
                 name,
                 schema=schema,
                 consistency_level=self._consistency,
@@ -378,18 +366,18 @@ class MilvusStore(BaseVectorStore):
         except Exception:
             # 跨进程没有共享锁。若别的实例刚好抢先建表，本次 create 会失败；
             # 重新探测并等待对方完成索引即可。其余错误保留原异常。
-            if not await asyncio.to_thread(self._sync.has_collection, name):
+            if not await self._client.has_collection(name):
                 raise
             await self._ensure_existing_ready(name, kb_id, dim)
             return
         self._created.add(kb_id)
         try:
-            await asyncio.to_thread(self._sync.create_index, name, index_params=index)
+            await self._client.create_index(name, index_params=index)
         except Exception:
             # sparse index 尚不可用时，没有其他实例能通过 schema 就绪检查；
             # 因此这里仍可精确回收本调用刚创建的空 collection。
             try:
-                await asyncio.to_thread(self._sync.drop_collection, name)
+                await self._client.drop_collection(name)
             except Exception:
                 logger.exception(f"Milvus 新建失败且回滚失败 kb={kb_id} name={name}")
             else:
@@ -407,16 +395,16 @@ class MilvusStore(BaseVectorStore):
         self._dims[kb_id] = dim
         logger.info(f"Milvus collection 已创建 kb={kb_id} name={name} dim={dim}")
 
-    async def adrop_collection(self, kb_id: str) -> None:
+    async def drop_collection(self, kb_id: str) -> None:
         self._dims.pop(kb_id, None)
         name = self._name(kb_id)
-        if await asyncio.to_thread(self._sync.has_collection, name):
-            await asyncio.to_thread(self._sync.drop_collection, name)
+        if await self._client.has_collection(name):
+            await self._client.drop_collection(name)
         self._created.discard(kb_id)
 
     # ── 写入 ───────────────────────────────────────────────────────────────
 
-    async def aupsert(self, kb_id: str, records: Sequence[VectorRecord]) -> list[str]:
+    async def upsert(self, kb_id: str, records: Sequence[VectorRecord]) -> list[str]:
         dim = await self._dim_of(kb_id)
         # 先整体校验：宁可一条不写，也不要写一半留下不一致的库
         for record in records:
@@ -434,10 +422,10 @@ class MilvusStore(BaseVectorStore):
             }
             for record in records
         ]
-        await self._async.upsert(self._name(kb_id), rows)
+        await self._client.upsert(self._name(kb_id), rows)
         return [record.id for record in records]
 
-    async def adelete(
+    async def delete(
         self,
         kb_id: str,
         *,
@@ -459,16 +447,16 @@ class MilvusStore(BaseVectorStore):
 
         # Milvus 的 delete 不返回准确条数，先查出真正会被删的主键。
         # 直接信它的 delete_count 会让契约里"删除不存在的 id 返回 0"失效。
-        matched = await self._async.query(name, filter=expression, output_fields=[_ID])
+        matched = await self._client.query(name, filter=expression, output_fields=[_ID])
         keys = [row[_ID] for row in matched]
         if not keys:
             return 0
-        await self._async.delete(name, ids=keys)
+        await self._client.delete(name, ids=keys)
         return len(keys)
 
     # ── 读取 ───────────────────────────────────────────────────────────────
 
-    async def asearch(
+    async def search(
         self,
         kb_id: str,
         query_embedding: Sequence[float],
@@ -480,7 +468,7 @@ class MilvusStore(BaseVectorStore):
         if len(query_embedding) != dim:
             raise DimensionMismatch(kb_id, dim, len(query_embedding))
 
-        results = await self._async.search(
+        results = await self._client.search(
             self._name(kb_id),
             data=[list(query_embedding)],
             anns_field=_DENSE,
@@ -502,7 +490,7 @@ class MilvusStore(BaseVectorStore):
         hits.sort(key=lambda h: (-h.score, h.id))
         return hits
 
-    async def asearch_keywords(
+    async def search_keywords(
         self,
         kb_id: str,
         query: str,
@@ -516,7 +504,7 @@ class MilvusStore(BaseVectorStore):
         if not query.strip():
             return []
 
-        results = await self._async.search(
+        results = await self._client.search(
             self._name(kb_id),
             data=[query],
             anns_field=_SPARSE,
@@ -538,9 +526,9 @@ class MilvusStore(BaseVectorStore):
         hits.sort(key=lambda hit: (-hit.score, hit.id))
         return hits
 
-    async def acount(self, kb_id: str, *, filter: Filter | None = None) -> int:
+    async def count(self, kb_id: str, *, filter: Filter | None = None) -> int:
         await self._dim_of(kb_id)
-        rows = await self._async.query(
+        rows = await self._client.query(
             self._name(kb_id),
             filter=build_expression(filter),
             output_fields=["count(*)"],
@@ -548,13 +536,12 @@ class MilvusStore(BaseVectorStore):
         )
         return int(rows[0]["count(*)"]) if rows else 0
 
-    async def aclose(self) -> None:
-        await self._async.close()
-        await asyncio.to_thread(self._sync.close)
+    async def close(self) -> None:
+        await self._client.close()
 
 
 __all__ = [
-    "MilvusStore",
+    "AsyncMilvusStore",
     "build_expression",
     "collection_name_for",
 ]

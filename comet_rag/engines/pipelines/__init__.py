@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from .hooks import (
+    AsyncHookProvider,
+    AsyncHookRegistry,
+    AsyncPipelineHooks,
+    ChunkHookProvider,
     DocumentChunkHook,
     HookProvider,
     HookRegistry,
@@ -11,6 +15,10 @@ from .hooks import (
 from .types import Chunk, DocxConfig, PipelineConfig, PipelineResult
 
 __all__ = [
+    "AsyncHookProvider",
+    "AsyncHookRegistry",
+    "AsyncPipelineHooks",
+    "ChunkHookProvider",
     "Chunk",
     "DocumentChunkHook",
     "HookProvider",

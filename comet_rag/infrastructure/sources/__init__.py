@@ -23,14 +23,19 @@ from comet_rag.engines.documents.formats import (
 )
 from comet_rag.ports.source import LoadedResource, SourceContent
 
-from .base import DEFAULT_MAX_CONCURRENCY, BaseLoader
-from .http import DownloadRequestConfig, URLLoader
-from .local import LocalLoader
-from .router import AutoLoader, LoaderRoute
+from .base import DEFAULT_MAX_CONCURRENCY, AsyncBaseLoader, BaseLoader
+from .http import AsyncURLLoader, DownloadRequestConfig, URLLoader
+from .local import AsyncLocalLoader, LocalLoader
+from .router import AsyncAutoLoader, AsyncLoaderRoute, AutoLoader, LoaderRoute
 
 LoaderContent = LoadedResource
 
 __all__ = [
+    "AsyncBaseLoader",
+    "AsyncURLLoader",
+    "AsyncLocalLoader",
+    "AsyncAutoLoader",
+    "AsyncLoaderRoute",
     "AllowExt",
     "AutoLoader",
     "BaseFileFormat",

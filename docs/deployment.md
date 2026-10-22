@@ -184,7 +184,7 @@ ingest_policy:
 调用时把来源写为 `s3://documents/report.docx` 或
 `minio://documents/report.docx`。Loader 会先用 `HEAD` 拒绝已知超限对象，
 下载时再按实际累计字节检查，避免伪造或过期的 `ContentLength` 绕过限制。
-临时文件与同步/异步 S3 client 由应用上下文统一清理。
+服务使用 `AsyncS3Loader` 和 aioboto3 原生异步客户端；临时文件与该客户端由应用上下文统一清理。同步库调用使用单独的 `S3Loader`，不会创建异步客户端。
 
 被拒返回 **403**，且错误信息里不回显解析出来的 IP：那等于把内网探测结果
 送给调用方，防护会退化成一个好用的扫描器。
@@ -304,8 +304,8 @@ DocumentStore，Milvus 配 PostgreSQL DocumentStore 和 Strong。Milvus 模式�
 候选预算必须是 1～2048 的整数，读开关须为布尔值；拼错字段或未实现的写开关会报错。
 此配置**不启用 revision 写入或激活**，生产配置仍应保持关闭直到完整读写验收。
 
-仍可向 `build_context(..., document_store=...)` 显式注入资源；这也是显式启用读侧。
-启动前拒绝持久化资源错配，以及自行注入的非 Strong MilvusStore。组合根拥有自动创建
+仍可向 `await build_context(..., document_store=...)` 显式注入资源；这也是显式启用读侧。
+启动前拒绝持久化资源错配，以及自行注入的非 Strong AsyncMilvusStore。组合根拥有自动创建
 的 SQL 连接池，停止执行器/关闭适配器后才释放它；外部注入的 Database 由注入方管理。
 
 每通道最多两轮、2048 个候选，先批量读取 active 指针，再参与 RRF/重排；staging、
@@ -402,10 +402,26 @@ retry_backoff。过期退避立即执行，租约回收和人工 retry 不附加
 由 PENDING 对账补投。初次投递失败仍向调用方报错，但数据库记录可能已创建；
 客户端重试应复用 idempotency_key，避免重复创建入库任务。
 
+### Milvus 连接时机
+
+`AsyncMilvusStore` 仅使用 PyMilvus 的 `AsyncMilvusClient`，集合检查、索引描述和加载
+也使用原生异步 RPC。构造器校验配置，SDK 在首次被等待的 RPC 时建立连接，因此
+`await build_context(...)` 成功不代表 Milvus 已可达。首次创建知识库、入库或检索仍
+可能遇到连接错误；`/admin/health` 保持进程存活探针语义，不替代真实读写验收。
+
 ### 优雅关停
 
 `SIGTERM` 后：停止收新任务 → 协作取消在跑的 → 等它们落到一致状态 → 释放连接。
 超时未收尾的交给租约回收，不会留下 RUNNING 僵尸。
+
+V2 的组合根入口为 `await build_context(...)`，只提供异步构造；早期过渡名称 `abuild_context` 已移除。
+自定义启动代码需更新导入并在原事件循环中等待；CLI、API lifespan 与 worker 已迁移。
+所有配置校验先于资源创建。初始化失败会等待本次自建资源回收，注入对象仍由调用方管理；
+成功返回后由 Context 统一关闭，调用方应在 `finally` 中 `await context.close()`。
+
+关闭时先排干执行器，再撤销注册和关闭依赖；重复关闭不会重复释放资源。
+取消启动回滚或关闭的调用方，也要等清理完成后才收到取消异常。这个保证不覆盖进程被
+强制终止，也不把有错误的第三方 `close()` 变成必定释放成功：清理错误会被记录。
 
 ---
 

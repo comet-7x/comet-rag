@@ -22,9 +22,9 @@ from comet_rag.config.schemas import (
     LimitsConfig,
     ServerConfig,
 )
-from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
+from comet_rag.infrastructure.models.reranker.base import AsyncBaseReranker
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.ports import ExtractedDocument
 from tests.e2e.test_ingest_search import (
     DIM,
@@ -44,13 +44,10 @@ ROUNDS = 200
 MODE_ROUNDS = 100
 
 
-class IdentityReranker(BaseReranker):
+class IdentityReranker(AsyncBaseReranker):
     """按原顺序打分。量的是重排这条路径的**框架开销**，不是模型质量。"""
 
-    def _score(self, query, documents, **kwargs):  # pragma: no cover
-        return []
-
-    async def _ascore(self, query, documents, **kwargs) -> list[float]:
+    async def _score(self, query, documents, **kwargs) -> list[float]:
         return [float(len(documents) - i) for i in range(len(documents))]
 
 
@@ -71,11 +68,11 @@ def document(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture(autouse=True)
 def hooks():
-    @PipelineHooks.extractor(STUB_TYPE)
+    @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
     def _extract(lc, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
-    PipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
+    AsyncPipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
 
     yield
 
@@ -101,7 +98,7 @@ async def client(document: Path) -> AsyncIterator[httpx.AsyncClient]:
         make_config(),
         embedding_model=KeywordEmbedding(),
         reranker=IdentityReranker(),
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
         pipeline_config=PipelineConfig(embed_batch_size=64, max_concurrency=16),
     )
     transport = httpx.ASGITransport(app=app)

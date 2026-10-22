@@ -27,13 +27,15 @@ def _isolate_pipeline_hooks() -> Iterator[None]:
     而且是否踩雷取决于用例执行顺序 —— 这类 bug 排查起来极其费时。
     autouse 而非按需，是因为"忘了加"正是这类污染的主要来源。
     """
-    from comet_rag.engines.pipelines import PipelineHooks
+    from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineHooks
 
     state = PipelineHooks.snapshot()
+    async_state = AsyncPipelineHooks.snapshot()
     try:
         yield
     finally:
         PipelineHooks.restore(state)
+        AsyncPipelineHooks.restore(async_state)
 
 
 @pytest.fixture(scope="session")

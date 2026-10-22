@@ -4,34 +4,47 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING
 
 from comet_rag.composition.context import Context, wire_runners
 from comet_rag.composition.pipeline_config import resolve_pipeline_config
+from comet_rag.composition.resources import (
+    clear_registrations,
+    close_resource,
+    run_cleanup,
+    wait_for_cleanup,
+)
 from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.degradation import DegradationController, DegradationSettings
 from comet_rag.core.logging import logger
+from comet_rag.engines.documents.docx.vision import validate_vision_model
 from comet_rag.engines.documents.formats import resolve_detected_extension
+from comet_rag.engines.offload import run_sync
 from comet_rag.engines.pipelines import (
-    HookProvider,
+    AsyncHookRegistry,
+    AsyncPipelineHooks,
     PipelineConfig,
-    PipelineHooks,
 )
 from comet_rag.engines.utils import detect_content_type_from_path
 from comet_rag.infrastructure.persistence.document_store import InMemoryDocumentStore
 from comet_rag.infrastructure.persistence.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
-from comet_rag.infrastructure.sources import AutoLoader, LoaderContent, LoaderRoute
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
+from comet_rag.infrastructure.sources import (
+    AsyncAutoLoader,
+    AsyncLoaderRoute,
+    LoaderContent,
+)
 from comet_rag.ports import (
-    BaseVectorStore,
-    DocumentExtractorPort,
-    EmbeddingPort,
+    AsyncDocumentExtractorPort,
+    AsyncEmbeddingPort,
+    AsyncKeywordSearchPort,
+    AsyncRerankerPort,
+    AsyncVectorStore,
     ExtractedDocument,
-    KeywordSearchPort,
-    RerankerPort,
 )
 from comet_rag.ports.document_store import DocumentStore
 from comet_rag.ports.knowledge_base import (
@@ -50,20 +63,20 @@ from comet_rag.tasks import (
 )
 
 if TYPE_CHECKING:
-    from comet_rag.infrastructure.extractors import MinerUDocumentExtractor
+    from comet_rag.infrastructure.extractors import AsyncMinerUDocumentExtractor
     from comet_rag.infrastructure.persistence.sql import Database
 
 
 def build_vector_store(
     config: APPConfig, *, revision_aware: bool = False
-) -> BaseVectorStore:
+) -> AsyncVectorStore:
     backend = config.backends.vector_store
     if backend is Backend.MEMORY:
-        return InMemoryVectorStore()
+        return AsyncInMemoryVectorStore()
     if backend is Backend.MILVUS:
         # pymilvus 在 `milvus` extra 里，函数内 import 才不会拖累未安装的用户
         from comet_rag.infrastructure.persistence.vector_store.milvus import (  # noqa: PLC0415
-            MilvusStore,
+            AsyncMilvusStore,
         )
 
         settings = config.infrastructure_config.vector_database
@@ -72,7 +85,7 @@ def build_vector_store(
                 "backends.vector_store=milvus 但未配置 "
                 "infrastructure_config.vector_database"
             )
-        return MilvusStore(
+        return AsyncMilvusStore(
             endpoint=settings.endpoint,
             api_key=settings.api_key_value,
             database_name=settings.database_name,
@@ -134,11 +147,11 @@ def build_document_store(
     config: APPConfig,
     database: Database | None = None,
     *,
-    vector_store: BaseVectorStore | None = None,
+    vector_store: AsyncVectorStore | None = None,
 ) -> DocumentStore:
     """跟向量资源配对；显式注入的内存向量替身不应意外创建持久化资源。"""
     memory = (
-        isinstance(vector_store, InMemoryVectorStore)
+        isinstance(vector_store, AsyncInMemoryVectorStore)
         if vector_store is not None
         else config.backends.vector_store is Backend.MEMORY
     )
@@ -153,26 +166,31 @@ def build_document_store(
     return PostgresDocumentStore(database)
 
 
-def _validate_revision_vectors(vectors: BaseVectorStore) -> None:
-    if isinstance(vectors, InMemoryVectorStore):
+def _validate_revision_vectors(vectors: AsyncVectorStore) -> None:
+    if isinstance(vectors, AsyncInMemoryVectorStore):
         return
     from comet_rag.infrastructure.persistence.vector_store.milvus import (  # noqa: PLC0415
-        MilvusStore,
+        AsyncMilvusStore,
     )
 
-    if not isinstance(vectors, MilvusStore) or vectors.consistency_level != "Strong":
-        raise ValueError("injected revision vector store requires Strong MilvusStore")
+    if (
+        not isinstance(vectors, AsyncMilvusStore)
+        or vectors.consistency_level != "Strong"
+    ):
+        raise ValueError(
+            "injected revision vector store requires Strong AsyncMilvusStore"
+        )
 
 
 def _validate_revision_resources(
     config: APPConfig,
     documents: DocumentStore,
-    vectors: BaseVectorStore | None,
+    vectors: AsyncVectorStore | None,
 ) -> None:
     if vectors is not None:
         _validate_revision_vectors(vectors)
     memory = (
-        isinstance(vectors, InMemoryVectorStore)
+        isinstance(vectors, AsyncInMemoryVectorStore)
         if vectors is not None
         else config.backends.vector_store is Backend.MEMORY
     )
@@ -238,10 +256,10 @@ def build_degradation(config: APPConfig) -> DegradationController:
     )
 
 
-def build_ingest_loader(config: APPConfig, policy: SourcePolicy) -> AutoLoader:
+def build_ingest_loader(config: APPConfig, policy: SourcePolicy) -> AsyncAutoLoader:
     """Assemble protocol-neutral routes with optional infrastructure loaders."""
 
-    routes = AutoLoader.default_routes(
+    routes = AsyncAutoLoader.default_routes(
         max_download_bytes=policy.max_download_bytes,
         redirect_validator=policy.check_redirect,
     )
@@ -251,11 +269,11 @@ def build_ingest_loader(config: APPConfig, policy: SourcePolicy) -> AutoLoader:
             raise ValueError(
                 "ingest_policy.allow_s3=true 但未配置 infrastructure_config.s3"
             )
-        return AutoLoader(routes)
+        return AsyncAutoLoader(routes)
 
-    from comet_rag.infrastructure.sources.s3 import S3Loader  # noqa: PLC0415
+    from comet_rag.infrastructure.sources.s3 import AsyncS3Loader  # noqa: PLC0415
 
-    object_loader = S3Loader(
+    object_loader = AsyncS3Loader(
         endpoint_url=settings.endpoint_url,
         access_key_id=settings.access_key_id_value,
         secret_access_key=settings.secret_access_key_value,
@@ -267,9 +285,9 @@ def build_ingest_loader(config: APPConfig, policy: SourcePolicy) -> AutoLoader:
     )
     routes.insert(
         0,
-        LoaderRoute.schemes("s3", object_loader, {"s3", "minio"}),
+        AsyncLoaderRoute.schemes("s3", object_loader, {"s3", "minio"}),
     )
-    return AutoLoader(routes)
+    return AsyncAutoLoader(routes)
 
 
 def build_loader_gate(config: APPConfig) -> Gate:
@@ -301,16 +319,16 @@ def build_mineru_gate(config: APPConfig) -> Gate:
     )
 
 
-def build_mineru_extractor(config: APPConfig) -> MinerUDocumentExtractor | None:
+def build_mineru_extractor(config: APPConfig) -> AsyncMinerUDocumentExtractor | None:
     settings = config.infrastructure_config.mineru
     if not settings.enabled:
         return None
 
     from comet_rag.infrastructure.extractors import (  # noqa: PLC0415
-        MinerUDocumentExtractor,
+        AsyncMinerUDocumentExtractor,
     )
 
-    return MinerUDocumentExtractor(
+    return AsyncMinerUDocumentExtractor(
         settings.base_url,
         backend=settings.backend,
         parse_method=settings.parse_method.value,
@@ -328,10 +346,10 @@ def build_mineru_extractor(config: APPConfig) -> MinerUDocumentExtractor | None:
 
 
 def wire_pdf_extractor(
-    extractor: DocumentExtractorPort, *, hooks: HookProvider | None = None
+    extractor: AsyncDocumentExtractorPort, *, hooks: AsyncHookRegistry | None = None
 ) -> Callable[[], None]:
     """把 Port 适配到现有字符串 Hook；供应商字段不进入 engines。"""
-    registry = hooks or PipelineHooks
+    registry = hooks or AsyncPipelineHooks
     previous = registry.snapshot()
 
     def verify_content(content: LoaderContent) -> None:
@@ -346,24 +364,12 @@ def wire_pdf_extractor(
         return content.path.name
 
     @registry.extractor("pdf")
-    def extract_pdf(
+    async def extract_pdf(
         content: LoaderContent, config: PipelineConfig
     ) -> ExtractedDocument:
         del config
-        verify_content(content)
-        return extractor.extract(
-            content.path,
-            filename=filename(content),
-            media_type="application/pdf",
-        )
-
-    @registry.aextractor("pdf")
-    async def aextract_pdf(
-        content: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
-        del config
-        await asyncio.to_thread(verify_content, content)
-        return await extractor.aextract(
+        await run_sync(verify_content, content)
+        return await extractor.extract(
             content.path,
             filename=filename(content),
             media_type="application/pdf",
@@ -397,9 +403,9 @@ def build_embedding_model(
     *,
     image_url_validator: Callable[[str], None] | None = None,
     local_image_validator: Callable[[str], None] | None = None,
-) -> EmbeddingPort:
+) -> AsyncEmbeddingPort:
     from comet_rag.infrastructure.models.embedding.qwen3_vl import (  # noqa: PLC0415
-        Qwen3VLEmbeddingModel,
+        AsyncQwen3VLEmbeddingModel,
     )
 
     settings = config.infrastructure_config.embedding_model
@@ -407,7 +413,7 @@ def build_embedding_model(
         source_policy = build_source_policy(config.ingest_policy)
         image_url_validator = image_url_validator or source_policy.check_redirect
         local_image_validator = local_image_validator or source_policy.check
-    return Qwen3VLEmbeddingModel(
+    return AsyncQwen3VLEmbeddingModel(
         base_url=settings.base_url,
         model_name=settings.model_name,
         api_key=settings.api_key_value or "EMPTY",
@@ -422,13 +428,13 @@ def build_reranker(
     *,
     image_url_validator: Callable[[str], None] | None = None,
     local_image_validator: Callable[[str], None] | None = None,
-) -> RerankerPort | None:
+) -> AsyncRerankerPort | None:
     settings = config.infrastructure_config.reranker
     if settings is None:
         logger.info("未配置 reranker，检索将跳过重排")
         return None
     from comet_rag.infrastructure.models.reranker.qwen3_vl import (  # noqa: PLC0415
-        Qwen3VLReranker,
+        AsyncQwen3VLReranker,
     )
 
     if image_url_validator is None or local_image_validator is None:
@@ -436,7 +442,7 @@ def build_reranker(
         image_url_validator = image_url_validator or source_policy.check_redirect
         local_image_validator = local_image_validator or source_policy.check
 
-    return Qwen3VLReranker(
+    return AsyncQwen3VLReranker(
         base_url=settings.base_url,
         model_name=settings.model_name,
         api_key=settings.api_key_value or "EMPTY",
@@ -446,8 +452,8 @@ def build_reranker(
     )
 
 
-def _gated_routes(loader: AutoLoader) -> list[object]:
-    """AutoLoader 自己不持有闸门，所以复验要落到真正发请求的叶子上。"""
+def _gated_routes(loader: AsyncAutoLoader) -> list[object]:
+    """AsyncAutoLoader 自己不持有闸门，所以复验要落到真正发请求的叶子上。"""
     return [route.loader for route in loader.routes]
 
 
@@ -473,27 +479,31 @@ def _assert_gated(gate: Gate, *models: object) -> None:
             )
 
 
-def build_context(
+async def build_context(
     config: APPConfig,
     *,
-    embedding_model: EmbeddingPort | None = None,
-    reranker: RerankerPort | None = None,
-    vector_store: BaseVectorStore | None = None,
+    embedding_model: AsyncEmbeddingPort | None = None,
+    reranker: AsyncRerankerPort | None = None,
+    vector_store: AsyncVectorStore | None = None,
     task_store: TaskStore | None = None,
     task_executor: TaskExecutor | None = None,
     kb_repository: KnowledgeBaseRepository | None = None,
     document_store: DocumentStore | None = None,
     pipeline_config: PipelineConfig | None = None,
-    ingest_loader: AutoLoader | None = None,
-    mineru_extractor: DocumentExtractorPort | None = None,
+    ingest_loader: AsyncAutoLoader | None = None,
+    mineru_extractor: AsyncDocumentExtractorPort | None = None,
     executor_lane: str | None = None,
 ) -> Context:
     """按配置装配全套资源。
 
-    每个依赖都可被显式传入覆盖 —— 测试要注入假模型，`build_embedding_model`
-    却会去连真实服务。有了这些参数，测试无需 monkeypatch 就能用同一条装配路径，
-    也就真正测到了装配逻辑本身。
+    先校验，再创建。失败只回收本次自建资源；成功返回后 Context 接管包括
+    注入对象在内的资源。闸门绑定会修改注入对象，失败不承诺恢复其原闸门。
+    异步入口保证回滚在调用方的事件循环内完成，再传播原始启动错误。
     """
+    # APPConfig 只有配置数据；python 模式保留 SecretStr，且让嵌套配置重新校验。
+    config = type(config).model_validate(config.model_dump(mode="python"))
+    resolved_pipeline = resolve_pipeline_config(config.limits, pipeline_config)
+    validate_vision_model(resolved_pipeline.docx.vision_model, asynchronous=True)
     if config.retrieval.revision_aware and vector_store is not None:
         _validate_revision_vectors(vector_store)
     if document_store is not None:
@@ -502,141 +512,201 @@ def build_context(
         config.retrieval.revision_aware
         and document_store is None
         and config.backends.vector_store is Backend.MILVUS
-        and not isinstance(vector_store, InMemoryVectorStore)
+        and not isinstance(vector_store, AsyncInMemoryVectorStore)
     )
     needs_database = needs_document_database or (
         config.backends.task_store is Backend.POSTGRES
         and (task_store is None or kb_repository is None)
     )
-    database = build_database(config) if needs_database else None
-    if config.retrieval.revision_aware and document_store is None:
-        document_store = build_document_store(
-            config, database, vector_store=vector_store
+    # 只要求实际需要创建的后端具备设置；显式注入仍可替换外部资源。
+    settings = config.infrastructure_config
+    if needs_database and settings.database is None:
+        raise ValueError("选择了 postgres 后端但未配置 infrastructure_config.database")
+    if vector_store is None:
+        if config.backends.vector_store not in (Backend.MEMORY, Backend.MILVUS):
+            raise ValueError(
+                f"不支持的 vector_store 后端：{config.backends.vector_store}"
+            )
+        if (
+            config.backends.vector_store is Backend.MILVUS
+            and settings.vector_database is None
+        ):
+            raise ValueError(
+                "backends.vector_store=milvus 但未配置 infrastructure_config.vector_database"
+            )
+    if (
+        task_store is None or kb_repository is None
+    ) and config.backends.task_store not in (Backend.MEMORY, Backend.POSTGRES):
+        raise ValueError(f"不支持的 task_store 后端：{config.backends.task_store}")
+    if task_executor is None:
+        if config.backends.task_executor not in (Backend.INPROCESS, Backend.ARQ):
+            raise ValueError(
+                f"不支持的 task_executor 后端：{config.backends.task_executor}"
+            )
+        if config.backends.task_executor is Backend.ARQ and settings.redis is None:
+            raise ValueError(
+                "backends.task_executor=arq 但未配置 infrastructure_config.redis"
+            )
+    if ingest_loader is None and config.ingest_policy.allow_s3 and settings.s3 is None:
+        raise ValueError(
+            "ingest_policy.allow_s3=true 但未配置 infrastructure_config.s3"
         )
-        _validate_revision_resources(config, document_store, vector_store)
 
     source_policy = build_source_policy(config.ingest_policy)
-    if ingest_loader is None:
-        ingest_loader = build_ingest_loader(config, source_policy)
-    embedding_model = embedding_model or build_embedding_model(
-        config,
-        image_url_validator=source_policy.check_redirect,
-        local_image_validator=source_policy.check,
-    )
-    reranker = (
-        reranker
-        if reranker is not None
-        else build_reranker(
-            config,
-            image_url_validator=source_policy.check_redirect,
-            local_image_validator=source_policy.check,
-        )
-    )
-
-    # 闸门在这里挂上 —— 注入进来的替身同样要挂，否则测试跑的是"没有闸门"
-    # 的那条路，而生产是另一条，两边行为不一致就白测了。
     degradation = build_degradation(config)
     gate = build_model_gate(config, degradation)
-    embedding_model.bind_gate(gate)
-    if reranker is not None:
-        reranker.bind_gate(gate)
-    _assert_gated(gate, embedding_model, reranker)
-
-    # 加载侧的闸门。`AutoLoader` 只转发给叶子 loader，自己不持有 —— 它是
-    # 路由器不是 I/O，持有会导致一次加载取两次许可（见 AutoLoader.bind_gate）。
     loader_gate = build_loader_gate(config)
-    ingest_loader.bind_gate(loader_gate)
-    _assert_gated(loader_gate, *_gated_routes(ingest_loader))
 
-    if mineru_extractor is None:
-        mineru_extractor = build_mineru_extractor(config)
-    mineru_gate: Gate | None = None
-    if mineru_extractor is not None:
-        bind_gate = getattr(mineru_extractor, "bind_gate", None)
-        if not callable(bind_gate):
-            raise RuntimeError(
-                f"{type(mineru_extractor).__name__} 不支持进程级 MinerU 闸门"
+    rollback = AsyncExitStack()
+    try:
+        database = build_database(config) if needs_database else None
+        if database is not None:
+            rollback.push_async_callback(close_resource, database)
+        if config.retrieval.revision_aware and document_store is None:
+            document_store = build_document_store(
+                config, database, vector_store=vector_store
             )
-        mineru_gate = build_mineru_gate(config)
-        bind_gate(mineru_gate)
-        _assert_gated(mineru_gate, mineru_extractor)
+            rollback.push_async_callback(close_resource, document_store)
+            _validate_revision_resources(config, document_store, vector_store)
 
-    vector_store = vector_store or build_vector_store(
-        config, revision_aware=document_store is not None
-    )
-    task_store = task_store or build_task_store(config, database)
-    task_executor = task_executor or build_task_executor(
-        config, task_store, lane=executor_lane
-    )
-    kb_repository = kb_repository or build_kb_repository(config, database)
+        if ingest_loader is None:
+            ingest_loader = build_ingest_loader(config, source_policy)
+            rollback.push_async_callback(close_resource, ingest_loader)
+        if embedding_model is None:
+            embedding_model = build_embedding_model(
+                config,
+                image_url_validator=source_policy.check_redirect,
+                local_image_validator=source_policy.check,
+            )
+            rollback.push_async_callback(close_resource, embedding_model)
+        if reranker is None:
+            reranker = build_reranker(
+                config,
+                image_url_validator=source_policy.check_redirect,
+                local_image_validator=source_policy.check,
+            )
+            if reranker is not None:
+                rollback.push_async_callback(close_resource, reranker)
 
-    embedding_settings = config.infrastructure_config.embedding_model
-    knowledge_base = KnowledgeBaseService(
-        repository=kb_repository,
-        vector_store=vector_store,
-        embedding_model=embedding_settings.model_name,
-        embedding_dim=embedding_settings.dim,
-    )
+        # 闸门在这里挂上 —— 注入进来的替身同样要挂，否则测试跑的是"没有闸门"
+        # 的那条路，而生产是另一条，两边行为不一致就白测了。
+        embedding_model.bind_gate(gate)
+        if reranker is not None:
+            reranker.bind_gate(gate)
+        _assert_gated(gate, embedding_model, reranker)
 
-    pipeline_hooks = PipelineHooks.fork()
-    hook_cleanups: list[Callable[[], None]] = []
-    if mineru_extractor is not None:
-        hook_cleanups.append(wire_pdf_extractor(mineru_extractor, hooks=pipeline_hooks))
+        # 加载侧的闸门。`AsyncAutoLoader` 只转发给叶子 loader，自己不持有 —— 它是
+        # 路由器不是 I/O，持有会导致一次加载取两次许可（见 AsyncAutoLoader.bind_gate）。
+        ingest_loader.bind_gate(loader_gate)
+        _assert_gated(loader_gate, *_gated_routes(ingest_loader))
 
-    context = Context(
-        embedding_model=embedding_model,
-        reranker=reranker,
-        vector_store=vector_store,
-        task_store=task_store,
-        task_executor=task_executor,
-        task_service=TaskService(
-            task_store, task_executor, max_backlog=config.limits.max_backlog
-        ),
-        retrieval=RetrievalService(
-            embedding_model=embedding_model,
+        if mineru_extractor is None:
+            mineru_extractor = build_mineru_extractor(config)
+            if mineru_extractor is not None:
+                rollback.push_async_callback(close_resource, mineru_extractor)
+        mineru_gate: Gate | None = None
+        if mineru_extractor is not None:
+            bind_gate = getattr(mineru_extractor, "bind_gate", None)
+            if not callable(bind_gate):
+                raise RuntimeError(
+                    f"{type(mineru_extractor).__name__} 不支持进程级 MinerU 闸门"
+                )
+            mineru_gate = build_mineru_gate(config)
+            bind_gate(mineru_gate)
+            _assert_gated(mineru_gate, mineru_extractor)
+
+        if vector_store is None:
+            vector_store = build_vector_store(
+                config, revision_aware=document_store is not None
+            )
+            rollback.push_async_callback(close_resource, vector_store)
+        if task_store is None:
+            task_store = build_task_store(config, database)
+        if task_executor is None:
+            task_executor = build_task_executor(config, task_store, lane=executor_lane)
+            rollback.push_async_callback(
+                run_cleanup, task_executor.shutdown, "task_executor"
+            )
+        if kb_repository is None:
+            kb_repository = build_kb_repository(config, database)
+
+        embedding_settings = config.infrastructure_config.embedding_model
+        knowledge_base = KnowledgeBaseService(
+            repository=kb_repository,
             vector_store=vector_store,
-            keyword_search=(
-                vector_store if isinstance(vector_store, KeywordSearchPort) else None
-            ),
-            knowledge_base=knowledge_base,
-            reranker=reranker,
-            degradation=degradation,
-            document_store=document_store,
-            max_revision_candidates=config.retrieval.max_revision_candidates,
-        ),
-        kb_repository=kb_repository,
-        knowledge_base=knowledge_base,
-        embedding_dim=embedding_settings.dim,
-        pipeline_hooks=pipeline_hooks,
-        database=database,
-        document_store=document_store,
-        model_gate=gate,
-        degradation=degradation,
-        source_policy=source_policy,
-        ingest_loader=ingest_loader,
-        mineru_gate=mineru_gate,
-        extracted_text_limits=(
-            {"pdf": config.infrastructure_config.mineru.max_markdown_bytes}
-            if mineru_extractor is not None
-            else {}
-        ),
-        max_chunk_context_bytes=config.limits.task_chunk_context_max_bytes,
-        _extra_closers=[
-            ingest_loader,
-            *([mineru_extractor] if mineru_extractor is not None else []),
-        ],
-        _hook_cleanups=hook_cleanups,
-    )
-    pipeline_config = resolve_pipeline_config(config.limits, pipeline_config)
-    wire_runners(context, ingest_config=pipeline_config)
+            embedding_model=embedding_settings.model_name,
+            embedding_dim=embedding_settings.dim,
+        )
 
-    logger.info(
-        f"资源装配完成 vector_store={config.backends.vector_store} "
-        f"task_store={config.backends.task_store} "
-        f"executor={config.backends.task_executor} "
-        f"rerank={'on' if reranker else 'off'}"
-    )
-    return context
+        pipeline_hooks = AsyncPipelineHooks.fork()
+        hook_cleanups: list[Callable[[], None]] = []
+        rollback.push_async_callback(clear_registrations, hook_cleanups)
+        if mineru_extractor is not None:
+            hook_cleanups.append(
+                wire_pdf_extractor(mineru_extractor, hooks=pipeline_hooks)
+            )
+
+        context = Context(
+            embedding_model=embedding_model,
+            reranker=reranker,
+            vector_store=vector_store,
+            task_store=task_store,
+            task_executor=task_executor,
+            task_service=TaskService(
+                task_store, task_executor, max_backlog=config.limits.max_backlog
+            ),
+            retrieval=RetrievalService(
+                embedding_model=embedding_model,
+                vector_store=vector_store,
+                keyword_search=(
+                    vector_store
+                    if isinstance(vector_store, AsyncKeywordSearchPort)
+                    else None
+                ),
+                knowledge_base=knowledge_base,
+                reranker=reranker,
+                degradation=degradation,
+                document_store=document_store,
+                max_revision_candidates=config.retrieval.max_revision_candidates,
+            ),
+            kb_repository=kb_repository,
+            knowledge_base=knowledge_base,
+            embedding_dim=embedding_settings.dim,
+            pipeline_hooks=pipeline_hooks,
+            database=database,
+            document_store=document_store,
+            model_gate=gate,
+            degradation=degradation,
+            source_policy=source_policy,
+            ingest_loader=ingest_loader,
+            mineru_gate=mineru_gate,
+            extracted_text_limits=(
+                {"pdf": config.infrastructure_config.mineru.max_markdown_bytes}
+                if mineru_extractor is not None
+                else {}
+            ),
+            max_chunk_context_bytes=config.limits.task_chunk_context_max_bytes,
+            _extra_closers=[
+                ingest_loader,
+                *([mineru_extractor] if mineru_extractor is not None else []),
+            ],
+            _hook_cleanups=hook_cleanups,
+        )
+        wire_runners(context, ingest_config=resolved_pipeline)
+
+        logger.info(
+            f"资源装配完成 vector_store={config.backends.vector_store} "
+            f"task_store={config.backends.task_store} "
+            f"executor={config.backends.task_executor} "
+            f"rerank={'on' if reranker else 'off'}"
+        )
+        # 所有权只在完整装配后转交；成功路径由 Context 按依赖顺序关闭。
+        rollback.pop_all()
+        return context
+    except BaseException:
+        # 回滚与正常关停一样必须排干；取消启动不能留下清理到一半的连接池。
+        await wait_for_cleanup(asyncio.create_task(rollback.aclose()))
+        raise
 
 
 __all__ = [

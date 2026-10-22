@@ -24,9 +24,7 @@ class ExtractedPage:
             raise TypeError("ExtractedPage.markdown 必须是 str")
         if any(not isinstance(key, str) or not key for key in self.metadata):
             raise ValueError("ExtractedPage.metadata 键必须是非空字符串")
-        object.__setattr__(
-            self, "metadata", MappingProxyType(dict(self.metadata))
-        )
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +40,9 @@ class ExtractedDocument:
         previous_page = 0
         for page in pages:
             if not isinstance(page, ExtractedPage):
-                raise TypeError("ExtractedDocument.pages 必须是 tuple[ExtractedPage, ...]")
+                raise TypeError(
+                    "ExtractedDocument.pages 必须是 tuple[ExtractedPage, ...]"
+                )
             if page.page_number <= previous_page:
                 raise ValueError("ExtractedDocument.pages 页号必须严格递增")
             previous_page = page.page_number
@@ -85,9 +85,7 @@ class DocumentBlock:
             raise TypeError("DocumentBlock.heading_path 必须是 tuple[str, ...]")
         if any(not isinstance(key, str) or not key for key in self.metadata):
             raise ValueError("DocumentBlock.metadata 键必须是非空字符串")
-        object.__setattr__(
-            self, "metadata", MappingProxyType(dict(self.metadata))
-        )
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,22 +138,27 @@ class RetryableDocumentUpstreamError(DocumentUpstreamError):
 
 @runtime_checkable
 class DocumentExtractorPort(Protocol):
-    """从受管本地文件生成通用提取结果的最小契约。
-
-    Loader 负责把 Local、URL、S3 来源变成本地文件；此接口因此不接受 URL、
-    凭据或供应商参数，避免来源路由与内容提取重新耦合。
-    """
+    """同步提取受管本地文件；来源路由与凭据属于 Loader。"""
 
     def extract(
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument: ...
 
-    async def aextract(
+    def close(self) -> None:
+        """释放自建资源，不关闭调用方注入的资源。"""
+        ...
+
+
+@runtime_checkable
+class AsyncDocumentExtractorPort(Protocol):
+    """异步提取受管本地文件；调用完成前不得释放输入文件。"""
+
+    async def extract(
         self, path: Path, /, *, filename: str, media_type: str
     ) -> ExtractedDocument: ...
 
-    async def aclose(self) -> None:
-        """释放实现持有的资源；不应关闭由调用方注入的资源。"""
+    async def close(self) -> None:
+        """释放自建资源，不关闭调用方注入的资源。"""
         ...
 
 
@@ -164,6 +167,7 @@ def _is_int(value: object) -> bool:
 
 
 __all__ = [
+    "AsyncDocumentExtractorPort",
     "DocumentExtractionError",
     "DocumentBlock",
     "DocumentExtractorPort",

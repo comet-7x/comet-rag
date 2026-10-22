@@ -23,8 +23,8 @@ from comet_rag.config.schemas import (
     LimitsConfig,
     ServerConfig,
 )
-from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.ports import ExtractedDocument
 from tests.e2e.test_ingest_search import (
     DIM,
@@ -55,11 +55,11 @@ def document(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture(autouse=True)
 def hooks():
-    @PipelineHooks.extractor(STUB_TYPE)
+    @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
     def _extract(lc, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
-    PipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
+    AsyncPipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
 
     yield
 
@@ -70,9 +70,9 @@ class DelayedEmbedding(KeywordEmbedding):
     def __init__(self, delay: float) -> None:
         self.delay = delay
 
-    async def _aembed(self, data, **kwargs):
+    async def _embed(self, data, **kwargs):
         await asyncio.sleep(self.delay)
-        return await super()._aembed(data, **kwargs)
+        return await super()._embed(data, **kwargs)
 
 
 def make_config(concurrency: int = 64) -> APPConfig:
@@ -97,7 +97,7 @@ async def _make_client(
     app = create_app(
         make_config(concurrency),
         embedding_model=embedding or KeywordEmbedding(),
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
         pipeline_config=PIPELINE,
     )
     transport = httpx.ASGITransport(app=app)

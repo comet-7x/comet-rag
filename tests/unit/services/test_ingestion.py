@@ -1,6 +1,6 @@
 """入库用例：三阶段流水线、断点续跑、幂等重入库。
 
-全程用假模型 + `InMemoryVectorStore` + `InMemoryTaskStore`，不碰任何中间件 ——
+全程用假模型 + `AsyncInMemoryVectorStore` + `InMemoryTaskStore`，不碰任何中间件 ——
 这正是 plan 里"先内存后真实"的意义：整条链路在零依赖下就能验证。
 """
 
@@ -15,14 +15,18 @@ import httpx
 import pytest
 
 from comet_rag.engines.chunkers import ChunkDraft
-from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
+from comet_rag.infrastructure.models.embedding.base import AsyncBaseEmbeddingModel
 from comet_rag.infrastructure.persistence.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
-from comet_rag.infrastructure.sources import BaseLoader, LoaderContent, SourceContent
-from comet_rag.pipeline import Pipeline
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
+from comet_rag.infrastructure.sources import (
+    AsyncBaseLoader,
+    LoaderContent,
+    SourceContent,
+)
+from comet_rag.pipeline import AsyncPipeline
 from comet_rag.ports import (
     DocumentBlock,
     ExtractedDocument,
@@ -55,7 +59,7 @@ MODEL = "fake-embed"
 # ── 测试替身 ───────────────────────────────────────────────────────────────
 
 
-class FakeEmbeddingModel(BaseEmbeddingModel):
+class FakeEmbeddingModel(AsyncBaseEmbeddingModel):
     """确定性伪向量：同样的文本永远得到同样的向量，断言才稳。"""
 
     def __init__(self) -> None:
@@ -66,22 +70,18 @@ class FakeEmbeddingModel(BaseEmbeddingModel):
     def _vector(self, text: str) -> list[float]:
         return [float(len(text)), float(sum(map(ord, text)) % 97), 1.0]
 
-    def _embed(self, data, **kwargs) -> list[float]:
-        self.calls += 1
-        return self._vector(str(data))
-
-    async def _aembed(self, data, **kwargs) -> list[float]:
+    async def _embed(self, data, **kwargs) -> list[float]:
         self.calls += 1
         if self.fail_times > 0:
             self.fail_times -= 1
             raise self.failure or RuntimeError("注入的失败")
         return self._vector(str(data))
 
-    async def close_client(self) -> None:  # pragma: no cover
+    async def close(self) -> None:  # pragma: no cover
         return None
 
 
-class StubLoader(BaseLoader):
+class StubLoader(AsyncBaseLoader):
     def __init__(self, path: Path, file_type: str = STUB_TYPE) -> None:
         self._path = path
         self.file_type = file_type
@@ -89,7 +89,7 @@ class StubLoader(BaseLoader):
         self.fail_times = 0
         self.failure: Exception | None = None
 
-    def _load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
+    def _resource(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         self.loads += 1
         if not isinstance(source, SourceContent):
             source = SourceContent(str(source))
@@ -100,16 +100,16 @@ class StubLoader(BaseLoader):
             metadata={"file_type": self.file_type, "file_name": self._path.name},
         )
 
-    async def _aload(
+    async def _load(
         self, source: SourceContent | str, *args, **kwargs
     ) -> LoaderContent:
         if self.fail_times > 0:
             self.loads += 1
             self.fail_times -= 1
             raise self.failure or RuntimeError("注入的下载失败")
-        return self._load(source)
+        return self._resource(source)
 
-    def cleanup(self) -> None:
+    async def cleanup(self) -> None:
         return None
 
 
@@ -137,14 +137,12 @@ def loader(source_file: Path) -> StubLoader:
 def stub_hooks(calls: dict[str, int]) -> Iterator[None]:
     """注册 stub 格式的 hook。conftest 的 autouse 夹具会在用例后还原（T11）。"""
 
-    @PipelineHooks.extractor(STUB_TYPE)
-    def _extract(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
+    def _extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         calls["extract"] += 1
         return ExtractedDocument(markdown="段落一。段落二。段落三。")
 
-    @PipelineHooks.document_chunker(STUB_TYPE)
+    @AsyncPipelineHooks.document_chunker(STUB_TYPE)
     def _chunk(
         document: NormalizedDocument, config: PipelineConfig
     ) -> list[ChunkDraft]:
@@ -168,8 +166,8 @@ def model() -> FakeEmbeddingModel:
 
 
 @pytest.fixture
-def store() -> InMemoryVectorStore:
-    return InMemoryVectorStore()
+def store() -> AsyncInMemoryVectorStore:
+    return AsyncInMemoryVectorStore()
 
 
 @pytest.fixture
@@ -178,7 +176,7 @@ def task_store() -> InMemoryTaskStore:
 
 
 @pytest.fixture
-def kb_service(store: InMemoryVectorStore) -> KnowledgeBaseService:
+def kb_service(store: AsyncInMemoryVectorStore) -> KnowledgeBaseService:
     return KnowledgeBaseService(
         repository=InMemoryKnowledgeBaseRepository(),
         vector_store=store,
@@ -191,7 +189,7 @@ def kb_service(store: InMemoryVectorStore) -> KnowledgeBaseService:
 async def svc(
     task_store: InMemoryTaskStore,
     model: FakeEmbeddingModel,
-    store: InMemoryVectorStore,
+    store: AsyncInMemoryVectorStore,
     loader: StubLoader,
     kb_service: KnowledgeBaseService,
 ) -> AsyncIterator[TaskService]:
@@ -220,7 +218,7 @@ def request(**overrides: Any) -> dict[str, Any]:
 
 
 async def test_ingest_writes_all_chunks(
-    svc: TaskService, store: InMemoryVectorStore
+    svc: TaskService, store: AsyncInMemoryVectorStore
 ) -> None:
     task = await svc.submit(INGEST_KIND, request())
 
@@ -229,15 +227,15 @@ async def test_ingest_writes_all_chunks(
     assert done.status is TaskStatus.SUCCEEDED, done.error
     assert done.result["chunk_count"] == 3
     assert done.result["kb_id"] == KB
-    assert await store.acount(KB) == 3
+    assert await store.count(KB) == 3
 
 
 async def test_library_pipeline_and_task_ingest_materialize_the_same_chunks(
     svc: TaskService,
-    store: InMemoryVectorStore,
+    store: AsyncInMemoryVectorStore,
     loader: StubLoader,
 ) -> None:
-    pipeline_result = Pipeline(
+    pipeline_result = await AsyncPipeline(
         loader=loader,
         config=PipelineConfig(embed=False, embed_batch_size=2, max_concurrency=4),
     ).run("任意来源")
@@ -263,10 +261,8 @@ async def test_ingest_prefers_async_extractor(
 ) -> None:
     async_calls = 0
 
-    @PipelineHooks.aextractor(STUB_TYPE)
-    async def _extract(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    @AsyncPipelineHooks.extractor(STUB_TYPE)
+    async def _extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         nonlocal async_calls
         async_calls += 1
         return ExtractedDocument(markdown="段落一。段落二。段落三。")
@@ -282,13 +278,11 @@ async def test_ingest_prefers_async_extractor(
 async def test_ingest_normalizes_before_chunking(svc: TaskService) -> None:
     received: list[str] = []
 
-    @PipelineHooks.aextractor(STUB_TYPE)
-    async def _extract(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    @AsyncPipelineHooks.extractor(STUB_TYPE)
+    async def _extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown="第一段  \r\n\r\n\r\n第二段\u00a0正文\r\n")
 
-    @PipelineHooks.document_chunker(STUB_TYPE)
+    @AsyncPipelineHooks.document_chunker(STUB_TYPE)
     def _chunk(
         document: NormalizedDocument, config: PipelineConfig
     ) -> list[ChunkDraft]:
@@ -310,14 +304,12 @@ async def test_ingest_normalizes_before_chunking(svc: TaskService) -> None:
 
 
 async def test_document_page_facts_survive_the_task_stage_handoff(
-    svc: TaskService, store: InMemoryVectorStore
+    svc: TaskService, store: AsyncInMemoryVectorStore
 ) -> None:
     received: list[tuple[DocumentBlock, ...]] = []
 
-    @PipelineHooks.aextractor(STUB_TYPE)
-    async def _extract(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    @AsyncPipelineHooks.extractor(STUB_TYPE)
+    async def _extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(
             markdown="共同正文\n\n共同正文",
             pages=(
@@ -326,7 +318,7 @@ async def test_document_page_facts_survive_the_task_stage_handoff(
             ),
         )
 
-    @PipelineHooks.document_chunker(STUB_TYPE)
+    @AsyncPipelineHooks.document_chunker(STUB_TYPE)
     def _chunk(
         document: NormalizedDocument, config: PipelineConfig
     ) -> list[ChunkDraft]:
@@ -353,13 +345,13 @@ async def test_document_page_facts_survive_the_task_stage_handoff(
 
 
 async def test_every_chunk_carries_kb_id(
-    svc: TaskService, store: InMemoryVectorStore
+    svc: TaskService, store: AsyncInMemoryVectorStore
 ) -> None:
     """租户维度必须落到每一条向量上（spec A5）—— 事后补要重灌数据。"""
     task = await svc.submit(INGEST_KIND, request())
     await wait_for_terminal(svc.store, task.task_id)
 
-    hits = await store.asearch(KB, [1.0, 1.0, 1.0], top_k=10)
+    hits = await store.search(KB, [1.0, 1.0, 1.0], top_k=10)
 
     assert all(h.metadata["kb_id"] == KB for h in hits)
     assert all("source_id" in h.metadata for h in hits)
@@ -369,26 +361,24 @@ async def test_every_chunk_carries_kb_id(
 
 
 async def test_extra_metadata_is_attached(
-    svc: TaskService, store: InMemoryVectorStore
+    svc: TaskService, store: AsyncInMemoryVectorStore
 ) -> None:
     task = await svc.submit(
         INGEST_KIND, request(metadata={"department": "研发", "year": 2026})
     )
     await wait_for_terminal(svc.store, task.task_id)
 
-    hit = (await store.asearch(KB, [1.0, 1.0, 1.0]))[0]
+    hit = (await store.search(KB, [1.0, 1.0, 1.0]))[0]
 
     assert hit.metadata["department"] == "研发"
     assert hit.metadata["year"] == 2026
 
 
 async def test_extracted_metadata_is_preserved_with_safe_precedence(
-    svc: TaskService, store: InMemoryVectorStore
+    svc: TaskService, store: AsyncInMemoryVectorStore
 ) -> None:
-    @PipelineHooks.aextractor(STUB_TYPE)
-    async def _extract(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    @AsyncPipelineHooks.extractor(STUB_TYPE)
+    async def _extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(
             markdown="段落一。段落二。段落三。",
             metadata={
@@ -405,7 +395,7 @@ async def test_extracted_metadata_is_preserved_with_safe_precedence(
     )
     await wait_for_terminal(svc.store, task.task_id)
 
-    hit = (await store.asearch(KB, [1.0, 1.0, 1.0]))[0]
+    hit = (await store.search(KB, [1.0, 1.0, 1.0]))[0]
 
     assert hit.metadata["provider"] == "fixture"
     assert hit.metadata["department"] == "调用方"
@@ -515,10 +505,8 @@ async def test_document_upstream_error_retries_extracting_stage(
 ) -> None:
     attempts = 0
 
-    @PipelineHooks.aextractor(STUB_TYPE)
-    async def _extract(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    @AsyncPipelineHooks.extractor(STUB_TYPE)
+    async def _extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         nonlocal attempts
         attempts += 1
         if attempts == 1:
@@ -536,7 +524,7 @@ async def test_document_upstream_error_retries_extracting_stage(
 async def test_extracted_text_is_rechecked_before_task_context_write(
     task_store: InMemoryTaskStore,
     model: FakeEmbeddingModel,
-    store: InMemoryVectorStore,
+    store: AsyncInMemoryVectorStore,
     loader: StubLoader,
     kb_service: KnowledgeBaseService,
 ) -> None:
@@ -605,7 +593,7 @@ async def test_client_4xx_is_not_retriable(
 
 
 async def test_chunk_payload_is_bounded_before_worker_handoff(
-    svc: TaskService, store: InMemoryVectorStore
+    svc: TaskService, store: AsyncInMemoryVectorStore
 ) -> None:
     runner = get_runner(INGEST_KIND)
     assert isinstance(runner, IngestRunner)
@@ -618,7 +606,7 @@ async def test_chunk_payload_is_bounded_before_worker_handoff(
     assert done.attempts == 1
     assert done.error is not None
     assert "payload" in done.error.message
-    assert await store.acount(KB) == 0
+    assert await store.count(KB) == 0
 
 
 async def test_unsupported_file_type_fails_fast(
@@ -640,7 +628,7 @@ async def test_unsupported_file_type_fails_fast(
 
 
 async def test_reingest_replaces_old_chunks(
-    svc: TaskService, store: InMemoryVectorStore
+    svc: TaskService, store: AsyncInMemoryVectorStore
 ) -> None:
     """同一文档重新入库必须替换而非堆副本 —— chunk id 由 source_id 派生。"""
     first = await svc.submit(INGEST_KIND, request())
@@ -650,12 +638,12 @@ async def test_reingest_replaces_old_chunks(
     second = await svc.submit(INGEST_KIND, request())
     await wait_for_terminal(svc.store, second.task_id)
 
-    assert await store.acount(KB) == 3
+    assert await store.count(KB) == 3
     assert {r["id"] for r in store.snapshot()[KB]} == ids_before
 
 
 async def test_reingest_removes_chunks_that_no_longer_exist(
-    svc: TaskService, store: InMemoryVectorStore, calls: dict[str, int]
+    svc: TaskService, store: AsyncInMemoryVectorStore, calls: dict[str, int]
 ) -> None:
     """新版本切得更少时，旧版本尾部的 chunk 必须被删掉。
 
@@ -663,11 +651,11 @@ async def test_reingest_removes_chunks_that_no_longer_exist(
     """
     task = await svc.submit(INGEST_KIND, request())
     await wait_for_terminal(svc.store, task.task_id)
-    assert await store.acount(KB) == 3
+    assert await store.count(KB) == 3
 
-    with PipelineHooks.temporary():
+    with AsyncPipelineHooks.temporary():
 
-        @PipelineHooks.document_chunker(STUB_TYPE)
+        @AsyncPipelineHooks.document_chunker(STUB_TYPE)
         def _fewer(
             document: NormalizedDocument, config: PipelineConfig
         ) -> list[ChunkDraft]:
@@ -676,11 +664,11 @@ async def test_reingest_removes_chunks_that_no_longer_exist(
         again = await svc.submit(INGEST_KIND, request())
         await wait_for_terminal(svc.store, again.task_id)
 
-    assert await store.acount(KB) == 1
+    assert await store.count(KB) == 1
 
 
 async def test_reingest_never_leaves_the_document_missing(
-    svc: TaskService, store: InMemoryVectorStore
+    svc: TaskService, store: AsyncInMemoryVectorStore
 ) -> None:
     """**替换过程中，这份文档必须始终查得到**（PR 评审 #3）。
 
@@ -693,30 +681,30 @@ async def test_reingest_never_leaves_the_document_missing(
     """
     first = await svc.submit(INGEST_KIND, request())
     await wait_for_terminal(svc.store, first.task_id)
-    assert await store.acount(KB) == 3
+    assert await store.count(KB) == 3
 
     # ⚠️ 必须在**每一次改动之后**采样，不能只盯 upsert。
     # 第一版只包了 upsert，于是"先删后写"里那次删除完全没被看见 ——
     # 反向验证时用例照样绿，等于没测。
     seen: list[int] = []
-    original_upsert, original_delete = store.aupsert, store.adelete
+    original_upsert, original_delete = store.upsert, store.delete
 
     async def watching_upsert(kb_id, records):
         result = await original_upsert(kb_id, records)
-        seen.append(await store.acount(kb_id))
+        seen.append(await store.count(kb_id))
         return result
 
     async def watching_delete(kb_id, **kwargs):
         result = await original_delete(kb_id, **kwargs)
-        seen.append(await store.acount(kb_id))
+        seen.append(await store.count(kb_id))
         return result
 
-    store.aupsert = watching_upsert  # type: ignore[method-assign]
-    store.adelete = watching_delete  # type: ignore[method-assign]
+    store.upsert = watching_upsert  # type: ignore[method-assign]
+    store.delete = watching_delete  # type: ignore[method-assign]
     try:
-        with PipelineHooks.temporary():
+        with AsyncPipelineHooks.temporary():
 
-            @PipelineHooks.document_chunker(STUB_TYPE)
+            @AsyncPipelineHooks.document_chunker(STUB_TYPE)
             def _fewer(
                 document: NormalizedDocument, config: PipelineConfig
             ) -> list[ChunkDraft]:
@@ -725,14 +713,14 @@ async def test_reingest_never_leaves_the_document_missing(
             again = await svc.submit(INGEST_KIND, request())
             await wait_for_terminal(svc.store, again.task_id)
     finally:
-        store.aupsert = original_upsert  # type: ignore[method-assign]
-        store.adelete = original_delete  # type: ignore[method-assign]
+        store.upsert = original_upsert  # type: ignore[method-assign]
+        store.delete = original_delete  # type: ignore[method-assign]
 
     assert seen, "第二次入库一次都没动过向量库 —— 用例没测到东西"
     assert all(count > 0 for count in seen), (
         f"替换过程中文档一度消失（每次改动后的块数：{seen}）—— 说明是先删后写"
     )
-    assert await store.acount(KB) == 1, "旧版本的尾巴没清掉，会变成查得到的幽灵"
+    assert await store.count(KB) == 1, "旧版本的尾巴没清掉，会变成查得到的幽灵"
 
 
 async def test_idempotency_key_prevents_duplicate_work(
@@ -747,14 +735,14 @@ async def test_idempotency_key_prevents_duplicate_work(
 
 
 async def test_chunk_ids_are_stable_across_runs(
-    svc: TaskService, store: InMemoryVectorStore
+    svc: TaskService, store: AsyncInMemoryVectorStore
 ) -> None:
     """id 不稳定的话，重新入库就会产生副本而不是覆盖。"""
     task = await svc.submit(INGEST_KIND, request())
     await wait_for_terminal(svc.store, task.task_id)
     first_ids = sorted(r["id"] for r in store.snapshot()[KB])
 
-    await store.adrop_collection(KB)
+    await store.drop_collection(KB)
     task2 = await svc.submit(INGEST_KIND, request())
     await wait_for_terminal(svc.store, task2.task_id)
 
@@ -768,13 +756,13 @@ async def test_cancel_during_indexing(
     svc: TaskService, model: FakeEmbeddingModel
 ) -> None:
     """indexing 每个窗口前都有 checkpoint，取消才能及时生效。"""
-    original = model.aembed
+    original = model.embed
 
     async def slow(data, **kwargs):
         await asyncio.sleep(0.05)
         return await original(data, **kwargs)
 
-    model.aembed = slow  # type: ignore[method-assign]
+    model.embed = slow  # type: ignore[method-assign]
 
     task = await svc.submit(INGEST_KIND, request())
     await asyncio.sleep(0.06)

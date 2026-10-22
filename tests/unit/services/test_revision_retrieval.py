@@ -6,10 +6,10 @@ import pytest
 
 from comet_rag.engines.chunkers import FixedSizeChunker
 from comet_rag.engines.indexing import HierarchyBuilder
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.models.reranker.base import BaseReranker
+from comet_rag.infrastructure.models.embedding.base import AsyncBaseEmbeddingModel
+from comet_rag.infrastructure.models.reranker.base import AsyncBaseReranker
 from comet_rag.infrastructure.persistence.document_store import InMemoryDocumentStore
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.ports import Filter, NormalizedDocument, SearchHit
 from comet_rag.ports.document_store import RevisionKey, StoredParent
 from comet_rag.services.indexing import IndexPlanner, RevisionStager
@@ -22,22 +22,22 @@ from comet_rag.services.retrieval import (
 from comet_rag.services.revision_recall import RevisionRecall, RevisionVisibilityError
 
 
-class Embedding(BaseEmbeddingModel):
+class Embedding(AsyncBaseEmbeddingModel):
     def __init__(self) -> None:
         self.calls = 0
 
-    def _embed(self, data, **kwargs) -> list[float]:
+    def _vector(self, data, **kwargs) -> list[float]:
         self.calls += 1
         return [1.0, 0.0]
 
-    async def _aembed(self, data, **kwargs) -> list[float]:
-        return self._embed(data)
+    async def _embed(self, data, **kwargs) -> list[float]:
+        return self._vector(data)
 
-    async def close_client(self) -> None:
+    async def close(self) -> None:
         return None
 
 
-class Candidates(InMemoryVectorStore):
+class Candidates(AsyncInMemoryVectorStore):
     def __init__(
         self, dense: list[SearchHit], keyword: list[SearchHit] | None = None
     ) -> None:
@@ -47,7 +47,7 @@ class Candidates(InMemoryVectorStore):
         self.limits: dict[str, list[int]] = {"dense": [], "keyword": []}
         self.dense_failure = False
 
-    async def asearch(
+    async def search(
         self,
         kb_id: str,
         query_embedding: Sequence[float],
@@ -60,7 +60,7 @@ class Candidates(InMemoryVectorStore):
             raise ConnectionError("vector unavailable")
         return self.dense[:top_k]
 
-    async def asearch_keywords(
+    async def search_keywords(
         self,
         kb_id: str,
         query: str,
@@ -83,7 +83,7 @@ class Documents(InMemoryDocumentStore):
         self.parent_failure = False
         self.incomplete = False
 
-    async def aget_active_revisions(
+    async def get_active_revisions(
         self,
         kb_id: str,
         source_ids: Sequence[str],
@@ -95,7 +95,7 @@ class Documents(InMemoryDocumentStore):
             return {}
         return {source: self.active.get(source) for source in source_ids}
 
-    async def aget_parents(
+    async def get_parents(
         self,
         kb_id: str,
         parent_ids: Sequence[str],
@@ -252,7 +252,7 @@ async def test_initial_limit_equals_cap_queries_only_once() -> None:
         limits.append(limit)
         return [hit(f"stale-{i}", "old") for i in range(limit)]
 
-    result = await RevisionRecall(documents, max_candidates=64).arecall(
+    result = await RevisionRecall(documents, max_candidates=64).recall(
         "kb", fetch_k=20, recall=recall
     )
     assert limits == [64]
@@ -271,7 +271,7 @@ async def test_recall_union_never_checks_more_than_cap_even_if_ann_changes() -> 
         ]
 
     # 每个 source 都有旧 revision；没有 active 的 source 也不能看见 staging。
-    result = await RevisionRecall(documents, max_candidates=128).arecall(
+    result = await RevisionRecall(documents, max_candidates=128).recall(
         "kb", fetch_k=1, recall=recall
     )
     assert result.hits == []
@@ -292,7 +292,7 @@ async def test_active_pointer_is_reloaded_before_second_round() -> None:
             hit(f"stale-{i}", "old") for i in range(70)
         ]
 
-    result = await RevisionRecall(documents).arecall("kb", fetch_k=2, recall=recall)
+    result = await RevisionRecall(documents).recall("kb", fetch_k=2, recall=recall)
     assert [item.id for item in result.hits] == ["future-active"]
     assert calls == 2
 
@@ -336,16 +336,16 @@ def parent(
     )
 
 
-class ReverseReranker(BaseReranker):
+class ReverseReranker(AsyncBaseReranker):
     def __init__(self) -> None:
         self.inputs: list[str] = []
 
-    def _score(self, query, documents, **kwargs) -> list[float]:
+    def _scores(self, query, documents, **kwargs) -> list[float]:
         return [float(i) for i in range(len(documents))]
 
-    async def _ascore(self, query, documents, **kwargs) -> list[float]:
+    async def _score(self, query, documents, **kwargs) -> list[float]:
         self.inputs = list(documents)
-        return self._score(query, documents)
+        return self._scores(query, documents)
 
 
 @pytest.mark.parametrize("mode", list(SearchMode))
@@ -438,7 +438,7 @@ async def test_real_memory_staging_activation_and_retirement_are_visible_atomica
 ):
     documents, vectors, model = (
         InMemoryDocumentStore(),
-        InMemoryVectorStore(),
+        AsyncInMemoryVectorStore(),
         Embedding(),
     )
     writer = RevisionStager(
@@ -459,13 +459,97 @@ async def test_real_memory_staging_activation_and_retirement_are_visible_atomica
         )
 
     old, new = plan("old", "oldOLD"), plan("new", "newNEW")
-    await writer.astage(old, embedding_dim=2)
+    await writer.stage(old, embedding_dim=2)
     query = SearchQuery(kb_id="kb", query="q", return_level=ReturnLevel.PARENT)
     assert (await reader.search(query)).chunks == []
-    await documents.aactivate_revision(old.key)
+    await documents.activate_revision(old.key)
     assert [item.text for item in (await reader.search(query)).chunks] == ["oldOLD"]
-    await writer.astage(new, embedding_dim=2)
+    await writer.stage(new, embedding_dim=2)
     assert [item.text for item in (await reader.search(query)).chunks] == ["oldOLD"]
-    await documents.aactivate_revision(new.key)
+    await documents.activate_revision(new.key)
     assert [item.text for item in (await reader.search(query)).chunks] == ["newNEW"]
-    assert await vectors.acount("kb") == 4
+    assert await vectors.count("kb") == 4
+
+
+@pytest.mark.parametrize("fault", ["missing", "revision", "kb", "source", "id"])
+async def test_unusable_shared_parent_keeps_each_verified_child(fault: str) -> None:
+    documents = Documents()
+    if fault != "missing":
+        documents.parents["p1"] = parent(
+            "wrong" if fault == "id" else "p1",
+            revision="old" if fault == "revision" else "new",
+            kb="other" if fault == "kb" else "kb",
+            source="other" if fault == "source" else "source",
+        )
+    children = [hit("c1", parent="p1"), hit("c2", parent="p1")]
+    reader, _ = service(Candidates(children), documents)
+    result = await reader.search(
+        SearchQuery(kb_id="kb", query="q", top_k=2, return_level=ReturnLevel.PARENT)
+    )
+    assert [item.id for item in result.chunks] == ["c1", "c2"]
+    assert [item.vector_rank for item in result.chunks] == [1, 2]
+    assert all(item.matched_child_id is None for item in result.chunks)
+    assert documents.parent_lookups == [["p1"]]
+    assert [item.reason for item in result.degradations] == ["invalid_parent"]
+    assert result.fetched == 2
+
+
+@pytest.mark.parametrize("wrong_first", [True, False])
+async def test_parent_deduplication_never_discards_a_different_source_child(
+    wrong_first: bool,
+) -> None:
+    documents = Documents()
+    documents.active["other"] = "new"
+    documents.parents["p1"] = parent("p1")
+    wrong = hit("wrong", source="other", parent="p1")
+    correct = hit("correct", parent="p1")
+    reader, _ = service(
+        Candidates([wrong, correct] if wrong_first else [correct, wrong]), documents
+    )
+    result = await reader.search(
+        SearchQuery(kb_id="kb", query="q", top_k=2, return_level=ReturnLevel.PARENT)
+    )
+    assert [item.id for item in result.chunks] == (
+        ["wrong", "p1"] if wrong_first else ["p1", "wrong"]
+    )
+    expanded = next(item for item in result.chunks if item.id == "p1")
+    assert expanded.matched_child_id == "correct"
+    assert expanded.metadata["source_id"] == "source"
+    assert [item.reason for item in result.degradations] == ["invalid_parent"]
+    assert documents.parent_lookups == [["p1"]]
+
+
+async def test_parent_expansion_preserves_ranking_and_deduplicates_before_top_k() -> (
+    None
+):
+    documents = Documents()
+    documents.parents = {pid: parent(pid) for pid in ("p1", "p2")}
+    children = [
+        hit("missing-1", parent="missing"),
+        hit("p1-child-1", parent="p1"),
+        hit("p1-child-2", parent="p1"),
+        hit("missing-2", parent="missing"),
+        hit("p2-child", parent="p2"),
+    ]
+    reader, _ = service(Candidates(children), documents)
+    result = await reader.search(
+        SearchQuery(kb_id="kb", query="q", top_k=4, return_level=ReturnLevel.PARENT)
+    )
+    assert [item.id for item in result.chunks] == ["missing-1", "p1", "missing-2", "p2"]
+    assert [item.vector_rank for item in result.chunks] == [1, 2, 4, 5]
+    assert [item.matched_child_id for item in result.chunks] == [
+        None,
+        "p1-child-1",
+        None,
+        "p2-child",
+    ]
+    assert documents.parent_lookups == [["missing", "p1", "p2"]]
+    assert [item.reason for item in result.degradations] == ["invalid_parent"]
+    assert result.fetched == 5
+    assert [item.metadata["parent_id"] for item in children] == [
+        "missing",
+        "p1",
+        "p1",
+        "missing",
+        "p2",
+    ]

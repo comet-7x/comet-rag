@@ -52,4 +52,4 @@ def test_s3_missing_dependency_error_is_actionable(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "boto3", None)
 
     with pytest.raises(ModuleNotFoundError, match=r"comet-rag\[server\]"):
-        loader._new_sync_client()
+        loader._new_client()

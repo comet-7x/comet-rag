@@ -26,8 +26,8 @@ from comet_rag.config.schemas import (
     ServerConfig,
     SqlDatabaseConfig,
 )
-from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.ports import ExtractedDocument
 from tests.e2e.test_ingest_search import (  # 复用替身，不重写
     DIM,
@@ -55,11 +55,11 @@ def document(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def hooks():
-    @PipelineHooks.extractor(STUB_TYPE)
+    @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
     def _extract(lc, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
-    PipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
+    AsyncPipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
 
     yield
 
@@ -102,7 +102,7 @@ async def client(document: Path, postgres_dsn: str) -> AsyncIterator[httpx.Async
     app = create_app(
         make_postgres_config(),
         embedding_model=KeywordEmbedding(),
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
         pipeline_config=PipelineConfig(embed_batch_size=2, max_concurrency=4),
     )
     transport = httpx.ASGITransport(app=app)

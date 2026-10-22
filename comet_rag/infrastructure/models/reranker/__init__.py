@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from .base import BaseReranker
+from .base import (
+    AsyncBaseReranker,
+    BaseReranker,
+)
 from .qwen3_vl import (
+    AsyncQwen3VLReranker,
     ChatCompletionContentPartImageEmbedsParam,
     ChatCompletionContentPartImageParam,
     ChatCompletionContentPartTextParam,
@@ -18,6 +22,7 @@ from .qwen3_vl import (
 )
 
 __all__ = [
+    "AsyncBaseReranker",
     "BaseReranker",
     "ImageDetail",
     "ImageUrlParam",
@@ -31,5 +36,6 @@ __all__ = [
     "RerankResponse",
     "RerankResult",
     "ScoreQueriesDocumentsRequest",
+    "AsyncQwen3VLReranker",
     "Qwen3VLReranker",
 ]

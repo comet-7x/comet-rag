@@ -240,7 +240,7 @@ def load_index_handoff(
     return _snapshot_handoff(IndexHandoff(draft, tuple(children)))
 
 
-async def aget_revision_key(
+async def get_revision_key(
     ctx: TaskContext, *, kb_id: str, source_id: str
 ) -> RevisionKey:
     """单一任务拥有者生成一次身份；context 提交后响应丢失也必须复用。"""
@@ -280,7 +280,7 @@ class RevisionTaskStages:
             raise RevisionConflict(handoff.draft.key, "移交不属于当前任务")
         return handoff
 
-    async def aprepare(
+    async def prepare(
         self, ctx: TaskContext, plan: IndexPlan | None = None
     ) -> IndexHandoff:
         """父块成功落库后才持久化移交数据并清掉原文；失败不丢重建输入。"""
@@ -304,20 +304,18 @@ class RevisionTaskStages:
         updates.update(dict.fromkeys(_DROP_ON_HANDOFF))
         merged = {**task.context, **updates}
         _validate_json_payload(merged, name="Revision context", max_bytes=self._limit)
-        await self._stager.aprepare(
-            plan, task_id=ctx.task_id, checkpoint=ctx.checkpoint
-        )
+        await self._stager.prepare(plan, task_id=ctx.task_id, checkpoint=ctx.checkpoint)
         try:
             await ctx.put_bounded(self._limit, **updates)
         except TaskContextTooLarge as exc:
             raise DocumentResourceLimitExceeded(str(exc)) from exc
         return handoff
 
-    async def astage(self, ctx: TaskContext, *, embedding_dim: int) -> StoredRevision:
+    async def stage(self, ctx: TaskContext, *, embedding_dim: int) -> StoredRevision:
         """保留窄 payload 供失败续跑；激活完成前不能当作任务成功。"""
         task = await ctx.snapshot()
         handoff = self._load(task.context, ctx.task_id)
-        ready = await self._stager.aresume(
+        ready = await self._stager.resume(
             handoff, embedding_dim=embedding_dim, checkpoint=ctx.checkpoint
         )
         await ctx.report(message=f"已准备 {ready.child_count} 块（待激活）")

@@ -1,5 +1,7 @@
 """应用生命周期：启动时装配资源，关停时逆序释放。"""
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -28,12 +30,14 @@ def make_lifespan(config: APPConfig, **build_kwargs: Any) -> Callable[[FastAPI],
             }
         )
 
-        context = build_context(config, **build_kwargs)
+        context = await build_context(config, **build_kwargs)
         app.state.ctx = context
         try:
             yield
         finally:
+            if getattr(app.state, "ctx", None) is context:
+                del app.state.ctx
             # 即便启动后发生异常也要走到这里，否则连接池会随进程一起泄漏
-            await context.aclose()
+            await context.close()
 
     return lifespan

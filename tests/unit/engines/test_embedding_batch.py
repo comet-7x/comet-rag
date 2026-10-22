@@ -13,11 +13,14 @@ from typing import Any
 
 import pytest
 
-from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.engines.embedding import async_batch, batch
+from comet_rag.infrastructure.models.embedding.base import (
+    AsyncBaseEmbeddingModel,
+    BaseEmbeddingModel,
+)
 
 
-class SpyEmbedding(BaseEmbeddingModel):
+class _SpyState:
     """记录每次请求装了几篇，以及真实并发峰值。"""
 
     def __init__(self, batch_limit: int = 1, delay: float = 0.0) -> None:
@@ -32,18 +35,22 @@ class SpyEmbedding(BaseEmbeddingModel):
         self.request_sizes.append(len(documents))
         return [[float(len(document))] for document in documents]
 
+
+class SpyEmbedding(_SpyState, BaseEmbeddingModel):
     def _embed(self, data: str, /, **kwargs: Any) -> list[float]:
         return self._vectors([data])[0]
-
-    async def _aembed(self, data: str, /, **kwargs: Any) -> list[float]:
-        return (await self._aembed_batch([data], **kwargs))[0]
 
     def _embed_batch(
         self, documents: Sequence[str], /, **kwargs: Any
     ) -> list[list[float]]:
         return self._vectors(documents)
 
-    async def _aembed_batch(
+
+class AsyncSpyEmbedding(_SpyState, AsyncBaseEmbeddingModel):
+    async def _embed(self, data: str, /, **kwargs: Any) -> list[float]:
+        return (await self._embed_batch([data], **kwargs))[0]
+
+    async def _embed_batch(
         self, documents: Sequence[str], /, **kwargs: Any
     ) -> list[list[float]]:
         self.live += 1
@@ -63,18 +70,18 @@ async def test_batch_limit_decides_how_many_documents_ride_one_request() -> None
 
     调度方只说"把这 5 篇发出去，最多 3 个并发"，装几条由模型声明的能力决定。
     """
-    single = SpyEmbedding(batch_limit=1)
-    native = SpyEmbedding(batch_limit=2)
+    single = AsyncSpyEmbedding(batch_limit=1)
+    native = AsyncSpyEmbedding(batch_limit=2)
     documents = ["a", "bb", "ccc", "dddd", "eeeee"]
 
-    assert await aembed_documents(single, documents, max_concurrency=3) == [
+    assert await async_batch.embed_documents(single, documents, max_concurrency=3) == [
         [1.0],
         [2.0],
         [3.0],
         [4.0],
         [5.0],
     ]
-    assert await aembed_documents(native, documents, max_concurrency=3) == [
+    assert await async_batch.embed_documents(native, documents, max_concurrency=3) == [
         [1.0],
         [2.0],
         [3.0],
@@ -89,7 +96,7 @@ async def test_batch_limit_decides_how_many_documents_ride_one_request() -> None
 def test_sync_path_chunks_the_same_way() -> None:
     model = SpyEmbedding(batch_limit=2)
 
-    assert embed_documents(model, ["a", "bb", "ccc"]) == [[1.0], [2.0], [3.0]]
+    assert batch.embed_documents(model, ["a", "bb", "ccc"]) == [[1.0], [2.0], [3.0]]
     assert sorted(model.request_sizes) == [1, 2]
 
 
@@ -103,9 +110,11 @@ async def test_max_concurrency_bounds_requests_in_flight_for_native_batching() -
     `max_concurrency` 被收下、被校验，然后完全不起作用。现在它约束的是
     "同时在飞的请求数"，两类适配器一个含义。
     """
-    model = SpyEmbedding(batch_limit=2, delay=0.02)
+    model = AsyncSpyEmbedding(batch_limit=2, delay=0.02)
 
-    await aembed_documents(model, [f"doc-{i}" for i in range(12)], max_concurrency=2)
+    await async_batch.embed_documents(
+        model, [f"doc-{i}" for i in range(12)], max_concurrency=2
+    )
 
     assert model.request_sizes == [2] * 6
     assert model.peak <= 2, f"限 2，实际同时在飞 {model.peak} 个请求"
@@ -114,27 +123,28 @@ async def test_max_concurrency_bounds_requests_in_flight_for_native_batching() -
 
 @pytest.mark.parametrize("max_concurrency", [0, -1])
 async def test_rejects_non_positive_concurrency(max_concurrency: int) -> None:
-    model = SpyEmbedding()
-
     with pytest.raises(ValueError, match="max_concurrency 必须大于 0"):
-        embed_documents(model, ["text"], max_concurrency=max_concurrency)
+        batch.embed_documents(SpyEmbedding(), ["text"], max_concurrency=max_concurrency)
     with pytest.raises(ValueError, match="max_concurrency 必须大于 0"):
-        await aembed_documents(model, ["text"], max_concurrency=max_concurrency)
+        await async_batch.embed_documents(
+            AsyncSpyEmbedding(), ["text"], max_concurrency=max_concurrency
+        )
 
 
 async def test_nonsense_batch_limit_is_refused() -> None:
-    model = SpyEmbedding(batch_limit=0)
+    model = AsyncSpyEmbedding(batch_limit=0)
 
     with pytest.raises(ValueError, match="batch_limit 必须大于 0"):
-        await aembed_documents(model, ["text"])
+        await async_batch.embed_documents(model, ["text"])
 
 
 async def test_empty_input_needs_no_round_trip() -> None:
-    model = SpyEmbedding()
+    sync_model, async_model = SpyEmbedding(), AsyncSpyEmbedding()
 
-    assert embed_documents(model, []) == []
-    assert await aembed_documents(model, []) == []
-    assert model.request_sizes == []
+    assert batch.embed_documents(sync_model, []) == []
+    assert await async_batch.embed_documents(async_model, []) == []
+    assert sync_model.request_sizes == []
+    assert async_model.request_sizes == []
 
 
 # ── 拼接 ───────────────────────────────────────────────────────────────────
@@ -142,10 +152,10 @@ async def test_empty_input_needs_no_round_trip() -> None:
 
 async def test_result_order_follows_input_across_blocks() -> None:
     """块之间乱序返回也不能错位 —— 错位不报错，只让 chunk 配上别人的向量。"""
-    model = SpyEmbedding(batch_limit=1, delay=0.0)
+    model = AsyncSpyEmbedding(batch_limit=1, delay=0.0)
 
     documents = [f"{'x' * n}" for n in range(1, 21)]
-    result = await aembed_documents(model, documents, max_concurrency=8)
+    result = await async_batch.embed_documents(model, documents, max_concurrency=8)
 
     assert result == [[float(n)] for n in range(1, 21)]
 
@@ -157,14 +167,14 @@ async def test_short_result_is_refused_instead_of_silently_misaligning() -> None
     都配上了下一个 chunk 的向量**，检索结果静静地变差，没有任何报错。
     """
 
-    class ShortChanging(SpyEmbedding):
-        async def _aembed_batch(
+    class ShortChanging(AsyncSpyEmbedding):
+        async def _embed_batch(
             self, documents: Sequence[str], /, **kwargs: Any
         ) -> list[list[float]]:
-            vectors = await super()._aembed_batch(documents, **kwargs)
+            vectors = await super()._embed_batch(documents, **kwargs)
             return vectors[:-1] or vectors
 
     model = ShortChanging(batch_limit=4)
 
     with pytest.raises(ValueError, match="无法与输入对齐"):
-        await aembed_documents(model, ["a", "bb", "ccc", "dddd"])
+        await async_batch.embed_documents(model, ["a", "bb", "ccc", "dddd"])

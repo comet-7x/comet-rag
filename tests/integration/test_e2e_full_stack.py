@@ -29,7 +29,7 @@ from comet_rag.config.schemas import (
     SqlDatabaseConfig,
     VectorDatabaseConfig,
 )
-from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
+from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
 from comet_rag.ports import ExtractedDocument
 from tests.e2e.test_ingest_search import (  # 复用替身，不重写
     DIM,
@@ -45,6 +45,8 @@ pytestmark = pytest.mark.integration
 
 #: 与其他集成用例区分，避免残留 collection 互相干扰
 KB = "kb-fullstack"
+
+
 @pytest.fixture
 def document(tmp_path: Path) -> Path:
     path = tmp_path / "fruits.stub"
@@ -57,11 +59,11 @@ def document(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def hooks():
-    @PipelineHooks.extractor(STUB_TYPE)
+    @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
     def _extract(lc, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
-    PipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
+    AsyncPipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
 
     yield
 
@@ -113,9 +115,7 @@ async def client(
     milvus_database: str,
 ) -> AsyncIterator[httpx.AsyncClient]:
     await _clean_postgres(postgres_dsn)
-    config = make_config(
-        milvus_uri, milvus_database, f"ctfull_{uuid4().hex[:12]}"
-    )
+    config = make_config(milvus_uri, milvus_database, f"ctfull_{uuid4().hex[:12]}")
     app = create_app(
         config,
         embedding_model=KeywordEmbedding(),
@@ -128,10 +128,10 @@ async def client(
     ):
         _use_stub_loader(app.state.ctx, document)
         with contextlib.suppress(Exception):
-            await app.state.ctx.vector_store.adrop_collection(KB)
+            await app.state.ctx.vector_store.drop_collection(KB)
         yield http
         with contextlib.suppress(Exception):
-            await app.state.ctx.vector_store.adrop_collection(KB)
+            await app.state.ctx.vector_store.drop_collection(KB)
     await _clean_postgres(postgres_dsn)
 
 

@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import threading
-from collections.abc import AsyncGenerator, Generator
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -15,7 +14,9 @@ from urllib.parse import unquote, urlparse
 from loguru import logger
 
 from comet_rag.engines.documents.formats import ContentTypeMismatch
-from comet_rag.infrastructure.sources.base import BaseLoader
+from comet_rag.engines.offload import run_sync
+from comet_rag.infrastructure.sources._lifecycle import AsyncActivity, SyncActivity
+from comet_rag.infrastructure.sources.base import AsyncBaseLoader, BaseLoader, finish
 from comet_rag.infrastructure.sources.file_info import (
     TemporaryFileRegistry,
     build_file_metadata,
@@ -69,15 +70,10 @@ def parse_s3_uri(source: str) -> S3ObjectLocation:
     return S3ObjectLocation(scheme=scheme, bucket=bucket, key=key)
 
 
-class S3Loader(BaseLoader):
-    """Download S3-compatible objects to managed local temporary files.
+class _S3Settings:
+    """S3 地址、大小预算和临时文件规则；SDK 类型不跨执行模型共享。"""
 
-    Both the synchronous boto3 client and asynchronous aioboto3 client are lazy and
-    reused across calls. Injected clients remain owned by the caller. Clients created
-    by this loader are closed by ``cleanup()`` / ``acleanup()``.
-    """
-
-    def __init__(
+    def _configure(
         self,
         *,
         endpoint_url: str | None = None,
@@ -89,8 +85,6 @@ class S3Loader(BaseLoader):
         verify_ssl: bool = True,
         max_object_bytes: int = DEFAULT_MAX_OBJECT_BYTES,
         download_dir: str | Path | None = None,
-        client: Any = None,
-        async_client: Any = None,
     ) -> None:
         if max_object_bytes <= 0:
             raise ValueError("max_object_bytes must be greater than zero")
@@ -109,21 +103,7 @@ class S3Loader(BaseLoader):
         self._verify_ssl = verify_ssl
         self._max_object_bytes = max_object_bytes
         self._download_dir = Path(download_dir) if download_dir else None
-        self._client = client
-        self._async_client = async_client
-        self._owns_client = client is None
-        self._owns_async_client = async_client is None
-        self._async_client_context: Any = None
-        self._sync_client_lock = threading.Lock()
-        self._async_client_lock = asyncio.Lock()
         self._temporary_files = TemporaryFileRegistry(self._download_dir)
-
-        # A single counter spans sync and async work. This matters because a service
-        # shutdown can call async cleanup while a sync batch is still in a worker.
-        self._lifecycle = threading.Condition()
-        self._active_loads = 0
-        self._cleanup_in_progress = False
-        self._async_lifecycle_waiters: set[asyncio.Future[None]] = set()
 
     @property
     def temp_files(self) -> list[str]:
@@ -145,151 +125,6 @@ class S3Loader(BaseLoader):
         if self._session_token is not None:
             kwargs["aws_session_token"] = self._session_token
         return kwargs
-
-    def _new_sync_client(self) -> Any:
-        try:
-            import boto3  # noqa: PLC0415
-        except ModuleNotFoundError as exc:
-            raise ModuleNotFoundError(
-                "S3Loader 需要可选依赖，请安装 comet-rag[server] 或 comet-rag[all]"
-            ) from exc
-
-        return boto3.client("s3", **self._client_kwargs())
-
-    def _new_async_client_context(self) -> Any:
-        try:
-            import aioboto3  # noqa: PLC0415
-        except ModuleNotFoundError as exc:
-            raise ModuleNotFoundError(
-                "S3Loader 异步入口需要可选依赖，请安装 "
-                "comet-rag[server] 或 comet-rag[all]"
-            ) from exc
-
-        return aioboto3.Session().client("s3", **self._client_kwargs())
-
-    def _shared_client(self) -> Any:
-        with self._sync_client_lock:
-            if self._client is None:
-                self._client = self._new_sync_client()
-            return self._client
-
-    async def _shared_async_client(self) -> Any:
-        async with self._async_client_lock:
-            if self._async_client is None:
-                context = self._new_async_client_context()
-                try:
-                    client = await context.__aenter__()
-                except BaseException:
-                    with suppress(Exception):
-                        await context.__aexit__(None, None, None)
-                    raise
-                self._async_client_context = context
-                self._async_client = client
-            return self._async_client
-
-    @contextmanager
-    def _sync_activity(self) -> Generator[None, None, None]:
-        self._begin_activity()
-        try:
-            yield
-        finally:
-            self._end_activity()
-
-    @asynccontextmanager
-    async def _async_activity(self) -> AsyncGenerator[None, None]:
-        await self._abegin_activity()
-        try:
-            yield
-        finally:
-            self._end_activity()
-
-    async def _abegin_activity(self) -> None:
-        """Register async activity without occupying a worker while cleanup runs."""
-
-        while True:
-            with self._lifecycle:
-                if not self._cleanup_in_progress:
-                    self._active_loads += 1
-                    return
-                waiter = self._new_async_lifecycle_waiter_locked()
-            await self._await_async_lifecycle_change(waiter)
-
-    def _new_async_lifecycle_waiter_locked(self) -> asyncio.Future[None]:
-        waiter = asyncio.get_running_loop().create_future()
-        self._async_lifecycle_waiters.add(waiter)
-        return waiter
-
-    async def _await_async_lifecycle_change(self, waiter: asyncio.Future[None]) -> None:
-        try:
-            await waiter
-        finally:
-            with self._lifecycle:
-                self._async_lifecycle_waiters.discard(waiter)
-
-    @staticmethod
-    def _resolve_async_lifecycle_waiter(waiter: asyncio.Future[None]) -> None:
-        if not waiter.done():
-            waiter.set_result(None)
-
-    def _notify_async_lifecycle_waiters_locked(self) -> None:
-        waiters = tuple(self._async_lifecycle_waiters)
-        self._async_lifecycle_waiters.clear()
-        for waiter in waiters:
-            with suppress(RuntimeError):
-                waiter.get_loop().call_soon_threadsafe(
-                    self._resolve_async_lifecycle_waiter,
-                    waiter,
-                )
-
-    def _begin_activity(self) -> None:
-        with self._lifecycle:
-            while self._cleanup_in_progress:
-                self._lifecycle.wait()
-            self._active_loads += 1
-
-    def _end_activity(self) -> None:
-        with self._lifecycle:
-            self._active_loads -= 1
-            if self._active_loads == 0:
-                self._lifecycle.notify_all()
-                self._notify_async_lifecycle_waiters_locked()
-
-    def _begin_cleanup(self) -> None:
-        with self._lifecycle:
-            while self._cleanup_in_progress:
-                self._lifecycle.wait()
-            self._cleanup_in_progress = True
-            while self._active_loads:
-                self._lifecycle.wait()
-
-    def _end_cleanup(self) -> None:
-        with self._lifecycle:
-            self._cleanup_in_progress = False
-            self._lifecycle.notify_all()
-            self._notify_async_lifecycle_waiters_locked()
-
-    async def _abegin_cleanup(self) -> None:
-        owns_cleanup = False
-        try:
-            while not owns_cleanup:
-                with self._lifecycle:
-                    if not self._cleanup_in_progress:
-                        self._cleanup_in_progress = True
-                        owns_cleanup = True
-                        break
-                    waiter = self._new_async_lifecycle_waiter_locked()
-                await self._await_async_lifecycle_change(waiter)
-
-            while True:
-                with self._lifecycle:
-                    if self._active_loads == 0:
-                        return
-                    waiter = self._new_async_lifecycle_waiter_locked()
-                await self._await_async_lifecycle_change(waiter)
-        except BaseException:
-            if owns_cleanup:
-                self._end_cleanup()
-            raise
 
     def _check_size(self, value: Any, *, stage: str) -> None:
         if value is None:
@@ -319,6 +154,88 @@ class S3Loader(BaseLoader):
         label = resolve_downloaded_extension(path, PurePosixPath(key).name)
         return self._temporary_files.replace_suffix(path, label)
 
+    def _build_content(
+        self,
+        path: str,
+        source: SourceContent,
+        location: S3ObjectLocation,
+        head: dict[str, Any],
+    ) -> LoaderContent:
+        file_path = Path(path)
+        metadata = build_file_metadata(
+            file_path,
+            source,
+            file_name=PurePosixPath(location.key).name,
+            extra={
+                "bucket": location.bucket,
+                "object_key": location.key,
+                "etag": str(head.get("ETag", "")).strip('"') or None,
+            },
+        )
+        return LoaderContent(
+            path=file_path,
+            source=source,
+            is_temp=True,
+            metadata=metadata,
+            _release=lambda: self._release_temp(path),
+        )
+
+    def _cleanup_files(self) -> None:
+        try:
+            self._temporary_files.cleanup()
+        except OSError as exc:
+            logger.warning(f"临时文件清理失败，已保留登记以便重试: {exc!r}")
+
+
+class S3Loader(_S3Settings, SyncActivity, BaseLoader):
+    """同步 boto3 来源；客户端懒创建并由其创建者关闭。"""
+
+    def __init__(
+        self,
+        *,
+        endpoint_url: str | None = None,
+        access_key_id: str | None = None,
+        secret_access_key: str | None = None,
+        session_token: str | None = None,
+        region_name: str = "us-east-1",
+        addressing_style: str = "path",
+        verify_ssl: bool = True,
+        max_object_bytes: int = DEFAULT_MAX_OBJECT_BYTES,
+        download_dir: str | Path | None = None,
+        client: Any = None,  # SDK 的服务类型由运行时生成。
+    ) -> None:
+        self._configure(
+            endpoint_url=endpoint_url,
+            access_key_id=access_key_id,
+            secret_access_key=secret_access_key,
+            session_token=session_token,
+            region_name=region_name,
+            addressing_style=addressing_style,
+            verify_ssl=verify_ssl,
+            max_object_bytes=max_object_bytes,
+            download_dir=download_dir,
+        )
+        self._client = client
+        self._owns_client = client is None
+        self._initialize_lifecycle()
+        self._client_lock = threading.Lock()
+
+    def _new_client(self) -> Any:
+        try:
+            import boto3  # noqa: PLC0415
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "S3Loader 需要可选依赖，请安装 comet-rag[server] 或 comet-rag[all]"
+            ) from exc
+
+        return boto3.client("s3", **self._client_kwargs())
+
+    def _shared_client(self) -> Any:
+        with self._client_lock:
+            if self._client is None:
+                self._client = self._new_client()
+            return self._client
+
     def _stream_object(self, response: dict[str, Any], key: str) -> str:
         body = response["Body"]
         try:
@@ -347,72 +264,13 @@ class S3Loader(BaseLoader):
             with suppress(Exception):
                 body.close()
 
-    async def _astream_object(self, response: dict[str, Any], key: str) -> str:
-        body = response["Body"]
-        try:
-            self._check_size(response.get("ContentLength"), stage="get_object")
-            tmp = self._new_temp_file()
-            total = 0
-            try:
-                async for chunk in body.iter_chunks(chunk_size=_STREAM_CHUNK_BYTES):
-                    if not chunk:
-                        continue
-                    total += len(chunk)
-                    if total > self._max_object_bytes:
-                        raise ObjectTooLarge(
-                            f"S3 object exceeded {self._max_object_bytes} bytes "
-                            "while streaming"
-                        )
-                    await asyncio.to_thread(tmp.write, chunk)
-                await asyncio.to_thread(tmp.close)
-                if total == 0:
-                    raise ValueError(f"S3 object is empty: {key!r}")
-                return await asyncio.to_thread(self._finalize_temp, tmp.name, key)
-            except BaseException:
-                await asyncio.to_thread(tmp.close)
-                await asyncio.to_thread(self._discard_temp, tmp.name)
-                raise
-        finally:
-            try:
-                result = body.close()
-                if inspect.isawaitable(result):
-                    await result
-            except Exception as exc:
-                logger.debug(f"关闭 S3 响应流时出错（已忽略）：{exc!r}")
-
-    def _build_content(
-        self,
-        path: str,
-        source: SourceContent,
-        location: S3ObjectLocation,
-        head: dict[str, Any],
-    ) -> LoaderContent:
-        file_path = Path(path)
-        metadata = build_file_metadata(
-            file_path,
-            source,
-            file_name=PurePosixPath(location.key).name,
-            extra={
-                "bucket": location.bucket,
-                "object_key": location.key,
-                "etag": str(head.get("ETag", "")).strip('"') or None,
-            },
-        )
-        return LoaderContent(
-            path=file_path,
-            source=source,
-            is_temp=True,
-            metadata=metadata,
-            _release=lambda: self._release_temp(path),
-        )
-
     def _load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
         self._reject_unsupported(kwargs)
         normalized = (
             source if isinstance(source, SourceContent) else SourceContent(source)
         )
         location = parse_s3_uri(normalized.source)
-        with self._sync_activity():
+        with self._activity():
             client = self._shared_client()
             head = client.head_object(Bucket=location.bucket, Key=location.key)
             self._check_size(head.get("ContentLength"), stage="head_object")
@@ -424,89 +282,173 @@ class S3Loader(BaseLoader):
                 self._discard_temp(path)
                 raise
 
-    async def _aload(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
+    def cleanup(self) -> None:
+        self._begin_cleanup()
+        try:
+            self._cleanup_files()
+            with self._client_lock:
+                if self._owns_client and self._client is not None:
+                    self._client.close()
+                    self._client = None
+        finally:
+            self._end_cleanup()
+
+
+class AsyncS3Loader(_S3Settings, AsyncActivity, AsyncBaseLoader):
+    """原生 aioboto3 来源；异步等待不占用默认线程池。"""
+
+    def __init__(
+        self,
+        *,
+        endpoint_url: str | None = None,
+        access_key_id: str | None = None,
+        secret_access_key: str | None = None,
+        session_token: str | None = None,
+        region_name: str = "us-east-1",
+        addressing_style: str = "path",
+        verify_ssl: bool = True,
+        max_object_bytes: int = DEFAULT_MAX_OBJECT_BYTES,
+        download_dir: str | Path | None = None,
+        client: Any = None,  # SDK 的服务类型由运行时生成。
+    ) -> None:
+        self._configure(
+            endpoint_url=endpoint_url,
+            access_key_id=access_key_id,
+            secret_access_key=secret_access_key,
+            session_token=session_token,
+            region_name=region_name,
+            addressing_style=addressing_style,
+            verify_ssl=verify_ssl,
+            max_object_bytes=max_object_bytes,
+            download_dir=download_dir,
+        )
+        self._client = client
+        self._owns_client = client is None
+        self._initialize_lifecycle()
+        self._client_lock = asyncio.Lock()
+        self._client_context: Any = None  # aioboto3 动态生成的客户端上下文。
+
+    def _new_client_context(self) -> Any:
+        try:
+            import aioboto3  # noqa: PLC0415
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "S3Loader 异步入口需要可选依赖，请安装 "
+                "comet-rag[server] 或 comet-rag[all]"
+            ) from exc
+
+        return aioboto3.Session().client("s3", **self._client_kwargs())
+
+    async def _shared_client(self) -> Any:
+        async with self._client_lock:
+            if self._client is None:
+                context = self._new_client_context()
+                try:
+                    client = await context.__aenter__()
+                except BaseException:
+                    with suppress(Exception):
+                        await context.__aexit__(None, None, None)
+                    raise
+                self._client_context = context
+                self._client = client
+            return self._client
+
+    async def _stream_object(self, response: dict[str, Any], key: str) -> str:
+        body = response["Body"]
+        try:
+            self._check_size(response.get("ContentLength"), stage="get_object")
+            tmp = self._new_temp_file()
+            path = tmp.name
+            total = 0
+            try:
+                async for chunk in body.iter_chunks(chunk_size=_STREAM_CHUNK_BYTES):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > self._max_object_bytes:
+                        raise ObjectTooLarge(
+                            f"S3 object exceeded {self._max_object_bytes} bytes "
+                            "while streaming"
+                        )
+                    await run_sync(tmp.write, chunk)
+                await run_sync(tmp.close)
+                if total == 0:
+                    raise ValueError(f"S3 object is empty: {key!r}")
+
+                def finalize() -> str:
+                    nonlocal path
+                    path = self._finalize_temp(path, key)
+                    return path
+
+                return await run_sync(finalize)
+            except BaseException:
+
+                def discard() -> None:
+                    tmp.close()
+                    self._discard_temp(path)
+
+                await run_sync(discard)
+                raise
+        finally:
+            try:
+                result = body.close()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                logger.debug(f"关闭 S3 响应流时出错（已忽略）：{exc!r}")
+
+    async def _load(self, source: SourceContent | str, **kwargs: Any) -> LoaderContent:
         self._reject_unsupported(kwargs)
         normalized = (
             source if isinstance(source, SourceContent) else SourceContent(source)
         )
         location = parse_s3_uri(normalized.source)
-        async with self._async_activity():
-            client = await self._shared_async_client()
+        async with self._activity():
+            client = await self._shared_client()
             head = await client.head_object(Bucket=location.bucket, Key=location.key)
             self._check_size(head.get("ContentLength"), stage="head_object")
             response = await client.get_object(Bucket=location.bucket, Key=location.key)
-            path = await self._astream_object(response, location.key)
+            path = await self._stream_object(response, location.key)
             try:
-                return self._build_content(path, normalized, location, head)
+                return await run_sync(
+                    self._build_content, path, normalized, location, head
+                )
             except BaseException:
-                self._discard_temp(path)
+                await run_sync(self._discard_temp, path)
                 raise
 
-    def _cleanup_sync_resources(self) -> None:
+    async def cleanup(self) -> None:
+        await finish(asyncio.create_task(self._cleanup()))
+
+    async def _cleanup(self) -> None:
+        await self._begin_cleanup()
         try:
-            self._temporary_files.cleanup()
-        except OSError as exc:
-            # shutdown 是 best-effort：账本已保留失败路径，但不能因此漏关连接池。
-            logger.warning(f"临时文件清理失败，已保留登记以便重试: {exc!r}")
-        with self._sync_client_lock:
-            if self._owns_client and self._client is not None:
-                self._client.close()
-                self._client = None
-
-    def cleanup(self) -> None:
-        """Wait for active work, delete temp files, and close the owned sync client."""
-
-        self._begin_cleanup()
-        try:
-            self._cleanup_sync_resources()
-        finally:
-            self._end_cleanup()
-
-    async def acleanup(self) -> None:
-        """Release temporary files and both owned clients without lifecycle races."""
-
-        cleanup_task = asyncio.create_task(self._acleanup_impl())
-        try:
-            await asyncio.shield(cleanup_task)
-        except asyncio.CancelledError:
-            await cleanup_task
-            raise
-
-    async def _acleanup_impl(self) -> None:
-        await self._abegin_cleanup()
-        try:
-            await asyncio.to_thread(self._cleanup_sync_resources)
-            async with self._async_client_lock:
-                if self._owns_async_client and self._async_client is not None:
-                    context = self._async_client_context
-                    if context is not None:
-                        await context.__aexit__(None, None, None)
+            await run_sync(self._cleanup_files)
+            async with self._client_lock:
+                if self._owns_client and self._client is not None:
+                    if self._client_context is not None:
+                        await self._client_context.__aexit__(None, None, None)
                     else:
-                        result = self._async_client.close()
+                        result = self._client.close()
                         if inspect.isawaitable(result):
                             await result
-                    self._async_client = None
-                    self._async_client_context = None
+                    self._client = None
+                    self._client_context = None
         finally:
             self._end_cleanup()
 
-    async def aclose(self) -> None:
-        """Backward-compatible alias for ``acleanup``."""
 
-        await self.acleanup()
-
-
-# Product-facing name retained for MinIO-specific deployments. The implementation
-# remains protocol-based and works with AWS S3 and other compatible endpoints.
 MinioLoader = S3Loader
-
+AsyncMinioLoader = AsyncS3Loader
 
 __all__ = [
     "DEFAULT_MAX_OBJECT_BYTES",
     "MinioLoader",
+    "AsyncMinioLoader",
     "ObjectContentTypeMismatch",
     "ObjectTooLarge",
     "S3Loader",
+    "AsyncS3Loader",
     "S3ObjectLocation",
     "parse_s3_uri",
 ]

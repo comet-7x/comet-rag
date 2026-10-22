@@ -6,18 +6,18 @@ import subprocess
 import sys
 from collections.abc import Sequence
 
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.ports import (
-    BaseVectorStore,
+    AsyncKeywordSearchPort,
+    AsyncVectorSearchPort,
+    AsyncVectorStore,
     Filter,
-    KeywordSearchPort,
     SearchHit,
-    VectorSearchPort,
 )
 
 
 def test_concrete_store_satisfies_vector_store_port() -> None:
-    assert isinstance(InMemoryVectorStore(), BaseVectorStore)
+    assert isinstance(AsyncInMemoryVectorStore(), AsyncVectorStore)
 
 
 def test_ports_import_does_not_load_pymilvus() -> None:
@@ -33,13 +33,13 @@ def test_ports_import_does_not_load_pymilvus() -> None:
 
 
 def test_full_store_structurally_satisfies_narrow_search_port() -> None:
-    store = InMemoryVectorStore()
-    assert isinstance(store, VectorSearchPort)
-    assert isinstance(store, KeywordSearchPort)
+    store = AsyncInMemoryVectorStore()
+    assert isinstance(store, AsyncVectorSearchPort)
+    assert isinstance(store, AsyncKeywordSearchPort)
 
 
 class _SearchOnly:
-    async def asearch(
+    async def search(
         self,
         kb_id: str,
         query_embedding: Sequence[float],
@@ -52,4 +52,4 @@ class _SearchOnly:
 
 def test_search_port_does_not_require_write_or_lifecycle_methods() -> None:
     """查询用例不应因 Port 迁移而获得建库、删除或关闭能力。"""
-    assert isinstance(_SearchOnly(), VectorSearchPort)
+    assert isinstance(_SearchOnly(), AsyncVectorSearchPort)

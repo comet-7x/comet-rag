@@ -21,8 +21,8 @@ from comet_rag.ports.document_store import (
 from comet_rag.services.indexing import IndexHandoff, IndexPlanner
 from comet_rag.services.revision_context import (
     RevisionTaskStages,
-    aget_revision_key,
     dump_index_handoff,
+    get_revision_key,
     load_index_handoff,
 )
 from comet_rag.tasks import InMemoryTaskStore, TaskContext, TaskStatus
@@ -143,11 +143,11 @@ class ReadFaultDocuments(FaultyDocuments):
         super().__init__()
         self.read_sizes = []
 
-    async def aget_parents(
+    async def get_parents(
         self, kb_id: str, parent_ids: Sequence[str]
     ) -> dict[str, StoredParent]:
         self.read_sizes.append(len(parent_ids))
-        parents = await super().aget_parents(kb_id, parent_ids)
+        parents = await super().get_parents(kb_id, parent_ids)
         if self.fault == "missing":
             return {}
         if parents and self.fault:
@@ -167,7 +167,7 @@ async def test_resume_rejects_missing_or_corrupt_plan_before_embedding_and_vecto
 ) -> None:
     documents, vectors, model = ReadFaultDocuments(), FaultyVectors(), FakeEmbedding()
     writer = stager(documents, vectors, model)
-    handoff = await writer.aprepare(make_plan())
+    handoff = await writer.prepare(make_plan())
     if fault == "child-digest":
         handoff = replace(
             handoff,
@@ -179,7 +179,7 @@ async def test_resume_rejects_missing_or_corrupt_plan_before_embedding_and_vecto
     else:
         documents.fault = fault
     with pytest.raises((RevisionConflict, RevisionNotReady)):
-        await writer.aresume(handoff, embedding_dim=2)
+        await writer.resume(handoff, embedding_dim=2)
     assert model.calls == vectors.calls == 0
 
 
@@ -206,8 +206,8 @@ async def test_task_identity_reused_by_new_context_and_source_mismatch_is_reject
     None
 ):
     ctx = await _context(InMemoryTaskStore())
-    first = await aget_revision_key(ctx, kb_id="kb", source_id="source")
-    again = await aget_revision_key(
+    first = await get_revision_key(ctx, kb_id="kb", source_id="source")
+    again = await get_revision_key(
         TaskContext(ctx.store, ctx.task_id), kb_id="kb", source_id="source"
     )
     assert (
@@ -216,7 +216,7 @@ async def test_task_identity_reused_by_new_context_and_source_mismatch_is_reject
         and len(first.revision_id) == 32
     )
     with pytest.raises(RevisionConflict):
-        await aget_revision_key(ctx, kb_id="other-kb", source_id="source")
+        await get_revision_key(ctx, kb_id="other-kb", source_id="source")
 
 
 @pytest.mark.parametrize("failure", ["parents", "context-before", "context-after"])
@@ -224,7 +224,7 @@ async def test_cpu_failure_preserves_rebuild_input_or_replays_persisted_handoff(
     failure: str, monkeypatch
 ) -> None:
     ctx = await _context(InMemoryTaskStore())
-    key = await aget_revision_key(ctx, kb_id="kb", source_id="source")
+    key = await get_revision_key(ctx, kb_id="kb", source_id="source")
     documents, vectors, model = FaultyDocuments(), FaultyVectors(), FakeEmbedding()
     stages = RevisionTaskStages(stager(documents, vectors, model))
     original = ctx.put_bounded
@@ -239,14 +239,14 @@ async def test_cpu_failure_preserves_rebuild_input_or_replays_persisted_handoff(
 
         monkeypatch.setattr(ctx, "put_bounded", lose_response)
     with pytest.raises(ConnectionError):
-        await stages.aprepare(ctx, _task_plan(key))
+        await stages.prepare(ctx, _task_plan(key))
     saved = await ctx.snapshot()
     assert model.calls == vectors.calls == 0
     assert (saved.context["text"] is None) == (failure == "context-after")
     if failure != "parents":
         monkeypatch.setattr(ctx, "put_bounded", original)
     documents.fail_parent_on = 0
-    replay = await stages.aprepare(
+    replay = await stages.prepare(
         ctx, None if failure == "context-after" else _task_plan(key)
     )
     assert replay.draft.key == key
@@ -256,9 +256,9 @@ async def test_cpu_failure_preserves_rebuild_input_or_replays_persisted_handoff(
 async def test_new_io_context_replays_partial_vectors_and_ready_response_loss() -> None:
     store = InMemoryTaskStore()
     cpu = await _context(store)
-    key = await aget_revision_key(cpu, kb_id="kb", source_id="source")
+    key = await get_revision_key(cpu, kb_id="kb", source_id="source")
     documents, vectors, model = ReadFaultDocuments(), FaultyVectors(), FakeEmbedding()
-    await RevisionTaskStages(stager(documents, vectors, model)).aprepare(
+    await RevisionTaskStages(stager(documents, vectors, model)).prepare(
         cpu, _task_plan(key)
     )
     await store.transition(
@@ -268,19 +268,19 @@ async def test_new_io_context_replays_partial_vectors_and_ready_response_loss() 
     io = TaskContext(store, cpu.task_id, worker_id="io", attempts=2)
     vectors.fail_on = 1
     with pytest.raises(ConnectionError):
-        await RevisionTaskStages(stager(documents, vectors, model)).astage(
+        await RevisionTaskStages(stager(documents, vectors, model)).stage(
             io, embedding_dim=2
         )
-    assert await documents.aget_active_revisions("kb", ["source"]) == {"source": None}
+    assert await documents.get_active_revisions("kb", ["source"]) == {"source": None}
     vectors.fail_on = 0
     documents.fail_ready = True
     with pytest.raises(ConnectionError):
-        await RevisionTaskStages(stager(documents, vectors, model)).astage(
+        await RevisionTaskStages(stager(documents, vectors, model)).stage(
             io, embedding_dim=2
         )
     calls = model.calls
     documents.fail_ready = False
-    ready = await RevisionTaskStages(stager(documents, vectors, model)).astage(
+    ready = await RevisionTaskStages(stager(documents, vectors, model)).stage(
         io, embedding_dim=2
     )
     assert ready.status is RevisionStatus.READY and ready.generation == 1
@@ -288,7 +288,7 @@ async def test_new_io_context_replays_partial_vectors_and_ready_response_loss() 
         model.calls == calls and documents.read_sizes and max(documents.read_sizes) == 1
     )
     assert (
-        await vectors.acount(
+        await vectors.count(
             "kb", filter={"source_id": "source", "document_revision": key.revision_id}
         )
         == 4
@@ -296,7 +296,7 @@ async def test_new_io_context_replays_partial_vectors_and_ready_response_loss() 
     assert (await io.snapshot()).context["revision_index"]
     assert (await io.snapshot()).status is TaskStatus.RUNNING
     with pytest.raises(TaskLeaseLost):
-        await RevisionTaskStages(stager(documents, vectors, model)).astage(
+        await RevisionTaskStages(stager(documents, vectors, model)).stage(
             cpu, embedding_dim=2
         )
 
@@ -305,31 +305,31 @@ async def test_context_budget_rejects_before_reserve_even_when_child_payload_fit
     None
 ):
     ctx = await _context(InMemoryTaskStore())
-    key = await aget_revision_key(ctx, kb_id="kb", source_id="source")
+    key = await get_revision_key(ctx, kb_id="kb", source_id="source")
     await ctx.put(unrelated="x" * 5000)
     documents, vectors, model = FaultyDocuments(), FaultyVectors(), FakeEmbedding()
     stages = RevisionTaskStages(
         stager(documents, vectors, model), max_context_bytes=4000
     )
     with pytest.raises(DocumentResourceLimitExceeded):
-        await stages.aprepare(ctx, _task_plan(key))
+        await stages.prepare(ctx, _task_plan(key))
     assert documents.parent_calls == vectors.calls == model.calls == 0
     assert (await ctx.snapshot()).context["text"] == "abcdEFGHijkl"
     probe = IndexHandoff.from_plan(make_plan("probe")).draft
-    assert (await documents.areserve_revision(probe)).generation == 1
+    assert (await documents.reserve_revision(probe)).generation == 1
 
 
 @pytest.mark.parametrize("fault", ["cancel", "lease"])
 async def test_post_embedding_fence_prevents_late_vector_write(fault: str) -> None:
     store = InMemoryTaskStore()
     ctx = await _context(store)
-    key = await aget_revision_key(ctx, kb_id="kb", source_id="source")
+    key = await get_revision_key(ctx, kb_id="kb", source_id="source")
 
     class LosingEmbedding(FakeEmbedding):
         changed = False
 
-        async def _aembed(self, data, **kwargs) -> list[float]:
-            result = await super()._aembed(data, **kwargs)
+        async def _embed(self, data, **kwargs) -> list[float]:
+            result = await super()._embed(data, **kwargs)
             if not self.changed:
                 self.changed = True
                 await store.transition(
@@ -340,9 +340,9 @@ async def test_post_embedding_fence_prevents_late_vector_write(fault: str) -> No
 
     documents, vectors, model = FaultyDocuments(), FaultyVectors(), LosingEmbedding()
     stages = RevisionTaskStages(stager(documents, vectors, model))
-    await stages.aprepare(ctx, _task_plan(key))
+    await stages.prepare(ctx, _task_plan(key))
     with pytest.raises(TaskCancelled if fault == "cancel" else TaskLeaseLost):
-        await stages.astage(ctx, embedding_dim=2)
+        await stages.stage(ctx, embedding_dim=2)
     assert model.calls > 0 and vectors.calls == 0
 
 
@@ -350,23 +350,23 @@ async def test_late_context_growth_is_rejected_inside_cas_after_parent_io(
     monkeypatch,
 ) -> None:
     ctx = await _context(InMemoryTaskStore())
-    key = await aget_revision_key(ctx, kb_id="kb", source_id="source")
+    key = await get_revision_key(ctx, kb_id="kb", source_id="source")
     documents, vectors, model = FaultyDocuments(), FaultyVectors(), FakeEmbedding()
-    put = documents.aput_parents
+    put = documents.put_parents
 
     async def grow_context(revision, parents):
         await put(revision, parents)
         await ctx.put(concurrent="x" * 5000)
 
-    monkeypatch.setattr(documents, "aput_parents", grow_context)
+    monkeypatch.setattr(documents, "put_parents", grow_context)
     stages = RevisionTaskStages(
         stager(documents, vectors, model), max_context_bytes=4000
     )
     with pytest.raises(DocumentResourceLimitExceeded):
-        await stages.aprepare(ctx, _task_plan(key))
+        await stages.prepare(ctx, _task_plan(key))
     assert (await ctx.snapshot()).context["text"] == "abcdEFGHijkl"
     assert documents.parent_calls == 2 and vectors.calls == model.calls == 0
-    assert await documents.aget_active_revisions("kb", ["source"]) == {"source": None}
+    assert await documents.get_active_revisions("kb", ["source"]) == {"source": None}
 
 
 async def test_revision_identity_commit_response_loss_reuses_same_key(
@@ -381,9 +381,9 @@ async def test_revision_identity_commit_response_loss_reuses_same_key(
 
     monkeypatch.setattr(ctx, "put", lose_response)
     with pytest.raises(ConnectionError):
-        await aget_revision_key(ctx, kb_id="kb", source_id="source")
+        await get_revision_key(ctx, kb_id="kb", source_id="source")
     stored = (await ctx.snapshot()).context["revision_key"]
-    resumed = await aget_revision_key(
+    resumed = await get_revision_key(
         TaskContext(ctx.store, ctx.task_id), kb_id="kb", source_id="source"
     )
     assert resumed.revision_id == stored["revision_id"]
@@ -392,10 +392,10 @@ async def test_revision_identity_commit_response_loss_reuses_same_key(
 @pytest.mark.parametrize("fault", ["task", "key"])
 async def test_context_cannot_replay_another_tasks_handoff(fault: str) -> None:
     ctx = await _context(InMemoryTaskStore())
-    key = await aget_revision_key(ctx, kb_id="kb", source_id="source")
+    key = await get_revision_key(ctx, kb_id="kb", source_id="source")
     documents, vectors, model = FaultyDocuments(), FaultyVectors(), FakeEmbedding()
     stages = RevisionTaskStages(stager(documents, vectors, model))
-    await stages.aprepare(ctx, _task_plan(key))
+    await stages.prepare(ctx, _task_plan(key))
     snapshot = await ctx.snapshot()
     if fault == "task":
         snapshot.context["revision_index"]["draft"]["task_id"] = "another-task"
@@ -403,5 +403,5 @@ async def test_context_cannot_replay_another_tasks_handoff(fault: str) -> None:
         snapshot.context["revision_key"]["source_id"] = "another-source"
     await ctx.put(**snapshot.context)
     with pytest.raises(RevisionConflict):
-        await stages.astage(ctx, embedding_dim=2)
+        await stages.stage(ctx, embedding_dim=2)
     assert vectors.calls == model.calls == 0

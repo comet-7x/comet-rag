@@ -1,25 +1,37 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
-from comet_rag.infrastructure.sources import LocalLoader, URLLoader
+from comet_rag.infrastructure.sources import (
+    AsyncLocalLoader,
+    AsyncURLLoader,
+    LocalLoader,
+    URLLoader,
+)
 from comet_rag.infrastructure.sources.file_info import TemporaryFileRegistry
-from comet_rag.infrastructure.sources.s3 import S3Loader
+from comet_rag.infrastructure.sources.s3 import AsyncS3Loader, S3Loader
 from comet_rag.ports import LoadedResource, SourceContent, SourceLoaderPort
-from tests.contracts.source_loader import SourceLoaderContract
+from tests.contracts.source_loader import (
+    AsyncSourceLoaderContract,
+    SourceLoaderContract,
+)
 
 PAYLOAD = b"shared loader contract"
 
 
-class TestLocalLoaderContract(SourceLoaderContract):
+class TestLocalLoaderContract(SourceLoaderContract, AsyncSourceLoaderContract):
     @pytest.fixture
     def loader(self) -> LocalLoader:
         return LocalLoader()
+
+    @pytest.fixture
+    def async_loader(self) -> AsyncLocalLoader:
+        return AsyncLocalLoader()
 
     @pytest.fixture
     def sources(self, tmp_path: Path) -> list[str]:
@@ -37,28 +49,38 @@ class TestLocalLoaderContract(SourceLoaderContract):
         return False
 
 
-class TestURLLoaderContract(SourceLoaderContract):
+class TestURLLoaderContract(SourceLoaderContract, AsyncSourceLoaderContract):
     @pytest.fixture
-    async def loader(self, tmp_path: Path, monkeypatch) -> AsyncIterator[URLLoader]:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, content=PAYLOAD, request=request)
-
-        transport = httpx.MockTransport(handler)
-        sync_client = httpx.Client(transport=transport)
-        async_client = httpx.AsyncClient(transport=transport)
-        loader = URLLoader(
-            download_dir=tmp_path,
-            client=sync_client,
-            async_client=async_client,
-        )
+    def loader(self, tmp_path: Path, monkeypatch) -> Iterator[URLLoader]:
         monkeypatch.setattr(
             "comet_rag.infrastructure.sources.file_info.detect_content_type_from_path",
             lambda path: "txt",
         )
-        yield loader
-        await loader.acleanup()
-        sync_client.close()
-        await async_client.aclose()
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, content=PAYLOAD)
+        )
+        with (
+            httpx.Client(transport=transport) as client,
+            URLLoader(download_dir=tmp_path, client=client) as loader,
+        ):
+            yield loader
+
+    @pytest.fixture
+    async def async_loader(
+        self, tmp_path: Path, monkeypatch
+    ) -> AsyncIterator[AsyncURLLoader]:
+        monkeypatch.setattr(
+            "comet_rag.infrastructure.sources.file_info.detect_content_type_from_path",
+            lambda path: "txt",
+        )
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, content=PAYLOAD)
+        )
+        async with (
+            httpx.AsyncClient(transport=transport) as client,
+            AsyncURLLoader(download_dir=tmp_path, client=client) as loader,
+        ):
+            yield loader
 
     @pytest.fixture
     def sources(self) -> list[str]:
@@ -116,22 +138,28 @@ class _AsyncS3Client:
         return None
 
 
-class TestS3LoaderContract(SourceLoaderContract):
+class TestS3LoaderContract(SourceLoaderContract, AsyncSourceLoaderContract):
     @pytest.fixture
-    async def loader(self, tmp_path: Path, monkeypatch) -> AsyncIterator[S3Loader]:
-        sync_client = _SyncS3Client()
-        async_client = _AsyncS3Client()
-        loader = S3Loader(
-            download_dir=tmp_path,
-            client=sync_client,
-            async_client=async_client,
-        )
+    def loader(self, tmp_path: Path, monkeypatch) -> Iterator[S3Loader]:
         monkeypatch.setattr(
             "comet_rag.infrastructure.sources.file_info.detect_content_type_from_path",
             lambda path: "txt",
         )
-        yield loader
-        await loader.acleanup()
+        with S3Loader(download_dir=tmp_path, client=_SyncS3Client()) as loader:
+            yield loader
+
+    @pytest.fixture
+    async def async_loader(
+        self, tmp_path: Path, monkeypatch
+    ) -> AsyncIterator[AsyncS3Loader]:
+        monkeypatch.setattr(
+            "comet_rag.infrastructure.sources.file_info.detect_content_type_from_path",
+            lambda path: "txt",
+        )
+        async with AsyncS3Loader(
+            download_dir=tmp_path, client=_AsyncS3Client()
+        ) as loader:
+            yield loader
 
     @pytest.fixture
     def sources(self) -> list[str]:
@@ -159,9 +187,6 @@ def test_legacy_loader_content_is_runtime_alias() -> None:
 def test_port_rejects_an_object_without_batch_or_cleanup() -> None:
     class IncompleteLoader:
         def load(self, source: str):
-            return source
-
-        async def aload(self, source: str):
             return source
 
     assert not isinstance(IncompleteLoader(), SourceLoaderPort)

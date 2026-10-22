@@ -132,7 +132,8 @@ Comet-RAG 仅允许 `localhost`、`127.0.0.0/8` 和 `::1` 使用明文 HTTP；�
 `base_url` 都必须使用 HTTPS，避免上传的原始 PDF 在网络路径中被读取或篡改。
 
 `enabled=false` 时不会创建 MinerU 客户端，也不会注册 PDF Hook。启用后，组合根
-为同步与异步 Pipeline 注册同一个 PDF 提取器，并在应用关停时释放连接池。
+创建 `AsyncMinerUDocumentExtractor` 并注册到当前 Context 的异步 HookRegistry，
+应用关停时等待其连接池关闭。同步库调用使用独立的 `MinerUDocumentExtractor` 与同步注册表。
 
 来源准入仍单独生效：本地文件需要 `allow_local` 与 `local_roots`，S3/MinIO 需要
 `allow_s3`、bucket 白名单和连接配置；URL 仍受私网与重定向 SSRF 检查。后缀为

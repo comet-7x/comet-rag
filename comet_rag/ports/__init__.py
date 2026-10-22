@@ -10,6 +10,7 @@ from .content import (
     TextContent,
 )
 from .document import (
+    AsyncDocumentExtractorPort,
     DocumentBlock,
     DocumentExtractionError,
     DocumentExtractorPort,
@@ -37,6 +38,8 @@ from .document_store import (
     StoredRevision,
 )
 from .embedding import (
+    AsyncEmbeddingPort,
+    AsyncMultimodalEmbeddingPort,
     EmbeddingPort,
     EmbeddingTask,
     MultimodalEmbeddingPort,
@@ -50,28 +53,39 @@ from .knowledge_base import (
     KnowledgeBaseNotFound,
     KnowledgeBaseRepository,
 )
-from .reranker import RerankerPort
-from .source import LoadedResource, SourceContent, SourceLoaderPort
+from .reranker import AsyncRerankerPort, RerankerPort
+from .source import (
+    AsyncSourceLoaderPort,
+    LoadedResource,
+    SourceContent,
+    SourceLoaderPort,
+)
 from .vector_store import (
-    BaseVectorStore,
+    AsyncKeywordSearchPort,
+    AsyncVectorSearchPort,
+    AsyncVectorStore,
     CollectionNotFound,
     CollectionSchemaMismatch,
     DimensionMismatch,
     Filter,
-    KeywordSearchPort,
     SearchHit,
     VectorRecord,
-    VectorSearchPort,
     VectorStoreError,
     matches_filter,
 )
-from .vision import VisionDescriptionPort
+from .vision import AsyncVisionDescriptionPort, VisionDescriptionPort
 
 __all__ = [
+    "AsyncDocumentExtractorPort",
+    "AsyncEmbeddingPort",
+    "AsyncMultimodalEmbeddingPort",
+    "AsyncRerankerPort",
+    "AsyncSourceLoaderPort",
+    "AsyncVisionDescriptionPort",
     "AsyncGate",
     "Activation",
     "ActiveRevisionDeletion",
-    "BaseVectorStore",
+    "AsyncVectorStore",
     "CollectionNotFound",
     "CollectionSchemaMismatch",
     "ContentInput",
@@ -92,7 +106,7 @@ __all__ = [
     "ExtractedPage",
     "Filter",
     "ImageContent",
-    "KeywordSearchPort",
+    "AsyncKeywordSearchPort",
     "KnowledgeBase",
     "KnowledgeBaseError",
     "KnowledgeBaseExists",
@@ -120,7 +134,7 @@ __all__ = [
     "SearchHit",
     "TextContent",
     "VectorRecord",
-    "VectorSearchPort",
+    "AsyncVectorSearchPort",
     "VectorStoreError",
     "VisionDescriptionPort",
     "matches_filter",

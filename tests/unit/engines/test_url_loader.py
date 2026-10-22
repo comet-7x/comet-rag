@@ -25,6 +25,7 @@ from comet_rag.engines.documents.formats import (
 )
 from comet_rag.infrastructure.sources import http as url_loader
 from comet_rag.infrastructure.sources.http import (
+    AsyncURLLoader,
     DownloadRequestConfig,
     DownloadTooLarge,
     URLLoader,
@@ -41,7 +42,7 @@ def test_content_type_mismatch_keeps_legacy_url_loader_import() -> None:
     assert url_loader.ContentTypeMismatch is ContentTypeMismatch
 
 
-def _wait_for_cleanup_start(loader: URLLoader) -> None:
+def _wait_for_cleanup_start(loader: URLLoader | AsyncURLLoader) -> None:
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
         with loader._lifecycle:
@@ -83,15 +84,15 @@ def test_download_writes_temp_file(tmp_path: Path) -> None:
 
 
 async def test_async_download_writes_temp_file(tmp_path: Path) -> None:
-    ld = URLLoader(
+    ld = AsyncURLLoader(
         download_dir=tmp_path,
-        async_client=httpx.AsyncClient(transport=_transport()),
+        client=httpx.AsyncClient(transport=_transport()),
     )
     try:
-        lc = await ld.aload(URL)
+        lc = await ld.load(URL)
         assert lc.path.read_bytes() == BODY
     finally:
-        await ld.aclose()
+        await ld.close()
 
 
 def test_redirect_uses_final_response_file_name(tmp_path: Path) -> None:
@@ -115,7 +116,9 @@ def test_redirect_uses_final_response_file_name(tmp_path: Path) -> None:
         ld.cleanup()
 
 
-def test_redirect_without_final_name_falls_back_to_original_name(tmp_path: Path) -> None:
+def test_redirect_without_final_name_falls_back_to_original_name(
+    tmp_path: Path,
+) -> None:
     original_url = "https://example.invalid/original.txt"
     final_url = "https://cdn.example.invalid/"
 
@@ -144,16 +147,16 @@ async def test_async_redirect_uses_final_response_file_name(tmp_path: Path) -> N
             return httpx.Response(302, headers={"Location": final_url})
         return httpx.Response(200, content=BODY)
 
-    ld = URLLoader(
+    ld = AsyncURLLoader(
         download_dir=tmp_path,
-        async_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     try:
-        content = await ld.aload(original_url)
+        content = await ld.load(original_url)
         assert content.metadata["file_name"] == "report.txt"
         assert content.source.source == original_url
     finally:
-        await ld.aclose()
+        await ld.close()
 
 
 def test_non_url_source_is_rejected(loader: URLLoader) -> None:
@@ -166,9 +169,10 @@ def test_load_rejects_unsupported_options(loader: URLLoader) -> None:
         loader.load(URL, unsupported=True)  # type: ignore[call-arg]
 
 
-async def test_aload_rejects_unsupported_options(loader: URLLoader) -> None:
+async def test_aload_rejects_unsupported_options() -> None:
+    loader = AsyncURLLoader()
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        await loader.aload(URL, unsupported=True)  # type: ignore[call-arg]
+        await loader.load(URL, unsupported=True)  # type: ignore[call-arg]
 
 
 # ── 连接复用 ───────────────────────────────────────────────────────────────
@@ -187,30 +191,30 @@ def test_sync_client_is_created_once_and_reused(tmp_path: Path) -> None:
 
 
 async def test_async_client_is_created_once_and_reused(tmp_path: Path) -> None:
-    ld = URLLoader(
+    ld = AsyncURLLoader(
         download_dir=tmp_path,
-        async_client=httpx.AsyncClient(transport=_transport()),
+        client=httpx.AsyncClient(transport=_transport()),
     )
     try:
-        first = ld._shared_async_client()
+        first = ld._shared_client()
         for _ in range(3):
-            await ld.aload(URL)
-        assert ld._shared_async_client() is first
+            await ld.load(URL)
+        assert ld._shared_client() is first
     finally:
-        await ld.aclose()
+        await ld.close()
 
 
 async def test_injected_client_is_used_for_every_request(tmp_path: Path) -> None:
     """注入的 client 必须真的承载请求，而不是被绕过去另建一个。"""
     counter: dict[str, int] = {}
     client = httpx.AsyncClient(transport=_transport(counter))
-    ld = URLLoader(download_dir=tmp_path, async_client=client)
+    ld = AsyncURLLoader(download_dir=tmp_path, client=client)
     try:
         for _ in range(4):
-            await ld.aload(URL)
+            await ld.load(URL)
         assert counter["requests"] == 4
     finally:
-        await ld.aclose()
+        await ld.close()
         await client.aclose()
 
 
@@ -251,24 +255,24 @@ def test_cleanup_does_not_close_injected_client(tmp_path: Path) -> None:
 
 async def test_aclose_does_not_close_injected_async_client(tmp_path: Path) -> None:
     injected = httpx.AsyncClient(transport=_transport())
-    ld = URLLoader(download_dir=tmp_path, async_client=injected)
+    ld = AsyncURLLoader(download_dir=tmp_path, client=injected)
 
-    await ld.aload(URL)
-    await ld.aclose()
+    await ld.load(URL)
+    await ld.close()
 
     assert not injected.is_closed
     await injected.aclose()
 
 
 async def test_aclose_closes_self_made_async_client(tmp_path: Path) -> None:
-    ld = URLLoader(download_dir=tmp_path)
-    client = ld._shared_async_client()
+    ld = AsyncURLLoader(download_dir=tmp_path)
+    client = ld._shared_client()
     client._transport = _transport()
 
-    await ld.aclose()
+    await ld.close()
 
     assert client.is_closed
-    assert ld._async_client is None
+    assert ld._client is None
 
 
 # ── 临时文件清理 ───────────────────────────────────────────────────────────
@@ -333,27 +337,28 @@ def test_batch_load_rejects_unsupported_options(loader: URLLoader) -> None:
         loader.batch_load([], unsupported=True)  # type: ignore[call-arg]
 
 
-async def test_abatch_load_rejects_unsupported_options(loader: URLLoader) -> None:
+async def test_abatch_load_rejects_unsupported_options() -> None:
+    loader = AsyncURLLoader()
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        await loader.abatch_load([], unsupported=True)  # type: ignore[call-arg]
+        await loader.batch_load([], unsupported=True)  # type: ignore[call-arg]
 
 
 async def test_abatch_load_shares_one_client(tmp_path: Path) -> None:
     """批量下载不该每个 URL 建一个连接池。"""
     counter: dict[str, int] = {}
-    ld = URLLoader(
+    ld = AsyncURLLoader(
         download_dir=tmp_path,
-        async_client=httpx.AsyncClient(transport=_transport(counter)),
+        client=httpx.AsyncClient(transport=_transport(counter)),
     )
     try:
-        before = ld._shared_async_client()
-        results = await ld.abatch_load([URL] * 5, max_concurrency=3)
+        before = ld._shared_client()
+        results = await ld.batch_load([URL] * 5, max_concurrency=3)
 
         assert len(results) == 5
         assert counter["requests"] == 5
-        assert ld._shared_async_client() is before
+        assert ld._shared_client() is before
     finally:
-        await ld.aclose()
+        await ld.close()
 
 
 async def test_acleanup_waits_for_active_async_batch(
@@ -361,7 +366,7 @@ async def test_acleanup_waits_for_active_async_batch(
 ) -> None:
     started = asyncio.Event()
     release = asyncio.Event()
-    ld = URLLoader(download_dir=tmp_path)
+    ld = AsyncURLLoader(download_dir=tmp_path)
 
     async def delayed_aload_impl(
         source: SourceContent | str,
@@ -377,13 +382,13 @@ async def test_acleanup_waits_for_active_async_batch(
         )
         return LoaderContent(path=tmp_path / "download.txt", source=normalized)
 
-    monkeypatch.setattr(ld, "_aload_impl", delayed_aload_impl)
-    batch_task = asyncio.create_task(ld.abatch_load([URL]))
+    monkeypatch.setattr(ld, "_load_impl", delayed_aload_impl)
+    batch_task = asyncio.create_task(ld.batch_load([URL]))
     await started.wait()
-    client = ld._async_client
+    client = ld._client
     assert client is not None
 
-    cleanup_task = asyncio.create_task(ld.acleanup())
+    cleanup_task = asyncio.create_task(ld.cleanup())
     await asyncio.sleep(0)
     assert not cleanup_task.done()
     assert not client.is_closed
@@ -393,13 +398,13 @@ async def test_acleanup_waits_for_active_async_batch(
     await cleanup_task
 
     assert client.is_closed
-    assert ld._async_client is None
+    assert ld._client is None
 
 
 async def test_cleanup_waits_for_active_async_load(tmp_path: Path, monkeypatch) -> None:
     started = asyncio.Event()
     release = asyncio.Event()
-    ld = URLLoader(download_dir=tmp_path)
+    ld = AsyncURLLoader(download_dir=tmp_path)
     active_path = tmp_path / "active.txt"
 
     async def delayed_aload_impl(
@@ -418,11 +423,11 @@ async def test_cleanup_waits_for_active_async_load(tmp_path: Path, monkeypatch) 
         )
         return LoaderContent(path=active_path, source=normalized, is_temp=True)
 
-    monkeypatch.setattr(ld, "_aload_impl", delayed_aload_impl)
-    load_task = asyncio.create_task(ld.aload(URL))
+    monkeypatch.setattr(ld, "_load_impl", delayed_aload_impl)
+    load_task = asyncio.create_task(ld.load(URL))
     await started.wait()
 
-    cleanup_task = asyncio.create_task(asyncio.to_thread(ld.cleanup))
+    cleanup_task = asyncio.create_task(ld.cleanup())
     await asyncio.to_thread(_wait_for_cleanup_start, ld)
     assert not cleanup_task.done()
     assert active_path.exists()
@@ -435,10 +440,10 @@ async def test_cleanup_waits_for_active_async_load(tmp_path: Path, monkeypatch) 
     assert ld.temp_files == []
 
 
-async def test_async_activity_waits_with_one_worker_dispatch(
+async def test_async_activity_waits_without_worker_dispatch(
     tmp_path: Path, monkeypatch
 ) -> None:
-    ld = URLLoader(download_dir=tmp_path)
+    ld = AsyncURLLoader(download_dir=tmp_path)
     original_to_thread = asyncio.to_thread
     begin_dispatches = 0
 
@@ -449,11 +454,11 @@ async def test_async_activity_waits_with_one_worker_dispatch(
         return await original_to_thread(func, *args, **kwargs)
 
     monkeypatch.setattr(asyncio, "to_thread", counting_to_thread)
-    ld._begin_cleanup()
+    await ld._begin_cleanup()
     entered = asyncio.Event()
 
     async def enter_activity() -> None:
-        async with ld._async_activity():
+        async with ld._activity():
             entered.set()
 
     task = asyncio.create_task(enter_activity())
@@ -463,18 +468,18 @@ async def test_async_activity_waits_with_one_worker_dispatch(
     ld._end_cleanup()
     await task
 
-    assert begin_dispatches == 1
+    assert begin_dispatches == 0
     assert ld._active_loads == 0
 
 
 async def test_cancelled_async_activity_waiter_does_not_leak_active_count(
     tmp_path: Path,
 ) -> None:
-    ld = URLLoader(download_dir=tmp_path)
-    ld._begin_cleanup()
+    ld = AsyncURLLoader(download_dir=tmp_path)
+    await ld._begin_cleanup()
 
     async def enter_activity() -> None:
-        async with ld._async_activity():
+        async with ld._activity():
             pytest.fail("cancelled waiter must not enter the activity body")
 
     task = asyncio.create_task(enter_activity())
@@ -617,17 +622,17 @@ async def test_actual_stream_size_is_bounded_when_header_lies(tmp_path: Path) ->
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, headers={"Content-Length": "1"}, content=body)
 
-    ld = URLLoader(
+    ld = AsyncURLLoader(
         download_dir=tmp_path,
         max_download_bytes=16,
-        async_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     try:
         with pytest.raises(DownloadTooLarge, match="while streaming"):
-            await ld.aload(URL)
+            await ld.load(URL)
         assert list(tmp_path.iterdir()) == []
     finally:
-        await ld.aclose()
+        await ld.close()
 
 
 async def test_redirect_target_is_validated_before_second_request(
@@ -644,18 +649,18 @@ async def test_redirect_target_is_validated_before_second_request(
         validated.append(url)
         raise PermissionError("private redirect rejected")
 
-    ld = URLLoader(
+    ld = AsyncURLLoader(
         download_dir=tmp_path,
         redirect_validator=reject_private,
-        async_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     try:
         with pytest.raises(PermissionError, match="private redirect"):
-            await ld.aload(URL)
+            await ld.load(URL)
         assert requested == [URL]
         assert validated == ["http://127.0.0.1/secret"]
     finally:
-        await ld.aclose()
+        await ld.close()
 
 
 def test_empty_body_is_rejected(tmp_path: Path) -> None:

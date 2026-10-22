@@ -17,10 +17,10 @@ comet_rag/
 │   └── schemas/        仅 HTTP 请求/响应 DTO
 ├── workers/            arq 消费进程；按 CPU / IO 负载分道
 ├── composition/        服务组合根与长生命周期 Context
-├── services/           用例、策略编排与 Pipeline
+├── services/           用例、策略编排与 Pipeline；IndexPlan 物化、revision 写入/判活
 ├── tasks/              通用任务内核、契约与无外部依赖参考实现
 ├── infrastructure/     所有外部适配器
-│   ├── sources/        Local · HTTP · S3 · AutoLoader
+│   ├── sources/        Local · HTTP · S3 · 同步/异步 AutoLoader
 │   ├── extractors/     MinerU HTTP 文档提取
 │   ├── models/         embedding · reranker · vision
 │   ├── persistence/
@@ -40,6 +40,7 @@ comet_rag/
 │   ├── chunkers/       原子 Chunker · 参数画像
 │   │   └── strategies/ Markdown section · 真实页面组合策略
 │   ├── embedding/      批量排程，不发模型请求
+│   ├── indexing/       HierarchyBuilder 纯父子块计算，不生成存储 ID
 │   ├── retrieval/      RRF 等纯计算算法
 │   └── pipelines/      Hook 与 Pipeline 值对象，不做外部装配
 ├── ports/              契约和值对象（只依赖标准库）
@@ -75,7 +76,7 @@ flowchart TD
     lib["engines/<br/>documents · chunkers · retrieval<br/>Hook · embedding 排程"]
 
     subgraph BASE["零依赖地基"]
-        ports["ports/<br/>Protocol 契约 + 值对象"]
+        ports["ports/<br/>Protocol / ABC 契约 + 值对象"]
         kernel["core/<br/>闸门 · 降级 · 日志 · 时间"]
         cfg["config/"]
         exc["exceptions/"]
@@ -106,19 +107,9 @@ flowchart TD
     class ports,kernel,cfg,exc base
 ```
 
-**依赖只能向下。** `tests/unit/test_layering.py` 用 AST 强制三条：
-
-| # | 规则 | 破了会怎样 |
-|---|------|-----------|
-| 1 | `engines/` 不得 import redis / pymilvus / sqlalchemy / arq / fastapi … | 装一个 docx 解析器要拖进一整套中间件，「库」那一半作废 |
-| 2 | `engines/` 只能 import `engines` 和 `ports`（**白名单**） | 底层反向依赖上层，`ports/` 存在的意义消失 |
-| 3 | `services/` 与 `engines/` 不得 import `infrastructure.models` | 供应商细节泄漏到用例，换模型要改业务代码 |
-| 4 | `core/` 不得 import 本项目任何其他包 | 人人依赖的内核回头依赖上层，立刻出环 |
-| 5 | 顶层包之间不得成环 | 环里的包无法被单独理解或单独拿走 |
-
-第 2 条原本是黑名单（禁 api / workers / services）。黑名单只拦得住已经想到的
-那几个 —— 后来新增的 `application/` 就从缝里溜了进去。白名单没有这个失效模式：
-新包默认被拒。
+**依赖只能向下。** `tests/unit/test_layering.py` 检查 engines/ports 白名单、Service
+与适配器隔离、模型构造位置、单进程租约隔离、并发默认值和包间无环等边界。
+完整规则与原因统一见 [架构：分层](architecture.md#分层)。
 
 ## 入库流程
 
@@ -133,10 +124,10 @@ flowchart TD
 
     subgraph ST["三个阶段：各自可重试、可断点续跑"]
         E --> LG{{"加载闸门<br/>护本机 fd 与对外连接"}}
-        LG --> F["AutoLoader<br/>Local / URL / S3 → 受管本地文件"]
+        LG --> F["AsyncAutoLoader<br/>Local / URL / S3 → 受管本地文件"]
         F --> T{"实际文件类型"}
-        T -->|DOCX| DX["DocumentExtractorPort<br/>DocxDocumentExtractor"]
-        T -->|PDF| DP["DocumentExtractorPort<br/>MinerUDocumentExtractor"]
+        T -->|DOCX| DX["AsyncDocumentExtractorPort<br/>AsyncDocxDocumentExtractor"]
+        T -->|PDF| DP["AsyncDocumentExtractorPort<br/>AsyncMinerUDocumentExtractor"]
         DX --> DOCX["engines<br/>converter → parser → cleaner"]
         DP --> MG{{"MinerU 独立闸门"}}
         MG --> MU["infrastructure/extractors<br/>mineru-api / mineru-router"]
@@ -152,7 +143,7 @@ flowchart TD
     KB -->|是| MAT["共享 materializer<br/>统一 ID · metadata · 字符位置"]
     MAT --> I["engines/embedding/batch<br/>按 batch_limit 切块<br/>max_concurrency 控并发"]
     I --> GATE{{"进程级闸门 Gate"}}
-    GATE --> J["EmbeddingPort.aembed_batch"]
+    GATE --> J["AsyncEmbeddingPort.embed_batch"]
     J --> K["infrastructure/models<br/>Qwen · OpenAI 兼容"]
     K --> L[("persistence/vector_store<br/>Milvus / 内存")]
     L --> M["Done：写入条数、chunk 数"]
@@ -176,30 +167,35 @@ flowchart TD
     D1 --> MODE{"请求 mode"}
     D2 --> MODE
     D3 --> MODE
-    MODE -->|dense| E["EmbeddingPort.aembed_query"]
-    MODE -->|keyword| KW[("KeywordSearchPort<br/>BM25 取 fetch_k")]
+    MODE -->|dense| E["AsyncEmbeddingPort.embed_query"]
+    MODE -->|keyword| KW[("AsyncKeywordSearchPort<br/>BM25 取 fetch_k")]
     MODE -->|hybrid| BOTH["并发执行两路召回"]
     BOTH --> E
     BOTH --> KW
     E --> GATE{{"进程级模型闸门"}}
-    GATE --> F[("VectorSearchPort.asearch<br/>dense 取 fetch_k")]
+    GATE --> F[("AsyncVectorSearchPort.search<br/>dense 取 fetch_k")]
     F --> CAND["dense 候选"]
     KW --> KCAND["keyword 候选"]
     CAND --> RRF{"是否 hybrid？"}
     KCAND --> RRF
     RRF -->|是，两路成功| RF["纯 RRF 按名次融合去重"]
-    RRF -->|是，单路故障| FALL["退到可用通道<br/>记录 degradations"]
+    RRF -->|是，单路可恢复故障| FALL["退到可用通道<br/>记录 degradations"]
     RRF -->|否| ONE["单路候选"]
     RF --> G{"命中为空？"}
     FALL --> G
     ONE --> G
     G -->|是| GX["返回空结果，附带 effective_top_k 与降级级别"]
     G -->|否| H{"配了 reranker<br/>且允许重排？"}
-    H -->|否| I["直接截取 top_k"]
-    H -->|是| J["RerankerPort.arank"]
-    J --> CHECK{"分数条数与索引<br/>能与候选对齐？"}
+    H -->|否| RETURN{"return_level"}
+    H -->|是| J["AsyncRerankerPort.rank"]
+    J --> CHECK{"结构、数量、索引<br/>和有限分数均有效？"}
     CHECK -->|"否 / 抛异常"| L["降级：返回召回/融合结果<br/>并打 WARNING"]
-    CHECK -->|是| M["按新分数排序 → top_k"]
+    CHECK -->|是| M["接受重排顺序"]
+    L --> RETURN
+    M --> RETURN
+    RETURN -->|child| I["截取 top_k"]
+    RETURN -->|parent| P["批量读取父块并核验身份<br/>只去重成功回填的父块"]
+    P --> I
 ```
 
 **重排失败一定降级、不失败整个查询** —— 检索是读路径，稍差的结果远好过没有
@@ -207,11 +203,16 @@ flowchart TD
 原始分数不可比，因此只用 RRF 的名次融合；`vector_score`、`keyword_score`、
 `fusion_score` 与各路 rank 仅用于观察和调试。
 
+hybrid 遇到判活、schema 或参数等不可降级错误，会取消并排干另一通道后传播原异常。
+调用方取消同样要排干两路，重复取消不会打断已经开始的清理。重排只接收候选 metadata
+的独立快照；畸形结果或非有限分数会回退原候选，取消仍向上传播。
+父块缺失或身份不匹配时，每个已判活 child 各自保留，不能因共同的 parent_id 提前丢弃。
+
 ## 改一件事，去哪找
 
 | 想做的事 | 位置 |
 |---|---|
-| 接一个新的 embedding 服务 | `infrastructure/models/embedding/`，继承 `BaseEmbeddingModel`，在 `composition/bootstrap.py` 装配 |
+| 接一个新的 embedding 服务 | `infrastructure/models/embedding/`，服务适配器继承 `AsyncBaseEmbeddingModel`，同步库适配器继承 `BaseEmbeddingModel`；在 `composition/bootstrap.py` 装配 |
 | 改「一次请求发几条、几个并发」 | `engines/embedding/batch.py` |
 | 改 embedding 契约本身 | `ports/embedding.py`（会波及所有适配器，pyright 会告诉你哪些） |
 | 加一种进程内文件格式 | `engines/documents/<format>/` 实现 `DocumentExtractorPort` + `engines/pipelines/hooks.py` 注册 |

@@ -11,7 +11,7 @@ from fastapi import Depends, Request
 from ..composition.context import Context
 from ..core.concurrency import Overloaded
 from ..core.degradation import Level
-from ..ports import BaseVectorStore
+from ..ports import AsyncVectorStore
 from ..services.knowledge_base import KnowledgeBaseService
 from ..services.retrieval import RetrievalService
 from ..services.source_policy import SourcePolicy
@@ -36,7 +36,7 @@ def get_retrieval(ctx: ContextDep) -> RetrievalService:
     return ctx.retrieval
 
 
-def get_vector_store(ctx: ContextDep) -> BaseVectorStore:
+def get_vector_store(ctx: ContextDep) -> AsyncVectorStore:
     return ctx.vector_store
 
 
@@ -46,7 +46,7 @@ def get_knowledge_base(ctx: ContextDep) -> KnowledgeBaseService:
 
 TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
 RetrievalDep = Annotated[RetrievalService, Depends(get_retrieval)]
-VectorStoreDep = Annotated[BaseVectorStore, Depends(get_vector_store)]
+VectorStoreDep = Annotated[AsyncVectorStore, Depends(get_vector_store)]
 KnowledgeBaseDep = Annotated[KnowledgeBaseService, Depends(get_knowledge_base)]
 
 

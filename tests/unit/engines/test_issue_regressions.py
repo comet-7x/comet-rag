@@ -23,11 +23,13 @@ from comet_rag.engines.documents.docx import (
     DocxParsedContent,
     DocxParser,
 )
+from comet_rag.engines.offload import run_sync
 from comet_rag.infrastructure.sources import (
-    AutoLoader,
-    BaseLoader,
+    AsyncAutoLoader,
+    AsyncBaseLoader,
+    AsyncLoaderRoute,
+    AsyncURLLoader,
     LoaderContent,
-    LoaderRoute,
     SourceContent,
     URLLoader,
 )
@@ -61,16 +63,13 @@ def test_directory_is_not_treated_as_local_file(tmp_path: Path) -> None:
     assert source.source_type == "unknown"
 
 
-class _RecordingLoader(BaseLoader):
-    def _load(self, source, *args, **kwargs):  # pragma: no cover
-        raise NotImplementedError
-
-    async def _aload(self, source, *args, **kwargs):
+class _RecordingLoader(AsyncBaseLoader):
+    async def _load(self, source, *args, **kwargs):
         if isinstance(source, str):
             source = SourceContent(source)
         return LoaderContent(path=Path(source.source), source=source)
 
-    def cleanup(self) -> None:
+    async def cleanup(self) -> None:
         pass
 
 
@@ -86,9 +85,9 @@ async def test_auto_loader_resolves_local_source_off_event_loop(
         return func(*args)
 
     monkeypatch.setattr(asyncio, "to_thread", recording_to_thread)
-    loader = AutoLoader([LoaderRoute.local(_RecordingLoader())])
+    loader = AsyncAutoLoader([AsyncLoaderRoute.local(_RecordingLoader())])
 
-    result = await loader.aload(SourceContent(path))
+    result = await loader.load(SourceContent(path))
 
     assert result.path == path
     assert calls == [loader._resolve]
@@ -99,10 +98,6 @@ class _VisionModel:
         self.mime_types: list[str] = []
 
     def describe(self, base64_data: str, media_type: str, **kwargs) -> str:
-        self.mime_types.append(media_type)
-        return "jpeg description"
-
-    async def adescribe(self, base64_data: str, media_type: str, **kwargs) -> str:
         self.mime_types.append(media_type)
         return "jpeg description"
 
@@ -174,7 +169,7 @@ async def test_docx_parser_supports_async_parse() -> None:
     converted = DocxDocument(elements=document, metadata={"source": "unit"})
     parser = DocxParser()
 
-    parsed = await parser.aparse(converted)
+    parsed = await run_sync(parser.parse, converted)
     assert parsed.text == "hello"
 
 
@@ -204,8 +199,10 @@ async def test_docx_parser_serializes_concurrent_aparse_calls(monkeypatch) -> No
 
     monkeypatch.setattr(parser, "_walk", monitored_walk)
     results = await asyncio.gather(
-        parser.aparse(DocxDocument(elements=first, metadata={"id": "first"})),
-        parser.aparse(DocxDocument(elements=second, metadata={"id": "second"})),
+        run_sync(parser.parse, DocxDocument(elements=first, metadata={"id": "first"})),
+        run_sync(
+            parser.parse, DocxDocument(elements=second, metadata={"id": "second"})
+        ),
     )
 
     assert max_active == 1
@@ -213,18 +210,24 @@ async def test_docx_parser_serializes_concurrent_aparse_calls(monkeypatch) -> No
     assert [result.text for result in results] == ["first document", "second document"]
 
 
-@pytest.mark.parametrize("method", ["batch_load", "abatch_load"])
+@pytest.mark.parametrize("asynchronous", [False, True])
 async def test_url_batch_rejects_non_positive_concurrency(
-    tmp_path: Path, method: str
+    tmp_path: Path, asynchronous: bool
 ) -> None:
-    loader = URLLoader(download_dir=tmp_path)
+    loader = (
+        AsyncURLLoader(download_dir=tmp_path)
+        if asynchronous
+        else URLLoader(download_dir=tmp_path)
+    )
     try:
         with pytest.raises(ValueError, match="max_concurrency 必须大于 0"):
-            result = getattr(loader, method)([], max_concurrency=0)
+            result = loader.batch_load([], max_concurrency=0)
             if asyncio.iscoroutine(result):
                 await result
     finally:
-        await loader.aclose()
+        result = loader.close()
+        if asyncio.iscoroutine(result):
+            await result
 
 
 def test_mdx_fenced_code_body_is_not_split_at_internal_blank_line() -> None:

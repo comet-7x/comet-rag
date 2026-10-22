@@ -229,9 +229,10 @@ def register(kind: str, *, replace: bool = False) -> Callable[[Runner], Runner]:
     return deco
 
 
-def unregister(kind: str) -> None:
-    """解绑。主要给测试用，避免用例间互相污染全局注册表。"""
-    _REGISTRY.pop(kind, None)
+def unregister(kind: str, *, expected: Runner | None = None) -> None:
+    """仅撤销仍属于调用方的注册，避免旧 Context 关闭时移除新 runner。"""
+    if expected is None or _REGISTRY.get(kind) is expected:
+        _REGISTRY.pop(kind, None)
 
 
 def get_runner(kind: str) -> Runner:

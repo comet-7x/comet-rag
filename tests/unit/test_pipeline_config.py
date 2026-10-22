@@ -93,9 +93,6 @@ def test_resolution_preserves_inputs_and_injected_model(limits: LimitsConfig) ->
         def describe(self, base64_data: str, media_type: str) -> str:
             return self.response
 
-        async def adescribe(self, base64_data: str, media_type: str) -> str:
-            return self.response
-
     model = VisionModel()
     docx = DocxConfig(vision_model=model, include_images=False, heading_numbers=True)
     overrides = PipelineConfig(docx=docx, chunk_size=321)

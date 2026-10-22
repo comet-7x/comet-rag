@@ -7,8 +7,10 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from comet_rag.core.concurrency import Gate
-from comet_rag.engines.embedding.batch import aembed_documents, embed_documents
-from comet_rag.infrastructure.models.embedding import OpenAIEmbeddingModel
+from comet_rag.infrastructure.models.embedding import (
+    AsyncOpenAIEmbeddingModel,
+    OpenAIEmbeddingModel,
+)
 
 
 @dataclass
@@ -17,11 +19,11 @@ class _Embedding:
     embedding: list[float]
 
 
-class _SyncEmbeddings:
+class _EmbeddingResponse:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    def create(self, **kwargs: Any) -> Any:
+    def _response(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         values = kwargs["input"]
         values = [values] if isinstance(values, str) else values
@@ -33,9 +35,14 @@ class _SyncEmbeddings:
         return SimpleNamespace(data=data)
 
 
-class _AsyncEmbeddings(_SyncEmbeddings):
+class _SyncEmbeddings(_EmbeddingResponse):
+    def create(self, **kwargs: Any) -> Any:
+        return self._response(**kwargs)
+
+
+class _AsyncEmbeddings(_EmbeddingResponse):
     async def create(self, **kwargs: Any) -> Any:
-        return super().create(**kwargs)
+        return self._response(**kwargs)
 
 
 class _SyncClient:
@@ -48,26 +55,33 @@ class _AsyncClient:
         self.embeddings = _AsyncEmbeddings()
 
 
-def _model() -> tuple[OpenAIEmbeddingModel, _SyncClient, _AsyncClient]:
+def _model() -> tuple[
+    OpenAIEmbeddingModel, AsyncOpenAIEmbeddingModel, _SyncClient, _AsyncClient
+]:
     sync_client = _SyncClient()
     async_client = _AsyncClient()
     model = OpenAIEmbeddingModel(
         base_url="https://model.invalid/v1",
         model_name="text-embedding",
         api_key="test",
-        sync_client=cast(Any, sync_client),
-        async_client=cast(Any, async_client),
+        client=cast(Any, sync_client),
     )
-    return model, sync_client, async_client
+    async_model = AsyncOpenAIEmbeddingModel(
+        base_url="https://model.invalid/v1",
+        model_name="text-embedding",
+        api_key="test",
+        client=cast(Any, async_client),
+    )
+    return model, async_model, sync_client, async_client
 
 
 async def test_query_and_document_interfaces_are_immediately_usable() -> None:
-    model, sync_client, async_client = _model()
+    model, async_model, sync_client, async_client = _model()
 
     assert model.embed_query("query") == [0.0]
-    assert await model.aembed_query("query") == [0.0]
-    assert embed_documents(model, ["a", "b"]) == [[0.0], [1.0]]
-    assert await aembed_documents(model, ["a", "b"]) == [[0.0], [1.0]]
+    assert await async_model.embed_query("query") == [0.0]
+    assert model.embed_batch(["a", "b"]) == [[0.0], [1.0]]
+    assert await async_model.embed_batch(["a", "b"]) == [[0.0], [1.0]]
 
     assert sync_client.embeddings.calls[-1]["input"] == ["a", "b"]
     assert async_client.embeddings.calls[-1]["input"] == ["a", "b"]
@@ -75,11 +89,11 @@ async def test_query_and_document_interfaces_are_immediately_usable() -> None:
 
 async def test_native_async_batch_still_uses_process_gate() -> None:
     """原生批量是一个请求，所以只占**一个**闸门名额 —— 装 1 篇还是 512 篇都一样。"""
-    model, _, _ = _model()
+    model, async_model, _, _ = _model()
     gate = Gate(limit=1)
-    model.bind_gate(gate)
+    async_model.bind_gate(gate)
 
-    assert await model.aembed_batch(["a", "b"]) == [[0.0], [1.0]]
+    assert await async_model.embed_batch(["a", "b"]) == [[0.0], [1.0]]
     assert gate.stats.admitted == 1
 
 
@@ -91,7 +105,7 @@ async def test_explicit_base64_encoding_is_decoded_to_floats() -> None:
     `embed_query` 声明 `list[float]`、实际给出 `str` —— 与 Qwen 适配器先前
     同病，只是这一处直到评审才被发现。
     """
-    model, _, _ = _model()
+    model, async_model, _, _ = _model()
     # 0.25, -0.5, 1.5 的小端 float32
     payload = base64.b64encode(struct.pack("<3f", 0.25, -0.5, 1.5)).decode()
 

@@ -16,7 +16,7 @@ from comet_rag.config.schemas import (
     SqlDatabaseConfig,
     VectorDatabaseConfig,
 )
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.models.embedding.base import AsyncBaseEmbeddingModel
 from comet_rag.infrastructure.persistence.document_store import InMemoryDocumentStore
 from comet_rag.infrastructure.persistence.document_store.postgres import (
     PostgresDocumentStore,
@@ -25,22 +25,22 @@ from comet_rag.infrastructure.persistence.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
 )
 from comet_rag.infrastructure.persistence.sql import Database
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
-from comet_rag.infrastructure.persistence.vector_store.milvus import MilvusStore
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store.milvus import AsyncMilvusStore
 from comet_rag.ports import VectorRecord
 from comet_rag.ports.document_store import RevisionDraft, RevisionKey
 from comet_rag.services.retrieval import SearchQuery
 from comet_rag.tasks import InMemoryTaskStore
 
 
-class Embedding(BaseEmbeddingModel):
-    def _embed(self, data, **kwargs) -> list[float]:
+class Embedding(AsyncBaseEmbeddingModel):
+    def _vector(self, data, **kwargs) -> list[float]:
         return [1.0, 0.0, 0.0]
 
-    async def _aembed(self, data, **kwargs) -> list[float]:
-        return self._embed(data)
+    async def _embed(self, data, **kwargs) -> list[float]:
+        return self._vector(data)
 
-    async def close_client(self) -> None:
+    async def close(self) -> None:
         return None
 
 
@@ -83,26 +83,28 @@ async def test_disabled_read_switch_never_builds_document_store(monkeypatch) -> 
         side_effect=AssertionError("disabled read must not create DocumentStore")
     )
     monkeypatch.setattr(bootstrap, "build_document_store", builder)
-    context = bootstrap.build_context(
+    context = await bootstrap.build_context(
         config(enabled=False), embedding_model=Embedding()
     )
     assert context.document_store is None
     builder.assert_not_called()
-    await context.aclose()
+    await context.close()
 
 
 async def test_enabled_memory_read_is_shared_and_preserves_legacy_visibility() -> None:
-    context = bootstrap.build_context(config(budget=64), embedding_model=Embedding())
+    context = await bootstrap.build_context(
+        config(budget=64), embedding_model=Embedding()
+    )
     try:
         documents = context.document_store
         assert isinstance(documents, InMemoryDocumentStore)
         assert context.database is None
         assert context.retrieval._document_store is documents  # noqa: SLF001
-        await context.vector_store.aensure_collection("kb", dim=3)
+        await context.vector_store.ensure_collection("kb", dim=3)
         from comet_rag.services.knowledge_base import KnowledgeBaseSpec
 
         await context.knowledge_base.create(KnowledgeBaseSpec(kb_id="kb"))
-        await context.vector_store.aupsert(
+        await context.vector_store.upsert(
             "kb",
             [
                 VectorRecord(
@@ -118,11 +120,11 @@ async def test_enabled_memory_read_is_shared_and_preserves_legacy_visibility() -
             "legacy"
         ]
         key = RevisionKey("kb", "source", "new")
-        await documents.areserve_revision(
+        await documents.reserve_revision(
             RevisionDraft(key, "a" * 64, 0, 1, "fixture.md", "md")
         )
-        await documents.amark_ready(key)
-        await context.vector_store.aupsert(
+        await documents.mark_ready(key)
+        await context.vector_store.upsert(
             "kb",
             [
                 VectorRecord(
@@ -133,14 +135,14 @@ async def test_enabled_memory_read_is_shared_and_preserves_legacy_visibility() -
                 )
             ],
         )
-        await documents.aactivate_revision(key)
+        await documents.activate_revision(key)
         assert [hit.id for hit in (await context.retrieval.search(query)).chunks] == [
             "active"
         ]
         recall = context.retrieval._revision_recall  # noqa: SLF001 — 配置预算必须落到调用边界
         assert recall is not None and recall._cap == 64  # noqa: SLF001
     finally:
-        await context.aclose()
+        await context.close()
 
 
 @pytest.mark.parametrize("milvus", [False, True])
@@ -152,10 +154,10 @@ async def test_injected_memory_vectors_pair_with_memory_documents_without_extra_
         side_effect=AssertionError("all injected stores need no new SQL pool")
     )
     monkeypatch.setattr(bootstrap, "build_database", builder)
-    context = bootstrap.build_context(
+    context = await bootstrap.build_context(
         config(milvus=milvus),
         embedding_model=Embedding(),
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
         task_store=InMemoryTaskStore(),
         kb_repository=InMemoryKnowledgeBaseRepository(),
     )
@@ -164,18 +166,18 @@ async def test_injected_memory_vectors_pair_with_memory_documents_without_extra_
         assert context.database is None
         builder.assert_not_called()
     finally:
-        await context.aclose()
+        await context.close()
 
 
-class FakeMilvus(MilvusStore):
+class FakeMilvus(AsyncMilvusStore):
     def __init__(self, consistency: str = "Strong") -> None:
         self._consistency = consistency
 
-    async def aclose(self) -> None:
+    async def close(self) -> None:
         return None
 
 
-def test_session_injected_without_documents_is_rejected_before_sql_creation(
+async def test_session_injected_without_documents_is_rejected_before_sql_creation(
     monkeypatch,
 ) -> None:
     builder = Mock(
@@ -183,19 +185,21 @@ def test_session_injected_without_documents_is_rejected_before_sql_creation(
     )
     monkeypatch.setattr(bootstrap, "build_database", builder)
     with pytest.raises(ValueError, match="Strong"):
-        bootstrap.build_context(config(milvus=True), vector_store=FakeMilvus("Session"))
+        await bootstrap.build_context(
+            config(milvus=True), vector_store=FakeMilvus("Session")
+        )
     builder.assert_not_called()
 
 
 @pytest.mark.parametrize("fault", ["memory-docs", "session", "postgres-with-memory"])
-def test_bad_injected_revision_pair_is_rejected_before_model_or_database_creation(
+async def test_bad_injected_revision_pair_is_rejected_before_model_or_database_creation(
     monkeypatch, fault: str
 ) -> None:
     builder = Mock(side_effect=AssertionError("resource preflight must run first"))
     monkeypatch.setattr(bootstrap, "build_embedding_model", builder)
     monkeypatch.setattr(bootstrap, "build_database", builder)
     vectors = (
-        InMemoryVectorStore()
+        AsyncInMemoryVectorStore()
         if fault == "postgres-with-memory"
         else FakeMilvus("Session" if fault == "session" else "Strong")
     )
@@ -207,7 +211,7 @@ def test_bad_injected_revision_pair_is_rejected_before_model_or_database_creatio
     with pytest.raises(
         ValueError, match="(InMemoryDocumentStore|PostgresDocumentStore|Strong)"
     ):
-        bootstrap.build_context(
+        await bootstrap.build_context(
             config(), vector_store=vectors, document_store=documents
         )
     builder.assert_not_called()
@@ -219,7 +223,7 @@ async def test_document_only_postgres_requirement_is_not_lost_when_other_stores_
     database = Mock(spec=Database)
     builder = Mock(return_value=database)
     monkeypatch.setattr(bootstrap, "build_database", builder)
-    context = bootstrap.build_context(
+    context = await bootstrap.build_context(
         config(milvus=True),
         embedding_model=Embedding(),
         vector_store=FakeMilvus(),
@@ -230,5 +234,5 @@ async def test_document_only_postgres_requirement_is_not_lost_when_other_stores_
     assert context.document_store._db is database  # noqa: SLF001
     assert context.database is database
     builder.assert_called_once()
-    await context.aclose()
-    database.aclose.assert_awaited_once()
+    await context.close()
+    database.close.assert_awaited_once()

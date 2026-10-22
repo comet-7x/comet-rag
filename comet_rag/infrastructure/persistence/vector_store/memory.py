@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from comet_rag.ports import (
-    BaseVectorStore,
+    AsyncVectorStore,
     CollectionNotFound,
     DimensionMismatch,
     Filter,
@@ -88,7 +88,7 @@ class _Collection:
         self.records: dict[str, VectorRecord] = {}
 
 
-class InMemoryVectorStore(BaseVectorStore):
+class AsyncInMemoryVectorStore(AsyncVectorStore):
     def __init__(self) -> None:
         self._collections: dict[str, _Collection] = {}
         self._lock = asyncio.Lock()
@@ -99,7 +99,7 @@ class InMemoryVectorStore(BaseVectorStore):
         except KeyError:
             raise CollectionNotFound(kb_id) from None
 
-    async def aensure_collection(self, kb_id: str, *, dim: int) -> None:
+    async def ensure_collection(self, kb_id: str, *, dim: int) -> None:
         if dim <= 0:
             raise ValueError(f"维度必须为正整数，收到 {dim}")
         async with self._lock:
@@ -110,7 +110,7 @@ class InMemoryVectorStore(BaseVectorStore):
             if existing.dim != dim:
                 raise DimensionMismatch(kb_id, existing.dim, dim)
 
-    async def aupsert(self, kb_id: str, records: Sequence[VectorRecord]) -> list[str]:
+    async def upsert(self, kb_id: str, records: Sequence[VectorRecord]) -> list[str]:
         async with self._lock:
             collection = self._require(kb_id)
             # 先整体校验再写入：宁可一条不写，也不要写一半留下不一致的库
@@ -128,7 +128,7 @@ class InMemoryVectorStore(BaseVectorStore):
                 )
             return [r.id for r in records]
 
-    async def asearch(
+    async def search(
         self,
         kb_id: str,
         query_embedding: Sequence[float],
@@ -159,7 +159,7 @@ class InMemoryVectorStore(BaseVectorStore):
         scored.sort(key=lambda h: (-h.score, h.id))
         return scored[:top_k]
 
-    async def asearch_keywords(
+    async def search_keywords(
         self,
         kb_id: str,
         query: str,
@@ -187,7 +187,7 @@ class InMemoryVectorStore(BaseVectorStore):
         hits.sort(key=lambda hit: (-hit.score, hit.id))
         return hits[:top_k]
 
-    async def adelete(
+    async def delete(
         self,
         kb_id: str,
         *,
@@ -209,11 +209,11 @@ class InMemoryVectorStore(BaseVectorStore):
                 del collection.records[key]
             return len(doomed)
 
-    async def adrop_collection(self, kb_id: str) -> None:
+    async def drop_collection(self, kb_id: str) -> None:
         async with self._lock:
             self._collections.pop(kb_id, None)
 
-    async def acount(self, kb_id: str, *, filter: Filter | None = None) -> int:
+    async def count(self, kb_id: str, *, filter: Filter | None = None) -> int:
         async with self._lock:
             collection = self._require(kb_id)
             return sum(

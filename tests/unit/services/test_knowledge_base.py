@@ -14,7 +14,7 @@ import pytest
 from comet_rag.infrastructure.persistence.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
 )
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.ports import CollectionNotFound, VectorRecord
 from comet_rag.ports.knowledge_base import (
     EmbeddingModelChanged,
@@ -27,8 +27,8 @@ DIM = 4
 
 
 @pytest.fixture
-def store() -> InMemoryVectorStore:
-    return InMemoryVectorStore()
+def store() -> AsyncInMemoryVectorStore:
+    return AsyncInMemoryVectorStore()
 
 
 @pytest.fixture
@@ -64,12 +64,12 @@ async def test_create_records_model_and_dim(service: KnowledgeBaseService) -> No
 
 
 async def test_create_also_prepares_the_collection(
-    service: KnowledgeBaseService, store: InMemoryVectorStore
+    service: KnowledgeBaseService, store: AsyncInMemoryVectorStore
 ) -> None:
     """元数据与 collection 必须成对存在，否则入库时会莫名报 CollectionNotFound。"""
     await service.create(KnowledgeBaseSpec(kb_id="kb-1"))
 
-    assert await store.acount("kb-1") == 0  # 不抛 CollectionNotFound 即为已建
+    assert await store.count("kb-1") == 0  # 不抛 CollectionNotFound 即为已建
 
 
 async def test_create_is_idempotent(service: KnowledgeBaseService) -> None:
@@ -83,14 +83,16 @@ async def test_create_is_idempotent(service: KnowledgeBaseService) -> None:
     assert again.name == "原名", "幂等创建不该悄悄改掉已有属性"
 
 
-async def test_concurrent_create_returns_the_winner(store: InMemoryVectorStore) -> None:
+async def test_concurrent_create_returns_the_winner(
+    store: AsyncInMemoryVectorStore,
+) -> None:
     class RacingRepository(InMemoryKnowledgeBaseRepository):
         def __init__(self) -> None:
             super().__init__()
             self.ready = asyncio.Barrier(2)
 
-        async def aget(self, kb_id: str):
-            found = await super().aget(kb_id)
+        async def get(self, kb_id: str):
+            found = await super().get(kb_id)
             if found is None:
                 await self.ready.wait()
             return found
@@ -182,11 +184,11 @@ async def test_ingest_into_unknown_kb_is_rejected(
 
 
 async def test_chunk_count_is_live(
-    service: KnowledgeBaseService, store: InMemoryVectorStore
+    service: KnowledgeBaseService, store: AsyncInMemoryVectorStore
 ) -> None:
     """现查而非存计数：冗余计数一定会漂移，而漂移了的计数比没有更误导人。"""
     await service.create(KnowledgeBaseSpec(kb_id="kb-1"))
-    await store.aupsert(
+    await store.upsert(
         "kb-1",
         [VectorRecord(id="a", text="内容", embedding=[1.0, 0, 0, 0])],
     )
@@ -211,7 +213,7 @@ async def test_count_failure_does_not_break_the_query(
 ) -> None:
     """统计失败不该让整个查询失败 —— 元数据本身还是有用的。"""
     await service.create(KnowledgeBaseSpec(kb_id="kb-1"))
-    await store.adrop_collection("kb-1")  # 制造元数据在、collection 没了的状态
+    await store.drop_collection("kb-1")  # 制造元数据在、collection 没了的状态
 
     view = await service.get("kb-1")
 
@@ -223,10 +225,10 @@ async def test_count_failure_does_not_break_the_query(
 
 
 async def test_delete_removes_both_metadata_and_vectors(
-    service: KnowledgeBaseService, store: InMemoryVectorStore
+    service: KnowledgeBaseService, store: AsyncInMemoryVectorStore
 ) -> None:
     await service.create(KnowledgeBaseSpec(kb_id="kb-1"))
-    await store.aupsert(
+    await store.upsert(
         "kb-1", [VectorRecord(id="a", text="内容", embedding=[1.0, 0, 0, 0])]
     )
 
@@ -235,7 +237,7 @@ async def test_delete_removes_both_metadata_and_vectors(
     with pytest.raises(KnowledgeBaseNotFound):
         await service.get("kb-1")
     with pytest.raises(CollectionNotFound):
-        await store.acount("kb-1")
+        await store.count("kb-1")
 
 
 async def test_delete_unknown_is_not_an_error(
@@ -253,8 +255,8 @@ async def test_delete_drops_vectors_before_metadata(
     await service.create(KnowledgeBaseSpec(kb_id="kb-1"))
     order: list[str] = []
 
-    original_drop = store.adrop_collection
-    original_delete = repo.adelete
+    original_drop = store.drop_collection
+    original_delete = repo.delete
 
     async def traced_drop(kb_id: str) -> None:
         order.append("vectors")
@@ -264,8 +266,8 @@ async def test_delete_drops_vectors_before_metadata(
         order.append("metadata")
         return await original_delete(kb_id)
 
-    store.adrop_collection = traced_drop  # type: ignore[method-assign]
-    repo.adelete = traced_delete  # type: ignore[method-assign]
+    store.drop_collection = traced_drop  # type: ignore[method-assign]
+    repo.delete = traced_delete  # type: ignore[method-assign]
 
     await service.delete("kb-1")
 

@@ -6,7 +6,10 @@ from typing import Any
 from openai import AsyncOpenAI, OpenAI
 
 from comet_rag.exceptions import CometRAGException
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
+from comet_rag.infrastructure.models.embedding.base import (
+    AsyncBaseEmbeddingModel,
+    BaseEmbeddingModel,
+)
 from comet_rag.infrastructure.models.embedding.wire import decode_vector
 
 #: OpenAI 官方 ``/embeddings`` 单请求的输入条数上限。
@@ -16,48 +19,16 @@ from comet_rag.infrastructure.models.embedding.wire import decode_vector
 DEFAULT_OPENAI_BATCH_LIMIT = 2048
 
 
-class OpenAIEmbeddingModel(BaseEmbeddingModel):
-    """OpenAI ``/embeddings`` 兼容文本嵌入适配器。"""
-
-    def __init__(
-        self,
-        base_url: str,
-        model_name: str,
-        api_key: str,
-        async_client: AsyncOpenAI | None = None,
-        sync_client: OpenAI | None = None,
-        batch_limit: int = DEFAULT_OPENAI_BATCH_LIMIT,
-    ) -> None:
-        """
-        Args:
-            base_url: 模型服务地址
-            model_name: 模型名称（如 text-embedding-3-small）
-            api_key: 服务 API Key
-            async_client: 复用已有异步客户端；为 None 时内部创建
-            sync_client: 复用已有同步客户端；为 None 时内部创建
-            batch_limit: 单请求最多携带几篇文档；由调度方据此切块
-
-        传入的客户端由调用方持有，本适配器只关闭自己创建的客户端。
-        """
+class _OpenAIEmbeddingFormat:
+    def _configure(self, model_name: str, batch_limit: int) -> None:
         if batch_limit <= 0:
             raise ValueError(f"batch_limit 必须大于 0，收到 {batch_limit}")
         self._model_name = model_name
         self.batch_limit = batch_limit
 
-        self._owns_async_client = async_client is None
-        self._owns_sync_client = sync_client is None
-        self.async_client = (
-            async_client
-            if async_client is not None
-            else AsyncOpenAI(base_url=base_url, api_key=api_key)
-        )
-        self.sync_client = (
-            sync_client
-            if sync_client is not None
-            else OpenAI(base_url=base_url, api_key=api_key)
-        )
-
-    def _request_options(self, input_data: str | Sequence[str], **kwargs: Any) -> dict:
+    def _request_options(
+        self, input_data: str | Sequence[str], **kwargs: Any
+    ) -> dict[str, Any]:
         """同步/异步共用请求构造，认证与模型名不能被透传参数覆盖。"""
         return {**kwargs, "input": input_data, "model": self._model_name}
 
@@ -78,6 +49,25 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             )
         return [decode_vector(item.embedding) for item in ordered]
 
+
+class OpenAIEmbeddingModel(_OpenAIEmbeddingFormat, BaseEmbeddingModel):
+    """OpenAI 兼容文本嵌入适配器。"""
+
+    def __init__(
+        self,
+        base_url: str,
+        model_name: str,
+        api_key: str,
+        client: OpenAI | None = None,
+        batch_limit: int = DEFAULT_OPENAI_BATCH_LIMIT,
+    ) -> None:
+        """注入客户端由调用方关闭；未注入时只创建当前执行模式的客户端。"""
+        self._configure(model_name, batch_limit)
+        self._owns_client = client is None
+        self.client = (
+            client if client is not None else OpenAI(base_url=base_url, api_key=api_key)
+        )
+
     def _embed(self, text: str, **kwargs: Any) -> list[float]:
         """
         同步生成文本嵌入向量。
@@ -90,7 +80,7 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             嵌入向量（浮点数列表）
         """
         try:
-            response = self.sync_client.embeddings.create(
+            response = self.client.embeddings.create(
                 **self._request_options(text, **kwargs)
             )
             return self._vectors(response, expected_count=1)[0]
@@ -99,7 +89,46 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
                 f"{self.__class__.__name__} | embed | 方法操作发生非预期错误：{str(e)}"
             ) from e
 
-    async def _aembed(self, text: str, **kwargs: Any) -> list[float]:
+    def _embed_batch(
+        self, documents: Sequence[str], /, **kwargs: Any
+    ) -> list[list[float]]:
+        """用 OpenAI 原生批量请求生成文档向量：一次请求，多篇文档。"""
+        try:
+            response = self.client.embeddings.create(
+                **self._request_options(list(documents), **kwargs)
+            )
+            return self._vectors(response, expected_count=len(documents))
+        except Exception as e:
+            raise CometRAGException(
+                f"{self.__class__.__name__} | embed_batch | 方法操作发生非预期错误：{str(e)}"
+            ) from e
+
+    def close(self) -> None:
+        if self._owns_client:
+            self.client.close()
+
+
+class AsyncOpenAIEmbeddingModel(_OpenAIEmbeddingFormat, AsyncBaseEmbeddingModel):
+    """OpenAI 兼容文本嵌入适配器。"""
+
+    def __init__(
+        self,
+        base_url: str,
+        model_name: str,
+        api_key: str,
+        client: AsyncOpenAI | None = None,
+        batch_limit: int = DEFAULT_OPENAI_BATCH_LIMIT,
+    ) -> None:
+        """注入客户端由调用方关闭；未注入时只创建当前执行模式的客户端。"""
+        self._configure(model_name, batch_limit)
+        self._owns_client = client is None
+        self.client = (
+            client
+            if client is not None
+            else AsyncOpenAI(base_url=base_url, api_key=api_key)
+        )
+
+    async def _embed(self, text: str, **kwargs: Any) -> list[float]:
         """
         异步生成文本嵌入向量。
 
@@ -111,21 +140,20 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             嵌入向量（浮点数列表）
         """
         try:
-            response = await self.async_client.embeddings.create(
+            response = await self.client.embeddings.create(
                 **self._request_options(text, **kwargs)
             )
             return self._vectors(response, expected_count=1)[0]
         except Exception as e:
             raise CometRAGException(
-                f"{self.__class__.__name__} | aembed | 方法操作发生非预期错误：{str(e)}"
+                f"{self.__class__.__name__} | embed | 方法操作发生非预期错误：{str(e)}"
             ) from e
 
-    def _embed_batch(
+    async def _embed_batch(
         self, documents: Sequence[str], /, **kwargs: Any
     ) -> list[list[float]]:
-        """用 OpenAI 原生批量请求生成文档向量：一次请求，多篇文档。"""
         try:
-            response = self.sync_client.embeddings.create(
+            response = await self.client.embeddings.create(
                 **self._request_options(list(documents), **kwargs)
             )
             return self._vectors(response, expected_count=len(documents))
@@ -134,22 +162,6 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
                 f"{self.__class__.__name__} | embed_batch | 方法操作发生非预期错误：{str(e)}"
             ) from e
 
-    async def _aembed_batch(
-        self, documents: Sequence[str], /, **kwargs: Any
-    ) -> list[list[float]]:
-        try:
-            response = await self.async_client.embeddings.create(
-                **self._request_options(list(documents), **kwargs)
-            )
-            return self._vectors(response, expected_count=len(documents))
-        except Exception as e:
-            raise CometRAGException(
-                f"{self.__class__.__name__} | aembed_batch | 方法操作发生非预期错误：{str(e)}"
-            ) from e
-
-    async def aclose(self) -> None:
-        """仅关闭由当前适配器创建的同步与异步客户端。"""
-        if self._owns_async_client:
-            await self.async_client.close()
-        if self._owns_sync_client:
-            self.sync_client.close()
+    async def close(self) -> None:
+        if self._owns_client:
+            await self.client.close()

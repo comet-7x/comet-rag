@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from comet_rag.infrastructure.sources.s3 import (
+    AsyncS3Loader,
     ObjectContentTypeMismatch,
     ObjectTooLarge,
     S3Loader,
@@ -196,17 +197,17 @@ def test_sync_load_metadata_uses_validated_minio_scheme(tmp_path: Path) -> None:
 
 async def test_async_load_reuses_client_and_cleans_temp_files(tmp_path: Path) -> None:
     client = AsyncClient()
-    loader = S3Loader(download_dir=tmp_path, async_client=client)
+    loader = AsyncS3Loader(download_dir=tmp_path, client=client)
 
-    first = await loader.aload(URI)
-    second = await loader.aload(URI)
+    first = await loader.load(URI)
+    second = await loader.load(URI)
 
     assert first.path.read_bytes() == BODY
     assert second.path.read_bytes() == BODY
     assert client.head_calls == 2
     assert client.get_calls == 2
 
-    await loader.acleanup()
+    await loader.cleanup()
 
     assert not first.path.exists()
     assert not second.path.exists()
@@ -283,7 +284,7 @@ def test_owned_sync_client_is_lazy_reused_and_closed(
 ) -> None:
     client = SyncClient()
     loader = S3Loader(download_dir=tmp_path)
-    monkeypatch.setattr(loader, "_new_sync_client", lambda: client)
+    monkeypatch.setattr(loader, "_new_client", lambda: client)
 
     loader.load(URI)
     loader.load(URI)
@@ -299,7 +300,7 @@ def test_cleanup_closes_owned_client_when_temp_file_removal_fails(
 ) -> None:
     client = SyncClient()
     loader = S3Loader(download_dir=tmp_path)
-    monkeypatch.setattr(loader, "_new_sync_client", lambda: client)
+    monkeypatch.setattr(loader, "_new_client", lambda: client)
     content = loader.load(URI)
     original_unlink = Path.unlink
 
@@ -326,17 +327,17 @@ async def test_owned_async_client_context_is_reused_and_closed(
 ) -> None:
     client = AsyncClient()
     context = AsyncClientContext(client)
-    loader = S3Loader(download_dir=tmp_path)
-    monkeypatch.setattr(loader, "_new_async_client_context", lambda: context)
+    loader = AsyncS3Loader(download_dir=tmp_path)
+    monkeypatch.setattr(loader, "_new_client_context", lambda: context)
 
-    await loader.aload(URI)
-    await loader.aload(URI)
-    await loader.acleanup()
+    await loader.load(URI)
+    await loader.load(URI)
+    await loader.cleanup()
 
     assert context.entered == 1
     assert context.exited == 1
     assert client.closed
-    assert loader._async_client is None
+    assert loader._client is None
 
 
 class DelayedAsyncBody(AsyncBody):
@@ -356,14 +357,14 @@ async def test_acleanup_waits_for_active_download(tmp_path: Path) -> None:
     started = asyncio.Event()
     release = asyncio.Event()
     body = DelayedAsyncBody(started, release)
-    loader = S3Loader(
+    loader = AsyncS3Loader(
         download_dir=tmp_path,
-        async_client=AsyncClient(body=body),
+        client=AsyncClient(body=body),
     )
 
-    load_task = asyncio.create_task(loader.aload(URI))
+    load_task = asyncio.create_task(loader.load(URI))
     await started.wait()
-    cleanup_task = asyncio.create_task(loader.acleanup())
+    cleanup_task = asyncio.create_task(loader.cleanup())
     await asyncio.sleep(0)
 
     assert not cleanup_task.done()
@@ -380,7 +381,7 @@ async def test_acleanup_waits_for_active_download(tmp_path: Path) -> None:
 async def test_async_activity_waiters_do_not_use_default_executor(
     tmp_path: Path, monkeypatch
 ) -> None:
-    loader = S3Loader(download_dir=tmp_path)
+    loader = AsyncS3Loader(download_dir=tmp_path)
     original_to_thread = asyncio.to_thread
     lifecycle_dispatches = 0
 
@@ -391,12 +392,12 @@ async def test_async_activity_waiters_do_not_use_default_executor(
         return await original_to_thread(func, *args, **kwargs)
 
     monkeypatch.setattr(asyncio, "to_thread", counting_to_thread)
-    loader._begin_cleanup()
+    await loader._begin_cleanup()
     entered = 0
 
     async def enter_activity() -> None:
         nonlocal entered
-        async with loader._async_activity():
+        async with loader._activity():
             entered += 1
 
     tasks = [asyncio.create_task(enter_activity()) for _ in range(64)]
@@ -414,7 +415,7 @@ async def test_async_activity_waiters_do_not_use_default_executor(
 async def test_acleanup_waits_without_dispatching_lifecycle_to_default_executor(
     tmp_path: Path, monkeypatch
 ) -> None:
-    loader = S3Loader(download_dir=tmp_path)
+    loader = AsyncS3Loader(download_dir=tmp_path)
     original_to_thread = asyncio.to_thread
     dispatched: list[object] = []
 
@@ -423,9 +424,9 @@ async def test_acleanup_waits_without_dispatching_lifecycle_to_default_executor(
         return await original_to_thread(func, *args, **kwargs)
 
     monkeypatch.setattr(asyncio, "to_thread", recording_to_thread)
-    loader._begin_activity()
+    await loader._begin_activity()
 
-    cleanup_task = asyncio.create_task(loader.acleanup())
+    cleanup_task = asyncio.create_task(loader.cleanup())
     while not loader._cleanup_in_progress:
         await asyncio.sleep(0)
     assert not cleanup_task.done()
@@ -434,17 +435,17 @@ async def test_acleanup_waits_without_dispatching_lifecycle_to_default_executor(
     await cleanup_task
 
     assert loader._begin_cleanup not in dispatched
-    assert loader._cleanup_sync_resources in dispatched
+    assert loader._cleanup_files in dispatched
 
 
 async def test_cancelled_async_activity_waiter_does_not_leak_active_count(
     tmp_path: Path,
 ) -> None:
-    loader = S3Loader(download_dir=tmp_path)
-    loader._begin_cleanup()
+    loader = AsyncS3Loader(download_dir=tmp_path)
+    await loader._begin_cleanup()
 
     async def enter_activity() -> None:
-        async with loader._async_activity():
+        async with loader._activity():
             pytest.fail("cancelled waiter must not enter the activity body")
 
     task = asyncio.create_task(enter_activity())
@@ -455,16 +456,16 @@ async def test_cancelled_async_activity_waiter_does_not_leak_active_count(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert loader._active_loads == 0
-    assert loader._async_lifecycle_waiters == set()
+    assert loader._waiters == set()
 
 
 async def test_cancelled_async_cleanup_wait_releases_lifecycle_gate(
     tmp_path: Path,
 ) -> None:
-    loader = S3Loader(download_dir=tmp_path)
-    loader._begin_activity()
+    loader = AsyncS3Loader(download_dir=tmp_path)
+    await loader._begin_activity()
 
-    task = asyncio.create_task(loader._abegin_cleanup())
+    task = asyncio.create_task(loader._begin_cleanup())
     while not loader._cleanup_in_progress:
         await asyncio.sleep(0)
     task.cancel()
@@ -473,5 +474,5 @@ async def test_cancelled_async_cleanup_wait_releases_lifecycle_gate(
         await task
 
     assert not loader._cleanup_in_progress
-    assert loader._async_lifecycle_waiters == set()
+    assert loader._waiters == set()
     loader._end_activity()

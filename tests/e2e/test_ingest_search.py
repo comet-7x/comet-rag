@@ -1,7 +1,7 @@
 """端到端：建库 → 入库 → 轮询 → 检索。**不需要 docker**。
 
 这是 plan 里 Checkpoint C 的验收用例，也是"先内存后真实"这条策略的兑现：
-整套抽象（TaskStore / TaskExecutor / BaseVectorStore）在零中间件下就能验证
+整套抽象（TaskStore / TaskExecutor / AsyncVectorStore）在零中间件下就能验证
 是否成立。Phase 4 换上 Postgres / Milvus / ARQ 后，本用例应当**一字不改**
 地继续通过 —— 只换注入的实现。
 
@@ -26,10 +26,14 @@ from comet_rag.config.schemas import (
     ServerConfig,
 )
 from comet_rag.engines.chunkers import ChunkDraft
-from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore
-from comet_rag.infrastructure.sources import BaseLoader, LoaderContent, SourceContent
+from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
+from comet_rag.infrastructure.models.embedding.base import AsyncBaseEmbeddingModel
+from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
+from comet_rag.infrastructure.sources import (
+    AsyncBaseLoader,
+    LoaderContent,
+    SourceContent,
+)
 from comet_rag.ports import ExtractedDocument, NormalizedDocument
 from comet_rag.services.ingestion import IngestRunner, register_ingest_runner
 
@@ -69,7 +73,7 @@ def line_chunk_drafts(
 # ── 替身：唯一被替换的是"打网络的那两个" ───────────────────────────────────
 
 
-class KeywordEmbedding(BaseEmbeddingModel):
+class KeywordEmbedding(AsyncBaseEmbeddingModel):
     """按关键词映射到三维空间，让"该命中哪条"完全可预测。"""
 
     def _vector(self, text: str) -> list[float]:
@@ -79,21 +83,18 @@ class KeywordEmbedding(BaseEmbeddingModel):
             1.0 if "橙子" in text else 0.0,
         ]
 
-    def _embed(self, data, **kwargs):  # pragma: no cover
+    async def _embed(self, data, **kwargs):
         return self._vector(str(data))
 
-    async def _aembed(self, data, **kwargs):
-        return self._vector(str(data))
-
-    async def close_client(self) -> None:
+    async def close(self) -> None:
         return None
 
 
-class LocalStubLoader(BaseLoader):
+class LocalStubLoader(AsyncBaseLoader):
     def __init__(self, path: Path) -> None:
         self._path = path
 
-    def _load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
+    def _resource(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         if not isinstance(source, SourceContent):
             source = SourceContent(str(source))
         return LoaderContent(
@@ -103,10 +104,10 @@ class LocalStubLoader(BaseLoader):
             metadata={"file_type": STUB_TYPE, "file_name": self._path.name},
         )
 
-    async def _aload(self, source, *args, **kwargs) -> LoaderContent:
-        return self._load(source)
+    async def _load(self, source, *args, **kwargs) -> LoaderContent:
+        return self._resource(source)
 
-    def cleanup(self) -> None:
+    async def cleanup(self) -> None:
         return None
 
 
@@ -122,11 +123,11 @@ def document(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def hooks(document: Path):
-    @PipelineHooks.extractor(STUB_TYPE)
+    @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
     def _extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(markdown=lc.path.read_text(encoding="utf-8"))
 
-    PipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
+    AsyncPipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
 
     yield
 
@@ -158,7 +159,7 @@ async def client(
     app = create_app(
         settings,
         embedding_model=KeywordEmbedding(),
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
         pipeline_config=PipelineConfig(embed_batch_size=2, max_concurrency=4),
     )
     transport = httpx.ASGITransport(app=app)
@@ -188,7 +189,7 @@ def _use_stub_loader(
 ) -> None:
     """只替换 loader 这一个依赖。
 
-    真实 `AutoLoader` 会把 "fruits.stub" 判为未知来源；而其余部件
+    真实 `AsyncAutoLoader` 会把 "fruits.stub" 判为未知来源；而其余部件
     （向量库、任务库、执行器、路由、异常映射）全是 `create_app` 装配的真货 ——
     替身越少，端到端测试越有意义。
 
@@ -541,7 +542,7 @@ async def test_ingest_refuses_arbitrary_server_paths_by_default(
             ),
         ),
         embedding_model=KeywordEmbedding(),
-        vector_store=InMemoryVectorStore(),
+        vector_store=AsyncInMemoryVectorStore(),
     )
     transport = httpx.ASGITransport(app=app)
     async with (

@@ -322,16 +322,16 @@ def test_vectorstore_port_guard_detects_absolute_and_relative_imports() -> None:
     """用故意违规的源码证明守卫不会静默放过两种导入写法。"""
     module = PROJECT_ROOT / "comet_rag" / "services" / "retrieval.py"
     tree = ast.parse(
-        "from comet_rag.infrastructure.persistence.vector_store import InMemoryVectorStore\n"
-        "from ..infrastructure.persistence.vector_store.milvus import MilvusStore\n"
+        "from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore\n"
+        "from ..infrastructure.persistence.vector_store.milvus import AsyncMilvusStore\n"
         "from comet_rag.infrastructure.persistence import vector_store\n"
         "from ..infrastructure.persistence import vector_store\n"
     )
     assert _service_vectorstore_violations(tree, module) == {
         "comet_rag.infrastructure.persistence.vector_store",
-        "comet_rag.infrastructure.persistence.vector_store.InMemoryVectorStore",
+        "comet_rag.infrastructure.persistence.vector_store.AsyncInMemoryVectorStore",
         "comet_rag.infrastructure.persistence.vector_store.milvus",
-        "comet_rag.infrastructure.persistence.vector_store.milvus.MilvusStore",
+        "comet_rag.infrastructure.persistence.vector_store.milvus.AsyncMilvusStore",
     }
 
 
@@ -391,8 +391,13 @@ def test_single_process_paths_never_pull_in_lease_reclaim(module: Path) -> None:
 #: 于是 `_gate is None`，闸门**静默失效**（不报错、不打日志）。
 CONCRETE_MODELS = (
     "Qwen3VLEmbeddingModel",
+    "AsyncQwen3VLEmbeddingModel",
     "OpenAIEmbeddingModel",
+    "AsyncOpenAIEmbeddingModel",
     "Qwen3VLReranker",
+    "AsyncQwen3VLReranker",
+    "OpenAIVisionModel",
+    "AsyncOpenAIVisionModel",
 )
 
 #: 只有这些地方可以直接构造：组合根负责装配，模型模块自己是定义处。
@@ -426,9 +431,9 @@ def _package_modules() -> list[Path]:
 
 @pytest.mark.parametrize("module", _package_modules(), ids=lambda p: p.name)
 def test_models_are_only_constructed_by_the_composition_root(module: Path) -> None:
-    """**并发闸门只在 `build_context()` 里挂上**（`bind_gate()`）。
+    """服务模型在组合根统一创建，并绑定对应的进程级预算。
 
-    任何绕开组合根直接 new 模型的地方，`_gate` 都是 None —— `aembed` 会
+    任何绕开组合根直接 new 模型的地方，`_gate` 都是 None —— `embed` 会
     直接放行，退回"每次调用一个信号量"的老样子。而那正是本项目实测出
     "配置写 4、实际 128"的那个缺陷（见 `core/concurrency.py`）。
 

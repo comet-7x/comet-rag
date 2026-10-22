@@ -18,10 +18,22 @@ from pathlib import Path
 import pytest
 
 from comet_rag.engines.chunkers import ChunkDraft
-from comet_rag.engines.pipelines import PipelineConfig, PipelineHooks
-from comet_rag.infrastructure.models.embedding.base import BaseEmbeddingModel
-from comet_rag.infrastructure.sources import BaseLoader, LoaderContent, SourceContent
-from comet_rag.pipeline import Pipeline
+from comet_rag.engines.pipelines import (
+    AsyncPipelineHooks,
+    PipelineConfig,
+    PipelineHooks,
+)
+from comet_rag.infrastructure.models.embedding.base import (
+    AsyncBaseEmbeddingModel,
+    BaseEmbeddingModel,
+)
+from comet_rag.infrastructure.sources import (
+    AsyncBaseLoader,
+    BaseLoader,
+    LoaderContent,
+    SourceContent,
+)
+from comet_rag.pipeline import AsyncPipeline, Pipeline
 from comet_rag.ports import ExtractedDocument, NormalizedDocument
 
 CHUNK_COUNT = 200
@@ -31,9 +43,7 @@ STUB_TYPE = "stub"
 # ── 测试替身 ───────────────────────────────────────────────────────────────
 
 
-class RecordingEmbeddingModel(BaseEmbeddingModel):
-    """记录调用次数与并发峰值的假模型。不打网络。"""
-
+class _RecordingState:
     def __init__(self, latency: float = 0.001) -> None:
         self.calls = 0
         self.live = 0
@@ -41,11 +51,15 @@ class RecordingEmbeddingModel(BaseEmbeddingModel):
         self._latency = latency
         self._lock = asyncio.Lock()
 
+
+class RecordingEmbeddingModel(_RecordingState, BaseEmbeddingModel):
     def _embed(self, data, **kwargs) -> list[float]:
         self.calls += 1
         return [float(len(str(data)))]
 
-    async def _aembed(self, data, **kwargs) -> list[float]:
+
+class AsyncRecordingEmbeddingModel(_RecordingState, AsyncBaseEmbeddingModel):
+    async def _embed(self, data, **kwargs) -> list[float]:
         self.calls += 1
         self.live += 1
         self.peak = max(self.peak, self.live)
@@ -55,17 +69,12 @@ class RecordingEmbeddingModel(BaseEmbeddingModel):
             self.live -= 1
         return [float(len(str(data)))]
 
-    async def close_client(self) -> None:  # pragma: no cover - 无资源可释放
-        return None
 
-
-class StubLoader(BaseLoader):
-    """把任意 source 映射到一个固定的临时文件，避开真实文件类型探测。"""
-
+class _StubSource:
     def __init__(self, path: Path) -> None:
         self._path = path
 
-    def _load(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
+    def _resource(self, source: SourceContent | str, *args, **kwargs) -> LoaderContent:
         if not isinstance(source, SourceContent):
             source = SourceContent(str(source))
         return LoaderContent(
@@ -75,13 +84,21 @@ class StubLoader(BaseLoader):
             metadata={"file_type": STUB_TYPE},
         )
 
-    async def _aload(
-        self, source: SourceContent | str, *args, **kwargs
-    ) -> LoaderContent:
-        return self._load(source)
 
+class StubLoader(_StubSource, BaseLoader):
     def cleanup(self) -> None:
         return None
+
+    def _load(self, source, **kwargs):
+        return self._resource(source)
+
+
+class AsyncStubLoader(_StubSource, AsyncBaseLoader):
+    async def cleanup(self) -> None:
+        return None
+
+    async def _load(self, source, **kwargs):
+        return self._resource(source)
 
 
 # ── 夹具 ───────────────────────────────────────────────────────────────────
@@ -95,36 +112,47 @@ def source_file(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def model() -> RecordingEmbeddingModel:
-    return RecordingEmbeddingModel()
+def model() -> AsyncRecordingEmbeddingModel:
+    return AsyncRecordingEmbeddingModel()
 
 
 @pytest.fixture
-def make_pipeline(source_file: Path, model: RecordingEmbeddingModel):
+def make_pipeline(source_file: Path, model: AsyncRecordingEmbeddingModel):
     """构造一个必定切出 CHUNK_COUNT 个 chunk 的 pipeline。
 
     hook 注册由 conftest 的 autouse 夹具在用例结束后自动还原（T11）。
     """
 
-    def _factory(*, embed: bool = True, embed_batch_size: int = 32, **kw) -> Pipeline:
+    def _factory(
+        *,
+        synchronous: bool = False,
+        embed: bool = True,
+        embed_batch_size: int = 32,
+        **kw,
+    ):
         @PipelineHooks.extractor(STUB_TYPE)
-        def _extract(
-            lc: LoaderContent, config: PipelineConfig
-        ) -> ExtractedDocument:
+        @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
+        def _extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
             return ExtractedDocument(markdown="x")
 
         @PipelineHooks.document_chunker(STUB_TYPE)
+        @AsyncPipelineHooks.document_chunker(STUB_TYPE)
         def _chunk(
             document: NormalizedDocument, config: PipelineConfig
         ) -> list[ChunkDraft]:
             return [
-                ChunkDraft(text=f"chunk-{i}", ordinal=i)
-                for i in range(CHUNK_COUNT)
+                ChunkDraft(text=f"chunk-{i}", ordinal=i) for i in range(CHUNK_COUNT)
             ]
 
         config = PipelineConfig(embed=embed, embed_batch_size=embed_batch_size, **kw)
-        return Pipeline(
-            config=config, loader=StubLoader(source_file), embedding_model=model
+        if synchronous:
+            return Pipeline(
+                config=config,
+                loader=StubLoader(source_file),
+                embedding_model=RecordingEmbeddingModel(),
+            )
+        return AsyncPipeline(
+            config=config, loader=AsyncStubLoader(source_file), embedding_model=model
         )
 
     return _factory
@@ -134,12 +162,12 @@ def make_pipeline(source_file: Path, model: RecordingEmbeddingModel):
 
 
 async def test_astream_run_embeds_concurrently(
-    make_pipeline, model: RecordingEmbeddingModel
+    make_pipeline, model: AsyncRecordingEmbeddingModel
 ) -> None:
     """修复前这里的 peak 恒为 1 —— 完全串行。"""
     pipeline = make_pipeline(max_concurrency=8, embed_batch_size=32)
 
-    chunks = [c async for c in pipeline.astream_run("任意")]
+    chunks = [c async for c in pipeline.stream_run("任意")]
 
     assert len(chunks) == CHUNK_COUNT
     assert model.peak > 1, "并发峰值为 1 说明仍在逐条串行"
@@ -147,22 +175,22 @@ async def test_astream_run_embeds_concurrently(
 
 
 async def test_arun_respects_concurrency_cap(
-    make_pipeline, model: RecordingEmbeddingModel
+    make_pipeline, model: AsyncRecordingEmbeddingModel
 ) -> None:
     pipeline = make_pipeline(max_concurrency=4)
 
-    await pipeline.arun("任意")
+    await pipeline.run("任意")
 
     assert 1 < model.peak <= 4
 
 
 async def test_window_size_caps_in_flight_work(
-    make_pipeline, model: RecordingEmbeddingModel
+    make_pipeline, model: AsyncRecordingEmbeddingModel
 ) -> None:
     """窗口比并发上限更小时，窗口才是实际约束。"""
     pipeline = make_pipeline(max_concurrency=64, embed_batch_size=3)
 
-    await pipeline.arun("任意")
+    await pipeline.run("任意")
 
     assert model.peak <= 3
 
@@ -171,12 +199,12 @@ async def test_window_size_caps_in_flight_work(
 
 
 async def test_first_chunk_arrives_before_all_are_embedded(
-    make_pipeline, model: RecordingEmbeddingModel
+    make_pipeline, model: AsyncRecordingEmbeddingModel
 ) -> None:
     """窗口化不得退化成"全算完再一次性吐"—— 那样流式就没意义了。"""
     pipeline = make_pipeline(embed_batch_size=16)
 
-    agen = pipeline.astream_run("任意")
+    agen = pipeline.stream_run("任意")
     first = await anext(agen)
 
     assert first.embedding is not None
@@ -187,15 +215,15 @@ async def test_first_chunk_arrives_before_all_are_embedded(
 
 
 def test_sync_stream_is_also_windowed(
-    make_pipeline, model: RecordingEmbeddingModel
+    make_pipeline, model: AsyncRecordingEmbeddingModel
 ) -> None:
-    pipeline = make_pipeline(embed_batch_size=16)
+    pipeline = make_pipeline(synchronous=True, embed_batch_size=16)
 
     gen = pipeline.stream_run("任意")
     first = next(gen)
 
     assert first.embedding is not None
-    assert model.calls <= 16
+    assert pipeline._embedding_model.calls == 16
     gen.close()
 
 
@@ -204,21 +232,23 @@ def test_sync_stream_is_also_windowed(
 
 async def test_all_entry_points_embed_every_chunk(make_pipeline) -> None:
     """run / arun / stream_run / astream_run 的 embedding 行为必须一致。"""
-    assert all(c.embedding for c in make_pipeline().run("任意").chunks)
-    assert all(c.embedding for c in (await make_pipeline().arun("任意")).chunks)
-    assert all(c.embedding for c in make_pipeline().stream_run("任意"))
-    assert all([c.embedding async for c in make_pipeline().astream_run("任意")])
+    assert all(c.embedding for c in make_pipeline(synchronous=True).run("任意").chunks)
+    assert all(c.embedding for c in (await make_pipeline().run("任意")).chunks)
+    assert all(c.embedding for c in make_pipeline(synchronous=True).stream_run("任意"))
+    assert all([c.embedding async for c in make_pipeline().stream_run("任意")])
 
 
 async def test_all_entry_points_materialize_identical_chunks(make_pipeline) -> None:
     def snapshot(chunks):
         return [(chunk.id, chunk.text, chunk.metadata) for chunk in chunks]
 
-    sync_result = make_pipeline(embed=False).run("任意").chunks
-    async_result = (await make_pipeline(embed=False).arun("任意")).chunks
-    stream_result = list(make_pipeline(embed=False).stream_run("任意"))
+    sync_result = make_pipeline(synchronous=True, embed=False).run("任意").chunks
+    async_result = (await make_pipeline(embed=False).run("任意")).chunks
+    stream_result = list(
+        make_pipeline(synchronous=True, embed=False).stream_run("任意")
+    )
     async_stream_result = [
-        chunk async for chunk in make_pipeline(embed=False).astream_run("任意")
+        chunk async for chunk in make_pipeline(embed=False).stream_run("任意")
     ]
 
     expected = snapshot(sync_result)
@@ -232,15 +262,15 @@ async def test_sync_and_async_normalize_before_chunking(make_pipeline) -> None:
     received: list[str] = []
 
     @PipelineHooks.extractor(STUB_TYPE)
-    def _extract(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
+    def _extract(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         return ExtractedDocument(
             markdown="\ufeff标题  \r\n\r\n\r\n正文\u00a0内容\r\n",
             metadata={"provider": "fixture"},
         )
 
     @PipelineHooks.document_chunker(STUB_TYPE)
+    @AsyncPipelineHooks.document_chunker(STUB_TYPE)
     def _chunk(
         document: NormalizedDocument, config: PipelineConfig
     ) -> list[ChunkDraft]:
@@ -254,8 +284,11 @@ async def test_sync_and_async_normalize_before_chunking(make_pipeline) -> None:
             )
         ]
 
-    sync_result = pipeline.run("任意")
-    async_result = await pipeline.arun("任意")
+    sync_pipeline = Pipeline(
+        config=pipeline._config, loader=StubLoader(pipeline._loader._path)
+    )
+    sync_result = sync_pipeline.run("任意")
+    async_result = await pipeline.run("任意")
 
     assert received == ["标题\n\n正文 内容", "标题\n\n正文 内容"]
     assert sync_result.metadata["provider"] == "fixture"
@@ -267,40 +300,34 @@ async def test_async_entry_points_prefer_async_extractor(make_pipeline) -> None:
     calls = {"sync": 0, "async": 0}
 
     @PipelineHooks.extractor(STUB_TYPE)
-    def _sync(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
+    def _sync(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         calls["sync"] += 1
         return ExtractedDocument(markdown="sync")
 
-    @PipelineHooks.aextractor(STUB_TYPE)
-    async def _async(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    @AsyncPipelineHooks.extractor(STUB_TYPE)
+    async def _async(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         calls["async"] += 1
         return ExtractedDocument(markdown="async")
 
-    await pipeline.arun("任意")
-    _ = [chunk async for chunk in pipeline.astream_run("任意")]
+    await pipeline.run("任意")
+    _ = [chunk async for chunk in pipeline.stream_run("任意")]
 
     assert calls == {"sync": 0, "async": 2}
 
 
 def test_sync_entry_points_keep_using_sync_extractor(make_pipeline) -> None:
-    pipeline = make_pipeline(embed=False)
+    pipeline = make_pipeline(synchronous=True, embed=False)
     calls = {"sync": 0, "async": 0}
 
     @PipelineHooks.extractor(STUB_TYPE)
-    def _sync(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
+    def _sync(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         calls["sync"] += 1
         return ExtractedDocument(markdown="sync")
 
-    @PipelineHooks.aextractor(STUB_TYPE)
-    async def _async(
-        lc: LoaderContent, config: PipelineConfig
-    ) -> ExtractedDocument:
+    @AsyncPipelineHooks.extractor(STUB_TYPE)
+    async def _async(lc: LoaderContent, config: PipelineConfig) -> ExtractedDocument:
         calls["async"] += 1
         return ExtractedDocument(markdown="async")
 
@@ -313,19 +340,19 @@ def test_sync_entry_points_keep_using_sync_extractor(make_pipeline) -> None:
 async def test_embed_disabled_leaves_embedding_none(make_pipeline) -> None:
     pipeline = make_pipeline(embed=False)
 
-    result = await pipeline.arun("任意")
+    result = await pipeline.run("任意")
 
     assert len(result.chunks) == CHUNK_COUNT
     assert all(c.embedding is None for c in result.chunks)
 
 
 async def test_every_chunk_is_embedded_exactly_once(
-    make_pipeline, model: RecordingEmbeddingModel
+    make_pipeline, model: AsyncRecordingEmbeddingModel
 ) -> None:
     """窗口切分不得漏掉或重复处理边界上的 chunk。"""
     pipeline = make_pipeline(embed_batch_size=7)  # 200 不能被 7 整除
 
-    chunks = [c async for c in pipeline.astream_run("任意")]
+    chunks = [c async for c in pipeline.stream_run("任意")]
 
     assert len(chunks) == CHUNK_COUNT
     assert model.calls == CHUNK_COUNT
