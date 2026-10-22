@@ -11,7 +11,12 @@ from pymilvus.client.connection_manager import AsyncConnectionManager
 from pymilvus.client.types import LoadState
 
 from comet_rag.infrastructure.persistence.vector_store import milvus as target
-from comet_rag.ports import CollectionNotFound, CollectionSchemaMismatch, VectorRecord
+from comet_rag.ports import (
+    CollectionNotFound,
+    CollectionSchemaMismatch,
+    DimensionMismatch,
+    VectorRecord,
+)
 
 
 def _v2_schema(*, dim: int = 4) -> dict[str, Any]:
@@ -123,6 +128,8 @@ class _FakeClient:
         self.rows: list[dict[str, Any]] = []
         self.reads: list[dict[str, Any]] = []
         self.closed = False
+        self.index_exists = exists
+        self.index_calls = 0
 
     async def has_collection(self, name: str) -> bool:
         return self.exists
@@ -132,7 +139,7 @@ class _FakeClient:
 
     async def list_indexes(self, name: str, *, field_name: str) -> list[str]:
         self.list_index_calls += 1
-        if self.list_index_calls <= self.index_ready_after:
+        if not self.index_exists or self.list_index_calls <= self.index_ready_after:
             return []
         return ["sparse_vector"]
 
@@ -157,9 +164,12 @@ class _FakeClient:
         self.load_state = LoadState.NotLoad
 
     async def create_index(self, name: str, *, index_params: Any) -> None:
+        self.index_calls += 1
         if self.fail_index:
             raise RuntimeError("index failed")
         self.indexes = index_params
+        self.index_exists = True
+        self.index_ready_after = 0
 
     async def load_collection(self, name: str, **kwargs: Any) -> None:
         self.load_calls += 1
@@ -289,16 +299,16 @@ async def test_old_schema_is_rejected_without_create_or_drop(
     assert client.dropped is False
 
 
-async def test_ensure_waits_for_concurrent_creator_to_finish_index(
+async def test_ensure_resumes_concurrent_creator_missing_index(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _FakeClient(exists=True, index_ready_after=2)
     store, _, _ = _store(monkeypatch, client)
-    monkeypatch.setattr(target, "_SCHEMA_READY_INTERVAL_SECONDS", 0)
 
     await store.ensure_collection("shared-kb", dim=4)
 
-    assert client.list_index_calls == 3
+    assert client.list_index_calls == 2
+    assert client.index_calls == 1
     assert store._dims["shared-kb"] == 4  # noqa: SLF001
 
 
@@ -374,10 +384,10 @@ async def test_missing_index_description_becomes_stable_schema_error(
 ) -> None:
     client = _FakeClient(exists=True, describe_index_none=True)
     store, _, _ = _store(monkeypatch, client)
-    monkeypatch.setattr(target, "_SCHEMA_READY_ATTEMPTS", 1)
 
     with pytest.raises(CollectionSchemaMismatch, match="SPARSE_INVERTED_INDEX"):
         await store.ensure_collection("existing-kb", dim=4)
+    assert client.index_calls == 0
 
 
 @pytest.mark.parametrize("mode", ["dense", "keyword"])
@@ -400,7 +410,7 @@ async def test_direct_search_after_restart_rejects_old_schema(
     assert client.dropped is False
 
 
-async def test_new_collection_is_rolled_back_when_index_creation_fails(
+async def test_new_collection_is_preserved_when_index_creation_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _FakeClient(exists=False, fail_index=True)
@@ -409,7 +419,11 @@ async def test_new_collection_is_rolled_back_when_index_creation_fails(
     with pytest.raises(RuntimeError, match="index failed"):
         await store.ensure_collection("new-kb", dim=4)
 
-    assert client.dropped is True
+    assert client.exists and not client.dropped
+    assert store._dims == {}  # noqa: SLF001
+    client.fail_index = False
+    await store.ensure_collection("new-kb", dim=4)
+    assert store._dims["new-kb"] == 4  # noqa: SLF001
 
 
 def test_database_name_is_required_before_clients_are_created() -> None:
@@ -493,3 +507,187 @@ async def test_cancellation_reaches_native_load_and_never_caches_unready_collect
         client.allow_load.set()
         loading.cancel()
         await asyncio.gather(loading, return_exceptions=True)
+
+
+async def test_cancelled_index_creation_can_resume_from_another_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient(exists=False)
+    first, _, _ = _store(monkeypatch, client)
+    second, _, _ = _store(monkeypatch, client)
+    started = asyncio.Event()
+    native_create_index = client.create_index
+
+    async def interrupted(name: str, *, index_params: Any) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(client, "create_index", interrupted)
+    creating = asyncio.create_task(first.ensure_collection("kb", dim=4))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        creating.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await creating
+    finally:
+        creating.cancel()
+        await asyncio.gather(creating, return_exceptions=True)
+    assert client.exists and not client.dropped
+    assert first._dims == {}  # noqa: SLF001
+
+    monkeypatch.setattr(client, "create_index", native_create_index)
+    # 不依赖取消实例的内存标记；重启后的新实例也必须能续建同一套索引。
+    async with asyncio.timeout(0.1):
+        await second.ensure_collection("kb", dim=4)
+    assert client.index_exists
+    assert second._dims["kb"] == 4  # noqa: SLF001
+
+
+async def test_index_response_loss_does_not_delete_other_instance_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient(exists=False)
+    creator, _, _ = _store(monkeypatch, client)
+    writer, _, _ = _store(monkeypatch, client)
+    native_create_index = client.create_index
+    lost_response = TimeoutError("index response lost")
+
+    async def committed_then_timeout(name: str, *, index_params: Any) -> None:
+        await native_create_index(name, index_params=index_params)
+        await writer.ensure_collection("kb", dim=4)
+        await writer.upsert("kb", [VectorRecord("r1", "text", [1, 0, 0, 0])])
+        raise lost_response
+
+    monkeypatch.setattr(client, "create_index", committed_then_timeout)
+    with pytest.raises(TimeoutError) as caught:
+        await creator.ensure_collection("kb", dim=4)
+
+    assert caught.value is lost_response
+    assert client.exists and not client.dropped
+    assert [row["id"] for row in client.rows] == ["r1"]
+    assert creator._dims == {}  # noqa: SLF001
+    await creator.ensure_collection("kb", dim=4)
+    assert creator._dims["kb"] == 4  # noqa: SLF001
+
+
+async def test_missing_index_is_not_repaired_for_wrong_dimension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient(exists=True)
+    client.index_exists = False
+    store, _, _ = _store(monkeypatch, client)
+
+    with pytest.raises(DimensionMismatch):
+        async with asyncio.timeout(0.1):
+            await store.ensure_collection("kb", dim=8)
+
+    assert client.index_calls == 0
+    assert not client.dropped
+
+
+async def test_existing_incompatible_index_is_never_replaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient(exists=True)
+    store, _, _ = _store(monkeypatch, client)
+
+    async def incompatible(name: str, index_name: str) -> dict[str, Any]:
+        return _v2_index() | {"metric_type": "IP"}
+
+    monkeypatch.setattr(client, "describe_index", incompatible)
+    with pytest.raises(CollectionSchemaMismatch):
+        async with asyncio.timeout(0.1):
+            await store.ensure_collection("kb", dim=4)
+
+    assert client.index_calls == 0
+    assert not client.dropped
+
+
+async def test_missing_index_does_not_authorize_legacy_schema_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_schema = _v2_schema()
+    old_schema["functions"] = []
+    client = _FakeClient(exists=True, description=old_schema)
+    client.index_exists = False
+    store, _, _ = _store(monkeypatch, client)
+
+    with pytest.raises(CollectionSchemaMismatch, match="BM25 function"):
+        await store.ensure_collection("kb", dim=4)
+
+    assert client.index_calls == 0
+    assert client.exists and not client.dropped
+    assert store._dims == {}  # noqa: SLF001
+
+
+async def test_resuming_index_failure_preserves_original_error_and_collection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient(exists=True)
+    client.index_exists = False
+    store, _, _ = _store(monkeypatch, client)
+    failure = OSError("index service unavailable")
+
+    async def unavailable(name: str, *, index_params: Any) -> None:
+        raise failure
+
+    monkeypatch.setattr(client, "create_index", unavailable)
+    with pytest.raises(OSError) as caught:
+        await store.ensure_collection("kb", dim=4)
+
+    assert caught.value is failure
+    assert client.exists and not client.dropped
+    assert store._dims == {}  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    "field_name", ["id", "text", "metadata", "dense_vector", "sparse_vector"]
+)
+@pytest.mark.parametrize("damage", ["missing", "wrong_type"])
+async def test_incomplete_field_schema_cannot_authorize_index_creation(
+    monkeypatch: pytest.MonkeyPatch, field_name: str, damage: str
+) -> None:
+    schema = _v2_schema()
+    field = next(item for item in schema["fields"] if item["name"] == field_name)
+    if damage == "missing":
+        schema["fields"].remove(field)
+    else:
+        field["type"] = DataType.INT64
+    client = _FakeClient(exists=True, description=schema)
+    client.index_exists = False
+    store, _, _ = _store(monkeypatch, client)
+
+    with pytest.raises(CollectionSchemaMismatch, match=field_name):
+        await store.ensure_collection("kb", dim=4)
+
+    assert client.index_calls == 0
+    assert client.created is None
+    assert client.exists and not client.dropped
+    assert store._dims == {}  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    "damage", ["not_primary", "collection_auto_id", "field_auto_id"]
+)
+async def test_unstable_record_identity_cannot_authorize_index_creation(
+    monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    schema = _v2_schema()
+    primary = schema["fields"][0]
+    if damage == "not_primary":
+        primary["is_primary"] = False
+    elif damage == "collection_auto_id":
+        schema["auto_id"] = True
+    else:
+        primary["auto_id"] = True
+    client = _FakeClient(exists=True, description=schema)
+    client.index_exists = False
+    store, _, _ = _store(monkeypatch, client)
+
+    with pytest.raises(CollectionSchemaMismatch, match="id"):
+        await store.ensure_collection("kb", dim=4)
+
+    assert client.index_calls == 0
+    assert client.created is None
+    assert client.exists and not client.dropped
+    assert store._dims == {}  # noqa: SLF001

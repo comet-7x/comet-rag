@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import re
@@ -35,11 +34,6 @@ _DENSE = "dense_vector"
 _SPARSE = "sparse_vector"
 _BM25_FUNCTION = "text_bm25"
 _BM25_INDEX_MISSING = f"{_SPARSE} 缺少 BM25 SPARSE_INVERTED_INDEX"
-
-# create_collection 与 create_index 不是一个原子操作。另一个进程可能在两者
-# 之间观察到 collection；只对这一种暂态做有限等待，旧 schema 仍立即拒绝。
-_SCHEMA_READY_ATTEMPTS = 41
-_SCHEMA_READY_INTERVAL_SECONDS = 0.25
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9_]")
 
@@ -113,28 +107,46 @@ def _combine(*expressions: str) -> str:
 
 
 def _schema_mismatches(
-    description: dict[str, Any], indexes: Sequence[dict[str, Any]]
+    description: dict[str, Any], indexes: Sequence[dict[str, Any]] | None
 ) -> list[str]:
-    """列出已有 collection 与 BM25 schema v2 的差异。"""
+    """列出 schema v2 差异；读索引前先用 None 校验字段，避免未知字段 RPC。"""
     fields = {
         str(field.get("name")): field
         for field in description.get("fields", [])
         if isinstance(field, dict)
     }
-    text_field = fields.get(_TEXT)
-    if text_field is None:
-        return [f"缺少 {_TEXT} 字段"]
+    required_types = {
+        _ID: DataType.VARCHAR,
+        _TEXT: DataType.VARCHAR,
+        _METADATA: DataType.JSON,
+        _DENSE: DataType.FLOAT_VECTOR,
+        _SPARSE: DataType.SPARSE_FLOAT_VECTOR,
+    }
+    problems = []
+    for name, expected in required_types.items():
+        field = fields.get(name)
+        if field is None:
+            problems.append(f"缺少 {name} 字段")
+        elif field.get("type") != expected:
+            problems.append(f"{name} 类型不是 {expected.name}")
+    if problems:
+        return problems
 
-    sparse_field = fields.get(_SPARSE)
+    primary = fields[_ID]
+    if primary.get("is_primary") not in (True, "true", "True"):
+        problems.append(f"{_ID} 不是主键")
+    # upsert 必须保留调用方提供的稳定 ID，服务端生成主键会破坏幂等写入。
+    if any(
+        auto_id in (True, "true", "True")
+        for auto_id in (description.get("auto_id"), primary.get("auto_id"))
+    ):
+        problems.append(f"{_ID} 启用了 auto_id")
 
+    text_field = fields[_TEXT]
     params = text_field.get("params") or {}
     analyzer_enabled = params.get("enable_analyzer")
     if analyzer_enabled not in (True, "true", "True"):
-        problems = [f"{_TEXT} 未启用 analyzer"]
-    else:
-        problems = []
-    if sparse_field is None:
-        problems.append(f"缺少 {_SPARSE} 字段")
+        problems.append(f"{_TEXT} 未启用 analyzer")
 
     analyzer = params.get("analyzer_params")
     if isinstance(analyzer, str):
@@ -156,6 +168,9 @@ def _schema_mismatches(
     )
     if not has_bm25:
         problems.append(f"缺少 {_TEXT} -> {_SPARSE} 的 BM25 function")
+
+    if indexes is None:
+        return problems
 
     def _index_value(index: dict[str, Any], key: str) -> Any:
         return index.get(key) or (index.get("params") or {}).get(key)
@@ -199,7 +214,7 @@ class AsyncMilvusStore(AsyncVectorStore):
         self._replica_number = replica_number
         #: kb_id → 维度。避免每次写入都去 describe 一次。
         self._dims: dict[str, int] = {}
-        #: 仅记录本实例成功创建的 collection，供失败后的精确回收使用。
+        #: 记录本实例确认创建的 collection，不代表它仍只被本实例使用。
         self._created: set[str] = set()
 
     # ── 集合 ───────────────────────────────────────────────────────────────
@@ -226,10 +241,12 @@ class AsyncMilvusStore(AsyncVectorStore):
         indexes: list[dict[str, Any]] = []
         for index_name in index_names:
             description = await self._client.describe_index(name, index_name)
-            # list_indexes 与 describe_index 之间索引可能被并发删除。把 SDK 的
-            # None 当成“当前未就绪”，交给 schema 校验输出稳定的领域错误。
-            if isinstance(description, dict):
-                indexes.append(description)
+            # 列表与详情间可能发生删除；未知详情不等于确定缺失，不能据此补建。
+            indexes.append(
+                description
+                if isinstance(description, dict)
+                else {"index_name": index_name}
+            )
         return indexes
 
     @staticmethod
@@ -251,40 +268,53 @@ class AsyncMilvusStore(AsyncVectorStore):
         self._dims[kb_id] = dim
         return dim
 
-    async def _validated_dim(self, name: str, kb_id: str) -> int:
-        """返回通过 schema v2 校验的维度，且不缓存失败结果。"""
+    async def _inspect_collection(
+        self, name: str, kb_id: str
+    ) -> tuple[int, list[dict[str, Any]], list[str]]:
+        """读取维度、已有 sparse 索引和兼容性差异，不改变服务端状态。"""
         description = await self._describe(name)
+        schema_problems = _schema_mismatches(description, None)
+        if schema_problems:
+            raise CollectionSchemaMismatch(kb_id, schema_problems)
         dim = self._dense_dim(description, kb_id)
-        fields = {
-            field.get("name")
-            for field in description.get("fields", [])
-            if isinstance(field, dict)
-        }
-        # 缺少 sparse 字段时按契约报告 schema 错误，不让 SDK 的 list_indexes
-        # 先因未知字段抛出供应商异常。
-        indexes = await self._sparse_indexes(name) if _SPARSE in fields else []
+        indexes = await self._sparse_indexes(name)
         problems = _schema_mismatches(description, indexes)
+        return dim, indexes, problems
+
+    async def _validated_dim(self, name: str, kb_id: str) -> int:
+        """读写路径只校验；续建索引属于显式 ensure_collection 的职责。"""
+        dim, _, problems = await self._inspect_collection(name, kb_id)
         if problems:
             raise CollectionSchemaMismatch(kb_id, problems)
         return dim
 
     async def _ensure_existing_ready(self, name: str, kb_id: str, dim: int) -> None:
-        """校验已有 collection，并容忍并发建表尚未建完索引的短窗口。"""
-        for attempt in range(_SCHEMA_READY_ATTEMPTS):
-            try:
-                existing = await self._validated_dim(name, kb_id)
-            except CollectionSchemaMismatch as exc:
-                transient = exc.reasons == (_BM25_INDEX_MISSING,)
-                if not transient or attempt == _SCHEMA_READY_ATTEMPTS - 1:
-                    raise
-                await asyncio.sleep(_SCHEMA_READY_INTERVAL_SECONDS)
-                continue
-            if existing != dim:
-                raise DimensionMismatch(kb_id, existing, dim)
-            await self._ensure_loaded(name, kb_id)
-            self._dims[kb_id] = existing
-            return
-        raise AssertionError("schema readiness loop exhausted unexpectedly")
+        """仅续建兼容 schema 中确实缺失的索引，绝不替换已有索引。"""
+        self._dims.pop(kb_id, None)
+        existing, indexes, problems = await self._inspect_collection(name, kb_id)
+        if existing != dim:
+            raise DimensionMismatch(kb_id, existing, dim)
+        if problems == [_BM25_INDEX_MISSING] and not indexes:
+            # 创建者可能已取消或退出。重复相同参数的建索引由 Milvus 幂等处理，
+            # 不能只等一个可能再也不会继续的创建者，也不能删除它留下的 collection。
+            await self._create_indexes(name)
+            await self._validated_dim(name, kb_id)
+        elif problems:
+            raise CollectionSchemaMismatch(kb_id, problems)
+        await self._ensure_loaded(name, kb_id)
+        self._dims[kb_id] = existing
+
+    async def _create_indexes(self, name: str) -> None:
+        index = self._client.prepare_index_params()
+        index.add_index(
+            field_name=_DENSE, index_type="AUTOINDEX", metric_type=self._metric
+        )
+        index.add_index(
+            field_name=_SPARSE,
+            index_type="SPARSE_INVERTED_INDEX",
+            metric_type="BM25",
+        )
+        await self._client.create_index(name, index_params=index)
 
     async def _ensure_loaded(self, name: str, kb_id: str) -> None:
         """主动加载 collection，并在服务端确认完成后返回。"""
@@ -325,7 +355,7 @@ class AsyncMilvusStore(AsyncVectorStore):
             await self._ensure_existing_ready(name, kb_id, dim)
             return
 
-        # 这两个是纯本地构造（不打网络），留在事件循环上没问题
+        # Schema 是纯本地构造，不执行网络请求。
         schema = self._client.create_schema(auto_id=False, enable_dynamic_field=False)
         schema.add_field(_ID, DataType.VARCHAR, is_primary=True, max_length=128)
         schema.add_field(
@@ -347,16 +377,6 @@ class AsyncMilvusStore(AsyncVectorStore):
             )
         )
 
-        index = self._client.prepare_index_params()
-        index.add_index(
-            field_name=_DENSE, index_type="AUTOINDEX", metric_type=self._metric
-        )
-        index.add_index(
-            field_name=_SPARSE,
-            index_type="SPARSE_INVERTED_INDEX",
-            metric_type="BM25",
-        )
-
         try:
             await self._client.create_collection(
                 name,
@@ -365,31 +385,20 @@ class AsyncMilvusStore(AsyncVectorStore):
             )
         except Exception:
             # 跨进程没有共享锁。若别的实例刚好抢先建表，本次 create 会失败；
-            # 重新探测并等待对方完成索引即可。其余错误保留原异常。
+            # 重新探测并续建缺失索引即可。其余错误保留原异常。
             if not await self._client.has_collection(name):
                 raise
             await self._ensure_existing_ready(name, kb_id, dim)
             return
         self._created.add(kb_id)
         try:
-            await self._client.create_index(name, index_params=index)
-        except Exception:
-            # sparse index 尚不可用时，没有其他实例能通过 schema 就绪检查；
-            # 因此这里仍可精确回收本调用刚创建的空 collection。
-            try:
-                await self._client.drop_collection(name)
-            except Exception:
-                logger.exception(f"Milvus 新建失败且回滚失败 kb={kb_id} name={name}")
-            else:
-                self._created.discard(kb_id)
-            raise
-        try:
+            await self._create_indexes(name)
             await self._ensure_loaded(name, kb_id)
         except Exception:
-            # index 已公开后，另一个实例可能已经加载并开始使用。此时删除会让
-            # 对方的维度缓存瞬间失效；保留完整 collection 供下一次主动重试加载。
+            # RPC 失败不代表服务端未提交；另一实例可能已经写入。取消同样保留
+            # collection，下一次 ensure 可续建索引或加载，而不猜测数据所有权。
             logger.exception(
-                f"Milvus collection 加载失败，保留供重试 kb={kb_id} name={name}"
+                f"Milvus collection 初始化失败，保留供重试 kb={kb_id} name={name}"
             )
             raise
         self._dims[kb_id] = dim

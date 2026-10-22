@@ -206,6 +206,7 @@ jobs:
       - name: 向量契约、Strong 与双存储故障恢复
         run: >-
           uv run pytest tests/integration/test_vectorstore_milvus.py
+          tests/integration/test_milvus_async_lifecycle.py
           tests/integration/test_document_store_postgres.py
           tests/integration/test_revision_lifecycle.py -m integration
       - name: 失败时记录隔离服务日志

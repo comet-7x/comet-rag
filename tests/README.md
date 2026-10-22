@@ -242,7 +242,9 @@ uv run alembic revision --autogenerate -m "描述"
 这验收真实服务端的 Strong/BM25/revision 行为，不宣称覆盖远程对象存储故障或生产 HA。
 
 CI 先创建 `zhihao_test_database`、迁移独立 PostgreSQL，再跑向量/文档仓储契约和
-`test_revision_lifecycle.py`。后者使用独立的 SQL/Milvus 读客户端，覆盖 legacy、
+`test_milvus_async_lifecycle.py`、`test_revision_lifecycle.py`。原生异步生命周期用例
+验证同参数建索引幂等、服务端提交后响应丢失不会删掉另一实例的数据，以及部分索引
+完成后取消仍能跨实例续建。revision 用例使用独立的 SQL/Milvus 读客户端，覆盖 legacy、
 partial-write、ready、激活以及旧向量残留，在 dense/keyword/hybrid 的 child/parent
 模式验证可见性；不靠 flush/sleep 掩盖跨客户端读空窗。
 
@@ -257,6 +259,23 @@ partial-write、ready、激活以及旧向量残留，在 dense/keyword/hybrid �
 本地缺服务仍 skip；设置 `COMET_TEST_REQUIRE_SERVICES=1` 后，Milvus 缺依赖、
 连接/鉴权失败或测试 database 不存在会 fail，不能用全 skip 的结果冒充验收。
 CI 总耗时上限 20 分钟，服务健康等待上限 180 秒，并始终清理本项目测试容器/卷。
+
+只验收真实 Milvus 时，可显式读取本地 `.env` 的 `MILVUS_URI`：
+
+```bash
+COMET_TEST_REQUIRE_SERVICES=1 uv run --env-file .env pytest \
+  tests/integration/test_vectorstore_milvus.py \
+  tests/integration/test_milvus_async_lifecycle.py -m integration
+```
+
+`COMET_TEST_MILVUS_URI` 优先于 `MILVUS_URI`；测试仍强制使用 `zhihao_test_database`，
+不使用 `.env` 的应用数据库名。普通 `uv run pytest` 不会自动读取 `.env`；因此默认
+localhost 的 skip 不能证明已配置的远程服务不可用。若 gRPC 被系统代理错误转发，
+可为该测试主机设置 `no_grpc_proxy` / `no_proxy`，不必改全局代理设置。
+
+每例只清理自己随机前缀下的集合。原生异步生命周期夹具会让清理错误直接导致失败，
+避免把遗留半成品当成验收通过。索引失败后不自动删集合；续建只由显式
+`ensure_collection` 触发，普通读写不会偷偷修复 schema。
 
 ## 覆盖率怎么量
 
