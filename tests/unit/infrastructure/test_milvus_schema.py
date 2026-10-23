@@ -254,7 +254,8 @@ async def test_existing_collection_reads_explicitly_use_adapter_consistency(
     await store.search_keywords("existing-kb", "量子纠缠")
     await store.count("existing-kb", filter={"document_revision": "new"})
     assert [call["consistency_level"] for call in client.reads] == [consistency] * 3
-    assert client.reads[2]["filter"] == 'metadata["document_revision"] == "new"'
+    assert client.reads[2]["filter"] == 'metadata["document_revision"] == {f0}'
+    assert client.reads[2]["filter_params"] == {"f0": "new"}
 
 
 async def test_new_collection_uses_bm25_schema_and_server_generated_sparse(

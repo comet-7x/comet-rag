@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections.abc import Sequence
 from typing import Any, cast
@@ -62,7 +63,7 @@ def _quote_key(key: str) -> str:
     """
     if not isinstance(key, str) or not key:
         raise ValueError(f"元数据键必须是非空字符串，收到 {key!r}")
-    return key.replace("\\", "\\\\").replace('"', '\\"')
+    return json.dumps(key, ensure_ascii=False)[1:-1]
 
 
 def _quote(value: Any) -> str:
@@ -82,11 +83,9 @@ def _quote(value: Any) -> str:
 
 
 def build_expression(filter: Filter | None) -> str:
-    """结构化 dict → Milvus 布尔表达式。
+    """兼容旧调用的字面量渲染；RPC 路径统一使用 compile_filter。
 
-    **翻译只发生在这里**，绝不让表达式语法泄漏到接口上（spec §7 Never）：
-    调用方写 `{"kb_id": "x"}`，换 Qdrant 时改的是这一个函数，
-    而不是每一个调用点。
+    保留现有导入方的返回类型，不作为不支持模板参数时的自动回退。
     """
     if not filter:
         return ""
@@ -99,6 +98,34 @@ def build_expression(filter: Filter | None) -> str:
         else:
             clauses.append(f"{field} == {_quote(expected)}")
     return " and ".join(clauses)
+
+
+def compile_filter(filter: Filter | None) -> tuple[str, dict[str, Any]]:
+    """编译现有等值/IN 契约；值绑定，JSON 路径仍按字面量转义。
+
+    Any 来自现有 Filter 边界；这里拒绝 SDK 无法可靠表示的值，不猜测字符串含义。
+    不支持的值不回退拼接，也不在 RPC 失败后去掉过滤条件重试。
+    """
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
+    for index, (key, expected) in enumerate((filter or {}).items()):
+        field = f'{_METADATA}["{_quote_key(key)}"]'
+        membership = isinstance(expected, (list, tuple, set))
+        values = list(expected) if membership else [expected]
+        for value in values:
+            if not isinstance(value, (str, bool, int, float)):
+                raise ValueError("Milvus 过滤值仅支持字符串、布尔和有限数值")
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError("Milvus 过滤数值必须有限")
+            if isinstance(value, int) and not -(2**63) <= value < 2**63:
+                raise ValueError("Milvus 过滤整数必须在 int64 范围内")
+        if membership and len({type(value) for value in values}) > 1:
+            raise ValueError("Milvus IN 过滤值必须同类型")
+        placeholder = f"f{index}"
+        params[placeholder] = values if membership else expected
+        operator = "in" if membership else "=="
+        clauses.append(f"{field} {operator} {{{placeholder}}}")
+    return " and ".join(clauses), params
 
 
 def _combine(*expressions: str) -> str:
@@ -446,17 +473,20 @@ class AsyncMilvusStore(AsyncVectorStore):
         await self._dim_of(kb_id)  # 顺带校验 collection 存在
         name = self._name(kb_id)
 
+        expression, params = compile_filter(filter)
         id_expr = ""
         if ids is not None:
             if not ids:
                 return 0
-            rendered = ", ".join(_quote(i) for i in ids)
-            id_expr = f"{_ID} in [{rendered}]"
-        expression = _combine(id_expr, build_expression(filter))
+            params["ids"] = list(ids)
+            id_expr = f"{_ID} in {{ids}}"
+        expression = _combine(id_expr, expression)
 
         # Milvus 的 delete 不返回准确条数，先查出真正会被删的主键。
         # 直接信它的 delete_count 会让契约里"删除不存在的 id 返回 0"失效。
-        matched = await self._client.query(name, filter=expression, output_fields=[_ID])
+        matched = await self._client.query(
+            name, filter=expression, filter_params=params, output_fields=[_ID]
+        )
         keys = [row[_ID] for row in matched]
         if not keys:
             return 0
@@ -477,12 +507,14 @@ class AsyncMilvusStore(AsyncVectorStore):
         if len(query_embedding) != dim:
             raise DimensionMismatch(kb_id, dim, len(query_embedding))
 
+        expression, params = compile_filter(filter)
         results = await self._client.search(
             self._name(kb_id),
             data=[list(query_embedding)],
             anns_field=_DENSE,
             limit=top_k,
-            filter=build_expression(filter),
+            filter=expression,
+            filter_params=params,
             output_fields=[_TEXT, _METADATA],
             consistency_level=self._consistency,
         )
@@ -513,13 +545,15 @@ class AsyncMilvusStore(AsyncVectorStore):
         if not query.strip():
             return []
 
+        expression, params = compile_filter(filter)
         results = await self._client.search(
             self._name(kb_id),
             data=[query],
             anns_field=_SPARSE,
             search_params={"metric_type": "BM25"},
             limit=top_k,
-            filter=build_expression(filter),
+            filter=expression,
+            filter_params=params,
             output_fields=[_TEXT, _METADATA],
             consistency_level=self._consistency,
         )
@@ -537,9 +571,11 @@ class AsyncMilvusStore(AsyncVectorStore):
 
     async def count(self, kb_id: str, *, filter: Filter | None = None) -> int:
         await self._dim_of(kb_id)
+        expression, params = compile_filter(filter)
         rows = await self._client.query(
             self._name(kb_id),
-            filter=build_expression(filter),
+            filter=expression,
+            filter_params=params,
             output_fields=["count(*)"],
             consistency_level=self._consistency,
         )
@@ -552,5 +588,6 @@ class AsyncMilvusStore(AsyncVectorStore):
 __all__ = [
     "AsyncMilvusStore",
     "build_expression",
+    "compile_filter",
     "collection_name_for",
 ]

@@ -60,6 +60,41 @@ class TestMilvusVectorStore(VectorStoreContract):
         return store
 
 
+async def test_bound_filter_preserves_hostile_value_across_operations(
+    store: AsyncVectorStore,
+) -> None:
+    kb = "filter-binding"
+    value = '中文\n\\"] or metadata["tag"] != "other'
+    await store.ensure_collection(kb, dim=4)
+    try:
+        await store.upsert(
+            kb,
+            [
+                VectorRecord(
+                    "selected", "shared keyword", [1.0, 0.0, 0.0, 0.0], {"tag": value}
+                ),
+                VectorRecord(
+                    "other", "shared keyword", [1.0, 0.0, 0.0, 0.0], {"tag": "other"}
+                ),
+            ],
+        )
+        condition = {"tag": value}
+        assert await store.count(kb, filter=condition) == 1
+        assert [
+            hit.id
+            for hit in await store.search(kb, [1.0, 0.0, 0.0, 0.0], filter=condition)
+        ] == ["selected"]
+        assert isinstance(store, AsyncKeywordSearchPort)
+        assert [
+            hit.id
+            for hit in await store.search_keywords(kb, "keyword", filter=condition)
+        ] == ["selected"]
+        assert await store.delete(kb, ids=["selected", "other"], filter=condition) == 1
+        assert await store.count(kb) == 1
+    finally:
+        await store.drop_collection(kb)
+
+
 class TestMilvusKeywordSearch(KeywordSearchContract):
     @pytest.fixture
     async def store(  # noqa: PT004

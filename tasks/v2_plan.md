@@ -1,7 +1,7 @@
 # Comet-RAG V2：实施记录
 
-当前进度：前8批实现与本地验证已完成，本批为重排基类有限分数校验。
-待办包括Filter 规范与参数化、真实后端验收，以及全局 runner、统一 deadline 与 M4 生产闭环。
+当前进度：前9批实现与本地验证已完成，本批为五库查询复核与 Milvus 参数绑定。
+待办包括Filter 类型/缺失/null/bool-int/集合规范及参数化真实验收，以及全局 runner、统一 deadline 与 M4 生产闭环。
 下文保留历史记录；现行执行模式以第四批与版本说明为准。
 
 # 第一批：文档校准与配置合并
@@ -652,3 +652,56 @@ Qwen 为 12 failed / 6 passed；随后补齐数字字符串拒绝用例并通过
 本轮未调用真实 GPU 模型或中间件，未重跑 core-only 安装与三层合并覆盖率；MockTransport
 验证实际 Qwen 请求/解析路径与可重复的异常响应，不代表线上模型联调。第七批真实后端
 契约验收、全局 runner/统一 deadline 与 M4 生产闭环仍按上方剩余清单推进。
+
+# 第九批：多后端查询复核与 Milvus 值绑定
+
+> 日期：2026-10-23。完整研究见 [查询与过滤适配复核](../docs/vector_filter_reassessment.md)。
+
+## 复核与范围
+
+重新检索五家官方仓库、文档/API、固定 PyMilvus 2.6.17 源码及社区问题。纠正 Chroma
+常规查询后过滤、Milvus 无过滤 count/文本短语/地理时间能力、Chroma 无数组 metadata
+等结论；补充 Qdrant 浮点 match 限制、Weaviate 分词与空值语义、版本/schema/索引门槛。
+资料表和推论区分见报告，不宣称已实测五库或已核对五家全部 OpenAPI/客户端源码。
+
+当前可见工作区没有原调研声称的 Filter AST 或 Milvus 参数化实现，只有前两批未提交
+改动。因此本次基于现有字面量实现改造，保留已有工作，没有撤销或替换未知分支内容。
+
+## 改动与可见行为
+
+- 新增 Milvus compile_filter：生成模板和独立参数，dense、keyword、count 与删除前
+  选取查询均接线；删除 ID 使用独立参数名，与 metadata 参数不碰撞。
+- JSON 字段路径使用 JSON 字面量转义，覆盖引号、反斜杠及控制字符；参数化不能替代
+  字段路径处理。旧 build_expression 仅保留导入兼容，生产 RPC 不再调用。
+- 绑定值收紧到 str/bool/int64/有限 float 与同类型候选集合。None、异构集合、对象、
+  NaN/Inf、溢出整数明确抛 ValueError；不字符串化、不自动回退拼接或去过滤重试。
+  这是 Milvus 的可见输入限制，不代表已统一 InMemory 的缺失/null/bool-int 语义。
+- Filter/AsyncVectorStore 的公共签名、向量 schema、依赖不变。研究提出的强类型 IR、
+  schema profile 和新增后端仍需按 AGENTS/spec 的接口、schema 与实现数量边界决策。
+
+## 故障注入与验证
+
+新增 41 项单测及 1 项真实 Milvus 集成用例：编译结构、恶意值/字段键、同名参数隔离、
+集合独立复制、SDK protobuf 序列化、原生 AsyncMilvusClient→传输层的参数实接，以及
+四条调用路径的超时/取消传播、非法输入不进入查询或删除。集成用例验证 hostile value
+下 count/dense/keyword/delete 的一致选取，当前环境连接/鉴权失败，实际跳过。
+
+在独立临时源码副本注入 10 类缺陷，全部被测试检测：dense/keyword/count/delete
+分别漏传绑定值、字段键不转义、标量全转字符串、占位符碰撞、放行非有限数、删除 ID
+参数碰撞、超时后去过滤重试。恢复后 41 项通过，工作区未被注入变异。
+
+| 最终检查 | 结果 |
+|---|---|
+| 完整 unit | 2860 passed、15 skipped、1 xfailed，8.66s |
+| 内存 E2E | 49 passed，1.82s |
+| 入库/检索 benchmark | 7 passed，3.25s |
+| 定向 Milvus 编译/适配器回归（新增传输检查前） | 94 passed |
+| 新增绑定与传输单测最终集 | 41 passed |
+| 全仓 Ruff / Pyright | 通过；0 errors、0 warnings |
+| 改动 Python 格式 / git diff --check | 通过 |
+| 新增真实 Milvus 参数化用例 | 1 skipped，连接/鉴权失败，47 deselected |
+
+使用现有环境 `UV_CACHE_DIR=/tmp/comet-rag-v2-uv-cache uv run --no-sync --offline`。
+没有安装新依赖、重装 core-only 或合并三层覆盖率，也没有运行另外四库和 GPU 联调。
+旧删除流程的先查后删并发窗口/大结果集、空集合服务器端行为与强类型过滤规范均未因
+本次参数化自动解决。保留这些缺口，禁止将本地 SDK/替身通过写成真实后端验收通过。

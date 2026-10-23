@@ -1,7 +1,7 @@
 """`build_expression` 的对抗性输入（PR 评审 #5）。
 
-这个函数是**唯一**把结构化 dict 翻译成 Milvus 表达式的地方，也就是唯一
-"字符串拼接出查询语句"的地方 —— 注入类问题只可能出在这里。
+保留旧字面量渲染入口的兼容性检查。生产 RPC 的模板与绑定测试位于
+test_milvus_filter_binding.py；两条路径共同使用字段键转义。
 
 filter 来自 HTTP 请求体（`POST /search` 的 `filter` 字段），**键和值都是
 调用方完全可控的**。最初只转义了值，键是直接插进 `metadata["..."]` 的。
