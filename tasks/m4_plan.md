@@ -27,8 +27,9 @@ T8 第一切片已实现 HierarchyBuilder、IndexPlanner 与 RevisionStager：�
 T8 第二切片已实现 UUID 一次持久化、32 MiB 整份 context 限额及 CPU→IO 的窄 payload
 移交。真实 PG/Redis/Milvus 验收在停止 CPU worker 后，仅凭 task_id 和持久化 context
 续跑到 ready，并覆盖向量提交后响应丢失。V2 第十五批补齐独立激活/响应丢失与
-superseded 恢复，复用现有 Store 原语并保持独立 Task 阶段；下一项推进 GC，
-最后接入生产 IngestRunner；生产新写入保持关闭。
+superseded 恢复，复用现有 Store 原语并保持独立 Task 阶段；第十六批补齐独立精确 GC，
+包括 superseded 废弃、部分失败恢复、active 保护与有界扫描。下一项接线生产
+IngestRunner/maintenance，持久化独立 GC 阶段并排干旧写入；生产新写入保持关闭。
 
 ## Dependency Graph
 

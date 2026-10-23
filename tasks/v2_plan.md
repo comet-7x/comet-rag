@@ -1,6 +1,7 @@
 # Comet-RAG V2：实施记录
 
-当前进度：前十五批已提交；第十六批先交付 Milvus 完整性读取，GC 与真实验收后续分项提交。
+当前进度：前十五批已提交；第十六批已交付 Milvus 修正与 GC 实现/单测，真实联合故障用例另项提交。
+第十六批补齐 superseded 精确回收、部分清理失败重试和 active 保护，未接线生产。
 第十五批补齐独立 revision 激活与故障恢复；单测 10 秒预算仍缺乏稳定余量。
 第十四批补齐入库线程取消与清理，
 并修复实机验证暴露的 ARQ 测试夹具关停竞态。
@@ -12,7 +13,7 @@
 Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 下文按批次保留历史记录，现行 API 以第四批和版本说明为准。
 
-## 当前剩余项复核（第十五批）
+## 当前剩余项复核（第十六批）
 
 | 历史待办 | 对照当前代码的结论 | 后续安排 |
 |---|---|---|
@@ -25,10 +26,10 @@ Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 | 入库线程取消与临时文件清理 | 复核发现 IngestRunner 正规化/分块仍用裸 to_thread，清理直接阻塞事件循环，与既有 run_sync 纪律不一致 | 第十四批已修复并完成故障注入、反向与全量验证；保留线程不可强杀的限制 |
 | 其他真实向量后端 | Qdrant、Weaviate、Chroma、OceanBase 已调研，但没有适配器、装配或真实契约验收；当前仅 Milvus + InMemory | 现行 spec A9 不含多后端；接入第三个实现及扩展 Filter/能力模型需独立确认范围 |
 | 统一查询 deadline | 第十三批建立每次 search 的绝对截止时刻，覆盖 KB 检查、模型排队、召回判活、重排和父块读取；保留取消排干 | 已补故障注入、HTTP 接线与 13 类反向验证；线程不能强杀、清理可超过预算，边界见 query_deadline.md |
-| 真实后端与安装验收缺口 | 第十五批复验 PostgreSQL/Redis/Milvus 全量集成并完成独立 core-only 重装与 DOCX 冒烟；MinIO、外部模型/MinerU 仍未补验 | 第十五批三层覆盖率：整体 92.45%、tasks 96.18%；其余按相关改造另行验收 |
-| M4 生产闭环 | Stager 仍止于 ready；新增独立 Activator/Task 激活恢复，验证失败保旧、提交响应丢失和 superseded；GC 与生产接线未完成 | 下一批推进精确、幂等 GC，再接线生产 IngestRunner |
+| 真实后端与安装验收缺口 | GC 真实联合故障用例和 CI 随第三项提交；本项包含 GC 服务、共享 Store 契约和单测 | 最近已提交验收仍是第十五批；MinIO、外部模型/MinerU 仍未补验 |
+| M4 生产闭环 | Stager 止于 ready，独立 Activator/Task 激活阶段和独立精确 GC 已实现；superseded 显式登记、部分失败重试和 active 保护已有故障测试 | 待接线生产 IngestRunner/maintenance；持久化独立 GC 阶段与结果并排干 revision 写入 |
 
-第十四批补齐入库线程所有权遗漏；第十五批补齐独立激活恢复。M4 GC/生产接线、其它向量库适配
+第十四批补齐入库线程所有权遗漏；第十五/十六批补齐独立激活与 GC。M4 生产接线、其它向量库适配
 与剩余安装/外部服务验收仍是独立工作；查询能力调研不等于后端已实现。
 
 # 第一批：文档校准与配置合并
@@ -1280,21 +1281,60 @@ Task 阶段、单元故障测试和接口文档；第二项包含真实中间件
 提交准备只重复本地检查；真实集成、15 类反向验证、core-only 和覆盖率沿用已核对的
 实现轮记录，未重新启动中间件。所有生产与测试文件均逐字节保持原实现。
 
-# 第十六批第一项：Milvus 完整性读取
+# 第十六批：revision 精确、幂等 GC
 
-复核确认 delete 的 ID 选择未显式传一致性，count 沿用检索偏好。两者固定使用上游
-原生 Strong query 参数；dense/keyword 仍按配置执行，避免跨客户端旧快照导致错误
-完整性判断。没有增加 Port、schema 或依赖，也没有提前交付 GC 服务或启用生产写入。
+> 日期：2026-10-23
+> 起点：`4b73074`；用户确认范围：复用现有 Store 原语，验证 superseded 回收、部分清理失败重试和 active 不可误删。
 
-新增两项 count/delete 弱检索配置下的 Strong 断言，原有一致性测试改为同时检查
-检索遵循配置与 count 固定 Strong。分别移除两处 Strong 的反向注入均由目标断言检出。
-完整性读取可能增加延迟；接口、过滤参数绑定和数据格式保持不变。
+## 复核与改造
 
-GC 服务/契约/单测与真实联合故障用例分别随第二、三项提交，不把读取断言当作 GC 验收。
+DocumentStore 已有原子 abandon、retired/abandoned 候选列表和保留墓碑的 purge，
+本批不新增方法、持久化字段、向量 schema 或依赖。补充既有原语的 docstring，并增加
+两实现共用的契约：ready 废弃后不可再激活，候选列表排除 staging/ready/active/purged。
+
+新增 `services/revision_gc.py::RevisionGarbageCollector`，职责仅为双存储回收：
+
+1. `collect_superseded(outcome)` 只接受 Activator 的 superseded 结果，原子 abandon
+   早于任何向量 IO；即使候选提供者错传 active，也由 Store 拒绝，不能先删除再检查。
+2. 按 KB 加 `{source_id, document_revision}` 精确删除；不按 source 整体删除，不碰
+   legacy、其他 source 或其他 KB。核验残留 count=0 后才清父块并写 purged 墓碑。
+3. 删除、核验或父块清理失败，保留 retired/abandoned 供扫描；删除 0 行可重试。
+   purge 已提交但响应丢失时，墓碑保持幂等；取消继续传播。明确 CollectionNotFound
+   视为空，其余连接、权限、超时等错误不得伪装为空集合。
+4. `sweep(limit=32)` 每次只扫一批，顺序执行，不循环扫空、不创建无界队列或后台任务。
+   每项失败记录日志并继续本批其他候选，返回成功/失败 key；列表查询失败直接传播。
+
+复核确认 Milvus delete 的 ID 选择未显式传一致性，count 沿用检索偏好，跨客户端 GC
+可能拿旧快照作为完成依据。两者改为固定 Strong，dense/keyword 保留配置偏好。
+复用上游已有 query 参数，未引入轮询、线程包装或新的翻译层：
+[Milvus 2.6 query 文档](https://milvus.io/api-reference/pymilvus/v2.6.x/MilvusClient/Vector/query.md)。
+此行为可能增加完整性读取延迟，但不会改变过滤语义或数据格式。
+
+## 范围与生产接线边界
+
+Activator 仍不自动 GC。未发布的旧 ready 只有显式登记后才进入持久化候选；登记提交前
+失败必须重试原 superseded 结果，不能只扫候选就宣称成功。登记提交后响应丢失则可由
+新实例扫描恢复。生产 Task 需持久化独立 GC 阶段和 superseded 结果，清理重试不应回到
+激活阶段；从未发布的 purged manifest 本身不含“为何废弃”的任务结果证据。
+
+GC 的输入必须已经停止写入；本服务不能阻止之前发出的旧 upsert 在清理后迟到。
+生产接线应先排干 revision 写入，并处理原有租约/所有权边界，不能把 Store 行锁当作
+跨 Milvus/PostgreSQL 原子事务。生产 IngestRunner/maintenance、定时任务和写开关均未改。
+遗留无 revision 向量不由普通 GC 清理。尚未宣称 Checkpoint H/I 或 M4 全部完成。
+
+## 本项测试与验收边界
+
+本项包含服务、Store 契约说明、两实现共用契约、单元故障测试和接口/架构文档。
+单测覆盖精确过滤、失败重试、取消、候选上限、墓碑与 active 保护；共享契约检查
+abandoned 不可重新 ready，以及候选只含 retired/abandoned。17 类单元/契约反向缺陷
+注入均被目标断言检出（包含前一项的两处 Strong），无收集错误。
+
+真实 PostgreSQL/Milvus GC 联合故障用例、CI 与完整验收记录随第三项提交，不把内存
+测试当作真实双存储恢复证明。生产接线与写开关仍未改变。
 
 ## 提交快照验证
 
-本快照默认单测：3032 passed, 15 skipped, 294 deselected, 1 xfailed in 10.56s；E2E：50 passed, 3292 deselected in 3.12s。
+本快照默认单测：3064 passed, 15 skipped, 296 deselected, 1 xfailed in 10.07s；E2E：50 passed, 3326 deselected in 2.89s。
 全仓 Ruff、Pyright、本批 Python 格式及 Commitizen 消息校验通过。
 单测功能断言通过；耗时超过 10 秒目标，不能称为预算达标。未改门槛、断言或测试选择。
 真实 GC 联合故障用例和最终验收记录随第三项提交。

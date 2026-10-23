@@ -28,7 +28,17 @@ IngestRunner 的正规化与分块改用已有 run_sync，取消后等待同步�
 调用方重试同一 manifest；提交后响应丢失返回 already_active，旧任务返回 superseded，
 不覆盖较新的 active。准备、激活与 GC 各有独立重试边界，激活阶段不重新 embedding。
 返回值是本次尝试的快照，不保证返回后仍为当前版本。未新增 schema、Port 或生产开关；
-生产 IngestRunner 与 GC 编排仍待完成。
+生产 IngestRunner 接线仍待完成。
+
+### 实验性 revision GC
+
+新增 `services.revision_gc.RevisionGarbageCollector`：`collect_superseded(outcome)` 精确
+登记并清理被取代版本，失败原样抛出供独立阶段重试；`sweep(limit=32)` 有界扫描已登记
+的 retired/abandoned，返回成功/失败 key 并记录失败。原子拒绝 active 早于向量 IO，
+向量删除和零残留核验早于父块清理及 purged 墓碑。缺失 collection 视为空，连接异常
+不能视为空；不会清理 legacy 或其他 source/KB。
+未新增 Store 方法、schema、生产开关或定时任务。生产接线仍需先排干 revision 写入，
+持久化 GC 阶段与 superseded 结果；本服务不替代任务租约或跨存储事务。
 
 ### Milvus 完整性读取
 

@@ -565,3 +565,15 @@ M4-T6 已提交 schema/迁移/回滚设计，后半段决策门已于 2026-09-16
 - 两个原始 stash 仍在；早先 `/tmp` 的删除分支前 bundle 已不在，补做并验证当前引用
   恢复 bundle。它不是当初完整备份的替代品，不宣称已恢复原删除分支清单。
   core-only 导入产生的遥测临时文件移出仓库保存，不纳入提交。
+
+## 24. V2 激活与 GC 切片现状（2026-10-23）
+
+第十五批新增独立 RevisionActivator/Task 激活阶段，复用既有 Store generation 围栏，
+验证事务失败保旧、提交响应丢失和 superseded。第十六批新增 RevisionGarbageCollector，
+复用原子 abandon 与 purge：按 KB/source/revision 删除子向量，确认零残留后清父块并
+保留 purged 墓碑，支持 superseded 登记与有界候选扫描。Milvus count 和删除 ID 选择
+固定 Strong；检索仍遵循配置的一致性级别。没有扩展 Port 方法、schema 或中间件。
+
+生产 Task/maintenance 尚未接线：需持久化独立 GC 阶段和 superseded 结果，登记失败
+不得当成成功；GC 前需排干该 revision 的写入，不能由跨存储清理保证迟到 upsert 的
+原子隔离。仍未宣称完整 Checkpoint H/I。实现、故障注入、反向与全量验证见 v2_plan.md。

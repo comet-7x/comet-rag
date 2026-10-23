@@ -309,6 +309,37 @@ class DocumentStoreContract:
         with pytest.raises(ValueError):
             await store.list_cleanup_candidates(limit=0)
 
+    async def test_abandon_ready_is_irreversible_before_vector_gc(
+        self, store: DocumentStore
+    ) -> None:
+        draft, _ = await make_ready(store, make_draft())
+        await store.abandon_revision(draft.key)
+        with pytest.raises(RevisionNotReady):
+            await store.activate_revision(draft.key)
+        with pytest.raises(RevisionConflict):
+            await store.mark_ready(draft.key)
+        assert (await store.reserve_revision(draft)).status is RevisionStatus.ABANDONED
+        assert await store.get_active_revisions(KB, [SOURCE]) == {SOURCE: None}
+
+    async def test_cleanup_candidates_only_include_terminal_inactive_revisions(
+        self, store: DocumentStore
+    ) -> None:
+        retired, _ = await make_ready(store, make_draft("retired"))
+        active, _ = await make_ready(store, make_draft("active"))
+        await store.activate_revision(retired.key)
+        await store.activate_revision(active.key)
+        await make_ready(store, make_draft("ready"))
+        await store.reserve_revision(make_draft("staging"))
+        abandoned, _ = await make_ready(store, make_draft("abandoned"))
+        await store.abandon_revision(abandoned.key)
+        purged, _ = await make_ready(store, make_draft("purged"))
+        await store.abandon_revision(purged.key)
+        await store.purge_inactive_revision(purged.key)
+        assert await store.list_cleanup_candidates(limit=20) == [
+            retired.key,
+            abandoned.key,
+        ]
+
     async def test_inputs_are_copied_at_value_boundary(
         self, store: DocumentStore
     ) -> None:

@@ -148,6 +148,7 @@ separator 配置不可被原地修改。
 - [x] UUID 一次持久化、窄 revision payload、CAS 内整份 context 字节上限
 - [x] CPU 父块落库后交接，IO 从 task_id/context 续跑到 ready，真实三后端验证
 - [x] 独立激活阶段复用 Store 原语：事务失败保留旧版本、提交响应丢失幂等恢复、旧任务 superseded
+- [x] 独立 GC：superseded 登记、有界候选扫描、零残留核验、部分失败重试及 active 保护
 - [ ] 父块、子向量、激活与旧版本回收按规格排序
 - [ ] 任一阶段失败只回滚本 revision，旧 active 数据仍可查询
 - [ ] 重试幂等，不产生重复可见记录
@@ -157,9 +158,10 @@ separator 配置不可被原地修改。
 IO 分批读取父块、复验完整指纹后才写向量，embedding 返回后仍检查所有权/取消。
 V2 第十五批补齐独立 activation/superseded 恢复切片；Redis worker 验证激活响应丢失
 只重试 activation，PostgreSQL 真事务回滚与独立 Milvus Strong 读验证可见性。
-GC 与生产 Task 全生命周期尚未完成，故完整 context/progress 条目仍未勾选。
+第十六批补齐独立 GC，生产 Task/maintenance 全生命周期尚未完成，故完整 context/progress 条目仍未勾选。
 不能把测试 kind 的成功当成生产 ingest 或 Checkpoint H。未发布的 stale ready
-本批保持 ready，后续 GC 必须负责废弃与清理，不能把它误算作已回收。
+由显式 collect_superseded 废弃并清理；登记提交前失败必须重试原结果。生产接线需先
+持久化独立 GC 阶段和 superseded 结果并排干该 revision 的写入。
 
 ### M4-T9 — 父块回填与检索兼容（M）
 
@@ -172,10 +174,10 @@ GC 与生产 Task 全生命周期尚未完成，故完整 context/progress 条�
 - [x] 旧平坦记录仍可检索，不伪造 parent
 - [x] 每通道最多两轮召回 / 2048 个 candidate，分别判活后才参与 RRF
 - [x] 判活失败或不完整映射拒绝查询，HTTP 返回安全 503
-- [x] Milvus dense/BM25/count 请求显式指定适配器一致性级别
+- [x] Milvus dense/BM25 请求显式指定配置的一致性级别；count 与删除选择固定 Strong
 - [x] 真实 Milvus 双客户端 Strong 验收与 PostgreSQL 指针联合故障恢复
 - [x] 配置化装配 DocumentStore、默认关闭的读开关与资源配对校验
-- [ ] 旧 revision GC
+- [x] 独立旧 revision GC（生产 maintenance 接线仍待完成）
 
 2026-10-03 读侧支持 `retrieval.revision_aware` 显式配置或注入 DocumentStore，默认
 不创建资源；CLI 已接线但生产配置未开启，新写入仍关闭。父块 key 必须与 child 的 KB/source/revision

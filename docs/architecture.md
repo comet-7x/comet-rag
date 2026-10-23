@@ -168,8 +168,14 @@ Stager 只写到 ready；`RevisionActivator` 复用 Store 的幂等 reserve、�
 识别 already-active；已被更高 generation 替换时返回 superseded，不重新准备或覆盖。
 版本顺序以 Store reserve 分配的 generation 为准，不以 Task 创建时间推断。
 网络异常和取消不证明提交失败，禁止据此清理向量或回滚 active。尚未发布的旧 generation
-保持 ready，后续 GC 编排负责废弃；已发布的 retired/purged manifest 保留恢复证据。
-本切片未执行 GC，也未接入生产 `IngestRunner`。读侧可显式配置或注入
+保持 ready，由独立 GC 显式登记废弃；已发布的 retired/purged manifest 保留恢复证据。
+`RevisionGarbageCollector.collect_superseded` 接受 Activator 的 superseded 结果，先原子
+abandon（拒绝 active），再按 KB/source/revision 删除向量并核验剩余数为零，最后清父块
+并保留 purged 墓碑。删除、计数或父块事务失败保留候选，重试删除零行也算成功。
+`sweep(limit=32)` 单次只处理一批 retired/abandoned；单项失败记录并继续，取消继续传播。
+登记提交前失败的 ready 不在扫描队列里，调用方必须重试登记。生产 Task 还需持久化
+独立 GC 阶段及 superseded 结果，并先排干该 revision 的写入；服务未接入生产
+`IngestRunner` 或 maintenance。读侧可显式配置或注入
 DocumentStore，默认关闭。M4 的完整完成标准见 `tasks/m4_todo.md`，不能由切片通过推定。
 
 Milvus 的计数和删除 ID 选择固定使用 Strong，检索仍保留配置的一致性偏好；跨客户端

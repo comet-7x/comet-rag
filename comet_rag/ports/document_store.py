@@ -223,10 +223,12 @@ class DocumentStore(ABC):
     ) -> dict[str, StoredParent]: ...
 
     @abstractmethod
-    async def abandon_revision(self, revision: RevisionKey) -> None: ...
+    async def abandon_revision(self, revision: RevisionKey) -> None:
+        """原子拒绝 active；废弃后不可再激活，retired/purged 重试为空操作。"""
 
     @abstractmethod
-    async def list_cleanup_candidates(self, *, limit: int) -> list[RevisionKey]: ...
+    async def list_cleanup_candidates(self, *, limit: int) -> list[RevisionKey]:
+        """只返回最多 limit 个 retired/abandoned，不含仍可发布的 staging/ready。"""
 
     @abstractmethod
     async def purge_inactive_revision(self, revision: RevisionKey) -> None:
