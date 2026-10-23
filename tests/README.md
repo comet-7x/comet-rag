@@ -307,7 +307,7 @@ uv run alembic revision --autogenerate -m "描述"
 
 CI 先创建 `zhihao_test_database`、迁移独立 PostgreSQL，再跑向量/文档仓储契约和
 `test_milvus_async_lifecycle.py`、`test_revision_lifecycle.py`、
-`test_revision_activation_recovery.py`。原生异步生命周期用例
+`test_revision_activation_recovery.py`、`test_revision_gc_recovery.py`。原生异步生命周期用例
 验证同参数建索引幂等、服务端提交后响应丢失不会删掉另一实例的数据，以及部分索引
 完成后取消仍能跨实例续建。revision 用例使用独立的 SQL/Milvus 读客户端，覆盖 legacy、
 partial-write、ready、激活以及旧向量残留，在 dense/keyword/hybrid 的 child/parent
@@ -323,6 +323,13 @@ partial-write、ready、激活以及旧向量残留，在 dense/keyword/hybrid �
 回滚；提交后再注入响应丢失，使用独立 PostgreSQL 与 Strong Milvus 读连接确认六种
 检索组合只见旧/新 active。另覆盖旧 ready 任务与已激活后又被替换的任务重试，二者
 都返回 superseded 而不能反杀新版本。此切片不执行 GC，也不模拟 fork/SIGKILL。
+
+GC 用例在独立 PostgreSQL/Milvus 连接中覆盖 superseded、retired、部分删除、无异常的
+残留向量、清父块事务回滚、删除/废弃/清理响应丢失、并发回收与误传 active 候选。
+每个 fixture 在 GC 前先验证六种检索组合可见；清理后 active、legacy 和其他 source
+向量必须保留，父块移除且 purged 墓碑仍存在。不用 sleep/flush 等待可见性。
+共享 Store 契约验证废弃后不可再激活，以及候选列表只包含 retired/abandoned。
+这验收独立 GC 切片，不代表生产 Task/maintenance 已接线或覆盖迟到写入。
 
 单元反向验证覆盖 context UTF-8 上限/CAS 冲突重验、模型返回后所有权围栏、完整计划
 指纹及 UUID 重用；32 MiB 是整份 context 的持久化上限，不是进程峰值内存预算。

@@ -211,7 +211,8 @@ jobs:
           tests/integration/test_milvus_async_lifecycle.py
           tests/integration/test_document_store_postgres.py
           tests/integration/test_revision_lifecycle.py
-          tests/integration/test_revision_activation_recovery.py -m integration
+          tests/integration/test_revision_activation_recovery.py
+          tests/integration/test_revision_gc_recovery.py -m integration
       - name: 失败时记录隔离服务日志
         if: failure()
         run: docker compose -p comet-rag-milvus-ci -f .github/milvus/compose.yml logs --tail 100

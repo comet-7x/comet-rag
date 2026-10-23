@@ -1,6 +1,6 @@
 # Comet-RAG V2：实施记录
 
-当前进度：前十五批已提交；第十六批已交付 Milvus 修正与 GC 实现/单测，真实联合故障用例另项提交。
+当前进度：前十六批实现与功能验证完成，均已按职责分批提交。
 第十六批补齐 superseded 精确回收、部分清理失败重试和 active 保护，未接线生产。
 第十五批补齐独立 revision 激活与故障恢复；单测 10 秒预算仍缺乏稳定余量。
 第十四批补齐入库线程取消与清理，
@@ -26,7 +26,7 @@ Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 | 入库线程取消与临时文件清理 | 复核发现 IngestRunner 正规化/分块仍用裸 to_thread，清理直接阻塞事件循环，与既有 run_sync 纪律不一致 | 第十四批已修复并完成故障注入、反向与全量验证；保留线程不可强杀的限制 |
 | 其他真实向量后端 | Qdrant、Weaviate、Chroma、OceanBase 已调研，但没有适配器、装配或真实契约验收；当前仅 Milvus + InMemory | 现行 spec A9 不含多后端；接入第三个实现及扩展 Filter/能力模型需独立确认范围 |
 | 统一查询 deadline | 第十三批建立每次 search 的绝对截止时刻，覆盖 KB 检查、模型排队、召回判活、重排和父块读取；保留取消排干 | 已补故障注入、HTTP 接线与 13 类反向验证；线程不能强杀、清理可超过预算，边界见 query_deadline.md |
-| 真实后端与安装验收缺口 | GC 真实联合故障用例和 CI 随第三项提交；本项包含 GC 服务、共享 Store 契约和单测 | 最近已提交验收仍是第十五批；MinIO、外部模型/MinerU 仍未补验 |
+| 真实后端与安装验收缺口 | 第十六批复验 PostgreSQL/Redis/Milvus 全量集成、独立 core-only 冒烟；MinIO、外部模型/MinerU 仍未补验 | 第十六批三层覆盖率：整体 92.48%、tasks 95.95%；其余按相关改造另行验收 |
 | M4 生产闭环 | Stager 止于 ready，独立 Activator/Task 激活阶段和独立精确 GC 已实现；superseded 显式登记、部分失败重试和 active 保护已有故障测试 | 待接线生产 IngestRunner/maintenance；持久化独立 GC 阶段与结果并排干 revision 写入 |
 
 第十四批补齐入库线程所有权遗漏；第十五/十六批补齐独立激活与 GC。M4 生产接线、其它向量库适配
@@ -1322,19 +1322,73 @@ GC 的输入必须已经停止写入；本服务不能阻止之前发出的旧 u
 跨 Milvus/PostgreSQL 原子事务。生产 IngestRunner/maintenance、定时任务和写开关均未改。
 遗留无 revision 向量不由普通 GC 清理。尚未宣称 Checkpoint H/I 或 M4 全部完成。
 
-## 本项测试与验收边界
+## 故障与反向验证
 
-本项包含服务、Store 契约说明、两实现共用契约、单元故障测试和接口/架构文档。
-单测覆盖精确过滤、失败重试、取消、候选上限、墓碑与 active 保护；共享契约检查
-abandoned 不可重新 ready，以及候选只含 retired/abandoned。17 类单元/契约反向缺陷
-注入均被目标断言检出（包含前一项的两处 Strong），无收集错误。
+单元测试覆盖精确过滤、跨 KB/source/revision 和 legacy 隔离、superseded 幂等回收、
+部分删除/无异常残留、计数失败、purge 前后响应故障、abandon 前后故障、并发激活
+尝试、取消、候选上限及单项失败继续。坏候选和伪造旧状态都必须在向量 IO 前拒绝 active。
 
-真实 PostgreSQL/Milvus GC 联合故障用例、CI 与完整验收记录随第三项提交，不把内存
-测试当作真实双存储恢复证明。生产接线与写开关仍未改变。
+真实 PostgreSQL/Milvus 用例使用独立读连接，覆盖 6 个故障点、并发收集器和误传 active。
+每个 fixture 在 GC 前先检查 dense/keyword/hybrid × child/parent 六种可见性，之后
+重复检查 active 可检索、legacy/其他 source 未删、父块已清和 purged 墓碑保留。
+首次测试 8 项失败来自 fixture 尾块不含 BM25 查询词，却断言应被召回；改用每个 child
+均含查询词的定长样本并加上 GC 前基线，没有弱化 GC 后断言。重跑 8 passed（32.90s），
+运行前后 Milvus 集合严格一致。首次失败日志保留，不计作已通过。
 
-## 提交快照验证
+15 类单元反向缺陷注入全部被目标断言检出、无收集错误，包括漏 source/revision/KB
+条件、跳过 active 保护、提前 purge、忽略残留、把连接异常当空集合、吞取消、丢墓碑、
+忽略候选上限和移除 Strong。真实 purge 事务反向验证及全量结果见后续验收记录。
 
-本快照默认单测：3064 passed, 15 skipped, 296 deselected, 1 xfailed in 10.07s；E2E：50 passed, 3326 deselected in 2.89s。
-全仓 Ruff、Pyright、本批 Python 格式及 Commitizen 消息校验通过。
-单测功能断言通过；耗时超过 10 秒目标，不能称为预算达标。未改门槛、断言或测试选择。
-真实 GC 联合故障用例和最终验收记录随第三项提交。
+## 第十六批全量验收
+
+新增共享契约的两类缺陷（允许 abandoned 重新 ready、候选包含 ready）也各自反向注入并
+由目标断言检出。另在独立代码副本的 PostgreSQL purge 中提前 commit，真实事务回滚
+用例按预期失败，且测试集合恢复基线。合计 18 类反向验证：17 类单元/契约，1 类真实 SQL；
+均为断言失败、无收集错误，工作区实现未注入缺陷。
+
+| 检查 | 本轮结果 |
+|---|---|
+| 完整默认单测 | 3064 passed、15 skipped、1 xfailed；9.48s |
+| 初次耗时采样 | 最后两项测试加入前 3062 passed；9.27s，最慢 15 项仍为既有并发/取消/导入检查 |
+| unit 覆盖率 | 3064 passed；88.96%，GC 服务语句覆盖率 100%；插桩耗时 13.53s 不作为 10 秒预算依据 |
+| 真实全量 integration | 245 passed、2 skipped、无 teardown error；336.05s |
+| E2E | 50 passed；4.36s（带覆盖率） |
+| benchmark | 7 passed；4.08s |
+| 三层合并覆盖率 | 整体 92.48%、tasks 95.95%（853/889），均达标 |
+| 静态/格式 | 全仓 Ruff、Pyright；本批 8 个 Python 文件格式及 git diff --check 通过 |
+| core-only | 沿用第十五批独立、无 extras 的临时环境，重新跑 CI 库入口及生成 DOCX 解析/分块冒烟，通过；本批没有重新安装依赖 |
+
+使用临时独立 PostgreSQL/Redis 和专用 Milvus 测试库（服务端 2.6.22）。仅跳过未配置
+的 MinIO/MinerU，跳过审计禁止其他服务缺失被算作通过；保留上游 ARQ close 的 24 条
+DeprecationWarning。全量与 SQL 反向验证前后均严格比对 Milvus 集合（1 个既有集合），
+没有残留测试 collection。默认单测本次低于 10 秒，但第十五批冷跑/提交快照的波动仍是
+已知限制，不据本次数字宣称预算已稳定解决。
+
+实现及验证记录在 `/tmp/comet-v2-gc-validation/`；单元、契约和真实 SQL 反向验证
+各自的 artifacts 路径见该目录中的 `mutations.log`、`contract-mutations.log` 与
+`sql-mutation.log`。没有修改 DOCX 快照、Task 字段、向量 schema 或生产配置。
+生产 Task/maintenance 接线、独立 GC 阶段及写入排干、完整 H/I、MinIO/外部模型/MinerU
+验收仍待推进。实现轮未提交或推送；随后按职责分为三个提交，核验记录见下文。
+
+## 第十六批提交前核验
+
+按职责分为三项，每项都包含相应代码/测试及文档：
+
+1. Milvus 完整性读取：count 和删除 ID 选择固定 Strong，保留检索偏好，附两项新断言及版本说明。
+2. GC 服务：精确删除、原子 active 保护、零残留核验、候选扫描、共享契约和单元故障测试。
+3. 真实验收：PostgreSQL/Milvus 联合故障恢复、CI、测试说明、部署状态和完整验证记录。
+
+| 提交快照 | 完整默认单测 | E2E |
+|---|---|---|
+| Milvus 完整性读取 | 3032 passed, 15 skipped, 294 deselected, 1 xfailed in 10.56s | 50 passed, 3292 deselected in 3.12s |
+| GC 服务与契约/单测 | 3064 passed, 15 skipped, 296 deselected, 1 xfailed in 10.07s | 50 passed, 3326 deselected in 2.89s |
+| 加入真实 GC 故障用例 | 3064 passed, 15 skipped, 304 deselected, 1 xfailed in 9.88s | 50 passed, 3334 deselected in 2.94s |
+
+三个快照的全仓 Ruff、Pyright、本批 Python 格式及 Commitizen 消息校验均通过。
+功能断言通过不等于耗时预算达标：第一/二个快照超过 10 秒，未改阈值、测试选择或断言。
+原生产与测试文件逐字节保留；仅将完整性读取说明独立成节、整理各阶段文档状态并补充
+本次核验记录。没有安装的 Git pre-commit/commit-msg 钩子未被绕过，检查已手工执行。
+
+提交准备没有重启中间件或重跑故障注入/覆盖率，前述真实集成 245 passed/2 skipped、
+18 类反向验证、core-only 和覆盖率来自实现轮，已核对记录与未变的源码/测试。
+部署开关、生产 Task/maintenance 接线和写入排干仍待推进；未推送。

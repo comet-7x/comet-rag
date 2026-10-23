@@ -321,7 +321,9 @@ DocumentStore，Milvus 配 PostgreSQL DocumentStore 和 Strong。Milvus 模式�
 retired 和被新版本替代的 legacy 均不可见。旧候选挤满上限时允许少返回，诊断为
 `revision_candidate_cap`。判活存储故障或结果不完整时返回安全 503，**不会降级为返回
 全部版本**。未配置 DocumentStore 的旧链路遇到 revision candidate 也拒绝查询。
-真实 Milvus 双客户端验收、Task 跨 worker 续跑、激活与 GC 完成前不得启用生产新写入。
+独立激活/GC 切片已验收，但生产 Task 与 maintenance 接线、写入排干及完整 H/I 验收
+尚未完成，不得启用生产新写入。GC 默认每轮最多 32 个 retired/abandoned；本轮没有
+自动注册定时任务。superseded 登记前失败需重试原结果，不能仅依赖候选扫描。
 
 ### Milvus schema 兼容
 
