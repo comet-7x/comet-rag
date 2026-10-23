@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, cast, final
@@ -16,6 +17,23 @@ from comet_rag.ports.content import (
     TextContent,
 )
 from comet_rag.ports.reranker import AsyncRerankerPort, RerankerPort
+
+
+def _validate_scores(scores: list[float]) -> list[float]:
+    """低层 score 也可被直接调用，必须在排序或截断前拒绝坏分数。"""
+    for index, score in enumerate(scores):
+        try:
+            valid = (
+                isinstance(score, (int, float))
+                and not isinstance(score, bool)
+                and math.isfinite(score)
+            )
+        except OverflowError:
+            valid = False
+        if not valid:
+            # 不格式化供应商值：异常可进入服务日志，值本身不属于诊断契约。
+            raise ValueError(f"重排分数[{index}] 必须是有限数值")
+    return scores
 
 
 class _RerankerTransform[ProviderInput]:
@@ -104,11 +122,14 @@ class BaseReranker[ProviderInput](_RerankerTransform[ProviderInput], GatedModel,
         documents: Sequence[ProviderInput],
         **kwargs: Any,
     ) -> list[float]:
-        """同步低层打分接口。受闸门保护，不可覆写。
+        """同步低层打分接口；非法或非有限分数抛 ValueError。不可覆写。
 
         同步入口同样必须经模板方法取闸门，否则 ``rank()`` 会绕过进程级预算。
         """
-        return self._through_gate_sync(lambda: self._score(query, documents, **kwargs))
+        scores = self._through_gate_sync(
+            lambda: self._score(query, documents, **kwargs)
+        )
+        return _validate_scores(scores)
 
     @final
     def rank(
@@ -151,8 +172,11 @@ class AsyncBaseReranker[ProviderInput](
         documents: Sequence[ProviderInput],
         **kwargs: Any,
     ) -> list[float]:
-        """异步低层打分接口。受闸门保护，不可覆写。"""
-        return await self._through_gate(lambda: self._score(query, documents, **kwargs))
+        """异步低层打分接口；受闸门保护，非法或非有限分数抛 ValueError。"""
+        scores = await self._through_gate(
+            lambda: self._score(query, documents, **kwargs)
+        )
+        return _validate_scores(scores)
 
     @final
     async def rank(

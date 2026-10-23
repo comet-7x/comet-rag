@@ -170,6 +170,15 @@ finally:
 同步代码使用 `Qwen3VLReranker.rank()`。`score()` 是接收供应商 DTO 的低层接口，
 业务代码优先调用 `rank()`；两种类均不再提供 `ascore/arank`。
 
+`BaseReranker` / `AsyncBaseReranker` 在 `score()` 返回前统一检查全部分数：
+NaN、正负无穷、布尔值、非数字及无法表示为有限浮点数的超大整数均抛 `ValueError`。
+`rank()` 通过同一入口检查，不能用 `top_k` 隐藏末位的坏分数。有限负数、零及大于 1
+的分数保持原值，不强制归一化；供应商 DTO 自身的输入解释和转换仍由适配器负责。
+
+直接模型调用由调用方处理异常。`RetrievalService` 会记录日志并退回原始召回候选：
+基类拒绝时沿用 `request_failed` / `ValueError` 诊断；不继承基类的 Port 实现仍受服务
+返回值校验保护，非法分数对应 `result_score_invalid`。请求取消继续传播。
+
 ## 视觉描述
 
 `OpenAIVisionModel.describe()` 与 `AsyncOpenAIVisionModel.describe()` 接收已编码的
