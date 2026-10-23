@@ -21,9 +21,7 @@ from comet_rag.tasks import (
     TaskError,
     TaskService,
     TaskStatus,
-    register,
 )
-from comet_rag.tasks.runner import unregister
 from comet_rag.workers.maintenance import sweep_stale_tasks
 
 
@@ -110,7 +108,7 @@ async def test_retry_enqueue_failure_preserves_absolute_backoff(
     now = Time.now()
     monkeypatch.setattr(Time, "now", lambda: now)
 
-    @register("delivery-retry")
+    @executor.runners.register("delivery-retry")
     async def runner(ctx: TaskContext) -> Done:
         await ctx.enter_stage("working")
         raise RetriableError("upstream unavailable", code="upstream_503")
@@ -138,7 +136,7 @@ async def test_retry_enqueue_failure_preserves_absolute_backoff(
         assert (await store.require(task.task_id)).version == pending.version
     finally:
         await executor.shutdown()
-        unregister("delivery-retry")
+        executor.runners.unregister("delivery-retry")
 
 
 async def test_first_retry_and_reconciliation_use_the_same_deadline(
@@ -179,7 +177,7 @@ async def test_handoff_enqueue_failure_is_repaired_to_the_destination_lane() -> 
         assert (await ctx.snapshot()).context["prepared"] is True
         return Done(result="indexed")
 
-    register("delivery-handoff")(flow)
+    cpu.runners.register("delivery-handoff")(flow)
     try:
         task = await store.create("delivery-handoff", max_attempts=1)
         await cpu.submit(task.task_id)
@@ -195,6 +193,7 @@ async def test_handoff_enqueue_failure_is_repaired_to_the_destination_lane() -> 
         job_id = cpu.job_id_for(task.task_id, 0, LANE_IO, version=pending.version)
         assert queue.jobs[job_id] == ((task.task_id,), "io-queue", None)
         io = executor_for(store, queue, lane=LANE_IO)
+        io.runners.register("delivery-handoff")(flow)
         await run_task({"executor": io, "job_id": job_id}, task.task_id)
         done = await store.require(task.task_id)
         assert done.status is TaskStatus.SUCCEEDED
@@ -202,7 +201,7 @@ async def test_handoff_enqueue_failure_is_repaired_to_the_destination_lane() -> 
         assert done.attempts == 1
     finally:
         await cpu.shutdown()
-        unregister("delivery-handoff")
+        cpu.runners.unregister("delivery-handoff")
 
 
 async def test_failed_requeue_after_lease_reclaim_is_repaired_next_round(
@@ -269,7 +268,7 @@ async def test_obsolete_message_cannot_start_new_retry_or_change_backoff() -> No
     pending = await store.update(task.task_id, attempts=1)
     calls = 0
 
-    @register("delivery-stale")
+    @executor.runners.register("delivery-stale")
     async def runner(ctx: TaskContext) -> Done:
         nonlocal calls
         calls += 1
@@ -281,7 +280,7 @@ async def test_obsolete_message_cannot_start_new_retry_or_change_backoff() -> No
         assert await store.require(task.task_id) == pending
     finally:
         await executor.shutdown()
-        unregister("delivery-stale")
+        executor.runners.unregister("delivery-stale")
 
 
 async def test_claim_rechecks_delivery_version_after_metadata_validation() -> None:

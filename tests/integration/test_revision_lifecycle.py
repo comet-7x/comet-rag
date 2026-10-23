@@ -36,9 +36,7 @@ from comet_rag.tasks import (
     StagePipeline,
     TaskContext,
     TaskStatus,
-    register,
 )
-from comet_rag.tasks.runner import unregister
 from tests.contracts.knowledge_base import make_kb
 from tests.contracts.support import wait_for_terminal, wait_until
 from tests.integration.arq_support import _make_worker, _running
@@ -291,7 +289,8 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
             }
         )
 
-    register(kind)(flow)
+    cpu.runners.register(kind)(flow)
+    io.runners.register(kind)(flow)
     upsert = io_vectors.upsert
     failed = False
 
@@ -355,7 +354,8 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
             "kb-revision-cycle", ["source"]
         ) == {"source": None}
     finally:
-        unregister(kind)
+        cpu.runners.unregister(kind)
+        io.runners.unregister(kind)
         await cpu.shutdown(timeout=5)
         await io.shutdown(timeout=5)
         try:

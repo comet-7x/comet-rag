@@ -252,10 +252,9 @@ async def deployment(
             await app.state.ctx.vector_store.drop_collection(KB)
         async with _running(*workers):
             await _await_startup(*workers)
-            # runner 注册表是**进程级全局**的，而这里三个 Context 挤在同一个
-            # 进程里，最后一次 wire_runners 说了算。真实部署下各进程各有一份
-            # 注册表，不存在这个问题；测试里统一绑上带替身 loader 的那份。
-            _wire_stub_runner(workers[-1], document)
+            # 各 worker 的依赖独立装配；替换每一份 loader，不能依赖注册顺序。
+            for worker in workers:
+                _wire_stub_runner(worker, document)
             yield http, workers
         with contextlib.suppress(Exception):
             await app.state.ctx.vector_store.drop_collection(KB)
@@ -273,13 +272,15 @@ def _wire_stub_runner(worker: Worker, document: Path) -> None:
 
     context = worker.ctx["context"]
     register_ingest_runner(
+        context.runners,
         IngestRunner(
             embedding_model=context.embedding_model,
             vector_store=context.vector_store,
             knowledge_base=context.knowledge_base,
             loader=LocalStubLoader(document),
             config=PIPELINE,
-        )
+        ),
+        replace=True,
     )
 
 

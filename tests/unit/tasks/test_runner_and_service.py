@@ -16,15 +16,13 @@ from comet_rag.tasks import (
     Done,
     InMemoryTaskStore,
     InProcessExecutor,
+    RunnerRegistry,
     StagePipeline,
     TaskCancelled,
     TaskContext,
     TaskService,
     TaskStatus,
     TaskStore,
-    get_runner,
-    register,
-    registered_kinds,
     sleep_with_checkpoint,
 )
 from comet_rag.tasks.runner import UnknownKind
@@ -39,7 +37,9 @@ def store() -> InMemoryTaskStore:
 
 @pytest.fixture
 async def executor(store: InMemoryTaskStore) -> AsyncIterator[InProcessExecutor]:
-    ex = InProcessExecutor(store, max_concurrency=4, retry_backoff=0.01)
+    ex = InProcessExecutor(
+        store, runners=RUNNERS, max_concurrency=4, retry_backoff=0.01
+    )
     yield ex
     await ex.shutdown(timeout=5.0)
 
@@ -54,10 +54,12 @@ def ctx(store: InMemoryTaskStore) -> TaskContext:
     return TaskContext(store, "占位", worker_id="w1")
 
 
+RUNNERS = RunnerRegistry()
+
 # ── 注册表 ─────────────────────────────────────────────────────────────────
 
 
-@register("rs-demo")
+@RUNNERS.register("rs-demo")
 async def _demo(ctx: TaskContext) -> Done:
     return Done(result="ok")
 
@@ -65,20 +67,20 @@ async def _demo(ctx: TaskContext) -> Done:
 def test_duplicate_registration_is_rejected() -> None:
     """静默覆盖会让"明明注册了却跑的是别人的 runner"极难排查。"""
     with pytest.raises(ValueError, match="重复注册"):
-        register("rs-demo")(_demo)
+        RUNNERS.register("rs-demo")(_demo)
 
 
 def test_get_runner_returns_registered() -> None:
-    assert get_runner("rs-demo") is _demo
+    assert RUNNERS.get("rs-demo") is _demo
 
 
 def test_get_unknown_kind_raises() -> None:
     with pytest.raises(UnknownKind):
-        get_runner("从未注册过")
+        RUNNERS.get("从未注册过")
 
 
 def test_registered_kinds_is_sorted() -> None:
-    kinds = registered_kinds()
+    kinds = RUNNERS.kinds()
     assert kinds == sorted(kinds)
     assert "rs-demo" in kinds
 
@@ -212,7 +214,7 @@ async def _three(ctx: TaskContext) -> None:  # pragma: no cover - 不该被执�
     _VISITED.append("three")
 
 
-register("rs-early-stop")(early_stop)
+RUNNERS.register("rs-early-stop")(early_stop)
 
 
 async def test_stage_returning_done_short_circuits(
@@ -323,7 +325,7 @@ async def test_shutdown_error_is_never_swallowed(store: TaskStore) -> None:
     （`ValueError` + 任务已离开 PENDING）。关停、连接断开等等抛的都不是
     `ValueError`，照常上抛。
     """
-    executor = InProcessExecutor(store, retry_backoff=0.01)
+    executor = InProcessExecutor(store, runners=RUNNERS, retry_backoff=0.01)
     await executor.shutdown(timeout=5.0)
     svc = TaskService(store, executor)
 

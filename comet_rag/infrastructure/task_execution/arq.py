@@ -12,7 +12,7 @@ from arq.constants import result_key_prefix
 from comet_rag.core.time import Time
 from comet_rag.tasks.executor import StoreDrivenExecutor, logger
 from comet_rag.tasks.models import Task, TaskStatus
-from comet_rag.tasks.runner import LANE_CPU, LANE_IO, UnknownKind, get_runner
+from comet_rag.tasks.runner import LANE_CPU, LANE_IO, RunnerRegistry, UnknownKind
 from comet_rag.tasks.store import TaskNotFound, TaskStore
 
 #: arq 侧的函数名。worker 注册的 `run_task` 必须与之一致，否则任务入队即失踪。
@@ -41,6 +41,7 @@ class ArqExecutor(StoreDrivenExecutor):
         lane: str | None = None,
         lanes: dict[str, str] | None = None,
         entry_lane: str | None = None,
+        runners: RunnerRegistry | None = None,
     ) -> None:
         super().__init__(
             store,
@@ -49,6 +50,7 @@ class ArqExecutor(StoreDrivenExecutor):
             worker_id=worker_id,
             worker_prefix="arq",
             lane=lane,
+            runners=runners,
         )
         self._redis_url = redis_url
         self._queue = queue_name
@@ -138,15 +140,14 @@ class ArqExecutor(StoreDrivenExecutor):
             return None
         return error.at + timedelta(seconds=self._backoff * (2 ** (task.attempts - 1)))
 
-    @staticmethod
-    def _lane_of_resume_stage(task: Task) -> str | None:
+    def _lane_of_resume_stage(self, task: Task) -> str | None:
         """任务续跑点所属的道。查不到（kind 没注册、不是流水线）就返回 None。
 
         这里刻意吞掉查询失败：投递路径不该因为注册表的状态而炸 —— 拿不到
         就退回下一级默认值，最坏也只是多一次移交。
         """
         try:
-            runner = get_runner(task.kind)
+            runner = self.runners.get(task.kind)
         except UnknownKind:
             return None
         lane_of = getattr(runner, "lane_of", None)

@@ -13,9 +13,7 @@ from comet_rag.tasks import (
     TaskContext,
     TaskService,
     TaskStatus,
-    register,
 )
-from comet_rag.tasks.runner import unregister
 from tests.contracts.support import wait_for_terminal, wait_until
 
 
@@ -29,7 +27,7 @@ async def test_long_stage_keeps_lease_without_checkpoints(
     now = Time.now()
     monkeypatch.setattr(Time, "now", lambda: now)
 
-    @register("lease-long-stage")
+    @executor.runners.register("lease-long-stage")
     async def runner(ctx: TaskContext) -> Done:
         started.set()
         await release.wait()
@@ -58,7 +56,7 @@ async def test_long_stage_keeps_lease_without_checkpoints(
     finally:
         release.set()
         await executor.shutdown()
-        unregister("lease-long-stage")
+        executor.runners.unregister("lease-long-stage")
 
 
 @pytest.mark.parametrize(
@@ -72,7 +70,7 @@ async def test_takeover_stops_old_runner_without_changing_new_owner(
     executor._heartbeat_interval = 0.005
     started, stopped = asyncio.Event(), asyncio.Event()
 
-    @register("lease-takeover")
+    @executor.runners.register("lease-takeover")
     async def runner(ctx: TaskContext) -> Done:
         started.set()
         try:
@@ -99,7 +97,7 @@ async def test_takeover_stops_old_runner_without_changing_new_owner(
         assert current.result is None
     finally:
         await executor.shutdown()
-        unregister("lease-takeover")
+        executor.runners.unregister("lease-takeover")
 
 
 async def test_renewal_failure_stops_runner_before_failure_is_recorded(
@@ -115,7 +113,7 @@ async def test_renewal_failure_stops_runner_before_failure_is_recorded(
 
     monkeypatch.setattr(store, "_renew_lease", failing_renewal)
 
-    @register("lease-failure")
+    @executor.runners.register("lease-failure")
     async def runner(ctx: TaskContext) -> Done:
         try:
             await asyncio.Event().wait()
@@ -131,4 +129,4 @@ async def test_renewal_failure_stops_runner_before_failure_is_recorded(
         assert done.result is None
     finally:
         await executor.shutdown()
-        unregister("lease-failure")
+        executor.runners.unregister("lease-failure")

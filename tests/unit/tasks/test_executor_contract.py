@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 import pytest
 
 from comet_rag.tasks import InMemoryTaskStore, InProcessExecutor, TaskStore
-from tests.contracts.task_executor import TaskExecutorContract
+from tests.contracts.task_executor import RUNNERS, TaskExecutorContract
 
 
 class TestInProcessExecutor(TaskExecutorContract):
@@ -24,7 +24,10 @@ class TestInProcessExecutor(TaskExecutorContract):
     async def executor(self, store: TaskStore) -> AsyncIterator[InProcessExecutor]:
         # retry_backoff 压到 10ms：语义由断言覆盖，不靠真等
         ex = InProcessExecutor(
-            store, max_concurrency=self.max_concurrency, retry_backoff=0.01
+            store,
+            runners=RUNNERS,
+            max_concurrency=self.max_concurrency,
+            retry_backoff=0.01,
         )
         yield ex
         await ex.shutdown(timeout=5.0)

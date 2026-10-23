@@ -185,7 +185,7 @@ comet_rag/
 │   ├── states.py         状态机迁移表（唯一合法迁移来源）
 │   ├── store*.py         TaskStore ABC + 内存实现
 │   ├── executor*.py      TaskExecutor ABC + 进程内实现
-│   ├── runner.py         Runner Protocol + kind 注册表 + StagePipeline
+│   ├── runner.py         Runner Protocol + 显式 RunnerRegistry + StagePipeline
 │   └── service.py        TaskService（store + executor 门面）
 │
 ├── services/             ★ 业务编排 —— 把 engines 拼成业务用例

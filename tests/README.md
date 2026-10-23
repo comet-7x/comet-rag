@@ -191,9 +191,10 @@ Redis，少掉的只有 `fork`；而"生产端与消费端之间除了 Redis 与
 别的通道"这一点，靠**两个 executor 实例 + 两条独立数据库连接**来证明
 （见 `test_executor_arq.py` 下半部分）。
 
-⚠️ **runner 注册表是进程级全局的**。测试把三个 `Context`（API + 两个 worker）
-挤进同一个进程，最后一次 `wire_runners` 说了算 —— 真实部署下各进程各有一份，
-不存在这个问题。`test_e2e_workers.py` 里有注释标出了这处差异。
+每个 `Context` 与自己的执行器共用一份 `RunnerRegistry`。即使 API 和两个 worker
+在同一测试进程运行，也分别使用自己装配的 runner；替换 loader 时必须逐个替换 worker
+的绑定。执行器契约 fixture 显式注入 `tests.contracts.task_executor.RUNNERS`；新增独立
+执行器时不能再依赖导入模块触发全局注册。
 
 ### 清表一律走 `conftest.truncate_tables`
 

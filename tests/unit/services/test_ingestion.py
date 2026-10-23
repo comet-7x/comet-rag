@@ -45,9 +45,8 @@ from comet_rag.tasks import (
     InProcessExecutor,
     TaskService,
     TaskStatus,
-    get_runner,
 )
-from comet_rag.tasks.runner import unregister
+from comet_rag.tasks.runner import RunnerRegistry
 from tests.contracts.support import wait_for_terminal
 
 DIM = 3
@@ -195,19 +194,23 @@ async def svc(
 ) -> AsyncIterator[TaskService]:
     # 入库前知识库必须存在（T19 起 IngestRunner 会做一致性检查）
     await kb_service.create(KnowledgeBaseSpec(kb_id=KB))
+    runners = RunnerRegistry()
     register_ingest_runner(
+        runners,
         IngestRunner(
             embedding_model=model,
             vector_store=store,
             knowledge_base=kb_service,
             loader=loader,
             config=PipelineConfig(embed_batch_size=2, max_concurrency=4),
-        )
+        ),
     )
-    executor = InProcessExecutor(task_store, max_concurrency=4, retry_backoff=0.01)
+    executor = InProcessExecutor(
+        task_store, runners=runners, max_concurrency=4, retry_backoff=0.01
+    )
     yield TaskService(task_store, executor)
     await executor.shutdown(timeout=5.0)
-    unregister(INGEST_KIND)
+    runners.unregister(INGEST_KIND)
 
 
 def request(**overrides: Any) -> dict[str, Any]:
@@ -530,23 +533,25 @@ async def test_extracted_text_is_rechecked_before_task_context_write(
 ) -> None:
     """Provider 限长不是信任边界；持久化前必须按 UTF-8 字节数再检查一次。"""
     await kb_service.create(KnowledgeBaseSpec(kb_id=KB))
+    runners = RunnerRegistry()
     register_ingest_runner(
+        runners,
         IngestRunner(
             embedding_model=model,
             vector_store=store,
             knowledge_base=kb_service,
             loader=loader,
             max_extracted_text_bytes_by_type={STUB_TYPE: 5},
-        )
+        ),
     )
-    executor = InProcessExecutor(task_store, retry_backoff=0.01)
+    executor = InProcessExecutor(task_store, runners=runners, retry_backoff=0.01)
     service = TaskService(task_store, executor)
     try:
         task = await service.submit(INGEST_KIND, request(), max_attempts=3)
         done = await wait_for_terminal(task_store, task.task_id)
     finally:
         await executor.shutdown(timeout=5.0)
-        unregister(INGEST_KIND)
+        runners.unregister(INGEST_KIND)
 
     assert done.status is TaskStatus.FAILED
     assert done.attempts == 1
@@ -595,7 +600,8 @@ async def test_client_4xx_is_not_retriable(
 async def test_chunk_payload_is_bounded_before_worker_handoff(
     svc: TaskService, store: AsyncInMemoryVectorStore
 ) -> None:
-    runner = get_runner(INGEST_KIND)
+    assert isinstance(svc.executor, InProcessExecutor)
+    runner = svc.executor.runners.get(INGEST_KIND)
     assert isinstance(runner, IngestRunner)
     runner._max_chunk_context_bytes = 20  # noqa: SLF001
 

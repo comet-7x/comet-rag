@@ -19,11 +19,11 @@ from comet_rag.tasks import (
     Done,
     InMemoryTaskStore,
     InProcessExecutor,
+    RunnerRegistry,
     Task,
     TaskContext,
     TaskStatus,
     VersionConflict,
-    register,
 )
 from comet_rag.tasks.store import _CAS_RETRIES
 
@@ -165,7 +165,9 @@ async def test_two_executors_cannot_both_claim_the_same_task() -> None:
     runs: list[str] = []
     gate = asyncio.Event()
 
-    @register("cas-claim-race", replace=True)
+    runners = RunnerRegistry()
+
+    @runners.register("cas-claim-race")
     async def _runner(ctx: TaskContext) -> Done:
         runs.append(ctx.worker_id or "?")
         await gate.wait()  # 赢家停在 RUNNING 上，把危险窗口撑开
@@ -175,8 +177,8 @@ async def test_two_executors_cannot_both_claim_the_same_task() -> None:
     store = _RacyClaimStore(barrier)
     task = await store.create("cas-claim-race")
 
-    a = InProcessExecutor(store, worker_id="worker-A")
-    b = InProcessExecutor(store, worker_id="worker-B")
+    a = InProcessExecutor(store, runners=runners, worker_id="worker-A")
+    b = InProcessExecutor(store, runners=runners, worker_id="worker-B")
     store.armed = True
     running = asyncio.ensure_future(
         asyncio.gather(

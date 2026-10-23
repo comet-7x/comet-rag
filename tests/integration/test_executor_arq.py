@@ -35,17 +35,19 @@ from comet_rag.tasks import (
     Done,
     InMemoryTaskStore,
     RetriableError,
+    RunnerRegistry,
     TaskContext,
     TaskStatus,
     TaskStore,
-    register,
     sleep_with_checkpoint,
 )
 from tests.contracts.support import wait_for_terminal, wait_until
+from tests.contracts.task_executor import RUNNERS as CONTRACT_RUNNERS
 from tests.contracts.task_executor import TaskExecutorContract
 from tests.integration.arq_support import _make_worker, _running
 from tests.integration.conftest import truncate_tables
 
+RUNNERS = RunnerRegistry()
 pytestmark = pytest.mark.integration
 
 
@@ -85,7 +87,13 @@ class TestArqExecutor(TaskExecutorContract):
     ) -> AsyncIterator[ArqExecutor]:
         queue = _fresh_queue()
         # retry_backoff 压到 10ms：退避语义由断言覆盖，不靠真等
-        ex = ArqExecutor(store, queue_name=queue, retry_backoff=0.01, pool=pool)
+        ex = ArqExecutor(
+            store,
+            runners=CONTRACT_RUNNERS,
+            queue_name=queue,
+            retry_backoff=0.01,
+            pool=pool,
+        )
         worker = _make_worker(pool, queue, ex, max_jobs=self.max_concurrency)
         async with _running(worker):
             yield ex
@@ -95,20 +103,20 @@ class TestArqExecutor(TaskExecutorContract):
 # ── ARQ 特有：契约兜不住的跨进程性质 ────────────────────────────────────────
 
 
-@register("arq-echo")
+@RUNNERS.register("arq-echo")
 async def _echo(ctx: TaskContext) -> Done:
     task = await ctx.snapshot()
     return Done(result={"kb": task.request, "worker": ctx.worker_id})
 
 
-@register("arq-slow")
+@RUNNERS.register("arq-slow")
 async def _slow(ctx: TaskContext) -> Done:
     await ctx.enter_stage("working")
     await sleep_with_checkpoint(ctx, 10.0, step=0.02)
     return Done(result="不该走到这里")
 
 
-@register("arq-flaky")
+@RUNNERS.register("arq-flaky")
 async def _flaky(ctx: TaskContext) -> Done:
     task = await ctx.snapshot()
     if task.attempts < 2:
@@ -127,7 +135,7 @@ async def test_enqueued_payload_carries_only_the_task_id(
     """
     store = InMemoryTaskStore()
     queue = _fresh_queue()
-    executor = ArqExecutor(store, queue_name=queue, pool=pool)
+    executor = ArqExecutor(store, runners=RUNNERS, queue_name=queue, pool=pool)
     task = await store.create("arq-echo", request={"kb_id": "kb-1", "source": "a.docx"})
 
     # 故意不起 worker：让消息留在队列里供检查
@@ -150,7 +158,9 @@ async def test_redis_pool_is_created_once_and_reused(redis_url: str) -> None:
     连接数还会随并发线性涨到把 Redis 打满。
     """
     store = InMemoryTaskStore()
-    executor = ArqExecutor(store, redis_url=redis_url, queue_name=_fresh_queue())
+    executor = ArqExecutor(
+        store, runners=RUNNERS, redis_url=redis_url, queue_name=_fresh_queue()
+    )
     try:
         # 并发首调：双检锁要是写漏了，这里会建出两个池
         pools = await asyncio.gather(*(executor.pool() for _ in range(10)))
@@ -192,7 +202,9 @@ async def test_job_id_must_vary_per_attempt(pool: ArqRedis) -> None:
 
     store = InMemoryTaskStore()
     queue = _fresh_queue()
-    broken = _NaiveJobId(store, queue_name=queue, retry_backoff=0.01, pool=pool)
+    broken = _NaiveJobId(
+        store, runners=RUNNERS, queue_name=queue, retry_backoff=0.01, pool=pool
+    )
     worker = _make_worker(pool, queue, broken, max_jobs=2)
 
     async with _running(worker):
@@ -217,7 +229,9 @@ async def test_job_id_must_vary_per_attempt(pool: ArqRedis) -> None:
 
     # 对照：正确的 job_id 让同一个任务顺利重试成功
     queue2 = _fresh_queue()
-    good = ArqExecutor(store, queue_name=queue2, retry_backoff=0.01, pool=pool)
+    good = ArqExecutor(
+        store, runners=RUNNERS, queue_name=queue2, retry_backoff=0.01, pool=pool
+    )
     worker2 = _make_worker(pool, queue2, good, max_jobs=2)
     async with _running(worker2):
         await good.submit(stuck.task_id)
@@ -256,10 +270,10 @@ async def split_pair(
 
     queue = _fresh_queue()
     producer = ArqExecutor(
-        store_producer, queue_name=queue, retry_backoff=0.01, pool=pool
+        store_producer, runners=RUNNERS, queue_name=queue, retry_backoff=0.01, pool=pool
     )
     consumer = ArqExecutor(
-        store_consumer, queue_name=queue, retry_backoff=0.01, pool=pool
+        store_consumer, runners=RUNNERS, queue_name=queue, retry_backoff=0.01, pool=pool
     )
     worker = _make_worker(pool, queue, consumer, max_jobs=4)
 
@@ -362,7 +376,7 @@ async def test_pending_transport_result_is_removed_without_waiting_for_redis_ttl
 ) -> None:
     store = InMemoryTaskStore()
     queue = _fresh_queue()
-    executor = ArqExecutor(store, pool=pool, queue_name=queue)
+    executor = ArqExecutor(store, runners=RUNNERS, pool=pool, queue_name=queue)
     task = await store.create("arq-echo")
     job_id = executor.job_id_for(task.task_id, 0, version=task.version)
     await pool.set(result_key_prefix + job_id, b"transport failed", ex=300)

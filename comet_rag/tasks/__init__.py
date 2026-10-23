@@ -16,13 +16,11 @@ from .runner import (
     Outcome,
     RetriableError,
     Runner,
+    RunnerRegistry,
     StagePipeline,
     TaskCancelled,
     TaskContext,
     TaskContextTooLarge,
-    get_runner,
-    register,
-    registered_kinds,
     sleep_with_checkpoint,
 )
 from .service import TaskService
@@ -41,6 +39,7 @@ __all__ = [
     "Outcome",
     "RetriableError",
     "Runner",
+    "RunnerRegistry",
     "StagePipeline",
     "StageRecord",
     "StoreDrivenExecutor",
@@ -59,8 +58,5 @@ __all__ = [
     "VersionConflict",
     "assert_transition",
     "can_transition",
-    "get_runner",
-    "register",
-    "registered_kinds",
     "sleep_with_checkpoint",
 ]

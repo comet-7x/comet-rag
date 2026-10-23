@@ -29,7 +29,7 @@ from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVecto
 from comet_rag.infrastructure.sources import AsyncAutoLoader
 from comet_rag.ports.gate import GatedResource
 from comet_rag.tasks import InMemoryTaskStore, InProcessExecutor
-from comet_rag.tasks.runner import UnknownKind, get_runner, unregister
+from comet_rag.tasks.runner import UnknownKind
 
 
 class Embedding(AsyncBaseEmbeddingModel):
@@ -111,9 +111,7 @@ def assembly(monkeypatch: pytest.MonkeyPatch):
                 "vector_store": "close",
             }.get(name, "close")
             monkeypatch.setattr(resource, method, result.closer(name), raising=False)
-    unregister("ingest")
     yield result
-    unregister("ingest")
 
 
 @pytest.mark.parametrize(
@@ -318,7 +316,7 @@ async def test_runner_failure_revokes_registration_and_preserves_original_error(
         "database",
     ]
     with pytest.raises(UnknownKind):
-        get_runner("ingest")
+        assembly.resources["task_executor"].runners.get("ingest")
 
 
 async def test_cancelled_startup_waits_for_rollback(assembly: Assembly) -> None:
@@ -374,7 +372,7 @@ async def test_success_transfers_ownership_and_closes_once_in_dependency_order(
         "database",
     ]
     with pytest.raises(UnknownKind):
-        get_runner("ingest")
+        assembly.resources["task_executor"].runners.get("ingest")
 
 
 async def test_synchronous_shutdown_failure_does_not_skip_other_resources(
@@ -400,17 +398,24 @@ async def test_synchronous_shutdown_failure_does_not_skip_other_resources(
     ]
 
 
-async def test_closing_old_context_does_not_unbind_new_runner(
+async def test_reusing_executor_rejects_duplicate_runner_without_unbinding_owner(
     assembly: Assembly,
 ) -> None:
     first = await bootstrap.build_context(assembly.config)
-    second = await bootstrap.build_context(assembly.config)
-    runner = get_runner("ingest")
-    await first.close()
-    assert get_runner("ingest") is runner
-    await second.close()
-    with pytest.raises(UnknownKind):
-        get_runner("ingest")
+    original = first.runners.get("ingest")
+    try:
+        with pytest.raises(ValueError, match="重复注册"):
+            await bootstrap.build_context(
+                assembly.config,
+                **{
+                    name: value
+                    for name, value in assembly.resources.items()
+                    if name != "database"
+                },
+            )
+        assert first.runners.get("ingest") is original
+    finally:
+        await first.close()
 
 
 async def test_cancelled_close_finishes_drain_before_closing_dependencies(

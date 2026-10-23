@@ -17,9 +17,9 @@ from .runner import (
     Handoff,
     Outcome,
     RetriableError,
+    RunnerRegistry,
     TaskCancelled,
     TaskContext,
-    get_runner,
 )
 from .store import _CAS_RETRIES, TaskLeaseLost, TaskNotFound, TaskStore, VersionConflict
 
@@ -68,8 +68,10 @@ class StoreDrivenExecutor(TaskExecutor):
         worker_id: str | None = None,
         worker_prefix: str = "exec",
         lane: str | None = None,
+        runners: RunnerRegistry | None = None,
     ) -> None:
         self._store = store
+        self._runners = runners if runners is not None else RunnerRegistry()
         self._timeout = default_timeout
         self._backoff = retry_backoff
         self._worker_id = worker_id or f"{worker_prefix}-{uuid.uuid4().hex[:6]}"
@@ -80,6 +82,11 @@ class StoreDrivenExecutor(TaskExecutor):
         self._detached: set[asyncio.Task[None]] = set()
         self._closed = False
         self._heartbeat_interval = 10.0
+
+    @property
+    def runners(self) -> RunnerRegistry:
+        """查找与路由共用的绑定；生命周期内不允许换成另一份注册表。"""
+        return self._runners
 
     @property
     def worker_id(self) -> str:
@@ -114,7 +121,7 @@ class StoreDrivenExecutor(TaskExecutor):
                 return
             if expected_version is not None and task.version != expected_version:
                 return
-            runner = get_runner(task.kind)  # 未注册的 kind 直接走失败分支
+            runner = self.runners.get(task.kind)  # 未注册的 kind 直接走失败分支
             try:
                 # **认领必须是原子的**：带上刚读到的版本号，谁先写谁赢。
                 #
@@ -510,6 +517,7 @@ class InProcessExecutor(StoreDrivenExecutor):
         hard_cancel: bool = True,
         worker_id: str | None = None,
         lane: str | None = None,
+        runners: RunnerRegistry | None = None,
     ) -> None:
         super().__init__(
             store,
@@ -520,6 +528,7 @@ class InProcessExecutor(StoreDrivenExecutor):
             # 默认 None = 不分道，整条流水线在本进程跑完。单进程部署下
             # 分道毫无意义 —— 移交只会变成一次没有必要的入队往返。
             lane=lane,
+            runners=runners,
         )
         self._sem = asyncio.Semaphore(max_concurrency)
         self._hard_cancel = hard_cancel  # 是否在协作取消之外再补一刀 asyncio.cancel

@@ -26,6 +26,33 @@ V2 优先清楚的资源所有权与调用边界。本轮是 Python API 的破�
 同步/异步 DTO 与纯计算实现继续共享。`DocxConverter`、`DocxParser`、分块算法没有
 无 I/O 的 Async 副本；异步提取器负责必要的线程卸载。
 
+### 任务 runner 注册表改为显式实例
+
+移除 `tasks.register/get_runner/registered_kinds` 与 `tasks.runner.unregister` 的全局入口。
+注册与查找改为 `RunnerRegistry.register/get/kinds/unregister`。每个执行器默认持有独立的
+`executor.runners`；应用装配后从 `context.runners` 访问同一份绑定。
+
+```python
+from comet_rag.tasks import Done, InMemoryTaskStore, InProcessExecutor, RunnerRegistry, TaskContext
+
+runners = RunnerRegistry()
+
+@runners.register("example")
+async def example(ctx: TaskContext) -> Done:
+    return Done(result="ok")
+
+executor = InProcessExecutor(InMemoryTaskStore(), runners=runners)
+```
+
+`ArqExecutor` 同样接受 `runners=`。`build_context` 也接受显式注册表；注入自定义
+TaskExecutor 时必须同时提供它，自带执行器与显式注册表不一致会在创建资源前报错。
+跨进程消费者必须各自装配 runner，不能靠生产端
+注册替代消费端注册；队列仍只放 task_id。`register_ingest_runner` 现在先接收注册表，
+默认拒绝重复注册，替换自己应用的绑定时显式传 `replace=True`。
+Context 先排干执行器，再清空自己的注册表和关闭资源；独立 Context 的启动失败、
+取消与关停不会撤销另一个 Context 的绑定。不要把一个执行器或持有 I/O 资源的
+registry 注入多个 Context。TaskExecutor 的抽象方法与任务数据格式没有改变。
+
 ### 原生异步与取消
 
 PyMilvus 2.6.17 已支持本项目需要的异步管理 API；移除了同步管理客户端与其线程

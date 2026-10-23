@@ -38,7 +38,7 @@ from comet_rag.tasks import TaskStatus
 from comet_rag.workers.maintenance import sweep_stale_tasks
 from tests.contracts.support import wait_for_terminal, wait_until
 from tests.integration.conftest import POSTGRES_DSN, REDIS_URL, truncate_tables
-from tests.integration.crash_worker import KIND
+from tests.integration.crash_worker import KIND, flow
 
 pytestmark = pytest.mark.integration
 
@@ -151,6 +151,7 @@ def _make_taker(store: PostgresTaskStore, pool: ArqRedis) -> tuple[ArqExecutor, 
         lane="cpu",
         retry_backoff=0.01,
     )
+    executor.runners.register(KIND)(flow)
     worker = Worker(
         functions=[run_task],
         redis_pool=pool,

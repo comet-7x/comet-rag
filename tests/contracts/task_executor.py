@@ -5,7 +5,7 @@
     class TestInProcessExecutor(TaskExecutorContract):
         @pytest.fixture
         async def executor(self, store):
-            ex = InProcessExecutor(store, retry_backoff=0.01)
+            ex = InProcessExecutor(store, runners=RUNNERS, retry_backoff=0.01)
             yield ex
             await ex.shutdown()
 
@@ -14,8 +14,8 @@
 压根没有本地协程 —— 只有把"跑完了"定义成"库里到终态了"，
 两者才可能跑同一套测试。
 
-runner 注册表是进程级全局的，故本模块的 runner 在导入时注册一次，
-kind 一律带 `c-` 前缀，避免与其他测试模块的 runner 撞名。
+本模块显式提供 RUNNERS，执行器 fixture 必须注入这组无外围资源的契约 runner。
+kind 一律带 `c-` 前缀，便于从执行记录识别契约任务。
 """
 
 from __future__ import annotations
@@ -28,16 +28,18 @@ import pytest
 from comet_rag.tasks import (
     Done,
     RetriableError,
+    RunnerRegistry,
     StagePipeline,
     TaskContext,
     TaskExecutor,
     TaskStatus,
     TaskStore,
-    register,
     sleep_with_checkpoint,
 )
 
 from .support import wait_for_terminal, wait_until
+
+RUNNERS = RunnerRegistry()
 
 # 每个用例的可变状态；由契约基类的 autouse fixture 清空
 CSTATE: dict[str, Any] = {}
@@ -46,20 +48,20 @@ CSTATE: dict[str, Any] = {}
 # ── 契约用 runner ──────────────────────────────────────────────────────────
 
 
-@register("c-ok")
+@RUNNERS.register("c-ok")
 async def _ok(ctx: TaskContext) -> Done:
     CSTATE["ran"] = CSTATE.get("ran", 0) + 1
     return Done(result={"ok": True})
 
 
-@register("c-slow")
+@RUNNERS.register("c-slow")
 async def _slow(ctx: TaskContext) -> Done:
     await ctx.enter_stage("working")
     await sleep_with_checkpoint(ctx, 5.0, step=0.02)
     return Done(result="不该走到这里")
 
 
-@register("c-flaky")
+@RUNNERS.register("c-flaky")
 async def _flaky(ctx: TaskContext) -> Done:
     CSTATE["ran"] = CSTATE.get("ran", 0) + 1
     if CSTATE["ran"] < 3:
@@ -67,18 +69,18 @@ async def _flaky(ctx: TaskContext) -> Done:
     return Done(result={"tries": CSTATE["ran"]})
 
 
-@register("c-doomed")
+@RUNNERS.register("c-doomed")
 async def _doomed(ctx: TaskContext) -> Done:
     CSTATE["ran"] = CSTATE.get("ran", 0) + 1
     raise RetriableError("永远失败", code="c_doomed")
 
 
-@register("c-boom")
+@RUNNERS.register("c-boom")
 async def _boom(ctx: TaskContext) -> Done:
     raise ValueError("确定性错误")
 
 
-@register("c-concurrent")
+@RUNNERS.register("c-concurrent")
 async def _concurrent(ctx: TaskContext) -> Done:
     """记录并发峰值，用于验证闸门真的在限流（spec S4-2）。"""
     CSTATE["live"] = CSTATE.get("live", 0) + 1
@@ -107,7 +109,7 @@ async def _second(ctx: TaskContext) -> Done | None:
     return Done(result="ok")
 
 
-register("c-resumable")(c_flow)
+RUNNERS.register("c-resumable")(c_flow)
 
 
 # ── 契约 ───────────────────────────────────────────────────────────────────

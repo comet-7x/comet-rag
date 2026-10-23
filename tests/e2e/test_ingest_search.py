@@ -201,13 +201,15 @@ def _use_stub_loader(
     根因就是它以为自己配的是 32/16，实际跑的是 2/4。
     """
     register_ingest_runner(
+        ctx.runners,
         IngestRunner(
             embedding_model=ctx.embedding_model,
             vector_store=ctx.vector_store,
             knowledge_base=ctx.knowledge_base,
             loader=LocalStubLoader(document),
             config=config or PipelineConfig(embed_batch_size=2, max_concurrency=4),
-        )
+        ),
+        replace=True,
     )
 
 

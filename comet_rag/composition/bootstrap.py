@@ -57,6 +57,8 @@ from comet_rag.tasks import (
     LANE_CPU,
     InMemoryTaskStore,
     InProcessExecutor,
+    RunnerRegistry,
+    StoreDrivenExecutor,
     TaskExecutor,
     TaskService,
     TaskStore,
@@ -207,7 +209,11 @@ def _validate_revision_resources(
 
 
 def build_task_executor(
-    config: APPConfig, store: TaskStore, *, lane: str | None = None
+    config: APPConfig,
+    store: TaskStore,
+    *,
+    lane: str | None = None,
+    runners: RunnerRegistry | None = None,
 ) -> TaskExecutor:
     """`lane` = 本进程服务哪条负载道。
 
@@ -218,7 +224,9 @@ def build_task_executor(
     if backend is Backend.INPROCESS:
         # 单进程下分道毫无意义：移交只会变成一次没必要的入队往返，
         # 而且 InProcessExecutor 压根没有"另一条队列"可投。
-        return InProcessExecutor(store, max_concurrency=config.backends.max_concurrency)
+        return InProcessExecutor(
+            store, max_concurrency=config.backends.max_concurrency, runners=runners
+        )
     if backend is Backend.ARQ:
         from comet_rag.infrastructure.task_execution.arq import (  # noqa: PLC0415
             LANE_QUEUES,
@@ -240,8 +248,21 @@ def build_task_executor(
             # 生产端首投进第一个阶段所在的道。投错也能自愈（目标 worker 会
             # 再移交一次），但投对能省掉一次空转往返。
             entry_lane=LANE_CPU,
+            runners=runners,
         )
     raise ValueError(f"不支持的 task_executor 后端：{backend}")
+
+
+def _executor_runners(
+    executor: TaskExecutor, runners: RunnerRegistry | None
+) -> RunnerRegistry:
+    if isinstance(executor, StoreDrivenExecutor):
+        if runners is not None and runners is not executor.runners:
+            raise ValueError("runners 必须与注入执行器的注册表是同一实例")
+        return executor.runners
+    if runners is None:
+        raise ValueError("注入自定义 TaskExecutor 时必须同时提供 runners 供消费者使用")
+    return runners
 
 
 def build_degradation(config: APPConfig) -> DegradationController:
@@ -493,17 +514,21 @@ async def build_context(
     ingest_loader: AsyncAutoLoader | None = None,
     mineru_extractor: AsyncDocumentExtractorPort | None = None,
     executor_lane: str | None = None,
+    runners: RunnerRegistry | None = None,
 ) -> Context:
     """按配置装配全套资源。
 
     先校验，再创建。失败只回收本次自建资源；成功返回后 Context 接管包括
     注入对象在内的资源。闸门绑定会修改注入对象，失败不承诺恢复其原闸门。
     异步入口保证回滚在调用方的事件循环内完成，再传播原始启动错误。
+    自带执行器与 runners 必须配对；注入自定义执行器时显式提供其消费者的注册表。
     """
     # APPConfig 只有配置数据；python 模式保留 SecretStr，且让嵌套配置重新校验。
     config = type(config).model_validate(config.model_dump(mode="python"))
     resolved_pipeline = resolve_pipeline_config(config.limits, pipeline_config)
     validate_vision_model(resolved_pipeline.docx.vision_model, asynchronous=True)
+    if task_executor is not None:
+        runners = _executor_runners(task_executor, runners)
     if config.retrieval.revision_aware and vector_store is not None:
         _validate_revision_vectors(vector_store)
     if document_store is not None:
@@ -623,10 +648,13 @@ async def build_context(
         if task_store is None:
             task_store = build_task_store(config, database)
         if task_executor is None:
-            task_executor = build_task_executor(config, task_store, lane=executor_lane)
+            task_executor = build_task_executor(
+                config, task_store, lane=executor_lane, runners=runners
+            )
             rollback.push_async_callback(
                 run_cleanup, task_executor.shutdown, "task_executor"
             )
+        runners = _executor_runners(task_executor, runners)
         if kb_repository is None:
             kb_repository = build_kb_repository(config, database)
 
@@ -673,6 +701,7 @@ async def build_context(
             knowledge_base=knowledge_base,
             embedding_dim=embedding_settings.dim,
             pipeline_hooks=pipeline_hooks,
+            runners=runners,
             database=database,
             document_store=document_store,
             model_gate=gate,

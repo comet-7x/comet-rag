@@ -26,15 +26,16 @@ from comet_rag.tasks import (
     LANE_IO,
     Done,
     RetriableError,
+    RunnerRegistry,
     StagePipeline,
     TaskContext,
     TaskStatus,
-    register,
 )
 from comet_rag.tasks.store import TaskStore
 from comet_rag.tasks.store_memory import InMemoryTaskStore
 from tests.contracts.support import wait_for_terminal, wait_until
 
+RUNNERS = RunnerRegistry()
 pytestmark = pytest.mark.integration
 
 
@@ -66,7 +67,7 @@ async def _indexing(ctx: TaskContext) -> Done:
     return Done(result={"trace": trace, "worker": ctx.worker_id})
 
 
-register("split-flow")(flow)
+RUNNERS.register("split-flow")(flow)
 
 
 #: 只在 io 道上失败一次，用来验证"移交没白吃掉重试预算"
@@ -88,7 +89,7 @@ async def _f_indexing(ctx: TaskContext) -> Done:
     return Done(result={"io_tries": _FLAKY_HITS[ctx.task_id]})
 
 
-register("split-flaky")(flaky_flow)
+RUNNERS.register("split-flaky")(flaky_flow)
 
 
 async def _trace(ctx: TaskContext) -> list[str]:
@@ -151,9 +152,9 @@ class _Lanes:
             "pool": pool,
         }
         #: API 进程里那个：只投递，不执行，故 lane=None
-        self.producer = ArqExecutor(store, **common)
-        self.cpu = ArqExecutor(store, lane=LANE_CPU, **common)
-        self.io = ArqExecutor(store, lane=LANE_IO, **common)
+        self.producer = ArqExecutor(store, runners=RUNNERS, **common)
+        self.cpu = ArqExecutor(store, runners=RUNNERS, lane=LANE_CPU, **common)
+        self.io = ArqExecutor(store, runners=RUNNERS, lane=LANE_IO, **common)
         self.cpu_worker = _worker(pool, self.queues[LANE_CPU], self.cpu, 2)
         self.io_worker = _worker(pool, self.queues[LANE_IO], self.io, 8)
 

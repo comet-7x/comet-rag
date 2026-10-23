@@ -49,9 +49,9 @@ from comet_rag.tasks import (
     Done,
     Outcome,
     RetriableError,
+    RunnerRegistry,
     StagePipeline,
     TaskContext,
-    register,
 )
 
 INGEST_KIND = "ingest"
@@ -398,12 +398,11 @@ class IngestRunner:
         )
 
 
-def register_ingest_runner(runner: IngestRunner) -> None:
-    """把 runner 绑到 `kind="ingest"`。
-
-    `replace=True`：这是装配代码，应用每次启动都会调一次，必须幂等。
-    """
-    register(INGEST_KIND, replace=True)(runner)
+def register_ingest_runner(
+    runners: RunnerRegistry, runner: IngestRunner, *, replace: bool = False
+) -> None:
+    """向指定执行环境绑定入库依赖；独立应用不共享注册表。"""
+    runners.register(INGEST_KIND, replace=replace)(runner)
 
 
 __all__ = [

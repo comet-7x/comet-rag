@@ -18,18 +18,18 @@ from comet_rag.tasks import (
     InMemoryTaskStore,
     InProcessExecutor,
     RetriableError,
+    RunnerRegistry,
     StagePipeline,
     TaskContext,
     TaskService,
-    register,
     sleep_with_checkpoint,
 )
 
+RUNNERS = RunnerRegistry()
+
 # ──────────────────────────────────────────────────────────────────────────
 
-# runner 注册表是进程级全局的（register 对重复 kind 会直接抛错），
-# 所以 runner 只能在模块导入时注册一次，而每个用例需要的可变状态
-# 放这里、由 autouse fixture 清空。
+# 用例共享这组纯 runner 定义；可变执行留痕由 fixture 清空。
 STATE: dict[str, Any] = {}
 
 
@@ -58,7 +58,9 @@ def store() -> InMemoryTaskStore:
 async def executor(store: InMemoryTaskStore) -> AsyncIterator[InProcessExecutor]:
     # retry_backoff 压到 10ms：真实退避是 1s/2s，跑一遍重试就要 3s+，
     # 而 unit 层全套必须 <10s（spec §6）。退避的**语义**由断言覆盖，不靠真等。
-    ex = InProcessExecutor(store, max_concurrency=4, retry_backoff=0.01)
+    ex = InProcessExecutor(
+        store, runners=RUNNERS, max_concurrency=4, retry_backoff=0.01
+    )
     yield ex
     await ex.shutdown(timeout=5.0)
 
@@ -93,7 +95,7 @@ async def _load(ctx: TaskContext) -> Done:
     return Done(result={"count": len(task.context["items"])}, result_uri="s3://out")
 
 
-register("multi")(three_stage)
+RUNNERS.register("multi")(three_stage)
 
 
 failing_flow = StagePipeline()
@@ -119,10 +121,10 @@ async def _s3(ctx: TaskContext) -> Done:
     return Done(result="ok")
 
 
-register("resumable")(failing_flow)
+RUNNERS.register("resumable")(failing_flow)
 
 
-@register("slow")
+@RUNNERS.register("slow")
 async def _slow(ctx: TaskContext) -> Done:
     await ctx.enter_stage("working")
     # 检查点密一些，取消才能迅速生效，测试不必真等
@@ -130,7 +132,7 @@ async def _slow(ctx: TaskContext) -> Done:
     return Done(result="不该走到这里")
 
 
-@register("flaky")
+@RUNNERS.register("flaky")
 async def _flaky(ctx: TaskContext) -> Done:
     STATE["attempts"] += 1
     if STATE["attempts"] < 3:
@@ -140,13 +142,13 @@ async def _flaky(ctx: TaskContext) -> Done:
     return Done(result={"ok": True, "tries": STATE["attempts"]})
 
 
-@register("always_fails")
+@RUNNERS.register("always_fails")
 async def _always_fails(ctx: TaskContext) -> Done:
     STATE["attempts"] += 1
     raise RetriableError("永远失败", code="doomed")
 
 
-@register("boom")
+@RUNNERS.register("boom")
 async def _boom(ctx: TaskContext) -> Done:
     """不可重试的确定性错误（如解析失败），应一次判死不进重试。"""
     raise ValueError("文件损坏")

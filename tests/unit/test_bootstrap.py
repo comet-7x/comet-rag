@@ -207,9 +207,7 @@ async def test_explicit_document_store_is_shared_and_closed(
 
 
 async def test_ingest_runner_is_registered(context) -> None:
-    from comet_rag.tasks import registered_kinds
-
-    assert "ingest" in registered_kinds()
+    assert "ingest" in context.runners.kinds()
 
     await context.close()
 
@@ -518,9 +516,7 @@ async def test_enabled_mineru_propagates_pdf_task_context_limit(
 
     assert context.extracted_text_limits == {"pdf": 1024}
     assert context.max_chunk_context_bytes == 4096
-    from comet_rag.tasks import get_runner
-
-    runner = get_runner("ingest")
+    runner = context.runners.get("ingest")
     assert isinstance(runner, IngestRunner)
     assert runner._max_extracted_text_bytes_by_type == {"pdf": 1024}  # noqa: SLF001
     assert runner._max_chunk_context_bytes == 4096  # noqa: SLF001

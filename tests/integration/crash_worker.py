@@ -22,7 +22,6 @@ from comet_rag.tasks import (
     Done,
     StagePipeline,
     TaskContext,
-    register,
     sleep_with_checkpoint,
 )
 from comet_rag.workers.base import WorkerProfile, build_settings
@@ -48,8 +47,6 @@ async def _working(ctx: TaskContext) -> Done:
     return Done(result="不该走到这里：进程本该在这中间被 kill 掉")
 
 
-register(KIND, replace=True)(flow)
-
 #: 与生产 profile 同构，只是并发压小、且不挂回收定时器
 PROFILE = WorkerProfile(
     name="crash-test",
@@ -63,5 +60,13 @@ PROFILE = WorkerProfile(
 
 def __getattr__(name: str) -> Any:
     if name == "WorkerSettings":
-        return build_settings(PROFILE, vector_store=AsyncInMemoryVectorStore())
+        settings = build_settings(PROFILE, vector_store=AsyncInMemoryVectorStore())
+        startup = settings.on_startup
+
+        async def on_startup(ctx: dict[str, Any]) -> None:
+            await startup(ctx)
+            ctx["context"].runners.register(KIND)(flow)
+
+        settings.on_startup = staticmethod(on_startup)
+        return settings
     raise AttributeError(name)

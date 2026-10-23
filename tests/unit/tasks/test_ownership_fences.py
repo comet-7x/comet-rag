@@ -18,9 +18,8 @@ from comet_rag.tasks import (
     TaskContext,
     TaskService,
     TaskStatus,
-    register,
 )
-from comet_rag.tasks.runner import TaskCancelled, unregister
+from comet_rag.tasks.runner import TaskCancelled
 from comet_rag.tasks.store import TaskLeaseLost
 
 
@@ -52,7 +51,7 @@ async def test_takeover_during_final_save_cannot_be_overwritten(outcome: str) ->
     executor = InProcessExecutor(store, lane="cpu", retry_backoff=0)
     kind = f"fence-{outcome}"
 
-    @register(kind)
+    @executor.runners.register(kind)
     async def runner(ctx: TaskContext) -> Done | Handoff:
         if store.replacement is not None:
             return Done(result="unexpected second run")
@@ -83,7 +82,7 @@ async def test_takeover_during_final_save_cannot_be_overwritten(outcome: str) ->
         assert await store.require(task.task_id) == store.replacement
     finally:
         await executor.shutdown()
-        unregister(kind)
+        executor.runners.unregister(kind)
 
 
 async def test_same_worker_new_attempt_finishes_before_next_heartbeat() -> None:
@@ -91,7 +90,7 @@ async def test_same_worker_new_attempt_finishes_before_next_heartbeat() -> None:
     executor = InProcessExecutor(store, worker_id="reused-worker")
     replacement: Task | None = None
 
-    @register("fence-fast-reuse")
+    @executor.runners.register("fence-fast-reuse")
     async def runner(ctx: TaskContext) -> Done:
         nonlocal replacement
         replacement = await store.update(ctx.task_id, attempts=2)
@@ -104,7 +103,7 @@ async def test_same_worker_new_attempt_finishes_before_next_heartbeat() -> None:
         assert await store.require(task.task_id) == replacement
     finally:
         await executor.shutdown()
-        unregister("fence-fast-reuse")
+        executor.runners.unregister("fence-fast-reuse")
 
 
 @pytest.mark.parametrize("write", ["put", "report", "enter_stage"])
@@ -213,7 +212,7 @@ async def test_old_handoff_cleanup_does_not_cancel_a_new_claim_with_same_attempt
 
     executor = OverlappingHandoff(store, worker_id="same-process")
 
-    @register("fence-handoff-overlap")
+    @executor.runners.register("fence-handoff-overlap")
     async def runner(ctx: TaskContext) -> Done | Handoff:
         task = await ctx.snapshot()
         if task.resume_stage is None:
@@ -241,7 +240,7 @@ async def test_old_handoff_cleanup_does_not_cancel_a_new_claim_with_same_attempt
         if next_job is not None:
             await asyncio.wait_for(next_job, 1.0)
         await executor.shutdown()
-        unregister("fence-handoff-overlap")
+        executor.runners.unregister("fence-handoff-overlap")
 
 
 async def test_duplicate_delivery_does_not_drop_the_running_claim() -> None:
@@ -249,7 +248,7 @@ async def test_duplicate_delivery_does_not_drop_the_running_claim() -> None:
     executor = ArqExecutor(store)
     started = asyncio.Event()
 
-    @register("fence-duplicate")
+    @executor.runners.register("fence-duplicate")
     async def runner(ctx: TaskContext) -> Done:
         started.set()
         while True:
@@ -269,4 +268,4 @@ async def test_duplicate_delivery_does_not_drop_the_running_claim() -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await job
         await executor.shutdown()
-        unregister("fence-duplicate")
+        executor.runners.unregister("fence-duplicate")

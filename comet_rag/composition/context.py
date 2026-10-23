@@ -27,7 +27,7 @@ from comet_rag.services.ingestion import (
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
 from comet_rag.tasks import TaskExecutor, TaskService, TaskStore
-from comet_rag.tasks.runner import unregister
+from comet_rag.tasks.runner import RunnerRegistry
 
 
 @dataclass(slots=True)
@@ -47,6 +47,7 @@ class Context:
     knowledge_base: KnowledgeBaseService
     embedding_dim: int
     pipeline_hooks: AsyncHookRegistry
+    runners: RunnerRegistry
     reranker: AsyncRerankerPort | None = None
     document_store: DocumentStore | None = None
     #: 对模型服务的进程级并发闸门。放进 Context 是为了让 /admin/health
@@ -92,6 +93,9 @@ class Context:
             closing.push_async_callback(close_resource, self.vector_store)
             for resource in self._extra_closers:
                 closing.push_async_callback(close_resource, resource)
+            closing.push_async_callback(
+                run_cleanup, self.runners.clear, "runner 注册表"
+            )
             for cleanup in self._hook_cleanups:
                 closing.push_async_callback(run_cleanup, cleanup, "注册引用")
             closing.push_async_callback(
@@ -127,5 +131,7 @@ def wire_runners(context: Context, *, ingest_config: Any = None) -> None:
         max_extracted_text_bytes_by_type=context.extracted_text_limits,
         max_chunk_context_bytes=context.max_chunk_context_bytes,
     )
-    context._hook_cleanups.append(lambda: unregister(INGEST_KIND, expected=runner))
-    register_ingest_runner(runner)
+    register_ingest_runner(context.runners, runner)
+    context._hook_cleanups.append(
+        lambda: context.runners.unregister(INGEST_KIND, expected=runner)
+    )

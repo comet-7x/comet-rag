@@ -199,51 +199,50 @@ class Runner(Protocol):
     async def __call__(self, ctx: TaskContext) -> Outcome: ...
 
 
-# 注册表
-_REGISTRY: dict[str, Runner] = {}
-
-
 class UnknownKind(KeyError):
     pass
 
 
-def register(kind: str, *, replace: bool = False) -> Callable[[Runner], Runner]:
-    """把 kind 与 runner 绑定。
+class RunnerRegistry:
+    """一组执行器显式持有的 kind → runner 绑定，不共享应用资源。
 
-    这是「submit(task_id) 而非 spawn(task, coro)」得以成立的关键：
-    执行器只要有 task_id，就能用 kind 查到函数、用 request/context 重建执行，
-    于是重跑、崩溃恢复、失败后断点续跑全都成立。
-
-    默认拒绝重复注册 —— 静默覆盖会让「明明注册了却跑的是别人的 runner」
-    极难排查。但**装配代码**需要幂等：runner 常是持有依赖的可调用对象
-    （见 `services/ingestion.py`），应用每次启动都要重新绑定一次，
-    此时用 `replace=True` 显式声明意图。
+    task_id 仍是唯一队列载荷；消费者从自己的注册表重建执行。
+    流水线可以在同一应用的执行器间共享，独立 Context 必须分别装配。
     """
 
-    def deco(fn: Runner) -> Runner:
-        if kind in _REGISTRY and not replace:
-            raise ValueError(f"kind 重复注册：{kind}。装配代码请显式传 replace=True。")
-        _REGISTRY[kind] = fn
-        return fn
+    def __init__(self) -> None:
+        self._runners: dict[str, Runner] = {}
 
-    return deco
+    def register(
+        self, kind: str, *, replace: bool = False
+    ) -> Callable[[Runner], Runner]:
+        """默认拒绝重复绑定；替换现有 runner 必须显式声明。"""
 
+        def deco(fn: Runner) -> Runner:
+            if kind in self._runners and not replace:
+                raise ValueError(f"kind 重复注册：{kind}。替换请显式传 replace=True。")
+            self._runners[kind] = fn
+            return fn
 
-def unregister(kind: str, *, expected: Runner | None = None) -> None:
-    """仅撤销仍属于调用方的注册，避免旧 Context 关闭时移除新 runner。"""
-    if expected is None or _REGISTRY.get(kind) is expected:
-        _REGISTRY.pop(kind, None)
+        return deco
 
+    def unregister(self, kind: str, *, expected: Runner | None = None) -> None:
+        """只撤销仍属于调用方的绑定，不移除后续显式替换的 runner。"""
+        if expected is None or self._runners.get(kind) is expected:
+            self._runners.pop(kind, None)
 
-def get_runner(kind: str) -> Runner:
-    try:
-        return _REGISTRY[kind]
-    except KeyError:
-        raise UnknownKind(f"未注册的任务种类：{kind}") from None
+    def get(self, kind: str) -> Runner:
+        try:
+            return self._runners[kind]
+        except KeyError:
+            raise UnknownKind(f"未注册的任务种类：{kind}") from None
 
+    def clear(self) -> None:
+        """执行器排干后释放全部 runner 对外围资源的引用。"""
+        self._runners.clear()
 
-def registered_kinds() -> list[str]:
-    return sorted(_REGISTRY)
+    def kinds(self) -> list[str]:
+        return sorted(self._runners)
 
 
 # 多阶段流水线

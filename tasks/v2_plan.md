@@ -1,11 +1,12 @@
 # Comet-RAG V2：实施记录
 
-当前进度：前十批实现与验证已完成；第十批统一 Filter 语义，真实 Milvus 70 项通过。
+当前进度：前十一批实现与验证已完成；第十一批隔离任务 runner 的应用所有权。
+第十批统一 Filter 语义，真实 Milvus 70 项通过。
 第七批 Milvus metadata 契约与第九批参数化用例均已实机补验；PostgreSQL 等其他后端
 以及 core-only 重装、三层覆盖率仍按各批范围保留待办。
 下文按批次保留历史记录，现行 API 以第四批和版本说明为准。
 
-## 当前剩余项复核（第十批）
+## 当前剩余项复核（第十一批）
 
 | 历史待办 | 对照当前代码的结论 | 后续安排 |
 |---|---|---|
@@ -14,11 +15,12 @@
 | VectorStore 与直接调用方的嵌套 metadata 所有权 | 复核确认内存向量写入、两路检索、snapshot、父块和 draft 共享嵌套值 | 第七批已修复并补共享契约 |
 | BaseReranker 直接库调用的有限分数守卫 | 原同步/异步 score 放行非有限值，rank 的 top_k 还能隐藏末位坏分数 | 第八批已修复；保留服务层校验和降级 |
 | Filter 契约 | 第十批已统一现有两实现的类型、缺失/null、bool/数字、标量 IN 与安全数值范围，真实 Milvus 验收通过 | 参见 filter_semantics.md；新算子、完整 IR、额外后端/schema 仍单独决策 |
-| 全局 runner 注册表、统一查询 deadline | 身份保护不代表多应用隔离；取消排干不代表统一超时或可强制终止线程 | 单独评估生命周期与超时契约 |
+| 全局 runner 注册表 | 第十一批已复现多 Context 错用 runner，并改为显式 RunnerRegistry；执行、ARQ 道次路由与清理使用同一实例 | 保留多应用、失败回滚与取消排干守卫；真实 worker 集成仍待中间件可用后补验 |
+| 统一查询 deadline | 已有通道取消排干，但没有端到端 deadline；线程工作仍不能强制终止 | 另行明确排队、召回、重排、父块读取共享预算及超时降级语义 |
 | 真实后端与安装验收缺口 | 第五批仅补真实 Milvus；不能推定 PostgreSQL/Redis/MinIO、外部模型/MinerU、core-only 重装及三层覆盖率已完成 | 按相关改造另行验收 |
 | M4 生产闭环 | Stager 仍止于 ready；生产激活/superseded、激活响应丢失恢复、GC 与完整接线未完成 | 继续按 m4_todo.md 失败矩阵独立推进 |
 
-本次选择已有污染反例的存储边界；不以历史 TODO 的排列顺序替代问题确认。
+本次选择已复现的多 Context runner 污染；统一查询 deadline 与 M4 生产闭环仍是独立事项。
 
 # 第一批：文档校准与配置合并
 
@@ -782,3 +784,77 @@ zhihao_test_database，不创建或删除数据库。未加载 .env 或经本机
 未安装依赖。单元新增通过数包括共享契约与新增基础模块触发的分层/导入守卫。
 本轮不把真实 Milvus 验收等同于 PostgreSQL/Redis/MinIO/GPU、CI 固定 2.6.23、core-only
 重新安装或三层覆盖率验收；删除并发窗口、全量大结果集与 ANN 召回限制仍保留。
+
+
+# 第十一批：任务 runner 注册与应用生命周期隔离
+
+> 日期：2026-10-23。基于前十批继续；注册表实现、调用方迁移、测试与文档按同一职责提交。
+
+## 复核与选择
+
+对照当前剩余表，复查了 Context 装配/关闭、任务执行与 ARQ 续跑路由的调用链。
+原实现存在可执行反例：先装配 A，再装配 B，向 A 的执行器提交任务，实际调用 B 的
+IngestRunner；关闭 B 后全局 ingest 绑定消失，A 无法继续执行。原先按身份解绑只防止
+旧 Context 误删新 runner，不能提供隔离，失败启动也可能撤销其他存活应用的可用绑定。
+因此本批先修复已确认的生命周期问题。查询统一 deadline 涉及各阶段预算与降级策略，
+M4 仍涉及生产激活与回收，均保留独立待办。
+
+## 改造与边界
+
+- `tasks.runner.RunnerRegistry` 明确持有 kind → runner；删除进程全局注册表及其便捷函数。
+  每个 StoreDrivenExecutor 默认创建独立注册表，也可通过 `runners=` 显式注入；绑定属性
+  只读。InProcess 与 ARQ 的实际执行、ARQ 的续跑道次判断都从同一实例查找，无全局兜底。
+- `Context.runners` 与自带执行器使用同一实例。`build_context` 支持显式 `runners=`；
+  注入自定义 TaskExecutor 必须显式提供消费者使用的注册表，自带执行器与显式表不匹配
+  时在创建资源前报错。重复装配到同一执行器拒绝覆盖。
+- 启动失败只按身份撤销本次 ingest 绑定，保留调用方原有注册；成功后的 Context 接管
+  注册表，先排干执行器，再撤销 Hook/runner 并清空表，最后关闭外围资源。显式替换或
+  自定义 runner 也不会在关闭后继续持有已关闭资源。独立应用必须分别装配 I/O 资源。
+- `register_ingest_runner` 显式接收表，默认拒绝重复绑定；测试替换 loader 时明确
+  `replace=True`。所有仓内调用方、契约 fixture、崩溃恢复 worker 与分道 E2E 已迁移。
+  原 worker E2E 只替换最后一个 worker 的全局 runner，现在逐个装配各自的 loader。
+- TaskExecutor 的 submit/request_cancel/shutdown 抽象方法、task_id 队列载荷、Task 持久化
+  字段、向量 schema、引擎依赖均未改变。全局注册 API 的破坏性迁移见
+  [版本说明](../docs/release_notes.md)，生命周期说明见 [架构文档](../docs/architecture.md)。
+
+## 故障注入与反向验证
+
+新增 `tests/unit/test_runner_isolation.py` 18 项：两个 Context 的实际任务执行及两种关闭
+顺序；第二个应用在注册后启动异常/取消；取消关闭时先排干再解绑；替换 runner 后清理；
+两种执行器无共享/兜底绑定；ARQ 同 kind 的独立续跑路由；重复注册、注入配对与
+自定义执行器消费表；失败启动保留既有绑定；ARQ 工厂转交显式表。除业务计算替身外，
+任务认领、runner 查找和终态写入仍走实际实现，断言通过 TaskStore 观察结果。
+
+在临时源码副本逐项反向注入缺陷，不修改工作区实现：共享默认表、忽略注入、执行查错
+表、路由查错表、静默覆盖、忽略解绑身份、关闭保留替换引用、排干前解绑、回滚遗留
+绑定、忽略配对、允许自定义执行器使用不连通的表、丢失 ARQ 注入转交、回滚清空调用方
+原有绑定。每项都必须由目标测试断言失败，导入/收集错误不计作检测成功。
+
+## 验证
+
+使用现有环境 `UV_CACHE_DIR=/tmp/comet-rag-v2-uv-cache uv run --no-sync --offline`。
+| 检查 | 结果 |
+|---|---|
+| 完整 unit | 2933 passed、15 skipped、1 xfailed，9.58s |
+| 内存 E2E | 49 passed，3.40s |
+| benchmark | 7 passed，4.37s |
+| 完整 integration | 6 passed、219 skipped，1.22s |
+| 新增隔离/故障测试 | 18 passed |
+| 反向验证 | 13 类均由测试断言检测，无收集或导入错误 |
+| 全仓 Ruff / Pyright | 通过；Pyright 0 errors、0 warnings |
+| 改动 Python 格式 / git diff --check | 通过 |
+
+unit 的既有 skip/xfail 未改变；本次未更新 DOCX 快照。最终检查前人工复核了所有
+生产改动及调用方迁移，补齐继承 ArqExecutor 的故障替身的显式注册表注入，防止
+中间件未启用时的 skip 掩盖调用迁移遗漏。
+
+本机 Docker daemon socket 不存在，未启动真实中间件。完整 integration 已执行，
+6 passed、219 skipped（1.22s）；这些跳过不代表真实 Redis/PostgreSQL/Milvus 链路验收。
+本批没有重复第十批的远程 Milvus 验证，也没有重跑 core-only 安装或三层覆盖率合并。
+
+## 提交前分批复核
+
+单独提取本批累计源码，核对所有调用方迁移、18 项回归与迁移说明一并存在，且不依赖
+后续真实 worker 辅助模块。提交候选完整 unit 2933 passed（9.02s），E2E 49 passed；
+全仓 Ruff、改动 Python 格式、Pyright 和 Commitizen 均通过。提交消息明确标记
+BREAKING CHANGE，说明全局注册函数移除及显式注册表迁移。
