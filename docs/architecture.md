@@ -162,9 +162,14 @@ manifest 墓碑，避免旧任务在 GC 后重新申请更高 generation 并覆�
 及读写编排不属于 Store 自身职责。
 
 M4 当前已有 `HierarchyBuilder`（`engines/indexing/`）、`IndexPlanner`/`RevisionStager`
-（`services/indexing.py`）、有界 Task context 移交与 ready 续跑切片，以及 revision-aware
-召回和父块回填。Store 的激活与回收原语已实现；Stager 只写到 ready，生产 `IngestRunner`
-尚未接入完整的激活/superseded、响应丢失恢复和旧版本 GC。读侧可显式配置或注入
+（`services/indexing.py`）、有界 Task context 移交，以及 revision-aware 召回和父块回填。
+Stager 只写到 ready；`RevisionActivator` 复用 Store 的幂等 reserve、原子激活与 generation
+围栏，`RevisionTaskStages.activate` 作为独立阶段从同一 manifest 恢复。激活响应丢失时
+识别 already-active；已被更高 generation 替换时返回 superseded，不重新准备或覆盖。
+版本顺序以 Store reserve 分配的 generation 为准，不以 Task 创建时间推断。
+网络异常和取消不证明提交失败，禁止据此清理向量或回滚 active。尚未发布的旧 generation
+保持 ready，后续 GC 编排负责废弃；已发布的 retired/purged manifest 保留恢复证据。
+本切片未执行 GC，也未接入生产 `IngestRunner`。读侧可显式配置或注入
 DocumentStore，默认关闭。M4 的完整完成标准见 `tasks/m4_todo.md`，不能由切片通过推定。
 
 检索侧刻意把完整存储生命周期与只读能力分开：`AsyncVectorSearchPort` 只暴露 dense

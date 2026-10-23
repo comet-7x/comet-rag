@@ -68,8 +68,9 @@ revision 激活、有界判活、故障恢复与回滚设计。决策门已经�
 DocumentStore、内存/PostgreSQL 适配器与三表迁移。T8 准备阶段与 T9 读侧切片已实现，
 配置化读侧装配及真实 Milvus Strong 验收通过；T8 有界 Task context 与 CPU→IO ready
 续跑也已通过真实 PG/Redis/Milvus 验收。`DocumentStore` 已提供激活与回收原语，
-`RevisionStager` 只写到 ready；待完成的是生产入库的激活/superseded、响应丢失恢复、
-旧版本 GC 与完整接线。生产检索开关默认关闭，不能把切片通过视为完整 M4 验收。
+`RevisionStager` 只写到 ready；V2 第十五批的独立 `RevisionActivator` 和 Task 激活阶段
+已补齐事务失败、提交响应丢失及 superseded 恢复切片。待完成的是旧版本 GC 与生产
+入库完整接线。生产检索开关默认关闭，不能把切片通过视为完整 M4 验收。
 
 V2 已完成现状校准、配置合并、启动清理、检索失败边界与全仓双模式类迁移，移除旧
 `a` 前缀接口；第五批补齐真实 Milvus 验证、索引失败恢复与单测耗时治理，第六批在

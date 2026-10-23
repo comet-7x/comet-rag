@@ -147,6 +147,7 @@ separator 配置不可被原地修改。
 - [x] RevisionStager 分批父块/窗口子向量写入、精确 count 与 ready 幂等重放
 - [x] UUID 一次持久化、窄 revision payload、CAS 内整份 context 字节上限
 - [x] CPU 父块落库后交接，IO 从 task_id/context 续跑到 ready，真实三后端验证
+- [x] 独立激活阶段复用 Store 原语：事务失败保留旧版本、提交响应丢失幂等恢复、旧任务 superseded
 - [ ] 父块、子向量、激活与旧版本回收按规格排序
 - [ ] 任一阶段失败只回滚本 revision，旧 active 数据仍可查询
 - [ ] 重试幂等，不产生重复可见记录
@@ -154,8 +155,11 @@ separator 配置不可被原地修改。
 
 2026-10-03 第二切片完成有界移交与 ready 续跑；原文只在父块和移交数据提交成功后清除。
 IO 分批读取父块、复验完整指纹后才写向量，embedding 返回后仍检查所有权/取消。
-activation、superseded、GC 与生产 Task 全生命周期尚未完成，故完整 context/progress
-条目仍未勾选。不能把测试 kind 的 prepare-to-ready 成功当成生产 ingest 或 Checkpoint H。
+V2 第十五批先补齐独立 activation/superseded 编排与单元故障测试；真实 Redis worker
+重试、PostgreSQL 事务回滚与独立 Milvus Strong 可见性用例随下一项提交。
+GC 与生产 Task 全生命周期尚未完成，故完整 context/progress 条目仍未勾选。
+不能把测试 kind 的成功当成生产 ingest 或 Checkpoint H。未发布的 stale ready
+本批保持 ready，后续 GC 必须负责废弃与清理，不能把它误算作已回收。
 
 ### M4-T9 — 父块回填与检索兼容（M）
 

@@ -26,7 +26,8 @@ T8 第一切片已实现 HierarchyBuilder、IndexPlanner 与 RevisionStager：�
 44 项集成测试和 PostgreSQL/Milvus 联合故障恢复通过，未改生产部署或使用第三方镜像。
 T8 第二切片已实现 UUID 一次持久化、32 MiB 整份 context 限额及 CPU→IO 的窄 payload
 移交。真实 PG/Redis/Milvus 验收在停止 CPU worker 后，仅凭 task_id 和持久化 context
-续跑到 ready，并覆盖向量提交后响应丢失。下一项推进激活/响应丢失、superseded 与 GC，
+续跑到 ready，并覆盖向量提交后响应丢失。V2 第十五批补齐独立激活/响应丢失与
+superseded 恢复，复用现有 Store 原语并保持独立 Task 阶段；下一项推进 GC，
 最后接入生产 IngestRunner；生产新写入保持关闭。
 
 ## Dependency Graph

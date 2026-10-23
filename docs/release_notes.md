@@ -21,6 +21,15 @@ IngestRunner 的正规化与分块改用已有 run_sync，取消后等待同步�
 避免阻塞事件循环。取消后的线程异常会被消费，迟到结果不写入 Task context。
 关停可能因此等待更久；没有修改正常解析、分块、metadata 或索引格式。
 
+### 实验性 revision 激活恢复
+
+新增 `services.revision_activation.RevisionActivator`，只依赖 DocumentStore 现有原语；
+`RevisionTaskStages` 可显式注入 `activator=` 并独立执行 `activate(ctx)`。事务失败交给
+调用方重试同一 manifest；提交后响应丢失返回 already_active，旧任务返回 superseded，
+不覆盖较新的 active。准备、激活与 GC 各有独立重试边界，激活阶段不重新 embedding。
+返回值是本次尝试的快照，不保证返回后仍为当前版本。未新增 schema、Port 或生产开关；
+生产 IngestRunner 与 GC 编排仍待完成。
+
 ### 同步与异步 API 分离
 
 | 旧用法 | V2 用法 |

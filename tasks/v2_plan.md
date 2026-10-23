@@ -1,6 +1,8 @@
 # Comet-RAG V2：实施记录
 
-当前进度：前十四批实现与验证已完成；第十四批补齐入库线程取消与清理，
+当前进度：前十四批已提交；第十五批先提交激活编排、Task 阶段与单测，真实中间件验收另项提交。
+第十五批补齐独立 revision 激活与故障恢复；单测 10 秒预算仍缺乏稳定余量。
+第十四批补齐入库线程取消与清理，
 并修复实机验证暴露的 ARQ 测试夹具关停竞态。
 第十三批补齐统一查询 deadline 与超时降级。
 第十二批补齐真实 RunnerRegistry worker 验收。
@@ -10,7 +12,7 @@
 Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 下文按批次保留历史记录，现行 API 以第四批和版本说明为准。
 
-## 当前剩余项复核（第十四批）
+## 当前剩余项复核（第十五批）
 
 | 历史待办 | 对照当前代码的结论 | 后续安排 |
 |---|---|---|
@@ -23,10 +25,10 @@ Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 | 入库线程取消与临时文件清理 | 复核发现 IngestRunner 正规化/分块仍用裸 to_thread，清理直接阻塞事件循环，与既有 run_sync 纪律不一致 | 第十四批已修复并完成故障注入、反向与全量验证；保留线程不可强杀的限制 |
 | 其他真实向量后端 | Qdrant、Weaviate、Chroma、OceanBase 已调研，但没有适配器、装配或真实契约验收；当前仅 Milvus + InMemory | 现行 spec A9 不含多后端；接入第三个实现及扩展 Filter/能力模型需独立确认范围 |
 | 统一查询 deadline | 第十三批建立每次 search 的绝对截止时刻，覆盖 KB 检查、模型排队、召回判活、重排和父块读取；保留取消排干 | 已补故障注入、HTTP 接线与 13 类反向验证；线程不能强杀、清理可超过预算，边界见 query_deadline.md |
-| 真实后端与安装验收缺口 | 第十二批补真实 PostgreSQL/Redis 及 Milvus 全量集成；MinIO、外部模型/MinerU、core-only 重装仍未补验 | 第十四批三层覆盖率：整体 92.38%、tasks 95.84%；其余按相关改造另行验收 |
-| M4 生产闭环 | Stager 仍止于 ready；生产激活/superseded、激活响应丢失恢复、GC 与完整接线未完成 | 继续按 m4_todo.md 失败矩阵独立推进 |
+| 真实后端与安装验收缺口 | 第十五批完成独立 core-only 重装与 DOCX 冒烟；真实激活恢复用例与 CI 随下一项提交 | 已提交的最近三层覆盖率为第十四批整体 92.38%、tasks 95.84%；MinIO、外部模型/MinerU 仍未补验 |
+| M4 生产闭环 | Stager 仍止于 ready；新增独立 Activator/Task 激活恢复，验证失败保旧、提交响应丢失和 superseded；GC 与生产接线未完成 | 下一批推进精确、幂等 GC，再接线生产 IngestRunner |
 
-第十四批优先补齐已确认的入库线程所有权遗漏。M4 激活/GC/生产接线、其它向量库适配
+第十四批补齐入库线程所有权遗漏；第十五批补齐独立激活恢复。M4 GC/生产接线、其它向量库适配
 与剩余安装/外部服务验收仍是独立工作；查询能力调研不等于后端已实现。
 
 # 第一批：文档校准与配置合并
@@ -1185,3 +1187,50 @@ MinIO、外部模型/MinerU、core-only 隔离重装仍未补验，不引用历�
 
 提交准备只重新运行本地检查。前述 230 passed / 2 skipped 真实集成、benchmark 和
 三层覆盖率是实现轮验收，经记录核对仍适用于本轮未变的实现与测试；本轮未重启中间件。
+
+# 第十五批：revision 激活与故障恢复
+
+> 日期：2026-10-23
+> 起点：`f7539a5`；范围依据用户确认：复用 Store 原语，验证失败保旧、提交响应丢失重试和旧任务围栏。
+
+## 复核结论与职责
+
+DocumentStore 的原子事务、同 revision 的 generation 幂等、already-active 和 StaleRevision
+围栏已经存在，无需新增 Port、schema、Task 持久化字段或数据库依赖。确认的缺口是服务
+编排与独立 Task 激活阶段；此前 Stager 刻意只推进到 ready。
+
+- 新增 `services/revision_activation.py::RevisionActivator`，只依赖 DocumentStore。
+  幂等 reserve 校验原计划、计数与任务身份并读取状态，随后复用原子 activate_revision。
+- 新增 `ActivationOutcome`：revision 是本次尝试的快照，superseded 表示已被更新版本
+  取代，already_active 表示提交后重试。调用方不能把返回状态当成持续可见性的保证。
+  新旧顺序沿用 Store reserve 分配的 generation，不以 Task 创建时间推断。
+- 网络异常与取消原样传播，不伪造成功、不撤销 active、不删除任何向量/父块。
+  相同 manifest 重试复用 generation 和 activated_at；激活不重新 embedding/count。
+- 已激活后又 retired/purged 的版本，以 activated_at 为历史发布证据返回 superseded；
+  从未发布的 staging/abandoned/purged 仍报错。reserve 与 activate 之间被新任务替换
+  时，只有再读到持久化发布证据才恢复为 superseded，不吞其他 RevisionNotReady。
+- `RevisionTaskStages` 显式注入 activator，新增独立 activate 阶段，复用整份 context
+  上限、revision/任务身份校验与 checkpoint。报告失败后只重试激活，不回到准备阶段。
+- 未发布且低于 active generation 的 ready revision 返回 superseded，但本批保持 ready；
+  废弃与回收交给后续 GC 编排，不能将其算入已回收候选或宣称 M4 全部完成。
+
+生产 IngestRunner 未接线，revision-aware 读开关仍默认关闭。更新架构、版本说明、
+M4 plan/todo/spec；真实故障用例、测试说明与 CI revision job 随下一项提交。
+
+## 本项测试与验收边界
+
+单元测试覆盖失败保旧、提交响应丢失、低 generation 围栏、读取后被替换的竞态、
+计划/任务身份、context 上限、提交前取消/租约丢失、提交后取消/报告失败和历史墓碑。
+14 类单元反向缺陷注入均由目标断言检出，没有收集错误。激活服务没有重做准备阶段，
+也没有扩展 Store 接口或启用生产写入。
+
+本项提交只交付激活服务、独立 Task 阶段、单元故障测试和接口文档。真实 PostgreSQL
+事务回滚、独立 Milvus Strong 读、Redis worker 响应丢失重试用例及 CI 随下一项提交；
+不能把内存单测通过称为真实激活恢复验收。独立 core-only 重装与 DOCX 冒烟已通过。
+
+## 提交前快照验证
+
+本快照默认单测：3030 passed, 15 skipped, 289 deselected, 1 xfailed in 12.27s；E2E：50 passed, 3285 deselected in 4.13s。
+全仓 Ruff、Pyright、本批 Python 格式与 Commitizen 消息校验均通过。
+单测功能断言通过，但耗时超过 10 秒目标；不修改门槛或测试。本项不宣称包含下一项
+真实激活恢复用例；其完整验证记录随下一项提交。

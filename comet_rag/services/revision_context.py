@@ -28,6 +28,7 @@ from comet_rag.services.indexing import (
     _snapshot_handoff,
     revision_chunk_id,
 )
+from comet_rag.services.revision_activation import ActivationOutcome, RevisionActivator
 from comet_rag.tasks import TaskContext
 from comet_rag.tasks.runner import TaskContextTooLarge
 
@@ -257,17 +258,19 @@ async def get_revision_key(
 
 
 class RevisionTaskStages:
-    """实验性 prepare/ready 阶段；不注册生产 runner，不激活或清理 revision。"""
+    """实验性 prepare/ready/activate 阶段；不注册生产 runner，不执行 GC。"""
 
     def __init__(
         self,
         stager: RevisionStager,
         *,
+        activator: RevisionActivator | None = None,
         max_context_bytes: int = DEFAULT_MAX_REVISION_CONTEXT_BYTES,
     ) -> None:
         if type(max_context_bytes) is not int or max_context_bytes <= 0:
             raise ValueError("max_context_bytes 必须是正整数")
         self._stager = stager
+        self._activator = activator
         self._limit = max_context_bytes
 
     def _load(self, context: dict[str, object], task_id: str) -> IndexHandoff:
@@ -320,6 +323,20 @@ class RevisionTaskStages:
         )
         await ctx.report(message=f"已准备 {ready.child_count} 块（待激活）")
         return ready
+
+    async def activate(self, ctx: TaskContext) -> ActivationOutcome:
+        """独立阶段重试同一 manifest；提交成功后报告失败也不能重新准备或回滚。"""
+        if self._activator is None:
+            raise ValueError("activate 阶段必须显式注入 RevisionActivator")
+        task = await ctx.snapshot()
+        handoff = self._load(task.context, ctx.task_id)
+        outcome = await self._activator.activate(
+            handoff.draft, checkpoint=ctx.checkpoint
+        )
+        await ctx.report(
+            message="已被更新版本取代" if outcome.superseded else "文档版本已激活"
+        )
+        return outcome
 
 
 def _validate_budget(max_bytes: int) -> None:
