@@ -1,13 +1,14 @@
 # Comet-RAG V2：实施记录
 
-当前进度：前十二批实现与验证已完成；第十二批补齐真实 RunnerRegistry worker 验收。
+当前进度：前十三批实现与验证已完成；第十三批补齐统一查询 deadline 与超时降级。
+第十二批补齐真实 RunnerRegistry worker 验收。
 第十一批隔离任务 runner 的应用所有权。
 第十批统一 Filter 语义，真实 Milvus 70 项通过。
 第七批 Milvus metadata 契约与第九批参数化用例均已实机补验；第十二批补齐
 Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 下文按批次保留历史记录，现行 API 以第四批和版本说明为准。
 
-## 当前剩余项复核（第十二批）
+## 当前剩余项复核（第十三批）
 
 | 历史待办 | 对照当前代码的结论 | 后续安排 |
 |---|---|---|
@@ -17,11 +18,11 @@ Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 | BaseReranker 直接库调用的有限分数守卫 | 原同步/异步 score 放行非有限值，rank 的 top_k 还能隐藏末位坏分数 | 第八批已修复；保留服务层校验和降级 |
 | Filter 契约 | 第十批已统一现有两实现的类型、缺失/null、bool/数字、标量 IN 与安全数值范围，真实 Milvus 验收通过 | 参见 filter_semantics.md；新算子、完整 IR、额外后端/schema 仍单独决策 |
 | 全局 runner 注册表 | 第十一批已复现多 Context 错用 runner，并改为显式 RunnerRegistry；执行、ARQ 道次路由与清理使用同一实例 | 第十二批已补真实 Redis/PostgreSQL 多 Context、跨道移交、故障补投和启动失败连接清理；保留回归守卫 |
-| 统一查询 deadline | 已有通道取消排干，但没有端到端 deadline；线程工作仍不能强制终止 | 另行明确排队、召回、重排、父块读取共享预算及超时降级语义 |
-| 真实后端与安装验收缺口 | 第十二批补真实 PostgreSQL/Redis 及 Milvus 全量集成；MinIO、外部模型/MinerU、core-only 重装仍未补验 | 三层覆盖率本批已通过：整体 92.35%、tasks 96.29%；其余按相关改造另行验收 |
+| 统一查询 deadline | 第十三批建立每次 search 的绝对截止时刻，覆盖 KB 检查、模型排队、召回判活、重排和父块读取；保留取消排干 | 已补故障注入、HTTP 接线与 13 类反向验证；线程不能强杀、清理可超过预算，边界见 query_deadline.md |
+| 真实后端与安装验收缺口 | 第十二批补真实 PostgreSQL/Redis 及 Milvus 全量集成；MinIO、外部模型/MinerU、core-only 重装仍未补验 | 第十三批三层覆盖率：整体 92.39%、tasks 96.18%；其余按相关改造另行验收 |
 | M4 生产闭环 | Stager 仍止于 ready；生产激活/superseded、激活响应丢失恢复、GC 与完整接线未完成 | 继续按 m4_todo.md 失败矩阵独立推进 |
 
-本次补齐 RunnerRegistry 改造后的真实 worker 验收；统一查询 deadline 与 M4 生产闭环仍是独立事项。
+本次完成统一查询工作预算；M4 生产闭环及剩余安装/外部服务验收仍需独立推进。
 
 # 第一批：文档校准与配置合并
 
@@ -950,3 +951,102 @@ Milvus 两次验收后都恢复原有的 1 个 collection 基线；本次创建�
 累计候选完整 unit 2940 passed（8.70s），E2E 49 passed；全仓 Ruff、改动 Python 格式、
 Pyright 和 Commitizen 均通过。真实集成、三层覆盖率与反向注入结果已核对原始报告，
 沿用本批上面的实机记录。
+
+
+# 第十三批：统一查询 deadline 与超时降级
+
+> 日期：2026-10-23。基于 `c8796f8`；按执行机制、检索业务与部署接线拆分本地提交。
+
+## 复核与确认的问题
+
+上轮通道取消排干已正确，但只限制模型闸门排队时间；KB 读取、SDK 连接池等待、
+模型请求、召回与判活、重排和父块读取没有统一工作预算。只给每个阶段配置独立
+相对超时会累加总等待；在整个 search 外套超时则会丢弃 hybrid 已完成的安全结果，
+并将本可回退的重排/父块超时变成查询失败。这是本批确认并处理的缺口。
+
+## 实现与职责
+
+- `services/query_deadline.py` 只负责单调时钟剩余预算、阶段任务所有权、一次取消和排干；
+  不认识后端、RRF 或降级规则。采用标准库 asyncio.wait/shield，没有新增依赖。
+- 每次 RetrievalService.search 创建新 deadline，默认 30 秒；配置为
+  `retrieval.timeout_seconds`，直接使用服务时为同名构造参数。构造/配置拒绝非有限、
+  非正数和 bool；部署配置仍在创建资源前重新校验。
+- KB 身份检查计入预算；每条召回通道的预算覆盖 embedding 排队、后端调用及全部
+  revision 判活/补召回。hybrid 两路共享绝对时刻，不按阶段重置，也不保留固定比例。
+- 单路请求未完成安全召回则抛 QueryDeadlineExceeded，HTTP 504。hybrid 保留已完成
+  的成功通道；两路均失败且至少一路耗尽预算时为 504，普通双路故障仍为 503。
+- 重排和父块只使用剩余时间，超时分别退回原候选和已判活 child，记录
+  deadline_exceeded；成功重排后的父块失败保留重排分数。预算已尽不启动后续 IO。
+- 调用方取消继续传播，包括在超时排干期间重复取消；不转换成质量降级。迟到成功、
+  吞取消后成功均被拒绝；召回清理暴露的致命异常仍传播。
+- 模型闸门原有 Overloaded 纪律保留：先触发的闸门拒绝仍走原有 429/重排降级。
+  供应商自身 TimeoutError 不冒充共享预算耗尽。
+- 不改 Port、数据库 schema、向量 metadata 或引擎依赖。配置样例、部署/架构/版本说明
+  与测试入口已更新；完整语义见 [查询 deadline](../docs/query_deadline.md)。
+
+预算从服务入口开始，不覆盖之前的 HTTP 接入/请求解析及之后的响应发送。线程不能强杀，
+取消后须等线程工作结束再释放闸门，因此实际返回可超过预算；CPU 同步计算也不能抢占。
+本批没有把工作预算包装成硬性的 HTTP 耗时 SLA。
+
+## 故障注入与反向验证
+
+新增 28 项定向服务/生命周期用例，覆盖三种召回模式耗尽、hybrid 单路存活、重排/父块
+分别耗尽、阶段累计预算、真实 Gate 等待者清除与恢复、先触发的 Overloaded、
+active 判活阻塞、KB 阻塞、调用方取消、线程桥资源所有权、不同查询预算隔离、迟到成功、
+吞取消及清理致命异常；新增配置/HTTP 用例与 1 项真实应用装配的无网络 E2E。
+
+在临时完整副本中依次注入 13 类缺陷：每阶段重置预算、父块另起预算、接纳事件循环迟到
+结果、接纳吞取消成功、漏排干、吞调用方取消、重排/父块超时不降级、丢弃 hybrid 成功路、
+隐藏清理致命错误、放行无限配置、漏接配置、504 错映射。每类均有断言失败，全部退出 1，
+无收集错误；工作树未注入缺陷。另以 RuntimeWarning 视为错误运行 60 项定向回归，确认
+没有未等待协程等运行时警告。
+
+## 全量验证
+
+使用现有环境及 `uv run --no-sync --offline`，未同步或安装依赖。
+
+| 检查 | 结果 |
+|---|---|
+| 完整 unit（未加覆盖率） | 2982 passed、15 skipped、1 xfailed；9.63s |
+| unit 覆盖率 | 88.83%；新增 QueryDeadline 模块 100%；插桩运行 12.42s 不作耗时预算 |
+| 全量内存 E2E | 50 passed；4.57s（带覆盖率） |
+| benchmark | 7 passed；4.41s |
+| 全量真实集成 | 230 passed、2 skipped；291.97s |
+| Ruff / Pyright / diff check | 全仓 Ruff 通过；Pyright 0 errors / 0 warnings；diff check 通过 |
+| format | 初次验证改动/新增 10 个 Python 文件通过；分批提交时执行原语测试独立成文件，11 个文件通过；全仓 20 个既有问题逐项在 HEAD 复现，未混入格式清理 |
+| 三层合并覆盖率 | 整体 92.39%、tasks 96.18%，均达标 |
+
+真实集成使用专用 PostgreSQL/Redis 测试容器及已约定 Milvus 测试库
+zhihao_test_database；Milvus 服务端 2.6.22，测试前后 collection 集合完全一致（1 个）。
+临时 PostgreSQL/Redis 容器、专用网络与数据已清理。仅未配置的 MinerU 与缺失的 MinIO
+各跳过 1 项；其他集成 skip 会由本次运行的审计插件拒绝。24 条 warning 来自上游 ARQ
+调用 Redis.close 的弃用提示。DOCX 快照未更新。
+
+core-only 隔离重装、外部模型/MinerU 和 MinIO 仍未补验；M4 激活/GC/生产接线仍按
+m4_todo.md 的失败矩阵推进。后续候选不再将“没有统一查询 deadline”列作未完成问题。
+
+
+## 第十三批提交前核验
+
+按职责拆为两个可独立运行的提交：
+
+1. `feat(retrieval): add cancellation-safe deadline execution`：QueryDeadline 执行原语、
+   独立的迟到结果/吞取消/清理异常测试，以及执行机制文档。此提交不改变 search 行为。
+2. `feat(retrieval)!: enforce shared deadlines across query stages`：检索服务接入共享预算、
+   各阶段降级、配置与组合根、HTTP 504、服务/配置/HTTP/E2E 回归和完整操作说明。
+   破坏性变更说明明确默认查询预算从无统一限制变为 30 秒。
+
+从原 HEAD 分别构建第一项及两项叠加的完整源码快照，独立运行以下检查：
+
+| 快照 | 完整 unit | E2E | 静态检查 |
+|---|---|---|---|
+| 执行机制 | 2949 passed、15 skipped、1 xfailed；9.46s | 49 passed；3.27s | Ruff / Pyright / 改动格式通过 |
+| 完整接线 | 2982 passed、15 skipped、1 xfailed；9.79s | 50 passed；2.95s | Ruff / Pyright / 改动格式通过 |
+
+两个提交消息均经 Commitizen 校验。拆分只移动 3 个原语测试到
+`test_query_deadline_execution.py`，逐个比较 AST 确认全部原有测试函数及断言不变；
+原有生产代码逐文件校验保持一致。测试入口文档已同步，原语回归不依赖尚未提交的服务接线。
+拆分后再次运行 13 类反向注入，全部被目标断言检出，无收集错误。
+
+本次提交准备没有修改生产行为或中间件测试；前述真实集成、benchmark 与三层覆盖率
+属于实现轮验收，本轮未重新启动中间件或重复这些检查。

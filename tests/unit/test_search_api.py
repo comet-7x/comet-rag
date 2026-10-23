@@ -173,3 +173,18 @@ def test_missing_keyword_capability_maps_to_503() -> None:
     response = TestClient(app).get("/failure")
 
     assert response.status_code == 503
+
+
+def test_query_deadline_maps_to_504() -> None:
+    from comet_rag.services.query_deadline import QueryDeadlineExceeded
+
+    app = FastAPI()
+    _install_exception_handlers(app)
+
+    @app.get("/query-timeout")
+    async def failure() -> None:
+        raise QueryDeadlineExceeded("dense")
+
+    response = TestClient(app).get("/query-timeout")
+    assert response.status_code == 504
+    assert response.json()["error"] == "query deadline exceeded during dense"

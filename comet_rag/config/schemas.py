@@ -570,10 +570,17 @@ class InfrastructureConfig(BaseModel):
 
 
 class RetrievalConfig(BaseModel):
-    """实验性 revision 读路径；不控制写入或激活。"""
+    """检索预算与实验性 revision 读路径；不控制写入或激活。"""
 
     model_config = ConfigDict(extra="forbid")
 
+    timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        allow_inf_nan=False,
+        strict=True,
+        description="查询共享工作预算（秒），含模型排队；取消排干可超出此时间",
+    )
     revision_aware: bool = Field(default=False, strict=True)
     max_revision_candidates: int = Field(
         default=2048,

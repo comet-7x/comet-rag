@@ -282,6 +282,14 @@ curl -X POST localhost:8000/search \
 并在 `degradations` 标明失败阶段和异常类型；两路都失败才返回 503。`degraded` 是
 系统负载降级级别，与请求级通道故障不是一回事。原始异常消息只写日志，不回给客户端。
 
+### 查询共享预算
+
+`retrieval.timeout_seconds` 默认 30 秒，从 RetrievalService.search 入口计时，覆盖 KB 检查、
+模型排队、召回/判活、重排和父块读取。阶段只使用剩余预算；重排和父块超时退回已有
+候选，hybrid 单路超时可保留另一条成功通道，没有安全召回结果则返回 HTTP 504。
+取消后等待清理，线程无法强杀，因此实际返回可能超过预算。
+完整边界、429/503/504 区分和诊断见[查询 deadline](query_deadline.md)。
+
 ### Revision 读侧（实验性，生产尚未启用）
 
 查询新增 `return_level=child|parent`，默认 child。parent 模式先对子块融合/重排，
@@ -290,10 +298,11 @@ curl -X POST localhost:8000/search \
 旧平坦记录没有 parent 时仍返回 child，父块缺失/错配或读取故障也退回 child，并在
 `degradations` 记录 `stage=parent`，不伪造正文。
 
-`config.yaml` 新增以下配置；默认关闭，未修改配置的部署行为不变：
+`config.yaml` 的 revision 读开关默认关闭；查询工作预算默认 30 秒：
 
 ```yaml
 retrieval:
+  timeout_seconds: 30.0
   revision_aware: false
   max_revision_candidates: 2048
 ```

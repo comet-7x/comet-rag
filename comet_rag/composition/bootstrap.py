@@ -696,6 +696,7 @@ async def build_context(
                 degradation=degradation,
                 document_store=document_store,
                 max_revision_candidates=config.retrieval.max_revision_candidates,
+                timeout_seconds=config.retrieval.timeout_seconds,
             ),
             kb_repository=kb_repository,
             knowledge_base=knowledge_base,

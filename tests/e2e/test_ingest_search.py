@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ from comet_rag.infrastructure.sources import (
 )
 from comet_rag.ports import ExtractedDocument, NormalizedDocument
 from comet_rag.services.ingestion import IngestRunner, register_ingest_runner
+from comet_rag.services.knowledge_base import KnowledgeBaseSpec
 
 pytestmark = pytest.mark.e2e
 
@@ -580,3 +582,32 @@ async def test_ingest_refuses_ssrf_targets(client: httpx.AsyncClient) -> None:
     ):
         resp = await client.post("/ingest", json={"kb_id": KB, "source": source})
         assert resp.status_code == 403, f"{source} 没被挡住（{resp.status_code}）"
+
+
+async def test_configured_query_budget_covers_model_queue_and_returns_504() -> None:
+    settings = make_config()
+    settings.retrieval.timeout_seconds = 0.02
+    model = KeywordEmbedding()
+    app = create_app(settings, embedding_model=model)
+    async with app.router.lifespan_context(app):
+        ctx = app.state.ctx
+        await ctx.knowledge_base.create(KnowledgeBaseSpec(kb_id="deadline-kb"))
+        # 使用组合根绑定的真实共享闸门，阻塞所有名额；查询不能绕过排队预算。
+        gate = ctx.model_gate
+        assert gate is not None
+        for _ in range(settings.limits.model_concurrency):
+            await gate.acquire()
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                async with asyncio.timeout(1):
+                    response = await client.post(
+                        "/search", json={"kb_id": "deadline-kb", "query": "苹果"}
+                    )
+            assert response.status_code == 504
+            assert response.json()["error"] == "query deadline exceeded during dense"
+            assert gate.stats.waiting == 0
+        finally:
+            for _ in range(settings.limits.model_concurrency):
+                gate.release()

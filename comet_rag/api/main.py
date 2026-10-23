@@ -26,6 +26,7 @@ from comet_rag.ports.knowledge_base import (
     KnowledgeBaseExists,
     KnowledgeBaseNotFound,
 )
+from comet_rag.services.query_deadline import QueryDeadlineExceeded
 from comet_rag.services.retrieval import HybridRecallFailed, KeywordSearchUnavailable
 from comet_rag.services.revision_recall import RevisionVisibilityError
 from comet_rag.services.source_policy import SourceNotAllowed
@@ -116,6 +117,12 @@ def _install_exception_handlers(app: FastAPI) -> None:
     async def _backlogged(request: Request, exc: Backlogged) -> JSONResponse:  # noqa: RUF029
         """429：待执行任务已堆到上限，收下也只是让它排得更久。"""
         return _problem(request, status.HTTP_429_TOO_MANY_REQUESTS, str(exc))
+
+    @app.exception_handler(QueryDeadlineExceeded)
+    async def _query_timeout(
+        request: Request, exc: QueryDeadlineExceeded
+    ) -> JSONResponse:  # noqa: RUF029
+        return _problem(request, status.HTTP_504_GATEWAY_TIMEOUT, str(exc))
 
     @app.exception_handler(HybridRecallFailed)
     async def _hybrid_unavailable(

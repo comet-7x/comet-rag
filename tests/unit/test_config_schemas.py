@@ -397,3 +397,14 @@ def test_pipeline_defaults_come_from_the_same_place() -> None:
 
     assert config.max_concurrency == DEFAULT_EMBED_FANOUT
     assert config.embed_batch_size == DEFAULT_EMBED_WINDOW
+
+
+@pytest.mark.parametrize("timeout", [0, -1, True, "1", float("inf"), float("nan")])
+def test_query_deadline_requires_finite_positive_seconds(timeout) -> None:
+    with pytest.raises(ValueError):
+        RetrievalConfig(timeout_seconds=timeout)
+
+
+def test_query_deadline_default_and_explicit_budget() -> None:
+    assert RetrievalConfig().timeout_seconds == 30.0
+    assert RetrievalConfig(timeout_seconds=0.25).timeout_seconds == 0.25

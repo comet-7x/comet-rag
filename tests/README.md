@@ -19,6 +19,15 @@ uv run pytest --cov=comet_rag --cov-report=term-missing
 **硬性要求**：`unit/` 不允许打真实网络，也不允许依赖 GPU 服务。
 需要 HTTP 时用 `httpx.MockTransport`（见 `unit/engines/test_url_loader.py`）。
 
+## 查询 deadline 回归
+
+共享预算、排队、超时降级和取消排干用例位于
+`unit/services/test_query_deadline.py`，执行原语的迟到结果及清理守卫位于
+`unit/services/test_query_deadline_execution.py`；真实应用配置到 HTTP 504 的接线位于
+`e2e/test_ingest_search.py::test_configured_query_budget_covers_model_queue_and_returns_504`。
+后者占满组合根创建的模型闸门，不依赖 GPU 或外部模型。规则见
+[查询 deadline](../docs/query_deadline.md)。
+
 ## 契约测试
 
 `contracts/` 下是与实现无关的测试基类。同一套测试要被多个实现跑：

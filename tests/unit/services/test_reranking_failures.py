@@ -21,6 +21,7 @@ from comet_rag.ports import (
     RerankDocument,
     SearchHit,
 )
+from comet_rag.services.query_deadline import QueryDeadline
 from comet_rag.services.retrieval import (
     RetrievalService,
     RetrievalStage,
@@ -172,7 +173,10 @@ async def test_successful_rerank_preserves_candidate_fields_and_original_scores(
     ]
     rank = AsyncMock(return_value=[ranked(0, 0.9)])
     chunks, reranked, degradation = await RetrievalService._rerank(  # noqa: SLF001
-        cast("AsyncRerankerPort", SimpleNamespace(rank=rank)), "query", candidates
+        cast("AsyncRerankerPort", SimpleNamespace(rank=rank)),
+        "query",
+        candidates,
+        QueryDeadline(30),
     )
 
     assert reranked

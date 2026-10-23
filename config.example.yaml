@@ -94,9 +94,10 @@ backends:
   task_executor: inprocess  # inprocess | arq
   max_concurrency: 8
 
-# 实验性读开关；只装配 DocumentStore / Strong recall，不启用 revision 写入或激活。
+# 查询工作预算；revision 开关只装配 DocumentStore / Strong recall，不启用写入或激活。
 # Milvus 模式必须配 postgres 元数据与三表迁移，Memory 模式仍不需要中间件。
 retrieval:
+  timeout_seconds: 30.0  # 含模型排队，取消排干可超过此时间
   revision_aware: false
   max_revision_candidates: 2048
 

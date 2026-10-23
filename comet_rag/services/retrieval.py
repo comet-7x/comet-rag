@@ -28,6 +28,12 @@ from comet_rag.ports import (
 from comet_rag.ports.document_store import DocumentStore, StoredParent
 from comet_rag.ports.filtering import normalize_filter
 from comet_rag.services.knowledge_base import KnowledgeBaseService
+from comet_rag.services.query_deadline import (
+    DEFAULT_QUERY_TIMEOUT_SECONDS,
+    QueryDeadline,
+    QueryDeadlineExceeded,
+    validate_query_timeout,
+)
 from comet_rag.services.recall_execution import run_recall_channels
 from comet_rag.services.reranking import InvalidRerankResult, validate_ranking
 from comet_rag.services.revision_recall import (
@@ -202,7 +208,10 @@ class RetrievalService:
         degradation: DegradationController | None = None,
         document_store: DocumentStore | None = None,
         max_revision_candidates: int = 2048,
+        timeout_seconds: float = DEFAULT_QUERY_TIMEOUT_SECONDS,
     ) -> None:
+        validate_query_timeout(timeout_seconds)
+        self._timeout_seconds = timeout_seconds
         self._embedding_model = embedding_model
         self._vector_store = vector_store
         self._keyword_search = keyword_search
@@ -218,6 +227,7 @@ class RetrievalService:
         )
 
     async def search(self, query: SearchQuery) -> RetrievalResult:
+        deadline = QueryDeadline(self._timeout_seconds)
         # 降级顺序的落点：L1 关 rerank（最贵、且没它检索仍可用），
         # L2 再砍 top_k。两级都只影响**质量**，不影响"能不能拿到结果"。
         top_k = query.top_k
@@ -231,7 +241,7 @@ class RetrievalService:
         if level == "NORMAL":
             level = None
 
-        recall = await self._recall(query)
+        recall = await self._recall(query, deadline)
         candidates = recall.chunks
         if not candidates:
             return RetrievalResult(
@@ -249,7 +259,7 @@ class RetrievalService:
         # None"这个结论丢掉，到调用点就得再补一次断言。
         reranker = self._reranker if (query.rerank and allow_rerank) else None
         chunks, did_rerank, rerank_degradation = (
-            await self._rerank(reranker, query.query, candidates)
+            await self._rerank(reranker, query.query, candidates, deadline)
             if reranker is not None
             else (candidates, False, None)
         )
@@ -257,7 +267,9 @@ class RetrievalService:
         if rerank_degradation is not None:
             degradations = (*degradations, rerank_degradation)
         if query.return_level is ReturnLevel.PARENT:
-            chunks, parent_degradation = await self._parents(query.kb_id, chunks)
+            chunks, parent_degradation = await self._parents(
+                query.kb_id, chunks, deadline
+            )
             if parent_degradation is not None:
                 degradations = (*degradations, parent_degradation)
         return RetrievalResult(
@@ -271,16 +283,25 @@ class RetrievalService:
             degradations=degradations,
         )
 
-    async def _recall(self, query: SearchQuery) -> _RecallResult:
+    async def _recall(
+        self, query: SearchQuery, deadline: QueryDeadline
+    ) -> _RecallResult:
         # 与入库路径使用同一条 A12 模型守卫。同维度的不同模型不会触发向量库
         # 报错，却会在不兼容的语义空间中比较向量，结果只会静默变差。
         if self._knowledge_base is not None:
-            await self._knowledge_base.resolve_for_search(query.kb_id)
+            knowledge_base = self._knowledge_base
+            await deadline.run(
+                lambda: knowledge_base.resolve_for_search(query.kb_id),
+                stage="knowledge_base",
+            )
         filter = _normalize_filter(query.filter)
         fetch_k = query.effective_fetch_k()
 
         if query.mode is SearchMode.DENSE:
-            result = await self._dense_hits(query, fetch_k=fetch_k, filter=filter)
+            result = await deadline.run(
+                lambda: self._dense_hits(query, fetch_k=fetch_k, filter=filter),
+                stage="dense",
+            )
             return _RecallResult(
                 chunks=self._dense_chunks(result.hits),
                 mode=SearchMode.DENSE,
@@ -296,8 +317,11 @@ class RetrievalService:
             )
 
         if query.mode is SearchMode.KEYWORD:
-            result = await self._keyword_hits(
-                query, keyword_search=keyword_search, fetch_k=fetch_k, filter=filter
+            result = await deadline.run(
+                lambda: self._keyword_hits(
+                    query, keyword_search=keyword_search, fetch_k=fetch_k, filter=filter
+                ),
+                stage="keyword",
             )
             return _RecallResult(
                 chunks=self._keyword_chunks(result.hits),
@@ -308,6 +332,7 @@ class RetrievalService:
 
         return await self._hybrid_recall(
             query,
+            deadline=deadline,
             keyword_search=keyword_search,
             fetch_k=fetch_k,
             filter=filter,
@@ -317,17 +342,24 @@ class RetrievalService:
         self,
         query: SearchQuery,
         *,
+        deadline: QueryDeadline,
         keyword_search: AsyncKeywordSearchPort,
         fetch_k: int,
         filter: Filter | None,
     ) -> _RecallResult:
         dense_result, keyword_result = await run_recall_channels(
-            dense=lambda: self._dense_hits(query, fetch_k=fetch_k, filter=filter),
-            keyword=lambda: self._keyword_hits(
-                query,
-                keyword_search=keyword_search,
-                fetch_k=fetch_k,
-                filter=filter,
+            dense=lambda: deadline.run(
+                lambda: self._dense_hits(query, fetch_k=fetch_k, filter=filter),
+                stage="dense",
+            ),
+            keyword=lambda: deadline.run(
+                lambda: self._keyword_hits(
+                    query,
+                    keyword_search=keyword_search,
+                    fetch_k=fetch_k,
+                    filter=filter,
+                ),
+                stage="keyword",
             ),
             must_propagate=_must_propagate,
         )
@@ -343,6 +375,9 @@ class RetrievalService:
             )
             _log_channel_failure(failures[0], dense_error, continued=False)
             _log_channel_failure(failures[1], keyword_error, continued=False)
+            for error in (dense_error, keyword_error):
+                if isinstance(error, QueryDeadlineExceeded):
+                    raise error
             raise HybridRecallFailed(failures)
 
         if dense_error is not None:
@@ -449,6 +484,7 @@ class RetrievalService:
         self,
         kb_id: str,
         candidates: list[RetrievedChunk],
+        deadline: QueryDeadline,
     ) -> tuple[list[RetrievedChunk], RetrievalDegradation | None]:
         parent_ids: dict[str, None] = {}
         for child in candidates:
@@ -460,12 +496,18 @@ class RetrievalService:
         try:
             if self._document_store is None:
                 raise RevisionVisibilityError("parent lookup requires DocumentStore")
-            parents = await self._document_store.get_parents(kb_id, list(parent_ids))
+            document_store = self._document_store
+            parents = await deadline.run(
+                lambda: document_store.get_parents(kb_id, list(parent_ids)),
+                stage="parent",
+            )
         except Exception as exc:  # noqa: BLE001 — 正文回填失败可退回已判活 child
             logger.opt(exception=exc).warning("父块回填失败，退回 child")
             return candidates, RetrievalDegradation(
                 RetrievalStage.PARENT,
-                "request_failed",
+                "deadline_exceeded"
+                if isinstance(exc, QueryDeadlineExceeded)
+                else "request_failed",
                 type(exc).__name__,
             )
         result, damaged = _expand_parents(kb_id, candidates, parents)
@@ -523,26 +565,33 @@ class RetrievalService:
 
     @staticmethod
     async def _rerank(
-        reranker: AsyncRerankerPort, query: str, candidates: list[RetrievedChunk]
+        reranker: AsyncRerankerPort,
+        query: str,
+        candidates: list[RetrievedChunk],
+        deadline: QueryDeadline,
     ) -> tuple[list[RetrievedChunk], bool, RetrievalDegradation | None]:
         """重排故障回退原候选；响应校验与物化同属降级边界，取消仍传播。"""
         try:
-            result = await reranker.rank(
-                query,
-                [
-                    RerankDocument(
-                        id=candidate.id,
-                        content=candidate.text,
-                        # 失败后仍要返回原始候选，不能把其可变元数据借给适配器。
-                        metadata=deepcopy(candidate.metadata),
-                    )
-                    for candidate in candidates
-                ],
+            documents = [
+                RerankDocument(
+                    id=candidate.id,
+                    content=candidate.text,
+                    # 失败后仍要返回原始候选，不能把其可变元数据借给适配器。
+                    metadata=deepcopy(candidate.metadata),
+                )
+                for candidate in candidates
+            ]
+            result = await deadline.run(
+                lambda: reranker.rank(query, documents),
+                stage="reranker",
             )
             ranked = validate_ranking(result, candidate_count=len(candidates))
             rescored = [
                 replace(candidates[item.index], score=item.score) for item in ranked
             ]
+        except QueryDeadlineExceeded as exc:
+            reason, error_type = "deadline_exceeded", type(exc).__name__
+            logger.warning("重排预算耗尽，降级为原始召回结果")
         except InvalidRerankResult as exc:
             reason, error_type = exc.reason, None
             logger.warning("重排返回值无效，降级为原始召回结果 reason={}", reason)
@@ -654,7 +703,9 @@ def _channel_degradation(
 ) -> RetrievalDegradation:
     return RetrievalDegradation(
         stage=stage,
-        reason="channel_unavailable",
+        reason="deadline_exceeded"
+        if isinstance(exc, QueryDeadlineExceeded)
+        else "channel_unavailable",
         error_type=type(exc).__name__,
     )
 
