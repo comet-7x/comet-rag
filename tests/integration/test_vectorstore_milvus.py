@@ -95,6 +95,44 @@ async def test_bound_filter_preserves_hostile_value_across_operations(
         await store.drop_collection(kb)
 
 
+async def test_safe_numeric_bounds_and_literal_paths(store: AsyncVectorStore) -> None:
+    kb = "filter-boundaries"
+    maximum = 2**53 - 1
+    await store.ensure_collection(kb, dim=2)
+    try:
+        await store.upsert(
+            kb,
+            [
+                VectorRecord(
+                    "positive", "keyword", [1.0, 0.0], {"v": maximum, "a.b": "literal"}
+                ),
+                VectorRecord(
+                    "negative", "keyword", [1.0, 0.0], {"v": -maximum, "a.b": "literal"}
+                ),
+                VectorRecord(
+                    "outside",
+                    "keyword",
+                    [1.0, 0.0],
+                    {"v": 2**53 + 1, "a": {"b": "literal"}},
+                ),
+            ],
+        )
+        for number, expected in [
+            (maximum, "positive"),
+            (float(maximum), "positive"),
+            (-maximum, "negative"),
+            (-float(maximum), "negative"),
+        ]:
+            assert await store.count(kb, filter={"v": number}) == 1
+            assert [
+                hit.id
+                for hit in await store.search(kb, [1.0, 0.0], filter={"v": number})
+            ] == [expected]
+        assert await store.count(kb, filter={"a.b": "literal"}) == 2
+    finally:
+        await store.drop_collection(kb)
+
+
 class TestMilvusKeywordSearch(KeywordSearchContract):
     @pytest.fixture
     async def store(  # noqa: PT004

@@ -1,8 +1,24 @@
 # Comet-RAG V2：实施记录
 
-当前进度：前9批实现与本地验证已完成，本批为五库查询复核与 Milvus 参数绑定。
-待办包括Filter 类型/缺失/null/bool-int/集合规范及参数化真实验收，以及全局 runner、统一 deadline 与 M4 生产闭环。
-下文保留历史记录；现行执行模式以第四批与版本说明为准。
+当前进度：前十批实现与验证已完成；第十批统一 Filter 语义，真实 Milvus 70 项通过。
+第七批 Milvus metadata 契约与第九批参数化用例均已实机补验；PostgreSQL 等其他后端
+以及 core-only 重装、三层覆盖率仍按各批范围保留待办。
+下文按批次保留历史记录，现行 API 以第四批和版本说明为准。
+
+## 当前剩余项复核（第十批）
+
+| 历史待办 | 对照当前代码的结论 | 后续安排 |
+|---|---|---|
+| 配置运行时赋值校验、初始化失败清理 | 第二批已解决，第四批完成异步入口迁移 | 保留回归守卫 |
+| Milvus 原生异步真实验证、单测超过 10 秒 | 第五批补真实 Milvus 与故障恢复，第五/六批处理等待和 DOCX 热点 | 本批继续检查完整 unit 耗时 |
+| VectorStore 与直接调用方的嵌套 metadata 所有权 | 复核确认内存向量写入、两路检索、snapshot、父块和 draft 共享嵌套值 | 第七批已修复并补共享契约 |
+| BaseReranker 直接库调用的有限分数守卫 | 原同步/异步 score 放行非有限值，rank 的 top_k 还能隐藏末位坏分数 | 第八批已修复；保留服务层校验和降级 |
+| Filter 契约 | 第十批已统一现有两实现的类型、缺失/null、bool/数字、标量 IN 与安全数值范围，真实 Milvus 验收通过 | 参见 filter_semantics.md；新算子、完整 IR、额外后端/schema 仍单独决策 |
+| 全局 runner 注册表、统一查询 deadline | 身份保护不代表多应用隔离；取消排干不代表统一超时或可强制终止线程 | 单独评估生命周期与超时契约 |
+| 真实后端与安装验收缺口 | 第五批仅补真实 Milvus；不能推定 PostgreSQL/Redis/MinIO、外部模型/MinerU、core-only 重装及三层覆盖率已完成 | 按相关改造另行验收 |
+| M4 生产闭环 | Stager 仍止于 ready；生产激活/superseded、激活响应丢失恢复、GC 与完整接线未完成 | 继续按 m4_todo.md 失败矩阵独立推进 |
+
+本次选择已有污染反例的存储边界；不以历史 TODO 的排列顺序替代问题确认。
 
 # 第一批：文档校准与配置合并
 
@@ -705,3 +721,64 @@ Qwen 为 12 failed / 6 passed；随后补齐数字字符串拒绝用例并通过
 没有安装新依赖、重装 core-only 或合并三层覆盖率，也没有运行另外四库和 GPU 联调。
 旧删除流程的先查后删并发窗口/大结果集、空集合服务器端行为与强类型过滤规范均未因
 本次参数化自动解决。保留这些缺口，禁止将本地 SDK/替身通过写成真实后端验收通过。
+
+# 第十批：Filter 契约与真实 Milvus 参数化验收
+
+> 日期：2026-10-23。用户明确授权统一 Filter 类型和语义；未新增向量后端、schema、
+> 依赖或持久化字段。现行规范见 [Filter 契约](../docs/filter_semantics.md)。
+
+## 规则与职责
+
+Filter 从 dict[str, Any] 收紧为 Mapping[str, FilterValue]，值为内建 str/bool/int/float
+或同类型候选 list/tuple/set，字段间 AND。保留原有 Filter/matches_filter 导入位置。
+ports/filtering.py 统一完整校验、候选快照和内存解释，Milvus compiler 不另维护类型规则。
+HTTP 与 SearchQuery 在 Pydantic 转换前校验，存储再次校验，避免空库、空关键词、空 ID
+或不命中的前置条件掩盖后续非法值。
+
+- bool 与数字分离；范围内 int/float 按数值相等，字符串不转换。
+- 查询值 None 拒绝；存储中的缺失/null/数组/对象均不能匹配标量谓词，空字符串仍有效。
+- 集合表示标量 IN，不是数组成员或数组整体比较；异构候选拒绝，空集合匹配零条。
+- 数值查询限于有限的 ±(2**53-1)。Milvus 实测浮点 2**53 会同时命中整数 2**53 和
+  2**53+1，Python 不同；继续沿用上一批 int64 查询域会产生假命中，因此本批进一步
+  收紧查询域而不重写已存 metadata。安全上下界另有真实边界测试。
+- None/{} 读取无过滤；删除必须 IDs 或非空 Filter。首次共享矩阵确认原 memory 允许
+  空过滤清库，而 Milvus 报空表达式无 limit；本批统一拒绝隐式清库，不构造恒真条件。
+- Milvus 在首次 collection 发现 await 前完成参数快照，不因调用方后来修改候选改变
+  已提交条件。超时/取消仍传播，不去掉 Filter 重试。
+
+## 真实环境与故障证据
+
+实际版本 PyMilvus 2.6.17 / Milvus 2.6.22。读取已有 .env URI，强制使用现有
+zhihao_test_database，不创建或删除数据库。未加载 .env 或经本机代理失败都不作为
+远端不可用的结论；测试进程仅针对该主机设置 no_grpc_proxy/no_proxy/NO_PROXY，
+不改变全局代理。开启 COMET_TEST_REQUIRE_SERVICES=1，连接失败不能静默 skip。
+
+先用随机集合探测 bool/数值、null/数组、空 IN 和精度边界；finally 清理。
+首次完整运行暴露空过滤删除差异，为 61 passed / 1 failed；依据明确的删除安全规则
+修复后最终完整重跑，而非删除失败测试。一次并发定位运行与完整测试交叠，使临时
+检查器观察到其他测试的活动集合；最终串行运行已恢复完整起始集合基线。
+
+新增 30 项专门单测、18 项两实现共享契约，以及 1 项真实数值/字面字段边界用例。
+真值表预期独立手写，包含同批 bool/int/float/string/null/缺失/数组/对象/大整数记录；
+每条验证 count、dense、keyword、delete，另检验非法条件不依赖是否命中、不得部分删除。
+原有 hostile value 参数化与异步索引响应丢失/取消等生命周期用例一并实机验收。
+
+隔离临时源码副本完成 14 类反向验证，均被目标测试检测：恢复 Python bool/int 相等、
+禁止 int/float 等值、把存储数组当 any、接受查询 null、接受异构候选、漏数值安全范围、
+四个内存操作分别漏完整校验、放行空过滤删除、HTTP 漏校验、服务 DTO 漏校验、参数
+快照晚于首次 await。恢复后相关 118 项通过，工作区未注入缺陷。
+
+| 最终检查 | 结果 |
+|---|---|
+| 真实 Milvus 向量/关键词契约与原生异步故障生命周期 | 70 passed、0 skipped，237.69s |
+| 真实测试清理 | 最终集合列表等于运行前列表，数量恢复为 1 |
+| 完整 unit | 2911 passed、15 skipped、1 xfailed，8.37s |
+| 内存 E2E | 49 passed，1.91s |
+| 入库/检索 benchmark | 7 passed，3.11s |
+| 全仓 Ruff / Pyright | 通过；0 errors、0 warnings |
+| 本批 Python 格式 / git diff --check | 通过 |
+
+单元与本地验证使用 UV_CACHE_DIR=/tmp/comet-rag-v2-uv-cache uv run --no-sync --offline，
+未安装依赖。单元新增通过数包括共享契约与新增基础模块触发的分层/导入守卫。
+本轮不把真实 Milvus 验收等同于 PostgreSQL/Redis/MinIO/GPU、CI 固定 2.6.23、core-only
+重新安装或三层覆盖率验收；删除并发窗口、全量大结果集与 ANN 召回限制仍保留。

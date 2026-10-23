@@ -3,8 +3,9 @@ from __future__ import annotations
 # 检索接口出入参。
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from comet_rag.ports.filtering import Filter, normalize_filter
 from comet_rag.services.retrieval import (
     RecallChannel,
     RetrievalStage,
@@ -20,8 +21,9 @@ class SearchRequest(BaseModel):
     fetch_k: int | None = Field(
         default=None, gt=0, le=500, description="送进重排的候选数，缺省为 top_k 的 4 倍"
     )
-    filter: dict[str, Any] | None = Field(
-        default=None, description="元数据过滤：{字段: 值} 或 {字段: [值1, 值2]}"
+    filter: Filter | None = Field(
+        default=None,
+        description="元数据标量等值/同类型候选 IN，字段间 AND；bool 与数字分离，不支持 null；数值限于 ±(2**53-1)",
     )
     rerank: bool = Field(
         default=True, description="是否重排（未配置 reranker 时自动跳过）"
@@ -34,6 +36,11 @@ class SearchRequest(BaseModel):
         default=ReturnLevel.CHILD,
         description="返回 child 或回填 parent；默认 child。",
     )
+
+    @field_validator("filter", mode="before")
+    @classmethod
+    def validate_filter(cls, value: object) -> Filter | None:
+        return None if value is None else normalize_filter(value)
 
 
 class SearchResultItem(BaseModel):

@@ -20,6 +20,7 @@ from comet_rag.ports import (
     VectorRecord,
     matches_filter,
 )
+from comet_rag.ports.filtering import normalize_filter
 
 _TERM = re.compile(r"[A-Za-z0-9_]+|[\u3400-\u4dbf\u4e00-\u9fff]")
 _BM25_K1 = 1.2
@@ -142,6 +143,7 @@ class AsyncInMemoryVectorStore(AsyncVectorStore):
         top_k: int = 5,
         filter: Filter | None = None,
     ) -> list[SearchHit]:
+        filter = normalize_filter(filter)
         async with self._lock:
             collection = self._require(kb_id)
             if len(query_embedding) != collection.dim:
@@ -174,6 +176,7 @@ class AsyncInMemoryVectorStore(AsyncVectorStore):
         top_k: int = 5,
         filter: Filter | None = None,
     ) -> list[SearchHit]:
+        filter = normalize_filter(filter)
         if top_k <= 0:
             raise ValueError(f"top_k 必须为正整数，收到 {top_k}")
         async with self._lock:
@@ -201,8 +204,9 @@ class AsyncInMemoryVectorStore(AsyncVectorStore):
         ids: Sequence[str] | None = None,
         filter: Filter | None = None,
     ) -> int:
-        if ids is None and filter is None:
-            raise ValueError("ids 与 filter 至少给一个，否则等于清空整个知识库")
+        filter = normalize_filter(filter)
+        if ids is None and not filter:
+            raise ValueError("删除必须提供 ids 或非空 Filter，不能隐式清空知识库")
         async with self._lock:
             collection = self._require(kb_id)
             targets = set(ids) if ids is not None else set(collection.records)
@@ -221,6 +225,7 @@ class AsyncInMemoryVectorStore(AsyncVectorStore):
             self._collections.pop(kb_id, None)
 
     async def count(self, kb_id: str, *, filter: Filter | None = None) -> int:
+        filter = normalize_filter(filter)
         async with self._lock:
             collection = self._require(kb_id)
             return sum(

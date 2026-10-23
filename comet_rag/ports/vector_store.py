@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from comet_rag.ports.filtering import Filter, matches_filter
+
 
 class VectorStoreError(RuntimeError):
     """向量存储相关错误的基类。"""
@@ -70,24 +72,6 @@ class SearchHit:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-# 过滤语义必须能被所有后端一致实现，因此暂时只开放等值、集合包含和 AND。
-Filter = dict[str, Any]
-
-
-def matches_filter(metadata: dict[str, Any], filter: Filter | None) -> bool:
-    """返回元数据是否满足后端无关的过滤语义。"""
-    if not filter:
-        return True
-    for key, expected in filter.items():
-        actual = metadata.get(key)
-        if isinstance(expected, (list, tuple, set)):
-            if actual not in expected:
-                return False
-        elif actual != expected:
-            return False
-    return True
-
-
 @runtime_checkable
 class AsyncVectorSearchPort(Protocol):
     """只读向量检索能力，避免查询服务依赖完整存储生命周期。"""
@@ -146,7 +130,7 @@ class AsyncVectorStore(ABC):
         ids: Sequence[str] | None = None,
         filter: Filter | None = None,
     ) -> int:
-        """删除并返回删除条数；ID 与过滤条件至少提供一个。"""
+        """删除并返回删除条数；须提供 IDs 或非空 Filter，空条件不允许清库。"""
 
     @abstractmethod
     async def drop_collection(self, kb_id: str) -> None:

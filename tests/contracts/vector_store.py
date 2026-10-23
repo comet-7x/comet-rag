@@ -28,6 +28,7 @@ from comet_rag.ports import (
     DimensionMismatch,
     VectorRecord,
 )
+from tests.contracts.filter_semantics import FilterSemanticsContract
 
 DIM = 4
 KB = "kb-contract"
@@ -43,7 +44,7 @@ def record(rid: str, text: str, embedding: list[float], **metadata) -> VectorRec
     return VectorRecord(id=rid, text=text, embedding=embedding, metadata=metadata)
 
 
-class VectorStoreContract:
+class VectorStoreContract(FilterSemanticsContract):
     """子类必须覆写 `store` fixture。类名不以 Test 开头，故本身不被收集。"""
 
     @pytest.fixture

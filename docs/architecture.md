@@ -124,6 +124,8 @@ ARQ/Redis 与 PyMilvus 均如此。`AsyncMilvusStore` 只持有 `AsyncMilvusClie
 ## 核心抽象
 
 每一个都配有一套**与实现无关的契约测试**（`tests/contracts/`）。
+两种向量存储共同遵守 [Filter 契约](filter_semantics.md)，字段等值/标量 IN 的类型、
+空值与安全数值范围由 ports/filtering.py 统一定义，不由各适配器分别猜测。
 换实现时跑同一套契约，这是"换后端行为不变"这句承诺的唯一兑现手段 ——
 不是靠文档，是靠契约断言。
 

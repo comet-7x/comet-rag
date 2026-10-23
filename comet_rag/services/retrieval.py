@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any, cast
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from comet_rag.core.degradation import DegradationController
 from comet_rag.core.logging import logger
@@ -26,6 +26,7 @@ from comet_rag.ports import (
     SearchHit,
 )
 from comet_rag.ports.document_store import DocumentStore, StoredParent
+from comet_rag.ports.filtering import normalize_filter
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.recall_execution import run_recall_channels
 from comet_rag.services.reranking import InvalidRerankResult, validate_ranking
@@ -101,13 +102,18 @@ class SearchQuery(BaseModel):
         le=500,
         description="送进重排的候选数。缺省为 top_k 的 4 倍（至少 20）。",
     )
-    filter: dict[str, Any] | None = None
+    filter: Filter | None = None
     rerank: bool = Field(default=True, description="是否重排（未配置时自动跳过）")
     mode: SearchMode = Field(
         default=SearchMode.DENSE,
         description="召回模式；默认 dense 保持既有行为。",
     )
     return_level: ReturnLevel = ReturnLevel.CHILD
+
+    @field_validator("filter", mode="before")
+    @classmethod
+    def validate_filter(cls, value: object) -> Filter | None:
+        return None if value is None else normalize_filter(value)
 
     def effective_fetch_k(self) -> int:
         if self.fetch_k is not None:
@@ -664,9 +670,9 @@ def _log_channel_failure(
     )
 
 
-def _normalize_filter(filter: dict[str, Any] | None) -> Filter | None:
-    """空 dict 视为无过滤，避免调用方传 `{}` 时被当成"匹配所有键"。"""
-    return filter or None
+def _normalize_filter(filter: Filter | None) -> Filter | None:
+    """复核构造后的赋值并把空映射归一化为无过滤。"""
+    return normalize_filter(filter) or None
 
 
 __all__ = [

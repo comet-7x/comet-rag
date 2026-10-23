@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from pymilvus import (
@@ -27,6 +26,7 @@ from comet_rag.ports import (
     SearchHit,
     VectorRecord,
 )
+from comet_rag.ports.filtering import normalize_filter
 
 _ID = "id"
 _TEXT = "text"
@@ -100,7 +100,7 @@ def build_expression(filter: Filter | None) -> str:
     return " and ".join(clauses)
 
 
-def compile_filter(filter: Filter | None) -> tuple[str, dict[str, Any]]:
+def compile_filter(filter: Mapping[str, object] | None) -> tuple[str, dict[str, Any]]:
     """编译现有等值/IN 契约；值绑定，JSON 路径仍按字面量转义。
 
     Any 来自现有 Filter 边界；这里拒绝 SDK 无法可靠表示的值，不猜测字符串含义。
@@ -108,19 +108,10 @@ def compile_filter(filter: Filter | None) -> tuple[str, dict[str, Any]]:
     """
     clauses: list[str] = []
     params: dict[str, Any] = {}
-    for index, (key, expected) in enumerate((filter or {}).items()):
+    for index, (key, expected) in enumerate(normalize_filter(filter).items()):
         field = f'{_METADATA}["{_quote_key(key)}"]'
         membership = isinstance(expected, (list, tuple, set))
         values = list(expected) if membership else [expected]
-        for value in values:
-            if not isinstance(value, (str, bool, int, float)):
-                raise ValueError("Milvus 过滤值仅支持字符串、布尔和有限数值")
-            if isinstance(value, float) and not math.isfinite(value):
-                raise ValueError("Milvus 过滤数值必须有限")
-            if isinstance(value, int) and not -(2**63) <= value < 2**63:
-                raise ValueError("Milvus 过滤整数必须在 int64 范围内")
-        if membership and len({type(value) for value in values}) > 1:
-            raise ValueError("Milvus IN 过滤值必须同类型")
         placeholder = f"f{index}"
         params[placeholder] = values if membership else expected
         operator = "in" if membership else "=="
@@ -468,12 +459,12 @@ class AsyncMilvusStore(AsyncVectorStore):
         ids: Sequence[str] | None = None,
         filter: Filter | None = None,
     ) -> int:
-        if ids is None and filter is None:
-            raise ValueError("ids 与 filter 至少给一个，否则等于清空整个知识库")
+        expression, params = compile_filter(filter)
+        if ids is None and not expression:
+            raise ValueError("删除必须提供 ids 或非空 Filter，不能隐式清空知识库")
         await self._dim_of(kb_id)  # 顺带校验 collection 存在
         name = self._name(kb_id)
 
-        expression, params = compile_filter(filter)
         id_expr = ""
         if ids is not None:
             if not ids:
@@ -503,11 +494,11 @@ class AsyncMilvusStore(AsyncVectorStore):
         top_k: int = 5,
         filter: Filter | None = None,
     ) -> list[SearchHit]:
+        expression, params = compile_filter(filter)
         dim = await self._dim_of(kb_id)
         if len(query_embedding) != dim:
             raise DimensionMismatch(kb_id, dim, len(query_embedding))
 
-        expression, params = compile_filter(filter)
         results = await self._client.search(
             self._name(kb_id),
             data=[list(query_embedding)],
@@ -539,13 +530,13 @@ class AsyncMilvusStore(AsyncVectorStore):
         top_k: int = 5,
         filter: Filter | None = None,
     ) -> list[SearchHit]:
+        expression, params = compile_filter(filter)
         if top_k <= 0:
             raise ValueError(f"top_k 必须为正整数，收到 {top_k}")
         await self._dim_of(kb_id)
         if not query.strip():
             return []
 
-        expression, params = compile_filter(filter)
         results = await self._client.search(
             self._name(kb_id),
             data=[query],
@@ -570,8 +561,8 @@ class AsyncMilvusStore(AsyncVectorStore):
         return hits
 
     async def count(self, kb_id: str, *, filter: Filter | None = None) -> int:
-        await self._dim_of(kb_id)
         expression, params = compile_filter(filter)
+        await self._dim_of(kb_id)
         rows = await self._client.query(
             self._name(kb_id),
             filter=expression,
