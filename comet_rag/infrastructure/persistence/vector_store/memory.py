@@ -7,6 +7,8 @@ import math
 import re
 from collections import Counter
 from collections.abc import Sequence
+from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 from comet_rag.ports import (
@@ -119,13 +121,17 @@ class AsyncInMemoryVectorStore(AsyncVectorStore):
                     raise DimensionMismatch(
                         kb_id, collection.dim, len(record.embedding)
                     )
-            for record in records:
-                collection.records[record.id] = VectorRecord(
+            # 复制也可能失败；整批准备成功后才替换库内数据。
+            prepared = {
+                record.id: VectorRecord(
                     id=record.id,
                     text=record.text,
                     embedding=list(record.embedding),
-                    metadata=dict(record.metadata),
+                    metadata=deepcopy(record.metadata),
                 )
+                for record in records
+            }
+            collection.records.update(prepared)
             return [r.id for r in records]
 
     async def search(
@@ -151,13 +157,14 @@ class AsyncInMemoryVectorStore(AsyncVectorStore):
                 id=r.id,
                 text=r.text,
                 score=cosine_similarity(query_embedding, r.embedding),
-                metadata=dict(r.metadata),
+                metadata=r.metadata,
             )
             for r in candidates
         ]
         # id 作为次级键，保证同分时顺序稳定（否则快照/断言会随机失败）
         scored.sort(key=lambda h: (-h.score, h.id))
-        return scored[:top_k]
+        # 库内 metadata 不再原地修改；只复制实际返回的命中，避免复制整库。
+        return [replace(hit, metadata=deepcopy(hit.metadata)) for hit in scored[:top_k]]
 
     async def search_keywords(
         self,
@@ -179,13 +186,13 @@ class AsyncInMemoryVectorStore(AsyncVectorStore):
                 id=record.id,
                 text=record.text,
                 score=scores[record.id],
-                metadata=dict(record.metadata),
+                metadata=record.metadata,
             )
             for record in records
             if record.id in scores and matches_filter(record.metadata, filter)
         ]
         hits.sort(key=lambda hit: (-hit.score, hit.id))
-        return hits[:top_k]
+        return [replace(hit, metadata=deepcopy(hit.metadata)) for hit in hits[:top_k]]
 
     async def delete(
         self,
@@ -227,7 +234,7 @@ class AsyncInMemoryVectorStore(AsyncVectorStore):
     def snapshot(self) -> dict[str, list[dict[str, Any]]]:
         return {
             kb_id: [
-                {"id": r.id, "text": r.text, "metadata": dict(r.metadata)}
+                {"id": r.id, "text": r.text, "metadata": deepcopy(r.metadata)}
                 for r in collection.records.values()
             ]
             for kb_id, collection in self._collections.items()

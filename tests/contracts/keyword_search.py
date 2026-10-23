@@ -95,6 +95,37 @@ class KeywordSearchContract:
     ) -> None:
         assert await store.search_keywords(populated, "OpenTelemetry") == []
 
+    async def test_results_own_nested_metadata(
+        self, store: KeywordSearchStore, kb: str
+    ) -> None:
+        details = {"tags": ["original"]}
+        await store.upsert(
+            kb,
+            [
+                VectorRecord(
+                    rid,
+                    "metadata ownership",
+                    [1.0, 0.0, 0.0, 0.0],
+                    {"details": details},
+                )
+                for rid in ("a", "b")
+            ],
+        )
+        details["tags"].append("input changed")
+        hits = await store.search_keywords(kb, "ownership")
+        assert [hit.metadata for hit in hits] == [
+            {"details": {"tags": ["original"]}},
+            {"details": {"tags": ["original"]}},
+        ]
+
+        hits[0].metadata["details"]["tags"].append("result changed")
+        assert hits[1].metadata == {"details": {"tags": ["original"]}}
+        fresh = await store.search_keywords(kb, "ownership")
+        assert [hit.metadata for hit in fresh] == [
+            {"details": {"tags": ["original"]}},
+            {"details": {"tags": ["original"]}},
+        ]
+
     async def test_whitespace_query_returns_empty_after_collection_check(
         self, store: KeywordSearchStore, kb: str
     ) -> None:

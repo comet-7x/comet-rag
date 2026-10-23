@@ -139,6 +139,13 @@ ARQ/Redis 与 PyMilvus 均如此。`AsyncMilvusStore` 只持有 `AsyncMilvusClie
 表中链接指向共享契约基类；参数化后的用例数量应以具体实现的 `pytest --collect-only`
 结果为准，不在文档维护另一份计数。
 
+向量与文档存储负责 metadata 的所有权：写入调用完成后，修改输入不影响已存数据；
+每次读取返回独立快照，修改嵌套字典或列表不影响后续读取及其他结果。调用尚未完成时，
+调用方不应并发修改输入。内存实现必须显式复制，不能依赖真实后端的序列化边界。
+内存批量写入先完成校验和全部快照，再发布，避免复制失败留下半批数据。
+`RevisionDraft` / `StoredParent` 构造时也隔离 metadata；只有最外层只读，内部仍保持
+JSON 风格的 dict/list，不能把 frozen dataclass 当作递归不可变对象。
+
 `DocumentStore` 只保存 revision manifest 与不参与召回的父块正文。PostgreSQL 的 active
 pointer 是版本可见性的唯一真相；清理 retired/abandoned revision 时保留 `purged`
 manifest 墓碑，避免旧任务在 GC 后重新申请更高 generation 并覆盖新版本。Milvus 子向量

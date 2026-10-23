@@ -136,6 +136,45 @@ class VectorStoreContract:
         assert await store.upsert(kb, []) == []
         assert await store.count(kb) == 0
 
+    async def test_upsert_owns_nested_metadata_and_embedding(
+        self, store: AsyncVectorStore, kb: str
+    ) -> None:
+        tags = ["original"]
+        embedding = vec(1.0)
+        item = record("a", "文本", embedding, details={"tags": tags})
+        await store.upsert(kb, [item])
+
+        tags.append("changed")
+        item.metadata["details"]["extra"] = True
+        embedding[:] = vec(-1.0)
+
+        hit = (await store.search(kb, vec(1.0)))[0]
+        assert hit.metadata == {"details": {"tags": ["original"]}}
+        assert hit.score == pytest.approx(1.0)
+
+    async def test_search_returns_independent_nested_metadata(
+        self, store: AsyncVectorStore, kb: str
+    ) -> None:
+        details = {"tags": ["original"]}
+        await store.upsert(
+            kb,
+            [
+                record("a", "文本", vec(1.0), details=details),
+                record("b", "文本", vec(1.0), details=details),
+            ],
+        )
+
+        hits = await store.search(kb, vec(1.0))
+        hits[0].metadata["details"]["tags"].append("changed")
+        hits[0].metadata["details"]["extra"] = True
+
+        assert hits[1].metadata == {"details": {"tags": ["original"]}}
+        fresh = await store.search(kb, vec(1.0))
+        assert [hit.metadata for hit in fresh] == [
+            {"details": {"tags": ["original"]}},
+            {"details": {"tags": ["original"]}},
+        ]
+
     async def test_upsert_rejects_wrong_dimension(
         self, store: AsyncVectorStore, kb: str
     ) -> None:

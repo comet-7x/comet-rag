@@ -1,8 +1,8 @@
 # Comet-RAG V2：实施记录
 
-当前进度：前六批实现与验证已完成；第五批补齐真实 Milvus 验收、索引失败恢复与单测耗时
-治理，第六批优化 DOCX 默认样式重复解析并验证行为等价。下文按批次保留历史记录，
-现行 API 以第四批和版本说明为准。
+当前进度：前7批实现与本地验证已完成，本批为存储 metadata 快照与复制失败边界。
+待办包括直接重排调用的有限分数守卫、Filter 规范与真实后端验收，以及全局 runner、统一 deadline 与 M4 生产闭环。
+下文保留历史记录；现行执行模式以第四批与版本说明为准。
 
 # 第一批：文档校准与配置合并
 
@@ -522,3 +522,68 @@ direct False 当未设置、继承 False 当未设置、None 缓存成 False、�
 本轮不涉及真实中间件或模型适配器，没有重跑 PostgreSQL / Redis / Milvus / MinIO /
 MinerU / GPU 联调、三层合并覆盖率或 core-only 重新安装。第五批真实 Milvus 验收
 记录继续保留，不作为本轮新执行结果。V2 的其余业务目标与 M4 生产闭环仍独立待办。
+
+# 第七批：存储 metadata 所有权与复制失败边界
+
+> 日期：2026-10-22。先复核第三批遗留，再扩展到同一读路径的父块存储；
+> 不改变 Port 签名、metadata 字段、持久化 schema 或依赖。
+
+## 确认的问题与职责
+
+原内存向量库只执行 `dict(metadata)`；写入后修改输入的嵌套列表、修改 search /
+search_keywords 的命中或调试 snapshot，都会改变后续查询。两个记录复用嵌套输入时，
+结果之间也会互相污染。embedding 已有 list 复制，本批仅以回归固定其正确行为。
+
+DocumentStore 的 frozen dataclass 和 MappingProxyType 只保护外层。内存实现直接保留
+RevisionDraft 和 StoredParent，前者的嵌套修改会改变重放冲突判断，后者会通过父块回填
+暴露内部引用。新增公共服务测试在 HEAD 基线 15 项全部失败，确认污染贯穿 dense /
+keyword / hybrid 和 parent 返回路径。
+
+处理集中在各自边界：
+
+- VectorStore 写入时独立复制各记录 metadata；两路查询排序截断后仅复制返回的命中，
+  snapshot 也返回独立数据。整批校验与复制完成后再更新，复制失败不部分插入或覆盖。
+- RevisionDraft / StoredParent 构造时复制嵌套 metadata，继续只冻结最外层，保留 dict/list
+  形状。内存 DocumentStore 在 reserve / put / get 用 replace 复用构造器快照职责。
+- reserve 在占用 revision_id 或增长 generation 前完成复制；put_parents 在任何发布前
+  完成整个批次复制。失败后原记录保留，重试仍可完成。
+- 服务层沿用存储返回的快照；未给每个候选处理步骤重复添加复制，也未机械改动 Milvus /
+  PostgreSQL 的序列化代码。既有重排输入隔离保持不变。
+
+上述保证针对现有 JSON 风格 metadata，以及调用完成后对输入/结果的修改；不承诺调用
+进行中可并发修改输入，也不宣称任意自定义对象都可深复制或递归不可变。不可复制值的
+异常继续传播；本批新增的是失败时不得留下部分存储状态的保护。
+
+## 回归、故障注入与反向验证
+
+新增 29 项行为用例：7 项后端共享契约、2 项值对象快照、5 项内存存储专项及 15 项服务
+入口回归。向量的 5 项、DocumentStore 的 9 项分别在修改实现前全部变红；服务 15 项在
+临时源码副本使用 HEAD 实现时全部变红。新增测试不访问真实网络。
+
+复制异常注入覆盖：批次前段覆盖/新增后段失败、父块批次后段失败、首次或已有 revision
+的 draft 复制失败。检查原值、记录数量、generation、占用状态及恢复重试，避免只断言
+异常出现而放过副作用。
+
+在独立临时源码副本完成 12 类反向验证，全部被目标断言检测：向量写入浅复制、dense
+读取浅复制、keyword 读取浅复制、snapshot 浅复制、embedding 引用复用、向量逐条发布、
+值对象浅复制、draft 引用复用、复制前消耗 generation、父块写入引用复用、父块读取引用
+复用、父块逐条发布。恢复后 95 项相关测试通过；工作区未注入变异。
+
+| 最终检查 | 结果 |
+|---|---|
+| 完整 unit | 2760 passed、15 skipped、1 xfailed，8.91s |
+| 内存 E2E | 49 passed，1.82s |
+| 入库/检索 benchmark | 7 passed，3.60s |
+| 相关定向回归 | 95 passed |
+| 全仓 Ruff / Pyright | 通过；0 errors、0 warnings |
+| 本批 Python 格式 / git diff --check | 通过 |
+| 独立实现与测试审查 | 未发现阻塞问题或已确认行为回归 |
+| 新增真实后端共享契约 | 7 skipped；3 项 Milvus 连接/鉴权失败，4 项 PostgreSQL 本地未运行 |
+
+沿用 `UV_CACHE_DIR=/tmp/comet-rag-v2-uv-cache uv run --no-sync --offline`，未安装依赖。
+单测时间继续低于本机 10 秒目标；skip/xfail 与上一批一致。共享契约自动由真实后端测试类
+继承，但本次跳过不算通过，也未重跑 core-only 安装和三层合并覆盖率。
+
+下一批优先考虑 BaseReranker / AsyncBaseReranker 直接调用的非有限分数守卫：本次已用
+Qwen 同步/异步适配器和 MockTransport 复现，服务层现有降级不能替代库边界验证。
+全局 runner、多应用生命周期、统一查询 deadline 与 M4 生产闭环继续按独立契约推进。

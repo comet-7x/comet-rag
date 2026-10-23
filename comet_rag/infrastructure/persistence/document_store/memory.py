@@ -54,6 +54,8 @@ class InMemoryDocumentStore(DocumentStore):
                     raise RevisionConflict(draft.key, "相同 revision_id 的计划发生变化")
                 return current
 
+            # 复制失败不能占用 revision_id 或消耗 generation。
+            stored_draft = replace(draft)
             document_key = (draft.key.kb_id, draft.key.source_id)
             document = self._documents.setdefault(document_key, _DocumentState())
             document.next_generation += 1
@@ -71,7 +73,7 @@ class InMemoryDocumentStore(DocumentStore):
                 updated_at=now,
             )
             self._revisions[draft.key] = revision
-            self._drafts[draft.key] = draft
+            self._drafts[draft.key] = stored_draft
             self._revision_ids[draft.key.revision_id] = draft.key
             return revision
 
@@ -117,6 +119,8 @@ class InMemoryDocumentStore(DocumentStore):
             new_count = sum(parent.parent_id not in self._parents for parent in batch)
             if current_count + new_count > row.parent_count:
                 raise RevisionConflict(revision, "父块数量超过 revision 计划")
+            # 全部快照成功后才能发布，避免后续父块的复制失败留下半批数据。
+            batch = tuple(replace(parent) for parent in batch)
             for parent in batch:
                 self._parents.setdefault(parent.parent_id, parent)
 
@@ -203,7 +207,7 @@ class InMemoryDocumentStore(DocumentStore):
     ) -> dict[str, StoredParent]:
         async with self._lock:
             return {
-                parent_id: parent
+                parent_id: replace(parent)
                 for parent_id in dict.fromkeys(parent_ids)
                 if (parent := self._parents.get(parent_id)) is not None
                 and parent.key.kb_id == kb_id

@@ -62,6 +62,8 @@ class VectorRecord:
 
 @dataclass(slots=True)
 class SearchHit:
+    """一次召回的独立结果；修改 metadata（含嵌套值）不应回写存储。"""
+
     id: str
     text: str
     score: float
@@ -123,7 +125,7 @@ class AsyncVectorStore(ABC):
 
     @abstractmethod
     async def upsert(self, kb_id: str, records: Sequence[VectorRecord]) -> list[str]:
-        """按 ID 写入或覆盖，并在返回时保证数据可查。"""
+        """按 ID 写入或覆盖；返回后可查，且修改入参不再影响已存数据。"""
 
     @abstractmethod
     async def search(

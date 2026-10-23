@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -31,9 +32,10 @@ def _require_int(value: object, field_name: str, *, minimum: int) -> None:
 
 
 def _freeze_metadata(metadata: Mapping[str, object]) -> Mapping[str, object]:
+    """隔离嵌套值；只冻结外层，保留内部 dict/list 的类型与内容。"""
     if any(not isinstance(key, str) or not key for key in metadata):
         raise ValueError("metadata 键必须是非空字符串")
-    return MappingProxyType(dict(metadata))
+    return MappingProxyType(deepcopy(dict(metadata)))
 
 
 class RevisionStatus(StrEnum):
@@ -191,7 +193,10 @@ class ActiveRevisionDeletion(DocumentStoreError):
 
 
 class DocumentStore(ABC):
-    """文档版本与父块存储；具体实现必须通过共享契约测试。"""
+    """文档版本与父块存储；具体实现必须通过共享契约测试。
+
+    写入后的输入与每次读取结果各自持有 metadata 快照，嵌套修改不能回写存储。
+    """
 
     @abstractmethod
     async def reserve_revision(self, draft: RevisionDraft) -> StoredRevision: ...

@@ -2,9 +2,48 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from comet_rag.ports.document_store import RevisionDraft, RevisionKey, StoredParent
+
+
+@pytest.mark.parametrize("value_type", [RevisionDraft, StoredParent])
+def test_metadata_values_take_nested_snapshots(
+    value_type: type[RevisionDraft | StoredParent],
+) -> None:
+    metadata = {"nested": {"labels": ["original"]}}
+    key = RevisionKey("kb", "source", "revision")
+    if value_type is RevisionDraft:
+        value = RevisionDraft(
+            key=key,
+            plan_sha256="a" * 64,
+            parent_count=1,
+            child_count=1,
+            source="fixture.md",
+            file_type="markdown",
+            metadata=metadata,
+        )
+    else:
+        value = StoredParent(
+            key=key,
+            parent_id="parent",
+            ordinal=0,
+            text="正文",
+            start_char=0,
+            end_char=2,
+            metadata=metadata,
+        )
+
+    metadata["nested"]["labels"].append("input change")
+
+    assert value.metadata == {"nested": {"labels": ["original"]}}
+    nested = cast(dict[str, list[str]], value.metadata["nested"])
+    nested["labels"].append("value change")
+    assert metadata == {"nested": {"labels": ["original", "input change"]}}
+    assert isinstance(nested, dict)
+    assert isinstance(nested["labels"], list)
 
 
 def test_revision_key_rejects_empty_identity() -> None:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
+from typing import cast
 
 import pytest
 
@@ -330,3 +332,71 @@ class DocumentStoreContract:
         loaded = (await store.get_parents(KB, [parent.parent_id]))[parent.parent_id]
         assert draft.metadata["version"] == 1
         assert loaded.metadata["page"] == 1
+
+    async def test_reserved_draft_owns_nested_metadata(
+        self, store: DocumentStore
+    ) -> None:
+        draft = make_draft(metadata={"labels": ["original"]})
+        original = await store.reserve_revision(draft)
+
+        cast(list[str], draft.metadata["labels"]).append("changed")
+
+        replay = await store.reserve_revision(
+            make_draft(metadata={"labels": ["original"]})
+        )
+        assert replay == original
+        with pytest.raises(RevisionConflict):
+            await store.reserve_revision(draft)
+
+    async def test_parent_write_owns_nested_metadata(
+        self, store: DocumentStore
+    ) -> None:
+        draft = make_draft()
+        await store.reserve_revision(draft)
+        parent = replace(
+            make_parents(draft.key)[0], metadata={"nested": {"labels": ["original"]}}
+        )
+        await store.put_parents(draft.key, [parent])
+
+        cast(dict[str, list[str]], parent.metadata["nested"])["labels"].append(
+            "changed"
+        )
+
+        loaded = (await store.get_parents(KB, [parent.parent_id]))[parent.parent_id]
+        assert loaded.metadata == {"nested": {"labels": ["original"]}}
+
+    async def test_parent_reads_return_independent_nested_metadata(
+        self, store: DocumentStore
+    ) -> None:
+        draft = make_draft()
+        await store.reserve_revision(draft)
+        parent = replace(make_parents(draft.key)[0], metadata={"labels": ["original"]})
+        await store.put_parents(draft.key, [parent])
+        first = (await store.get_parents(KB, [parent.parent_id]))[parent.parent_id]
+        second = (await store.get_parents(KB, [parent.parent_id]))[parent.parent_id]
+
+        cast(list[str], first.metadata["labels"]).append("changed")
+
+        latest = (await store.get_parents(KB, [parent.parent_id]))[parent.parent_id]
+        assert second.metadata == {"labels": ["original"]}
+        assert latest.metadata == {"labels": ["original"]}
+        assert parent.metadata == {"labels": ["original"]}
+
+    async def test_parent_records_do_not_share_nested_metadata(
+        self, store: DocumentStore
+    ) -> None:
+        draft = make_draft(parent_count=2)
+        await store.reserve_revision(draft)
+        shared = {"labels": ["original"]}
+        parents = [
+            replace(parent, metadata=shared) for parent in make_parents(draft.key, 2)
+        ]
+        await store.put_parents(draft.key, parents)
+        loaded = await store.get_parents(KB, [parent.parent_id for parent in parents])
+
+        cast(list[str], loaded[parents[0].parent_id].metadata["labels"]).append(
+            "changed"
+        )
+
+        assert loaded[parents[1].parent_id].metadata == {"labels": ["original"]}
+        assert shared == {"labels": ["original"]}
