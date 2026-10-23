@@ -89,6 +89,16 @@ async def invoke(
         await target.delete("kb", ids=['id"] or true'], filter=condition)
 
 
+@pytest.mark.parametrize("operation", ["count", "delete"])
+async def test_integrity_reads_are_strong_even_when_retrieval_uses_eventual(
+    operation: str,
+) -> None:
+    target, client = store()
+    target._consistency = "Eventually"
+    await invoke(target, operation)
+    assert client.query.call_args.kwargs["consistency_level"] == "Strong"
+
+
 @pytest.mark.parametrize("operation", ["dense", "keyword", "count", "delete"])
 async def test_every_read_and_delete_selection_preserves_binding(
     operation: str,

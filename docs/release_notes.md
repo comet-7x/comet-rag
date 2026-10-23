@@ -30,6 +30,11 @@ IngestRunner 的正规化与分块改用已有 run_sync，取消后等待同步�
 返回值是本次尝试的快照，不保证返回后仍为当前版本。未新增 schema、Port 或生产开关；
 生产 IngestRunner 与 GC 编排仍待完成。
 
+### Milvus 完整性读取
+
+Milvus count 与删除 ID 选择固定使用 Strong，dense/keyword 检索仍遵循配置。
+这避免把跨客户端旧快照作为完整性判断依据，可能增加读取延迟，但不改过滤语义或数据格式。
+
 ### 同步与异步 API 分离
 
 | 旧用法 | V2 用法 |

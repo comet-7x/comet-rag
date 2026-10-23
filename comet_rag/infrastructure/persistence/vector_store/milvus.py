@@ -475,8 +475,13 @@ class AsyncMilvusStore(AsyncVectorStore):
 
         # Milvus 的 delete 不返回准确条数，先查出真正会被删的主键。
         # 直接信它的 delete_count 会让契约里"删除不存在的 id 返回 0"失效。
+        # 删除选择必须跨客户端看到已提交写入，不沿用检索侧的一致性偏好。
         matched = await self._client.query(
-            name, filter=expression, filter_params=params, output_fields=[_ID]
+            name,
+            filter=expression,
+            filter_params=params,
+            output_fields=[_ID],
+            consistency_level="Strong",
         )
         keys = [row[_ID] for row in matched]
         if not keys:
@@ -568,7 +573,8 @@ class AsyncMilvusStore(AsyncVectorStore):
             filter=expression,
             filter_params=params,
             output_fields=["count(*)"],
-            consistency_level=self._consistency,
+            # 计数用于 ready/GC 完整性核验，不能因检索侧偏好而放行旧快照。
+            consistency_level="Strong",
         )
         return int(rows[0]["count(*)"]) if rows else 0
 

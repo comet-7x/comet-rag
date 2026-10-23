@@ -172,6 +172,10 @@ Stager 只写到 ready；`RevisionActivator` 复用 Store 的幂等 reserve、�
 本切片未执行 GC，也未接入生产 `IngestRunner`。读侧可显式配置或注入
 DocumentStore，默认关闭。M4 的完整完成标准见 `tasks/m4_todo.md`，不能由切片通过推定。
 
+Milvus 的计数和删除 ID 选择固定使用 Strong，检索仍保留配置的一致性偏好；跨客户端
+旧快照不能作为 GC 完成依据。这使用上游已有的 query 参数，见
+[Milvus 2.6 query 一致性文档](https://milvus.io/api-reference/pymilvus/v2.6.x/MilvusClient/Vector/query.md)。
+
 检索侧刻意把完整存储生命周期与只读能力分开：`AsyncVectorSearchPort` 只暴露 dense
 召回，`AsyncKeywordSearchPort` 只暴露关键词召回。`RetrievalService` 按请求选择一路或
 并发调用两路，hybrid 的原始分数不直接相加，而是在 `engines/retrieval/` 用纯 RRF
