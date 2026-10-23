@@ -155,8 +155,8 @@ separator 配置不可被原地修改。
 
 2026-10-03 第二切片完成有界移交与 ready 续跑；原文只在父块和移交数据提交成功后清除。
 IO 分批读取父块、复验完整指纹后才写向量，embedding 返回后仍检查所有权/取消。
-V2 第十五批先补齐独立 activation/superseded 编排与单元故障测试；真实 Redis worker
-重试、PostgreSQL 事务回滚与独立 Milvus Strong 可见性用例随下一项提交。
+V2 第十五批补齐独立 activation/superseded 恢复切片；Redis worker 验证激活响应丢失
+只重试 activation，PostgreSQL 真事务回滚与独立 Milvus Strong 读验证可见性。
 GC 与生产 Task 全生命周期尚未完成，故完整 context/progress 条目仍未勾选。
 不能把测试 kind 的成功当成生产 ingest 或 Checkpoint H。未发布的 stale ready
 本批保持 ready，后续 GC 必须负责废弃与清理，不能把它误算作已回收。

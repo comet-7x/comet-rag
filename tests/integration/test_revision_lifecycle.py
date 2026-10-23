@@ -29,6 +29,7 @@ from comet_rag.services.retrieval import (
     SearchMode,
     SearchQuery,
 )
+from comet_rag.services.revision_activation import RevisionActivator
 from comet_rag.services.revision_context import RevisionTaskStages, get_revision_key
 from comet_rag.tasks import (
     Done,
@@ -194,6 +195,9 @@ async def test_pg_pointer_and_independent_strong_milvus_survive_partial_write(
             await truncate_tables(database, "knowledge_bases")
 
 
+@pytest.mark.parametrize(
+    "publish", [False, True], ids=["ready", "activate-response-loss"]
+)
 async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
     database: Database,
     postgres_dsn: str,
@@ -201,6 +205,7 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
     milvus_uri: str,
     milvus_database: str,
     monkeypatch: pytest.MonkeyPatch,
+    publish: bool,
 ) -> None:
     await truncate_tables(database, "tasks", "knowledge_bases")
     unique = uuid4().hex[:12]
@@ -248,14 +253,16 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
             parent_batch_size=1,
         )
     )
+    io_documents = PostgresDocumentStore(io_db)
     io_stages = RevisionTaskStages(
         RevisionStager(
-            document_store=PostgresDocumentStore(io_db),
+            document_store=io_documents,
             vector_store=io_vectors,
             embedding_model=io_model,
             parent_batch_size=1,
             embed_window=1,
-        )
+        ),
+        activator=RevisionActivator(io_documents),
     )
     flow = StagePipeline()
 
@@ -275,17 +282,35 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
         await cpu_stages.prepare(ctx, plan)
 
     @flow.stage("indexing", lane="io")
-    async def stage(ctx: TaskContext) -> Done:
+    async def stage(ctx: TaskContext) -> Done | None:
         try:
             ready = await io_stages.stage(ctx, embedding_dim=2)
         except ConnectionError as exc:
             raise RetriableError("模拟向量提交后响应丢失") from exc
+        if publish:
+            return None
         # 测试 kind 只承诺 prepare-to-ready，不代表生产 ingest 已完成激活。
         return Done(
             result={
                 "revision_id": ready.key.revision_id,
                 "status": ready.status,
                 "generation": ready.generation,
+            }
+        )
+
+    @flow.stage("activation", lane="io")
+    async def activate(ctx: TaskContext) -> Done:
+        try:
+            outcome = await io_stages.activate(ctx)
+        except ConnectionError as exc:
+            raise RetriableError("模拟激活提交后响应丢失") from exc
+        return Done(
+            result={
+                "revision_id": outcome.revision.key.revision_id,
+                "status": outcome.revision.status,
+                "generation": outcome.revision.generation,
+                "already_active": outcome.already_active,
+                "superseded": outcome.superseded,
             }
         )
 
@@ -303,6 +328,19 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
         return result
 
     monkeypatch.setattr(io_vectors, "upsert", lose_first_response)
+    activate_revision = io_documents.activate_revision
+    activation_failed = False
+
+    async def lose_activation_response(key):
+        nonlocal activation_failed
+        result = await activate_revision(key)
+        if not activation_failed:
+            activation_failed = True
+            raise ConnectionError("response lost after activation commit")
+        return result
+
+    if publish:
+        monkeypatch.setattr(io_documents, "activate_revision", lose_activation_response)
     try:
         await PostgresKnowledgeBaseRepository(database).create(
             make_kb("kb-revision-cycle", embedding_dim=2)
@@ -335,13 +373,19 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
         assert info is not None and info.args == (task.task_id,) and info.kwargs == {}
         async with _running(_make_worker(pool, lanes["io"], io, max_jobs=1)):
             done = await wait_for_terminal(producer_store, task.task_id, timeout=20)
-        assert done.status is TaskStatus.SUCCEEDED and done.attempts == 2
+        assert done.status is TaskStatus.SUCCEEDED
+        assert done.attempts == (3 if publish else 2)
         assert done.result == {
             "revision_id": revision,
-            "status": "ready",
+            "status": "active" if publish else "ready",
             "generation": 1,
+            **({"already_active": True, "superseded": False} if publish else {}),
         }
         assert [s.stage for s in done.stage_history].count("chunking") == 1
+        assert [s.stage for s in done.stage_history].count("indexing") == 2
+        assert [s.stage for s in done.stage_history].count("activation") == (
+            2 if publish else 0
+        )
         assert (
             await io_vectors.count(
                 "kb-revision-cycle",
@@ -352,7 +396,7 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
         assert io_model.calls == 5
         assert await PostgresDocumentStore(database).get_active_revisions(
             "kb-revision-cycle", ["source"]
-        ) == {"source": None}
+        ) == {"source": revision if publish else None}
     finally:
         cpu.runners.unregister(kind)
         io.runners.unregister(kind)

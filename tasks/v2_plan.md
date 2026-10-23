@@ -1,6 +1,6 @@
 # Comet-RAG V2：实施记录
 
-当前进度：前十四批已提交；第十五批先提交激活编排、Task 阶段与单测，真实中间件验收另项提交。
+当前进度：前十五批实现与功能验证已完成，均已按职责分批提交。
 第十五批补齐独立 revision 激活与故障恢复；单测 10 秒预算仍缺乏稳定余量。
 第十四批补齐入库线程取消与清理，
 并修复实机验证暴露的 ARQ 测试夹具关停竞态。
@@ -25,7 +25,7 @@ Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 | 入库线程取消与临时文件清理 | 复核发现 IngestRunner 正规化/分块仍用裸 to_thread，清理直接阻塞事件循环，与既有 run_sync 纪律不一致 | 第十四批已修复并完成故障注入、反向与全量验证；保留线程不可强杀的限制 |
 | 其他真实向量后端 | Qdrant、Weaviate、Chroma、OceanBase 已调研，但没有适配器、装配或真实契约验收；当前仅 Milvus + InMemory | 现行 spec A9 不含多后端；接入第三个实现及扩展 Filter/能力模型需独立确认范围 |
 | 统一查询 deadline | 第十三批建立每次 search 的绝对截止时刻，覆盖 KB 检查、模型排队、召回判活、重排和父块读取；保留取消排干 | 已补故障注入、HTTP 接线与 13 类反向验证；线程不能强杀、清理可超过预算，边界见 query_deadline.md |
-| 真实后端与安装验收缺口 | 第十五批完成独立 core-only 重装与 DOCX 冒烟；真实激活恢复用例与 CI 随下一项提交 | 已提交的最近三层覆盖率为第十四批整体 92.38%、tasks 95.84%；MinIO、外部模型/MinerU 仍未补验 |
+| 真实后端与安装验收缺口 | 第十五批复验 PostgreSQL/Redis/Milvus 全量集成并完成独立 core-only 重装与 DOCX 冒烟；MinIO、外部模型/MinerU 仍未补验 | 第十五批三层覆盖率：整体 92.45%、tasks 96.18%；其余按相关改造另行验收 |
 | M4 生产闭环 | Stager 仍止于 ready；新增独立 Activator/Task 激活恢复，验证失败保旧、提交响应丢失和 superseded；GC 与生产接线未完成 | 下一批推进精确、幂等 GC，再接线生产 IngestRunner |
 
 第十四批补齐入库线程所有权遗漏；第十五批补齐独立激活恢复。M4 GC/生产接线、其它向量库适配
@@ -1215,22 +1215,67 @@ DocumentStore 的原子事务、同 revision 的 generation 幂等、already-act
   废弃与回收交给后续 GC 编排，不能将其算入已回收候选或宣称 M4 全部完成。
 
 生产 IngestRunner 未接线，revision-aware 读开关仍默认关闭。更新架构、版本说明、
-M4 plan/todo/spec；真实故障用例、测试说明与 CI revision job 随下一项提交。
+M4 plan/todo/spec 与测试说明；CI revision job 显式纳入新增真实故障用例。
 
-## 本项测试与验收边界
+## 故障注入与反向验证
 
-单元测试覆盖失败保旧、提交响应丢失、低 generation 围栏、读取后被替换的竞态、
-计划/任务身份、context 上限、提交前取消/租约丢失、提交后取消/报告失败和历史墓碑。
-14 类单元反向缺陷注入均由目标断言检出，没有收集错误。激活服务没有重做准备阶段，
-也没有扩展 Store 接口或启用生产写入。
+单元用例覆盖：激活失败旧 pointer/状态不变、提交响应丢失跨服务重试、期间新版本
+激活、ready/active 两种读取后竞态、未知状态拒绝、计划/任务身份错误、取消/租约丢失
+的提交前 checkpoint、提交后取消与报告失败、已回收历史版本防复活、整份 context 上限。
 
-本项提交只交付激活服务、独立 Task 阶段、单元故障测试和接口文档。真实 PostgreSQL
-事务回滚、独立 Milvus Strong 读、Redis worker 响应丢失重试用例及 CI 随下一项提交；
-不能把内存单测通过称为真实激活恢复验收。独立 core-only 重装与 DOCX 冒烟已通过。
+真实 PostgreSQL/Milvus 用例在 Store 已 flush 状态和 pointer 后、事务 commit 前抛异常，
+证明旧版本仍可由独立连接检索；提交后抛异常则证明新版本已经可见。六种 dense/keyword/
+hybrid × child/parent 组合通过独立 SQL 与 Strong Milvus 读连接观察，不靠 flush/sleep。
+Redis/PostgreSQL worker 验证 CPU 停止后 IO 仅凭 task_id/context 续跑：向量响应丢失
+重试 indexing，激活响应丢失只重试 activation，最终 generation=1、already_active=true，
+模型仍只调用 5 次。测试使用独立连接、同一事件循环，不宣称覆盖 fork/SIGKILL。
 
-## 提交前快照验证
+反向验证在隔离源码副本中注入 15 类缺陷，全部以目标断言失败检测，未使用收集错误
+充数：14 类单元变异包括移除 generation 围栏、忽略 manifest/context 身份、吞掉网络
+失败/取消、跳过 checkpoint、误判 purged、漏掉竞态恢复、重试重新 staging 等；另在
+PostgresDocumentStore 注入提前 commit，真实回滚用例确实红，Milvus 集合仍恢复基线。
 
-本快照默认单测：3030 passed, 15 skipped, 289 deselected, 1 xfailed in 12.27s；E2E：50 passed, 3285 deselected in 4.13s。
-全仓 Ruff、Pyright、本批 Python 格式与 Commitizen 消息校验均通过。
-单测功能断言通过，但耗时超过 10 秒目标；不修改门槛或测试。本项不宣称包含下一项
-真实激活恢复用例；其完整验证记录随下一项提交。
+## 全量验证
+
+| 检查 | 本轮结果 |
+|---|---|
+| 默认完整测试 | 3030 passed、15 skipped、1 xfailed；10.09s |
+| 耗时复核 | 相同断言全过；9.93s，最慢 15 项均为既有并发/取消/导入守卫，新增激活测试不在其中 |
+| unit 覆盖率 | 3030 passed；88.90%，新增激活服务语句覆盖率 100% |
+| E2E | 50 passed；5.43s（带覆盖率） |
+| 真实全量 integration | 235 passed、2 skipped；307.86s，无 teardown error |
+| benchmark | 7 passed；5.07s |
+| 三层合并覆盖率 | 整体 92.45%，tasks 96.18%（855/889），均达标 |
+| 静态检查 | 全仓 Ruff、Pyright 通过；本批 Python 格式与 git diff --check 通过 |
+| core-only | 临时独立环境按现有锁文件仅安装核心依赖，CI 库入口与生成 DOCX 解析/分块冒烟通过；确认无 SQL/Redis/Milvus/ARQ/FastAPI/S3/asyncpg extras |
+
+最初默认测试发现 integration/unit 的测试文件同名导致收集冲突，改为唯一的
+`test_revision_activation_recovery.py` 后全量通过。core-only 离线安装首次因缺少
+socksio 缓存失败，随后联网按原锁文件安装成功，没有改变项目虚拟环境和依赖版本。
+
+本轮使用临时独立 PostgreSQL 17/Redis 7 测试实例和专用 Milvus 测试库；Milvus
+服务端 2.6.22，集合运行前后严格相同（1 个既有集合）。仅跳过未配置的 MinIO/MinerU，
+跳过审计拒绝其他缺失服务。保留上游 ARQ 原生 close 的 24 条 DeprecationWarning。
+带覆盖率 unit 为 15.18s，不用它冒充未插桩耗时；10 秒预算仍不稳定，不扩大门槛。
+DOCX 快照没有变化；GC、生产接线、MinIO、外部模型/MinerU 验收继续独立推进。
+
+验证日志与覆盖率位于 `/tmp/comet-v2-activation-validation/`；反向验证结果分别在
+`/var/folders/5p/z15rg_z50td8mwr47wzk4_d80000gn/T/comet-v2-activation-mutations-_bk6zvso/`
+和 `/var/folders/5p/z15rg_z50td8mwr47wzk4_d80000gn/T/comet-v2-activation-sql-mutation-nlwy6m1k/`。
+
+## 第十五批提交前核验
+
+已分别验证两个独立提交快照，源码与测试保持实现轮原样。第一项同时包含服务、
+Task 阶段、单元故障测试和接口文档；第二项包含真实中间件用例、CI、测试说明及验收记录。
+
+| 快照 | 默认单测 | E2E |
+|---|---|---|
+| 激活编排与单测 | 3030 passed, 15 skipped, 289 deselected, 1 xfailed in 12.27s | 50 passed, 3285 deselected in 4.13s |
+| 加入真实中间件验证 | 3030 passed, 15 skipped, 294 deselected, 1 xfailed in 11.63s | 50 passed, 3290 deselected in 4.51s |
+| 当前工作区默认命令 | 3030 passed, 15 skipped, 294 deselected, 1 xfailed in 10.89s | 同完整快照 |
+
+两个快照的全仓 Ruff、Pyright、本批 Python 格式与 Commitizen 消息校验均通过。
+单测功能断言通过，但以上耗时均超过 10 秒目标；没有修改阈值、测试选择或断言。
+当前未安装 Git pre-commit/commit-msg 钩子，质量检查已手动执行，没有绕过钩子。
+提交准备只重复本地检查；真实集成、15 类反向验证、core-only 和覆盖率沿用已核对的
+实现轮记录，未重新启动中间件。所有生产与测试文件均逐字节保持原实现。

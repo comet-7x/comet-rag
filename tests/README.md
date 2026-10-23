@@ -306,7 +306,8 @@ uv run alembic revision --autogenerate -m "描述"
 这验收真实服务端的 Strong/BM25/revision 行为，不宣称覆盖远程对象存储故障或生产 HA。
 
 CI 先创建 `zhihao_test_database`、迁移独立 PostgreSQL，再跑向量/文档仓储契约和
-`test_milvus_async_lifecycle.py`、`test_revision_lifecycle.py`。原生异步生命周期用例
+`test_milvus_async_lifecycle.py`、`test_revision_lifecycle.py`、
+`test_revision_activation_recovery.py`。原生异步生命周期用例
 验证同参数建索引幂等、服务端提交后响应丢失不会删掉另一实例的数据，以及部分索引
 完成后取消仍能跨实例续建。revision 用例使用独立的 SQL/Milvus 读客户端，覆盖 legacy、
 partial-write、ready、激活以及旧向量残留，在 dense/keyword/hybrid 的 child/parent
@@ -315,7 +316,13 @@ partial-write、ready、激活以及旧向量残留，在 dense/keyword/hybrid �
 该 job 同时提供 Redis，验证 CPU→IO ready 移交：队列仅含 task_id，CPU worker 停止且
 连接关闭后，IO worker 从 PostgreSQL context 和父块续跑；向量提交后响应丢失重用
 同一 revision。测试 worker 运行于同一事件循环但连接独立，不能当作 fork/SIGKILL
-验收。测试 kind 只承诺 prepare-to-ready，成功不代表生产 ingest 已激活。
+验收。测试 kind 分别验收 prepare-to-ready 和独立 activation 阶段；激活提交后丢失响应
+只重试 activation，不重做 indexing。该测试成功不代表生产 ingest 已接线。
+
+激活恢复用例在 PostgreSQL 事务的状态/pointer flush 后、commit 前注入异常，验证真正
+回滚；提交后再注入响应丢失，使用独立 PostgreSQL 与 Strong Milvus 读连接确认六种
+检索组合只见旧/新 active。另覆盖旧 ready 任务与已激活后又被替换的任务重试，二者
+都返回 superseded 而不能反杀新版本。此切片不执行 GC，也不模拟 fork/SIGKILL。
 
 单元反向验证覆盖 context UTF-8 上限/CAS 冲突重验、模型返回后所有权围栏、完整计划
 指纹及 UUID 重用；32 MiB 是整份 context 的持久化上限，不是进程峰值内存预算。
