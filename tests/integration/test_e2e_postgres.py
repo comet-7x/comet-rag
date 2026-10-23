@@ -24,7 +24,6 @@ from comet_rag.config.schemas import (
     InfrastructureConfig,
     IngestPolicyConfig,
     ServerConfig,
-    SqlDatabaseConfig,
 )
 from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
 from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
@@ -39,6 +38,7 @@ from tests.e2e.test_ingest_search import (  # 复用替身，不重写
     poll_until_terminal,
 )
 from tests.integration.conftest import truncate_tables
+from tests.integration.worker_config import database_config
 
 pytestmark = pytest.mark.integration
 
@@ -64,7 +64,7 @@ def hooks():
     yield
 
 
-def make_postgres_config() -> APPConfig:
+def make_postgres_config(postgres_dsn: str) -> APPConfig:
     """**与内存版唯一的差别就是这里的 backends 段。**"""
     return APPConfig(
         server_config=ServerConfig(app_name="comet-rag-pg", host="127.0.0.1", port=0),
@@ -72,13 +72,7 @@ def make_postgres_config() -> APPConfig:
             embedding_model=EmbeddingModelConfig(
                 base_url="http://unused", model_name="stub-embed", dim=DIM
             ),
-            database=SqlDatabaseConfig(
-                host="localhost",
-                port=5432,
-                username="comet",
-                password="comet",  # noqa: S106 —— 本地 compose 的固定测试凭据
-                database="comet_rag",
-            ),
+            database=database_config(postgres_dsn),
         ),
         backends=BackendsConfig(
             task_store=Backend.POSTGRES,  # ← 换的就是这一行
@@ -100,7 +94,7 @@ async def _clean(dsn: str) -> None:
 async def client(document: Path, postgres_dsn: str) -> AsyncIterator[httpx.AsyncClient]:
     await _clean(postgres_dsn)
     app = create_app(
-        make_postgres_config(),
+        make_postgres_config(postgres_dsn),
         embedding_model=KeywordEmbedding(),
         vector_store=AsyncInMemoryVectorStore(),
         pipeline_config=PipelineConfig(embed_batch_size=2, max_concurrency=4),

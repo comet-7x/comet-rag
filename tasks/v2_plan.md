@@ -1,12 +1,13 @@
 # Comet-RAG V2：实施记录
 
-当前进度：前十一批实现与验证已完成；第十一批隔离任务 runner 的应用所有权。
+当前进度：前十二批实现与验证已完成；第十二批补齐真实 RunnerRegistry worker 验收。
+第十一批隔离任务 runner 的应用所有权。
 第十批统一 Filter 语义，真实 Milvus 70 项通过。
-第七批 Milvus metadata 契约与第九批参数化用例均已实机补验；PostgreSQL 等其他后端
-以及 core-only 重装、三层覆盖率仍按各批范围保留待办。
+第七批 Milvus metadata 契约与第九批参数化用例均已实机补验；第十二批补齐
+Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 下文按批次保留历史记录，现行 API 以第四批和版本说明为准。
 
-## 当前剩余项复核（第十一批）
+## 当前剩余项复核（第十二批）
 
 | 历史待办 | 对照当前代码的结论 | 后续安排 |
 |---|---|---|
@@ -15,12 +16,12 @@
 | VectorStore 与直接调用方的嵌套 metadata 所有权 | 复核确认内存向量写入、两路检索、snapshot、父块和 draft 共享嵌套值 | 第七批已修复并补共享契约 |
 | BaseReranker 直接库调用的有限分数守卫 | 原同步/异步 score 放行非有限值，rank 的 top_k 还能隐藏末位坏分数 | 第八批已修复；保留服务层校验和降级 |
 | Filter 契约 | 第十批已统一现有两实现的类型、缺失/null、bool/数字、标量 IN 与安全数值范围，真实 Milvus 验收通过 | 参见 filter_semantics.md；新算子、完整 IR、额外后端/schema 仍单独决策 |
-| 全局 runner 注册表 | 第十一批已复现多 Context 错用 runner，并改为显式 RunnerRegistry；执行、ARQ 道次路由与清理使用同一实例 | 保留多应用、失败回滚与取消排干守卫；真实 worker 集成仍待中间件可用后补验 |
+| 全局 runner 注册表 | 第十一批已复现多 Context 错用 runner，并改为显式 RunnerRegistry；执行、ARQ 道次路由与清理使用同一实例 | 第十二批已补真实 Redis/PostgreSQL 多 Context、跨道移交、故障补投和启动失败连接清理；保留回归守卫 |
 | 统一查询 deadline | 已有通道取消排干，但没有端到端 deadline；线程工作仍不能强制终止 | 另行明确排队、召回、重排、父块读取共享预算及超时降级语义 |
-| 真实后端与安装验收缺口 | 第五批仅补真实 Milvus；不能推定 PostgreSQL/Redis/MinIO、外部模型/MinerU、core-only 重装及三层覆盖率已完成 | 按相关改造另行验收 |
+| 真实后端与安装验收缺口 | 第十二批补真实 PostgreSQL/Redis 及 Milvus 全量集成；MinIO、外部模型/MinerU、core-only 重装仍未补验 | 三层覆盖率本批已通过：整体 92.35%、tasks 96.29%；其余按相关改造另行验收 |
 | M4 生产闭环 | Stager 仍止于 ready；生产激活/superseded、激活响应丢失恢复、GC 与完整接线未完成 | 继续按 m4_todo.md 失败矩阵独立推进 |
 
-本次选择已复现的多 Context runner 污染；统一查询 deadline 与 M4 生产闭环仍是独立事项。
+本次补齐 RunnerRegistry 改造后的真实 worker 验收；统一查询 deadline 与 M4 生产闭环仍是独立事项。
 
 # 第一批：文档校准与配置合并
 
@@ -852,9 +853,100 @@ unit 的既有 skip/xfail 未改变；本次未更新 DOCX 快照。最终检查
 6 passed、219 skipped（1.22s）；这些跳过不代表真实 Redis/PostgreSQL/Milvus 链路验收。
 本批没有重复第十批的远程 Milvus 验证，也没有重跑 core-only 安装或三层覆盖率合并。
 
+
 ## 提交前分批复核
 
 单独提取本批累计源码，核对所有调用方迁移、18 项回归与迁移说明一并存在，且不依赖
 后续真实 worker 辅助模块。提交候选完整 unit 2933 passed（9.02s），E2E 49 passed；
 全仓 Ruff、改动 Python 格式、Pyright 和 Commitizen 均通过。提交消息明确标记
 BREAKING CHANGE，说明全局注册函数移除及显式注册表迁移。
+
+# 第十二批：真实 Redis/PostgreSQL worker 与失败清理验收
+
+> 日期：2026-10-23。在第十一批 RunnerRegistry 改造之上，补齐真实中间件验收与夹具修复。
+
+## 环境与范围
+
+启动已安装的 Docker Desktop，创建专用 compose 项目 `comet-rag-v2-worker-validation`，
+使用 PostgreSQL 17.11、Redis 7.4.11，仅映射 127.0.0.1:25432/26379；数据库为
+`comet_v2_test`，应用现有三条 Alembic 迁移，不使用仓库开发数据卷。
+Milvus 使用已授权的 `zhihao_test_database`，真实服务器 2.6.22；测试前后对比完整
+collection 列表，随机测试集合必须清理，原有集合保持一致。
+
+## 确认的问题与改动
+
+- worker E2E、PostgreSQL API E2E、全栈 E2E 均曾写死 localhost:5432 和开发库名，
+  worker E2E 还写死 localhost:6379。这会让探测/清表与实际应用连接到不同实例，
+  也会使 CI 的独立数据库设置失效。测试连接配置集中到 `worker_config.py`，
+  从真实 fixture 的 DSN 保留地址、端口与解码后的凭据，仅显式选择测试 Redis DB。
+- 原 worker E2E 使用 `async_run()`，收尾只关闭 Context，遗漏 ARQ 自建 Redis 池。
+  上游 `Worker.async_run` 明确不关闭连接；两项回归在原夹具上均失败。夹具改为
+  停全部轮询、排干全部 worker job，再调用原生 `Worker.close()`，复用生产
+  on_shutdown，统一撤销 Context/executor 引用并释放 SDK pool。
+- 全量集成中的 Milvus 接线冒烟未指定测试 database，且 RPC 异常时不关闭客户端。
+  现在显式传入 fixture 的测试库与超时，并在 finally 关闭；正常/故障均有零网络回归。
+- 新增真实 worker 用例与现有跨道用例进入 task-integration CI，强制依赖服务存在，
+  不让本地 skip 代替持续验收。生产 RunnerRegistry/Port/数据库 schema 无需新增改动。
+
+## 真实故障与观测边界
+
+`test_runner_registry_workers.py` 七项用例通过实际 build_context/build_settings：
+
+1. 两套部署的六个 Context 使用独立注册表和数据库连接池，同 kind 任务走自己的
+   CPU/IO runner；任意一套先关闭，另一套仍能继续执行。
+2. CPU 完成移交并关闭自己的 Context 后，IO 从 PostgreSQL 上下文与 Redis 的 task_id
+   续跑；IO 第一次失败的变体保留重试预算，CPU 阶段只执行一次。
+3. 注入移交 enqueue 失败，停止消费者后从生产 maintenance 对账补投，明确断言消息
+   进入 IO 队列，防止错投 CPU 后靠再次移交掩盖路由缺陷。
+4. 注册后启动异常或取消：注入已打开真实连接的自建工厂资源，先证明 PostgreSQL
+   application_name 与 Redis client_id 存在，再从独立观察者确认连接消失；失败 Context
+   不发布、只撤销本次 ingest 注册，存活应用仍能执行任务。
+
+首次编写移交断言时，只观察 PostgreSQL PENDING 就立即读取 Redis，真实运行出现
+“状态已落库、消息尚未投递”的窗口。测试现等待两个事实成立；没有用 sleep 掩盖，
+也没有把两套中间件误写成原子事务。持久化 PENDING 的补投恢复单独由故障用例验证。
+向量与模型不参与此组任务；实际 RAG + Milvus 的完整 worker E2E 另行运行。
+
+## 反向验证
+
+临时源码副本检测十一类缺陷：PostgreSQL 地址错误、Redis 地址错误、Redis DB 错误、
+Milvus 冒烟连错库、冒烟客户端泄漏、跨 Context runner 查找、恢复道次错误、启动失败
+遗漏 PostgreSQL 回收、遗漏 Redis 回收、遗漏 runner 撤销，以及 worker SDK pool 未关闭。
+每类均须由目标测试断言失败，不以收集/导入错误计为检测成功。工作区实现未注入缺陷。
+
+## 最终验证
+
+使用现有环境 `UV_CACHE_DIR=/tmp/comet-rag-v2-uv-cache uv run --no-sync --offline`，
+覆盖率数据另存临时目录，不覆盖仓库已有数据；不重新安装依赖。
+
+| 检查 | 结果 |
+|---|---|
+| 既有 Redis/PostgreSQL 执行器、存储、崩溃恢复、跨道基线 | 117 passed、0 skipped，17.12s |
+| 新增真实 worker 场景 | 7 passed；最终包含在全量 integration 中 |
+| 新增 unit 端点/客户端/SDK 关闭回归 | 7 passed |
+| 最终完整 unit（无覆盖率插桩） | 2940 passed、15 skipped、1 xfailed，8.31s |
+| unit 覆盖率运行 | 2940 passed，88.75%（≥ 70%）；插桩运行 11.01s，不作耗时预算依据 |
+| 内存 E2E + 覆盖率追加 | 49 passed，2.88s |
+| 修复 SDK 关闭后的完整 integration + 覆盖率追加 | 230 passed、2 skipped，295.96s |
+| 三层整体 / tasks 覆盖率 | 92.35% / 96.29%（tasks 为 856/889；90% 门槛通过） |
+| benchmark | 7 passed，3.68s |
+| 反向验证 | 11 类缺陷全部被目标测试检测，无收集/导入错误 |
+| 全仓 Ruff / Pyright | 通过；Pyright 0 errors、0 warnings |
+| 改动 Python 格式、workflow YAML 接线、git diff --check | 通过 |
+
+全量集成也在 SDK 夹具修复前运行过一次（230 passed、2 skipped，294.57s），最终
+验收以上表修复后的重跑为准。只有未设置 MinerU URL、MinIO 未运行两项跳过；脚本
+审计其他 skip 为错误，不把 PostgreSQL/Redis/Milvus 暂时失联当作成功。
+Milvus 两次验收后都恢复原有的 1 个 collection 基线；本次创建的临时 Docker 项目、
+网络与匿名卷在验收后清理。ARQ 0.28.0 的原生 Worker.close 内部调用 Redis.close，
+产生已观察到的弃用提示（最终 24 条），没有用替代 SDK 实现来隐藏它。
+
+本批已补真实 PostgreSQL/Redis 与三层覆盖率缺口；core-only 独立重装、MinIO、
+外部模型及 MinerU 仍未补验。没有更新 DOCX 快照或改变生产数据 schema。
+
+## 提交前分批复核
+
+本批包含真实 worker 场景、7 项 unit 回归、端点/SDK 资源清理修复、CI 接线和验收说明。
+累计候选完整 unit 2940 passed（8.70s），E2E 49 passed；全仓 Ruff、改动 Python 格式、
+Pyright 和 Commitizen 均通过。真实集成、三层覆盖率与反向注入结果已核对原始报告，
+沿用本批上面的实机记录。

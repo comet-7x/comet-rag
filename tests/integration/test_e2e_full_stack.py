@@ -26,7 +26,6 @@ from comet_rag.config.schemas import (
     InfrastructureConfig,
     IngestPolicyConfig,
     ServerConfig,
-    SqlDatabaseConfig,
     VectorDatabaseConfig,
 )
 from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
@@ -40,6 +39,7 @@ from tests.e2e.test_ingest_search import (  # 复用替身，不重写
     poll_until_terminal,
 )
 from tests.integration.conftest import truncate_tables
+from tests.integration.worker_config import database_config
 
 pytestmark = pytest.mark.integration
 
@@ -69,7 +69,7 @@ def hooks():
 
 
 def make_config(
-    milvus_uri: str, milvus_database: str, collection_prefix: str
+    postgres_dsn: str, milvus_uri: str, milvus_database: str, collection_prefix: str
 ) -> APPConfig:
     """**与全内存版唯一的差别就是 backends 段与两处连接配置。**"""
     return APPConfig(
@@ -78,13 +78,7 @@ def make_config(
             embedding_model=EmbeddingModelConfig(
                 base_url="http://unused", model_name="stub-embed", dim=DIM
             ),
-            database=SqlDatabaseConfig(
-                host="localhost",
-                port=5432,
-                username="comet",
-                password="comet",  # noqa: S106 —— 本地 compose 的固定测试凭据
-                database="comet_rag",
-            ),
+            database=database_config(postgres_dsn),
             vector_database=VectorDatabaseConfig(
                 endpoint=milvus_uri,
                 database_name=milvus_database,
@@ -115,7 +109,9 @@ async def client(
     milvus_database: str,
 ) -> AsyncIterator[httpx.AsyncClient]:
     await _clean_postgres(postgres_dsn)
-    config = make_config(milvus_uri, milvus_database, f"ctfull_{uuid4().hex[:12]}")
+    config = make_config(
+        postgres_dsn, milvus_uri, milvus_database, f"ctfull_{uuid4().hex[:12]}"
+    )
     app = create_app(
         config,
         embedding_model=KeywordEmbedding(),

@@ -96,12 +96,14 @@ async def test_engine_pools_connections(postgres_dsn: str) -> None:
 # ── Milvus ─────────────────────────────────────────────────────────────────
 
 
-def test_milvus_reachable(milvus_uri: str) -> None:
+def test_milvus_reachable(milvus_uri: str, milvus_database: str) -> None:
     from pymilvus import MilvusClient
 
-    client = MilvusClient(uri=milvus_uri)
-
-    assert isinstance(client.list_collections(), list)
+    client = MilvusClient(uri=milvus_uri, db_name=milvus_database, timeout=3.0)
+    try:
+        assert isinstance(client.list_collections(timeout=3.0), list)
+    finally:
+        client.close()
 
 
 # ── Redis ──────────────────────────────────────────────────────────────────

@@ -35,18 +35,7 @@ from arq.worker import Worker, create_worker
 from sqlalchemy import text
 
 from comet_rag.api.main import create_app
-from comet_rag.config.schemas import (
-    APPConfig,
-    Backend,
-    BackendsConfig,
-    EmbeddingModelConfig,
-    InfrastructureConfig,
-    IngestPolicyConfig,
-    RedisConfig,
-    ServerConfig,
-    SqlDatabaseConfig,
-    VectorDatabaseConfig,
-)
+from comet_rag.config.schemas import APPConfig
 from comet_rag.engines.pipelines import AsyncPipelineHooks, PipelineConfig
 from comet_rag.infrastructure.persistence.sql import Database
 from comet_rag.infrastructure.task_execution.arq import LANE_QUEUES
@@ -63,6 +52,7 @@ from tests.e2e.test_ingest_search import (  # 复用替身，不重写
     poll_until_terminal,
 )
 from tests.integration.conftest import truncate_tables
+from tests.integration.worker_config import make_worker_config
 
 pytestmark = pytest.mark.integration
 
@@ -92,46 +82,6 @@ def hooks() -> Any:
     AsyncPipelineHooks.document_chunker(STUB_TYPE)(line_chunk_drafts)
 
     yield
-
-
-def make_config(
-    milvus_uri: str, milvus_database: str, collection_prefix: str
-) -> APPConfig:
-    """**全真后端 + arq 执行器**。与全内存版的差别就是 backends 这一段。"""
-    return APPConfig(
-        server_config=ServerConfig(
-            app_name="comet-rag-workers", host="127.0.0.1", port=0
-        ),
-        infrastructure_config=InfrastructureConfig(
-            embedding_model=EmbeddingModelConfig(
-                base_url="http://unused", model_name="stub-embed", dim=DIM
-            ),
-            database=SqlDatabaseConfig(
-                host="localhost",
-                port=5432,
-                username="comet",
-                password="comet",  # noqa: S106 —— 本地 compose 的固定测试凭据
-                database="comet_rag",
-            ),
-            vector_database=VectorDatabaseConfig(
-                endpoint=milvus_uri,
-                database_name=milvus_database,
-                collection_prefix=collection_prefix,
-            ),
-            # 队列名必须是生产那两个（本用例用的就是生产 PROFILE），所以改用
-            # **独立的 redis db** 来隔离：否则 `_drain_queues` 会把开发机上
-            # 正在跑的 comet:cpu / comet:io 一起删掉。
-            redis=RedisConfig(host="localhost", port=6379, db_index=TEST_REDIS_DB),
-        ),
-        backends=BackendsConfig(
-            task_store=Backend.POSTGRES,
-            vector_store=Backend.MILVUS,
-            task_executor=Backend.ARQ,  # ← 本用例的主角
-        ),
-        # 这些用例走的正是"服务端读本地文件"这条**危险能力**，
-        # 所以必须显式打开 —— 默认是拒绝的（PR 评审 #4）。
-        ingest_policy=IngestPolicyConfig(allow_local=True),
-    )
 
 
 async def _clean(dsn: str) -> None:
@@ -205,31 +155,33 @@ async def _running(*workers: Worker) -> AsyncIterator[None]:
         for r in runners:
             r.cancel()
         await asyncio.gather(*runners, return_exceptions=True)
-        for w in workers:
-            for job in list(w.tasks.values()):
-                job.cancel()
-            if w.tasks:
-                await asyncio.gather(*w.tasks.values(), return_exceptions=True)
-            await _close_worker_context(w)
-
-
-async def _close_worker_context(worker: Worker) -> None:
-    context = worker.ctx.get("context")
-    if context is not None:
-        await context.close()
-        worker.ctx.pop("context", None)
+        jobs = [job for worker in workers for job in worker.tasks.values()]
+        for job in jobs:
+            job.cancel()
+        await asyncio.gather(*jobs, return_exceptions=True)
+        # async_run 不释放 SDK 自建连接池；原生 close 同时执行生产 on_shutdown。
+        for worker in workers:
+            await worker.close()
 
 
 @pytest.fixture
 async def deployment(
     document: Path,
     postgres_dsn: str,
-    redis_url: str,  # noqa: ARG001 —— 只为触发"Redis 没起就跳过"的探测
+    redis_url: str,
     milvus_uri: str,
     milvus_database: str,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, list[Worker]]]:
     await _clean(postgres_dsn)
-    config = make_config(milvus_uri, milvus_database, f"ctworker_{uuid4().hex[:12]}")
+    config = make_worker_config(
+        postgres_dsn,
+        redis_url,
+        redis_db=TEST_REDIS_DB,
+        dim=DIM,
+        milvus_uri=milvus_uri,
+        milvus_database=milvus_database,
+        collection_prefix=f"ctworker_{uuid4().hex[:12]}",
+    )
     # 用 config 里那份连接（db=15），不是 fixture 的 db=0 —— 否则清的是别人的队列
     redis_config = config.infrastructure_config.redis
     assert redis_config is not None, "make_config 必须配好 redis，否则本用例无从跑起"

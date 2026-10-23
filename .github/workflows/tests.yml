@@ -146,7 +146,9 @@ jobs:
           uv run pytest tests/integration/test_executor_arq.py
           tests/integration/test_store_postgres.py
           tests/integration/test_document_store_postgres.py
-          tests/integration/test_crash_recovery.py -m integration
+          tests/integration/test_crash_recovery.py
+          tests/integration/test_workers_split.py
+          tests/integration/test_runner_registry_workers.py -m integration
           --cov=comet_rag --cov-append --cov-report=term-missing --cov-fail-under=70
       - name: 任务框架三层合并覆盖率至少 90%
         run: uv run coverage report --include="comet_rag/tasks/*" --fail-under=90

@@ -182,6 +182,7 @@ worker 相关的集成测试要真的用 Redis，隔离方式分两种，选哪�
 |---|---|---|
 | `test_executor_arq.py`、`test_workers_split.py` | 每个用例一条随机队列名（db 0） | 队列名无所谓，随机最省事 |
 | `test_e2e_workers.py` | 生产队列名 + **独立 redis db 15** | 它验的就是生产 `PROFILE`，队列名不能改 |
+| `test_runner_registry_workers.py` | 生产队列名 + **专用 redis db 11/12/13** | 两套 Context 的消费与失败启动不能互相接管队列 |
 
 第二种若也用 db 0，`_drain_queues` 会把开发机上真跑着的 `comet:cpu` /
 `comet:io` 一起删掉 —— 测试删掉开发者的队列，属于最难联想到原因的那类事故。
@@ -195,6 +196,33 @@ Redis，少掉的只有 `fork`；而"生产端与消费端之间除了 Redis 与
 在同一测试进程运行，也分别使用自己装配的 runner；替换 loader 时必须逐个替换 worker
 的绑定。执行器契约 fixture 显式注入 `tests.contracts.task_executor.RUNNERS`；新增独立
 执行器时不能再依赖导入模块触发全局注册。
+
+### RunnerRegistry 的真实 worker 验证
+
+`test_runner_registry_workers.py` 使用真实 Redis、PostgreSQL 和生产 worker 装配，
+仅注入不调用网络的模型与内存向量存储，专测任务执行与生命周期。场景包括六个
+Context 的绑定隔离、两种关闭顺序、CPU 关闭后的 IO 续跑、IO 重试、移交投递失败
+后补投，以及启动异常/取消后真实连接释放。任务结果通过 TaskStore 观察；失败清理
+同时检查 PostgreSQL `pg_stat_activity` 与 Redis `CLIENT LIST`，并先证明连接确实存在。
+这组测试已接入 `task-integration` CI，不需要 Milvus 或模型服务。
+
+```bash
+COMET_TEST_POSTGRES_DSN='postgresql+asyncpg://comet:comet@127.0.0.1:25432/comet_v2_test' \
+COMET_TEST_REDIS_URL='redis://127.0.0.1:26379/0' \
+COMET_TEST_REQUIRE_SERVICES=1 \
+uv run pytest tests/integration/test_runner_registry_workers.py -m integration
+```
+
+测试前先迁移该独立数据库。生产队列所在的 11–15 DB 必须专供集成测试；它们的区分
+是测试隔离手段，不代表共享任务表提供多租户路由隔离。`worker_config.py` 从探测通过的
+端点构建 APPConfig，PostgreSQL/API 全栈与 worker E2E 不再写死 localhost 或开发库名。
+当前 APPConfig 不能表达的 PostgreSQL 查询参数、Redis TLS/ACL 用户会明确拒绝，
+不会转换为另一种连接方式。真实全栈/Milvus 链路仍由相应 E2E 独立验收。
+
+`Worker.async_run()` 不释放 ARQ 自建连接池。持有自建 pool 的测试 worker 先停全部
+轮询、排干全部 job，再调用原生 `Worker.close()`，由它触发生产 `on_shutdown` 并关闭
+SDK 连接池；不能用仅关闭 Context 的替代函数。外部注入并共享的池仍由外部 fixture
+在所有消费者和执行器停止后统一关闭。
 
 ### 清表一律走 `conftest.truncate_tables`
 
