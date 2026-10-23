@@ -114,7 +114,10 @@ API 和 worker 只在创建成功后发布 Context，关闭前撤销自己发布
 共享部分保留为同步计算：请求 DTO、输入规范化、响应解析、排序、分块器、DOCX Parser
 与值对象不因调用方式增加一份 Async 算法。异步编排在必要处将同步文件读取、DNS、
 ZIP/XML 解析交给 `engines.offload.run_sync`；取消时等待工作线程结束后才传播，防止
-调用方提前释放输入资源。线程不能被强制终止，此处也不承诺 CPU 吞吐扩容。
+调用方提前释放输入资源。入库 IngestRunner 的正规化、分块和 LoadedResource.cleanup
+同样使用这条边界：阶段退出或 Task 落取消终态之前，已启动的同步工作必须结束；
+临时文件清理也在工作线程执行，避免阻塞事件循环。线程不能被强制终止，此处也不承诺
+CPU 吞吐扩容。
 
 上游有原生异步 API 时直接使用：HTTPX、OpenAI、aioboto3、SQLAlchemy/asyncpg、
 ARQ/Redis 与 PyMilvus 均如此。`AsyncMilvusStore` 只持有 `AsyncMilvusClient`；

@@ -28,6 +28,13 @@ uv run pytest --cov=comet_rag --cov-report=term-missing
 后者占满组合根创建的模型闸门，不依赖 GPU 或外部模型。规则见
 [查询 deadline](../docs/query_deadline.md)。
 
+## 入库线程生命周期
+
+`unit/services/test_ingest_thread_lifecycle.py` 通过阻塞同步正规化、分块及文件清理，
+验证一次/重复取消、取消后的线程异常、输入清理顺序和事件循环响应。真实
+InProcessExecutor + Context 组合用例只通过 TaskStore 检查取消中/终态，不 gather
+执行器内部协程，确保先排干线程再关闭 Loader/模型。测试无需网络、GPU 或真实中间件。
+
 ## 契约测试
 
 `contracts/` 下是与实现无关的测试基类。同一套测试要被多个实现跑：

@@ -17,6 +17,7 @@ from comet_rag.engines.documents.normalization import (
     MarkdownDocumentNormalizer,
 )
 from comet_rag.engines.embedding.async_batch import embed_documents
+from comet_rag.engines.offload import run_sync
 from comet_rag.engines.pipelines import (
     AsyncHookProvider,
     AsyncPipelineHooks,
@@ -219,7 +220,7 @@ class IngestRunner:
                 file_type, loader_content, self._config
             )
             self._validate_extracted_text_size(extracted.markdown, file_type)
-            document = await asyncio.to_thread(self._normalizer.normalize, extracted)
+            document = await run_sync(self._normalizer.normalize, extracted)
             text = document.markdown
             self._validate_extracted_text_size(text, file_type)
             extracted_text_bytes = len(text.encode("utf-8"))
@@ -245,9 +246,9 @@ class IngestRunner:
         except Exception as exc:
             raise _classify(exc, "extracting") from exc
         finally:
-            # 临时文件必须清掉，否则批量入库会把磁盘塞满
+            # 同步工作先排干，再删除输入；清理本身也可能阻塞或被重复取消。
             if loader_content is not None:
-                loader_content.cleanup()
+                await run_sync(loader_content.cleanup)
 
     def _validate_extracted_text_size(self, text: str, file_type: str) -> None:
         """在跨 worker 持久化前复验；不能只信任某个 provider 的入口检查。"""
@@ -275,7 +276,7 @@ class IngestRunner:
             metadata=document_metadata,
             blocks=load_document_blocks(task.context.get("document_blocks", [])),
         )
-        drafts = await asyncio.to_thread(self._chunking.split, file_type, document)
+        drafts = await run_sync(self._chunking.split, file_type, document)
         payload = dump_chunk_drafts(
             drafts,
             max_bytes=self._max_chunk_context_bytes,
