@@ -1,7 +1,7 @@
 # Comet-RAG V2：实施记录
 
-当前进度：前十三批已完成；第十四批第一项补齐入库线程取消与清理。
-实机验证另发现的 ARQ 测试夹具关停问题作为第二项单独提交。
+当前进度：前十四批实现与验证已完成；第十四批补齐入库线程取消与清理，
+并修复实机验证暴露的 ARQ 测试夹具关停竞态。
 第十三批补齐统一查询 deadline 与超时降级。
 第十二批补齐真实 RunnerRegistry worker 验收。
 第十一批隔离任务 runner 的应用所有权。
@@ -10,7 +10,7 @@
 Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 下文按批次保留历史记录，现行 API 以第四批和版本说明为准。
 
-## 当前剩余项复核（第十四批第一项）
+## 当前剩余项复核（第十四批）
 
 | 历史待办 | 对照当前代码的结论 | 后续安排 |
 |---|---|---|
@@ -20,15 +20,14 @@ Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 | BaseReranker 直接库调用的有限分数守卫 | 原同步/异步 score 放行非有限值，rank 的 top_k 还能隐藏末位坏分数 | 第八批已修复；保留服务层校验和降级 |
 | Filter 契约 | 第十批已统一现有两实现的类型、缺失/null、bool/数字、标量 IN 与安全数值范围，真实 Milvus 验收通过 | 参见 filter_semantics.md；新算子、完整 IR、额外后端/schema 仍单独决策 |
 | 全局 runner 注册表 | 第十一批已复现多 Context 错用 runner，并改为显式 RunnerRegistry；执行、ARQ 道次路由与清理使用同一实例 | 第十二批已补真实 Redis/PostgreSQL 多 Context、跨道移交、故障补投和启动失败连接清理；保留回归守卫 |
-| 入库线程取消与临时文件清理 | IngestRunner 正规化/分块裸 to_thread 与同步清理已复现问题，并改为复用 run_sync | 本项完成 11 个回归及 6 类反向验证，保留线程不可强杀的限制 |
-| ARQ 测试夹具关停 | 实机暴露错误取消 run_job 的 Redis 确认阶段，导致 Worker.close 跳过连接池关闭 | 作为第二项独立提交；本提交尚未包含夹具修复 |
-| 其他真实向量后端 | Qdrant、Weaviate、Chroma、OceanBase 只有调研，没有适配器/装配/真实验收 | spec A9 仍限定 Milvus + InMemory，新增后端另行确定范围 |
+| 入库线程取消与临时文件清理 | 复核发现 IngestRunner 正规化/分块仍用裸 to_thread，清理直接阻塞事件循环，与既有 run_sync 纪律不一致 | 第十四批已修复并完成故障注入、反向与全量验证；保留线程不可强杀的限制 |
+| 其他真实向量后端 | Qdrant、Weaviate、Chroma、OceanBase 已调研，但没有适配器、装配或真实契约验收；当前仅 Milvus + InMemory | 现行 spec A9 不含多后端；接入第三个实现及扩展 Filter/能力模型需独立确认范围 |
 | 统一查询 deadline | 第十三批建立每次 search 的绝对截止时刻，覆盖 KB 检查、模型排队、召回判活、重排和父块读取；保留取消排干 | 已补故障注入、HTTP 接线与 13 类反向验证；线程不能强杀、清理可超过预算，边界见 query_deadline.md |
-| 真实后端与安装验收缺口 | 第十二批补真实 PostgreSQL/Redis 及 Milvus 全量集成；MinIO、外部模型/MinerU、core-only 重装仍未补验 | 第十三批三层覆盖率：整体 92.39%、tasks 96.18%；其余按相关改造另行验收 |
+| 真实后端与安装验收缺口 | 第十二批补真实 PostgreSQL/Redis 及 Milvus 全量集成；MinIO、外部模型/MinerU、core-only 重装仍未补验 | 第十四批三层覆盖率：整体 92.38%、tasks 95.84%；其余按相关改造另行验收 |
 | M4 生产闭环 | Stager 仍止于 ready；生产激活/superseded、激活响应丢失恢复、GC 与完整接线未完成 | 继续按 m4_todo.md 失败矩阵独立推进 |
 
-本项补齐入库线程所有权遗漏；ARQ 夹具修复单独提交。M4 生产闭环、其它向量库适配、
-剩余安装和外部服务验收仍是独立工作。
+第十四批优先补齐已确认的入库线程所有权遗漏。M4 激活/GC/生产接线、其它向量库适配
+与剩余安装/外部服务验收仍是独立工作；查询能力调研不等于后端已实现。
 
 # 第一批：文档校准与配置合并
 
@@ -1057,42 +1056,132 @@ m4_todo.md 的失败矩阵推进。后续候选不再将“没有统一查询 de
 本次提交准备没有修改生产行为或中间件测试；前述真实集成、benchmark 与三层覆盖率
 属于实现轮验收，本轮未重新启动中间件或重复这些检查。
 
-
 # 第十四批：入库线程取消与资源清理
 
-> 日期：2026-10-23。起点 `ab5088b`；此提交只包含入库线程生命周期修复。
+> 日期：2026-10-23。起点 `ab5088b`；按入库线程生命周期、worker 夹具关停分为两项本地提交。
 
-AsyncPipeline 已使用 run_sync，IngestRunner 的正规化和分块仍直接 await
-asyncio.to_thread，文件清理直接阻塞事件循环。故障注入确认取消会让阶段先退出、
-同步线程继续运行，正规化仍使用的临时文件可能提前被删除。
+## 剩余项复核与选择
 
-本项复用现有 engines.offload.run_sync，调整正规化、分块及 LoadedResource.cleanup
-三个边界；先排干同步工作，再传播取消、允许删除输入，不写入迟到产物。清理也在线程中
-执行，重复取消不会提前退出。HTTP/S3 临时文件登记采用 threading.Lock，释放可在线程
-边界执行。正常数据、异常分类、Port、Task/向量 schema、依赖及 revision 开关不变。
+先前配置、重排、Filter、注册表和查询 deadline 的实现与回归入口仍在。
+本轮发现执行模式重估还有一处实现与契约不一致：AsyncPipeline 已采用 run_sync，
+IngestRunner 的正规化和分块仍裸 await asyncio.to_thread，资源清理仍在事件循环同步执行。
+这会让已取消的阶段先退出，同步线程继续运行，甚至提前删除其输入；文件清理慢时还会
+阻塞事件循环。因此先修补这条现有生产入库路径的线程所有权边界。
 
-新增 11 项入库回归：正规化/分块的一次取消、重复取消和取消后线程异常；清理的事件循环
-响应与排干；真实 build_context + InProcessExecutor 在两种阶段与直接关停/取消后关停
-四种组合下的 CANCELLING/终态、Loader/模型关闭顺序。仅通过 TaskStore 观察执行器，
-不 gather 其内部协程。修复前先新增的 7 项均在目标断言处失败，修复后通过。
+其他向量库的状态也已核对：Qdrant、Weaviate、Chroma、OceanBase 没有适配器、
+配置装配或真实后端契约验收。已有五库调研、统一 Filter 类型与现有两实现的语义，
+不等于已实现多后端。spec A9 仍限定 Milvus + InMemory，新增后端/IR/能力模型另行决策。
 
-临时副本中的 6 类反向验证全部命中：两处恢复裸 to_thread、清理放回事件循环、
-清理使用裸 to_thread、提前删除输入、线程桥吞取消。DOCX 快照没有修改。
+M4 激活、响应丢失恢复、GC 和完整生产接线仍按 m4_todo.md 推进；本批不更改
+Task 持久化字段、Port、向量 schema、metadata、安装依赖或生产 revision 开关。
 
-同步线程不能强杀，取消和 Context.close 可能延长等待。架构、部署、版本说明、
-执行模式复核和测试入口已同步。其它四种真实向量库仍未实现，不能将调研当作已适配。
+## 生产代码改动
 
-完整真实验收曾得到 230 passed、2 skipped，但 ARQ 夹具在传输确认阶段被取消，
-随后 Worker.close 提前退出，出现 1 项 teardown error。该夹具问题与入库线程修复
-分别提交；本项不宣称已经解决它或已通过含该问题的完整中间件验收。
+只调整 IngestRunner 的三个边界，复用 engines.offload.run_sync：
+
+1. 正规化取消时等待同步线程结束，再允许资源清理；取消后的成功和异常不继续写 context。
+2. 分块同样先排干再传播取消，不发布迟到的 chunk_drafts。
+3. LoadedResource.cleanup 移到工作线程，重复取消期间仍等待清理，不阻塞事件循环。
+
+默认正规化/分块产物、异常分类、窗口化索引与正常数据格式保持原有行为。
+HTTP/S3 Loader 的临时文件登记使用 threading.Lock，释放回调可在线程边界执行；
+AsyncPipeline 也早已通过同一线程桥调用 cleanup。没有新增生产清理抽象。
+
+同步工作不能强杀，因此请求取消或 Context.close 可能等待更久；文档不再把执行器的
+关停 timeout 描述成强制终止线程的硬时限。跨进程租约回收与单进程部署的边界保留。
+
+## 故障注入与补充发现
+
+新增 11 项入库生命周期用例：
+
+- 正规化/分块各覆盖一次取消、重复取消、取消后的线程异常；输入先保留到工作结束，
+  晚到成功不写入 Task context，线程异常被消费。
+- 同步文件清理阻塞时事件循环仍能推进，重复取消不提前退出。
+- 实际 build_context + InProcessExecutor 在两种阶段、直接关停/先取消后关停四种组合下，
+  仅通过 TaskStore 检查 CANCELLING/终态；不 gather 执行器内部任务。
+  同步工作未结束时 Context 保持打开，线程结束后才关闭 Loader/模型、清空注册。
+
+修复前最先新增的 7 项测试均在目标断言处失败，修复后全部通过。
+
+首次完整真实集成得到 230 passed、2 skipped，但在
+test_failed_worker_startup_releases_real_connections_and_preserves_live_app[True]
+的 teardown 发生 CancelledError。检查已安装 ARQ 0.28.0 源码确认：
+
+- worker.tasks 是 run_job 包装任务，包含 Redis 结果确认；job_tasks 才是函数本体。
+- 原夹具把正在确认结果的 run_job 一起取消；Worker.close 再次 gather 已取消包装任务，
+  在关闭 SDK 池之前退出。这是测试生命周期竞态，不能用“业务断言通过”掩盖。
+
+用实际 Worker.close + 模拟网络池的两项确定性单测复现旧夹具错误后，抽出仅供
+非 burst 集成测试使用的 worker_lifecycle.stop_workers：先停轮询、取消业务 job_tasks、
+排干传输确认并解除已消费的 Task 引用，再由原生 close 执行 on_shutdown 与关闭连接池。
+真实传输异常会在清理后继续传播；没有复制 SDK 连接关闭逻辑或修改生产 worker。
+
+E2E 夹具使用 AsyncExitStack，排干异常也会继续尝试 SDK close。新增共 5 项 SDK 级
+无网络单测，覆盖两条夹具入口、成功/失败的确认，以及业务任务取消和包装任务不被取消；
+原有两项多 worker 顺序/异常清理测试继续保留。7 项真实 registry worker 回归通过。
+
+## 反向验证
+
+在隔离源码副本注入 11 类缺陷，全部产生断言失败（退出 1，无收集错误）：
+
+- 入库 6 类：正规化/分块恢复裸 to_thread、清理放回事件循环、清理改用裸 to_thread、
+  正规化前删除输入、吞掉线程桥取消。
+- worker 夹具 5 类：取消传输而非业务、遗漏传输排干、吞确认异常、遗漏原生 SDK close、
+  不取消业务任务。
+
+另将 RuntimeWarning 作为错误运行 83 项入库、Context 和 SDK 夹具定向回归，全部通过。
+正常流程和错误处理的期望来自输入文件、手写状态/顺序断言与实际 SDK close，
+不通过重新调用实现计算预期结果。DOCX 快照未更新。
+
+## 验证记录
+
+使用现有环境与 uv run --no-sync --offline，未安装或更新依赖。
+
+| 检查 | 结果 |
+|---|---|
+| 最终完整 unit | 2998 passed、15 skipped、1 xfailed；9.68s |
+| 最终 unit 覆盖率 | 88.85%；IngestRunner 模块 97.35%；覆盖率插桩运行 13.37s 不作预算 |
+| 内存 E2E | 50 passed；4.72s（带覆盖率） |
+| benchmark | 7 passed；4.66s |
+| 首轮完整真实集成 | 230 passed、2 skipped、1 teardown error；293.93s，已定位并修复上述夹具 |
+| 定向真实 registry worker | 7 passed；3.82s |
+| 最终完整真实集成 | 230 passed、2 skipped，无错误；292.66s |
+| 三层合并覆盖率 | 整体 92.38%、tasks 95.84%，均达标 |
+| Ruff / Pyright | 全仓通过；0 errors / 0 warnings |
+| 格式与 diff check | 7 个修改/新增 Python 文件通过，diff check 通过 |
+
+真实环境使用隔离 PostgreSQL/Redis 容器，以及 zhihao_test_database 中的随机 Milvus
+collection；两轮结束时 Milvus 基线集合均完全恢复（1 个），最终测试仅跳过未配置的
+MinerU 和未运行的 MinIO 各 1 项。其余 skip 会由本次运行的审计插件拒绝。
+最终 24 条 warning 为 ARQ 原生 close 调用 Redis.close 的上游弃用提示；保留 SDK
+原生关闭路径。专用 PostgreSQL/Redis 容器、网络和临时数据已清理。
+MinIO、外部模型/MinerU、core-only 隔离重装仍未补验，不引用历史结果代替本轮验收。
 
 
-## 本项提交前独立核验
+## 第十四批提交前核验
 
-从 ab5088b 构建仅叠加入库修复的完整源码快照，完整 unit 为 2993 passed、
-15 skipped、1 xfailed；E2E 50 passed（3.05s）。Ruff、Pyright、2 个改动 Python
-文件的格式与 Commitizen 消息检查通过。
+按职责拆为两个提交，每项包含对应代码、测试与文档：
 
-隔离快照设置 PYTHONDONTWRITEBYTECODE=1，首轮 unit 10.50s，耗时明细复核 10.14s，
-超过 10 秒预算，已保留两次实际结果。最慢 12 项均是既有测试；新入库回归不在其中。
-耗时预算仍需关注，不把功能通过写成该项耗时达标；未改变任何测试断言或时间阈值。
+1. `fix(ingest): drain synchronous stages before releasing resources`：
+   三处生产线程边界、11 个入库回归，以及架构/部署/版本说明、执行模式复核和测试入口。
+   本项独立文档明确 ARQ 夹具修复仍在后续提交，不宣称完整真实验收已经无错误。
+2. `test(workers): drain transport acknowledgements before closing pools`：
+   测试专用 stop_workers、两处夹具接线、5 个原生 SDK close 回归、旧多 worker 测试替身
+   以及最终验收记录；不包含生产业务代码修改。
+
+分别从起点构建完整快照，保持原有生产代码与测试文件字节不变；共享文档按每项实际
+内容分批更新。Ruff、Pyright、改动文件 format 与两条 Commitizen 消息检查均通过。
+
+| 快照 | 完整 unit | E2E |
+|---|---|---|
+| 入库线程生命周期 | 2993 passed、15 skipped、1 xfailed；10.50s，独立耗时复核 10.14s | 50 passed；3.05s |
+| 含 worker 夹具修复 | 2998 passed、15 skipped、1 xfailed；9.98s | 50 passed；2.86s |
+| 当前工作区默认命令 | 2998 passed、15 skipped、1 xfailed；9.65s | 同完整快照 |
+
+隔离快照使用 PYTHONDONTWRITEBYTECODE=1。首项两次超过 10 秒预算，实际工作区默认运行
+在预算内，已分别保留数据；不据此推断环境差异的具体成因。耗时明细最慢 12 项均是
+既有测试，新增入库回归不在其中。单测耗时存在波动，不能把快照功能通过等同于预算
+始终满足；未修改测试断言、时间阈值或 pytest 筛选。
+
+提交准备只重新运行本地检查。前述 230 passed / 2 skipped 真实集成、benchmark 和
+三层覆盖率是实现轮验收，经记录核对仍适用于本轮未变的实现与测试；本轮未重启中间件。

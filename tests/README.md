@@ -35,6 +35,14 @@ uv run pytest --cov=comet_rag --cov-report=term-missing
 InProcessExecutor + Context 组合用例只通过 TaskStore 检查取消中/终态，不 gather
 执行器内部协程，确保先排干线程再关闭 Loader/模型。测试无需网络、GPU 或真实中间件。
 
+## Worker 夹具关停
+
+worker 集成夹具先停轮询，取消 SDK 的业务 job_tasks，再等待 run_job 传输任务完成
+Redis 结果确认，最后调用原生 Worker.close。不要取消正在确认结果的包装任务：
+ARQ 0.28.0 的 close 会再次 gather 此表，CancelledError 会阻断后续连接池关闭。
+`unit/test_worker_teardown.py` 使用真实 SDK close 与模拟池固定这个竞态；确认失败
+仍传播，清理不能以吞掉异常的方式变绿。
+
 ## 契约测试
 
 `contracts/` 下是与实现无关的测试基类。同一套测试要被多个实现跑：

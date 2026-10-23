@@ -100,13 +100,21 @@ async def test_worker_fixture_drains_all_jobs_then_closes_sdk_pools(
         cast(
             Worker,
             SimpleNamespace(
-                async_run=poll, tasks={"job": jobs[0]}, close=close_first, ctx={}
+                async_run=poll,
+                tasks={"job": jobs[0]},
+                job_tasks={"job": jobs[0]},
+                close=close_first,
+                ctx={},
             ),
         ),
         cast(
             Worker,
             SimpleNamespace(
-                async_run=poll, tasks={"job": jobs[1]}, close=close_second, ctx={}
+                async_run=poll,
+                tasks={"job": jobs[1]},
+                job_tasks={"job": jobs[1]},
+                close=close_second,
+                ctx={},
             ),
         ),
     ]

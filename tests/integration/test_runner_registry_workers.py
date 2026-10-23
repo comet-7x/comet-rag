@@ -29,6 +29,7 @@ from comet_rag.workers.preprocessor import PROFILE as PREPROCESSOR
 from tests.contracts.support import wait_for_terminal, wait_until
 from tests.integration.conftest import truncate_tables
 from tests.integration.worker_config import make_worker_config
+from tests.integration.worker_lifecycle import stop_workers
 
 pytestmark = pytest.mark.integration
 KIND = "registry-probe"
@@ -97,14 +98,7 @@ class Deployment:
 
 
 async def stop_polling(deployment: Deployment) -> None:
-    for polling in deployment.polling:
-        polling.cancel()
-    await asyncio.gather(*deployment.polling, return_exceptions=True)
-    # 所有生产者先停，再排干 job，最后由退出栈关闭 Context 和连接池。
-    jobs = [job for worker in deployment.workers for job in worker.tasks.values()]
-    for job in jobs:
-        job.cancel()
-    await asyncio.gather(*jobs, return_exceptions=True)
+    await stop_workers(deployment.polling, deployment.workers)
 
 
 @pytest.fixture

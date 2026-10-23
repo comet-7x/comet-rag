@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -53,6 +54,7 @@ from tests.e2e.test_ingest_search import (  # 复用替身，不重写
 )
 from tests.integration.conftest import truncate_tables
 from tests.integration.worker_config import make_worker_config
+from tests.integration.worker_lifecycle import stop_workers
 
 pytestmark = pytest.mark.integration
 
@@ -148,20 +150,15 @@ async def _await_startup(*workers: Worker, timeout: float = 20.0) -> None:
 
 @contextlib.asynccontextmanager
 async def _running(*workers: Worker) -> AsyncIterator[None]:
-    runners = [asyncio.create_task(w.async_run()) for w in workers]
-    try:
-        yield
-    finally:
-        for r in runners:
-            r.cancel()
-        await asyncio.gather(*runners, return_exceptions=True)
-        jobs = [job for worker in workers for job in worker.tasks.values()]
-        for job in jobs:
-            job.cancel()
-        await asyncio.gather(*jobs, return_exceptions=True)
-        # async_run 不释放 SDK 自建连接池；原生 close 同时执行生产 on_shutdown。
-        for worker in workers:
-            await worker.close()
+    async with AsyncExitStack() as cleanup:
+        for worker in reversed(workers):
+            cleanup.push_async_callback(worker.close)
+        runners = [asyncio.create_task(w.async_run()) for w in workers]
+        try:
+            yield
+        finally:
+            # 原生 close 仍执行生产 on_shutdown 并关闭 SDK 自建连接池。
+            await stop_workers(runners, workers)
 
 
 @pytest.fixture
