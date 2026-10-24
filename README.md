@@ -8,16 +8,23 @@
 两者共用同一份解析代码。这个双重定位由 `pyproject.toml` 的依赖分组
 **在安装期强制**，并由 AST 层级守卫在 CI 里盯着（`tests/unit/test_layering.py`）。
 
-> 当前进度：M1～M3、公共 Loader/Extractor 入口和仓库结构归一化已完成；M4 已完成
-> 可追溯 Chunking 与结构感知切分；父子索引的 DocumentStore、三表迁移和 revision
-> 状态机已经完成，下一项是把它接入双存储入库链路。
+> 当前进度（2026-10-24）：V2 前十六批已提交。M4 已有结构感知分块、DocumentStore、
+> ready 续跑、独立激活/GC 及 revision-aware 读取；生产 Task/maintenance 完整接线
+> 和 H/I 验收尚未完成，revision 新写入未启用。见 [V2 实施记录](tasks/v2_plan.md)。
+
+| 你要做什么 | 从这里开始 |
+|---|---|
+| 只解析、分块或扩展 Pipeline | [库使用说明](docs/pipeline_usage.md) |
+| 启动 API/worker、配置模型和中间件 | [部署与配置](docs/deployment.md) |
+| 理解边界、调用路径与当前切片 | [架构](docs/architecture.md)、[流程图](docs/structure.md) |
+| 修改代码或贡献实现 | [开发规范](CONTRIBUTING.md)、[测试说明](tests/README.md) |
 
 ---
 
 ## 一、当库用
 
 ```bash
-pip install comet-rag        # 只装 pydantic / httpx / lxml / python-docx 一类
+pip install .               # 在仓库根目录，仅安装核心依赖
 ```
 
 ```python
@@ -44,15 +51,33 @@ for chunk in result.chunks:
 ```bash
 uv sync --extra server
 cp config.example.yaml config.yaml      # 改掉 embedding_model 的 base_url 与 dim
+```
+
+该方式不需要数据库或队列服务，**仍需要可用的 Embedding HTTP 服务**；内存内容在进程
+重启后丢失。未部署 reranker 时删除示例中的该配置或设为 null。
+
+下面用服务器本地文件演示。先在已有 config.yaml 中修改这些来源策略字段，把目录替换
+为实际存在的绝对路径，并将报告放入其中；默认配置禁止本地路径入库。
+
+```yaml
+ingest_policy:
+  allow_local: true
+  local_roots: ["/data/corpus"]
+```
+
+```bash
 uv run comet-rag serve
 ```
 
 ```bash
 curl -X POST localhost:8000/kb     -d '{"kb_id":"demo"}'                          -H 'Content-Type: application/json'
-curl -X POST localhost:8000/ingest -d '{"kb_id":"demo","source":"报告.docx"}'      -H 'Content-Type: application/json'
-curl      localhost:8000/tasks/<task_id>
+curl -X POST localhost:8000/ingest -d '{"kb_id":"demo","source":"/data/corpus/报告.docx"}' -H 'Content-Type: application/json'
+curl      localhost:8000/tasks/TASK_ID
 curl -X POST localhost:8000/search -d '{"kb_id":"demo","query":"关键结论是什么"}'  -H 'Content-Type: application/json'
 ```
+
+将 TASK_ID 替换为返回的 task_id；等任务成功后再检索。source 是服务器可读取的路径，不是上传
+客户端电脑中的文件。URL/S3 来源、权限策略及失败诊断见部署说明。
 
 检索默认仍是向量召回；需要精确术语或混合召回时显式选择模式：
 
@@ -67,7 +92,12 @@ curl -X POST localhost:8000/search \
 
 ### 生产形态
 
+先按部署说明将后端设为 `milvus`、`postgres`、`arq` 并填写连接配置，再安装全部 extras。
+仅启动容器不会自动切换 config.yaml 中的内存后端。以下仍是已交付入库路径的部署方式，
+不代表尚未接线的 revision 生产闭环已经启用。
+
 ```bash
+uv sync --extra all
 docker compose up -d && uv run alembic upgrade head
 uv run comet-rag serve                  # 生产端
 uv run comet-rag worker preprocessor    # CPU 密集：解析 / 分块
@@ -111,7 +141,7 @@ V2 的 Python API 按执行模式分离；旧 `a*` 入口不再保留，迁移�
 ```bash
 make install
 
-uv run pytest                    # 单元测试，零依赖，~10s
+uv run pytest                    # 单元测试，零外部服务依赖，目标 < 10s
 uv run pytest -m e2e             # 端到端，全内存
 uv run pytest -m integration     # 需要 docker compose up -d
 uv run pytest -m benchmark       # 性能基线（见 docs/benchmark.md）
@@ -124,6 +154,8 @@ make format
 就忽略"的习惯，那比没有测试更糟。
 
 测试的组织方式、契约怎么写、快照怎么更新，见 [tests/README.md](tests/README.md)。
+可读性与职责边界见 [CONTRIBUTING.md](CONTRIBUTING.md)；单测耗时波动及历史验收见
+[V2 实施记录](tasks/v2_plan.md)。
 
 ## 文档
 
@@ -138,3 +170,4 @@ make format
 | [docx_parser_internals.md](docs/docx_parser_internals.md) | docx 解析内幕                        |
 | [mineru_integration.md](docs/mineru_integration.md)       | PDF / MinerU 部署、配置与验收        |
 | [comment_style.md](docs/comment_style.md)                 | 注释与 Docstring 的编写、评审标准    |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                         | 开发规范、质量门与变更边界          |

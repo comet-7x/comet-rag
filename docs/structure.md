@@ -2,9 +2,33 @@
 
 本文回答两个问题：**东西放在哪**，以及**一次请求怎么走完全程**。
 
-图里画的是**实际的依赖边**（用 AST 扫出来的），不是理想中的分层。两者不一致
-的地方在文末「已知的接缝」里列出来了 —— 一份画着理想图的架构文档，正是本项目
-踩过的那种坑：文档说的规则和守卫执行的规则不是同一条，中间的缝刚好够放一个错误。
+模块图概括源码中的主要依赖关系，不穷举每条 import；完整边界由 AST 守卫检查。
+系统边界图画运行时调用，流程图画数据/控制流，不将不同含义的箭头混在一张图中。
+历史接缝见文末。实施与后续工作见 [v2_plan.md](../tasks/v2_plan.md)。
+
+## 系统边界
+
+库入口是嵌入调用方进程的 Python API，不是一个独立部署的服务。参考服务按配置选择
+内存实现或外部适配器；下图中的“通过 Port”是运行时调用，不是 services 导入数据库 SDK。
+
+```mermaid
+flowchart LR
+    caller["库调用方"] --> library["Pipeline / AsyncPipeline"]
+    library --> engine["engines：解析、规范化、分块"]
+    client["HTTP 调用方"] --> api["API：入库与检索用例"]
+    api --> engine
+    api --> executor["执行器：进程内或 ARQ 分道"]
+    executor -->|"ARQ 配置时"| worker["可选 CPU / IO worker"]
+    worker --> engine
+    api -->|"通过 Port"| stores["内存或 PostgreSQL / Redis / Milvus"]
+    worker -->|"通过 Port"| stores
+    api -->|"模型 HTTP"| models["Embedding / 可选 Reranker"]
+    worker -->|"模型 HTTP"| models
+    library -->|"显式注入模型时"| models
+    library -->|"显式注册 PDF Hook"| mineru["可选外部 MinerU HTTP"]
+    api -->|"PDF 已启用时"| mineru
+    worker -->|"PDF 已启用时"| mineru
+```
 
 ## 目录
 
@@ -113,10 +137,12 @@ flowchart TD
 
 ## 入库流程
 
+下图是当前生产 IngestRunner 的三个阶段；后文的独立 revision 切片尚未接入这条路径。
+
 ```mermaid
 flowchart TD
     A["POST /ingest"] --> P{"来源准入<br/>SourcePolicy"}
-    P -->|"拒绝：内网地址 / 本地路径 / 超限"| PX["400，任务都不建"]
+    P -->|"拒绝：不允许的地址或本地路径"| PX["403，任务不建"]
     P -->|通过| B["TaskService.submit"]
     B --> C[("TaskStore<br/>内存 / Postgres")]
     C --> D["TaskExecutor<br/>进程内 / arq"]
@@ -154,11 +180,36 @@ flowchart TD
 库 `Pipeline` 与服务 `IngestRunner` 共用同一个 `ChunkingService` 和
 materializer，因此同源文档的 chunk ID、顺序和基础 metadata 不会因入口不同而漂移。
 
+## 独立 revision 切片（尚未生产接线）
+
+下图表示已有组件的合法调用顺序，不表示 IngestRunner 已自动执行激活或 maintenance
+已自动执行 GC。GC 的输入必须停止写入；持久化清理阶段/结果及迟到写对账仍见后续计划。
+
+```mermaid
+flowchart TD
+    plan["IndexPlanner：稳定 ID 与计划"] --> prepare["RevisionStager.prepare：父块落库"]
+    prepare --> resume["resume：子向量写入、计数核验"]
+    resume --> ready["ready：尚不可见"]
+    ready --> activate["RevisionActivator：原子激活或幂等恢复"]
+    activate --> active["active：由指针决定可见"]
+    activate --> superseded["superseded：低 generation 或已被替换"]
+    superseded --> collect["显式 collect_superseded"]
+    collect --> abandon["原子 abandon：拒绝 active"]
+    candidates["retired / abandoned 持久化候选"] --> sweep["sweep：一批有界扫描"]
+    activate -->|"旧 active 变为 retired"| candidates
+    sweep --> abandon
+    abandon --> delete["按 KB/source/revision 删除向量并确认零残留"]
+    delete --> purge["purge：清父块，保留 purged 墓碑"]
+```
+
+向量删除、计数或父块事务失败会保留重试入口；登记提交前失败的 ready 不在候选列表，
+须重试原 superseded 结果。激活响应丢失不能被解释为“失败后可删除当前版本”。
+
 ## 检索流程
 
 ```mermaid
 flowchart TD
-    A["POST /search"] --> B["RetrievalService.search"]
+    A["POST /search"] --> B["RetrievalService.search<br/>建立单一 deadline"]
     B --> DEG{"当前系统降级级别"}
     DEG -->|"NO_RERANK"| D1["关掉重排"]
     DEG -->|"更低"| D2["再砍 top_k"]
@@ -176,8 +227,10 @@ flowchart TD
     GATE --> F[("AsyncVectorSearchPort.search<br/>dense 取 fetch_k")]
     F --> CAND["dense 候选"]
     KW --> KCAND["keyword 候选"]
-    CAND --> RRF{"是否 hybrid？"}
-    KCAND --> RRF
+    CAND --> DV["dense revision 可见性检查<br/>已配置时批量判活"]
+    KCAND --> KV["keyword revision 可见性检查<br/>已配置时批量判活"]
+    DV --> RRF{"是否 hybrid？"}
+    KV --> RRF
     RRF -->|是，两路成功| RF["纯 RRF 按名次融合去重"]
     RRF -->|是，单路可恢复故障| FALL["退到可用通道<br/>记录 degradations"]
     RRF -->|否| ONE["单路候选"]
