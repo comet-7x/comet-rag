@@ -233,6 +233,8 @@ async def test_cpu_failure_preserves_rebuild_input_or_replays_persisted_handoff(
     else:
 
         async def lose_response(limit, **values):
+            if "revision_index" not in values:
+                return await original(limit, **values)
             if failure == "context-after":
                 await original(limit, **values)
             raise ConnectionError("context response lost")

@@ -328,7 +328,13 @@ async def test_terminal_active_and_activation_race_are_not_deleted(monkeypatch) 
 
 @pytest.mark.parametrize(
     "marker",
-    ["revision_key", "revision_index", "revision_publication", "revision_scan"],
+    [
+        "revision_key",
+        "revision_prepare",
+        "revision_index",
+        "revision_publication",
+        "revision_scan",
+    ],
 )
 @pytest.mark.parametrize("force", [False, True])
 async def test_configured_task_service_retains_intent_even_if_invalid_or_complete(
@@ -416,7 +422,11 @@ async def test_scan_budget_rejects_concurrent_context_growth_before_gc(
     query.assert_not_awaited()
 
 
-async def test_parent_commit_then_cancel_without_handoff_keeps_recovery_input() -> None:
+async def test_parent_commit_then_cancel_without_handoff_is_precisely_recovered() -> (
+    None
+):
+    from comet_rag.ports.document_store import RevisionStatus
+    from comet_rag.services.indexing import IndexHandoff
     from comet_rag.services.revision_context import RevisionTaskStages, get_revision_key
     from tests.unit.services.test_revision_context import _context, _task_plan
     from tests.unit.services.test_revision_indexing import (
@@ -440,7 +450,12 @@ async def test_parent_commit_then_cancel_without_handoff_keeps_recovery_input() 
     outcome = await reconciler(ctx.store, documents, vectors).reconcile(
         await ctx.snapshot()
     )
-    assert outcome is ReconciliationDisposition.DEFERRED
+    assert outcome is ReconciliationDisposition.CLEANED
+    assert await documents.get_parents("kb", [p.id for p in plan.parents]) == {}
+    manifest = await documents.reserve_revision(
+        IndexHandoff.from_plan(plan, task_id=ctx.task_id).draft
+    )
+    assert manifest.status is RevisionStatus.PURGED
     assert (await ctx.snapshot()).context["text"] == "abcdEFGHijkl"
     with pytest.raises(RevisionTaskRetained):
         await ctx.store.delete(

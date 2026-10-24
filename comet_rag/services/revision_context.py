@@ -132,6 +132,51 @@ def _task_key(value: object) -> RevisionKey:
     return key
 
 
+def _dump_draft(draft: RevisionDraft) -> dict[str, object]:
+    return {
+        "key": _dump_key(draft.key),
+        "plan_sha256": draft.plan_sha256,
+        "parent_count": draft.parent_count,
+        "child_count": draft.child_count,
+        "source": draft.source,
+        "file_type": draft.file_type,
+        "metadata": dict(draft.metadata),
+        "task_id": draft.task_id,
+    }
+
+
+def _load_draft(value: object) -> RevisionDraft:
+    raw = _object(value, _DRAFT_FIELDS)
+    task_id = raw["task_id"]
+    draft = RevisionDraft(
+        _key(raw["key"]),
+        _text(raw["plan_sha256"]),
+        _integer(raw["parent_count"]),
+        _integer(raw["child_count"]),
+        _text(raw["source"]),
+        _text(raw["file_type"]),
+        _metadata(raw["metadata"]),
+        _text(task_id) if task_id is not None else None,
+    )
+    if draft.parent_count > draft.child_count:
+        raise RevisionConflict(draft.key, "准备计数不一致")
+    return draft
+
+
+def load_preparation(context: dict[str, object], task_id: str) -> RevisionDraft | None:
+    """外部写入前的计划身份；旧记录可没有，损坏记录不得猜测恢复。"""
+    value = context.get("revision_prepare")
+    if value is None:
+        return None
+    fields = _object(value, {"version", "draft"})
+    if type(fields["version"]) is not int or fields["version"] != 1:
+        raise ValueError("不支持的 preparation version")
+    draft = _load_draft(fields["draft"])
+    if draft.key != _task_key(context["revision_key"]) or draft.task_id != task_id:
+        raise RevisionConflict(draft.key, "准备意图不属于当前任务")
+    return draft
+
+
 def dump_index_handoff(
     handoff: IndexHandoff,
     /,
@@ -163,16 +208,7 @@ def dump_index_handoff(
         )
     payload: dict[str, object] = {
         "version": 1,
-        "draft": {
-            "key": _dump_key(draft.key),
-            "plan_sha256": draft.plan_sha256,
-            "parent_count": draft.parent_count,
-            "child_count": draft.child_count,
-            "source": draft.source,
-            "file_type": draft.file_type,
-            "metadata": dict(draft.metadata),
-            "task_id": draft.task_id,
-        },
+        "draft": _dump_draft(draft),
         "children": children,
     }
     _validate_json_payload(payload, name="IndexHandoff", max_bytes=max_bytes)
@@ -191,18 +227,7 @@ def load_index_handoff(
     fields = _object(payload, {"version", "draft", "children"})
     if type(fields["version"]) is not int or fields["version"] != 1:
         raise ValueError("不支持的 revision payload version")
-    raw = _object(fields["draft"], _DRAFT_FIELDS)
-    task_id = raw["task_id"]
-    draft = RevisionDraft(
-        _key(raw["key"]),
-        _text(raw["plan_sha256"]),
-        _integer(raw["parent_count"]),
-        _integer(raw["child_count"]),
-        _text(raw["source"]),
-        _text(raw["file_type"]),
-        _metadata(raw["metadata"]),
-        _text(task_id) if task_id is not None else None,
-    )
+    draft = _load_draft(fields["draft"])
     raw_children = fields["children"]
     if (
         not isinstance(raw_children, list)
@@ -294,6 +319,9 @@ def load_task_handoff(
         or handoff.draft.task_id != task_id
     ):
         raise RevisionConflict(handoff.draft.key, "移交不属于当前任务")
+    preparation = load_preparation(context, task_id)
+    if preparation is not None and preparation != handoff.draft:
+        raise RevisionConflict(handoff.draft.key, "移交与准备意图不一致")
     return handoff
 
 
@@ -319,6 +347,18 @@ def load_publication(
     if generation <= 0:
         raise ValueError("publication generation 必须为正整数")
     return Publication(generation, PublicationPhase(_text(value["phase"])))
+
+
+def load_recovery_draft(
+    context: dict[str, object], task_id: str
+) -> RevisionDraft | None:
+    """完整移交优先；移交前仅允许用已验证的准备意图做精确回收。"""
+    if context.get("revision_index") is not None:
+        return load_task_handoff(context, task_id).draft
+    _validate_json_payload(
+        context, name="Revision context", max_bytes=DEFAULT_MAX_REVISION_CONTEXT_BYTES
+    )
+    return load_preparation(context, task_id)
 
 
 class RevisionTaskStages:
@@ -380,7 +420,7 @@ class RevisionTaskStages:
     async def prepare(
         self, ctx: TaskContext, plan: IndexPlan | None = None
     ) -> IndexHandoff:
-        """父块成功落库后才持久化移交数据并清掉原文；失败不丢重建输入。"""
+        """先记计划身份，再写父块；完整移交提交后才释放重建输入。"""
         task = await ctx.snapshot()
         if "revision_index" in task.context:
             handoff = self._load(task.context, ctx.task_id)
@@ -396,11 +436,29 @@ class RevisionTaskStages:
         if plan.key != _task_key(task.context.get("revision_key")):
             raise RevisionConflict(plan.key, "计划不属于当前任务 revision")
         handoff = IndexHandoff.from_plan(plan, task_id=ctx.task_id)
+        preparation = load_preparation(task.context, ctx.task_id)
+        if preparation is not None and preparation != handoff.draft:
+            raise RevisionConflict(plan.key, "任务准备计划发生变化")
         payload = dump_index_handoff(handoff, max_bytes=self._limit)
-        updates: dict[str, object] = {"revision_index": payload}
+        updates: dict[str, object] = {
+            "revision_index": payload,
+            "revision_prepare": None,
+        }
         updates.update(dict.fromkeys(_DROP_ON_HANDOFF))
         merged = {**task.context, **updates}
         _validate_json_payload(merged, name="Revision context", max_bytes=self._limit)
+        if preparation is None:
+            try:
+                # 这次 CAS 必须先于 reserve/put_parents；丢响应时重读原意图，不分配新身份。
+                await ctx.put_bounded(
+                    self._limit,
+                    revision_prepare={
+                        "version": 1,
+                        "draft": _dump_draft(handoff.draft),
+                    },
+                )
+            except TaskContextTooLarge as exc:
+                raise DocumentResourceLimitExceeded(str(exc)) from exc
         await self._stager.prepare(plan, task_id=ctx.task_id, checkpoint=ctx.checkpoint)
         try:
             await ctx.put_bounded(self._limit, **updates)

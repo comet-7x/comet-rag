@@ -59,6 +59,13 @@ public delete 新增 guard/expected_version；force 不绕过 guard。未显式�
 新增后台循环、cron 或生产写开关。不支持依赖 Task TTL 丢弃 GC 身份，详见
 [持续对账设计](../tasks/v2_reconciliation_design.md)。
 
+### 准备意图与移交前恢复
+
+第十九批在 `RevisionTaskStages.prepare` 的首次 DocumentStore 写入前，保存有界
+`revision_prepare` 计划身份；完整 handoff 确认后才清空意图/原文。新记录的移交前取消
+可精确回收，失败重试必须匹配原计划；旧缺载荷记录仍保留并告警。未改变 Task 字段、
+表或向量 schema，原 handoff/publication 的版本 1 格式继续可读。
+
 ### Milvus 完整性读取（既有行为）
 
 Milvus count 与删除 ID 选择固定使用 Strong，dense/keyword 检索仍遵循配置。

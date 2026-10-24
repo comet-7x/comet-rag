@@ -17,7 +17,7 @@ from comet_rag.ports.document_store import (
 from comet_rag.services.revision_context import (
     PublicationPhase,
     load_publication,
-    load_task_handoff,
+    load_recovery_draft,
 )
 from comet_rag.services.revision_gc import RevisionGarbageCollector
 from comet_rag.tasks import (
@@ -32,7 +32,7 @@ from comet_rag.tasks.runner import TaskCancelled
 from comet_rag.tasks.store import TaskLeaseLost
 
 _REVISION_MARKERS = frozenset(
-    {"revision_key", "revision_index", "revision_publication"}
+    {"revision_key", "revision_prepare", "revision_index", "revision_publication"}
 )
 _SCAN_KEY = "revision_scan"
 
@@ -154,12 +154,13 @@ class RevisionReconciler:
             return ReconciliationDisposition.IGNORED
         if not task.status.is_terminal:
             return ReconciliationDisposition.DEFERRED
-        if task.context.get("revision_index") is None:
-            # prepare 写父块后、移交提交前失败的旧记录还不能安全重建 draft。
-            # 保留输入供业务恢复，不能把缺载荷当作空 revision 或擅自发布。
-            logger.warning(f"revision 对账缺移交数据，保留任务 {task.task_id}")
+        draft = load_recovery_draft(task.context, task.task_id)
+        if draft is None:
+            # 第十九批之前的缺载荷旧记录没有可靠计划身份，仍需迁移/人工恢复。
+            logger.warning(
+                f"event=revision_reconciliation_missing_prepare task_id={task.task_id}"
+            )
             return ReconciliationDisposition.DEFERRED
-        draft = load_task_handoff(task.context, task.task_id).draft
         publication = load_publication(task.context, draft)
         if checkpoint is not None:
             await checkpoint()
