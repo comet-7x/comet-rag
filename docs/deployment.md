@@ -323,7 +323,10 @@ retired 和被新版本替代的 legacy 均不可见。旧候选挤满上限时�
 全部版本**。未配置 DocumentStore 的旧链路遇到 revision candidate 也拒绝查询。
 独立激活/GC 切片已验收，但生产 Task 与 maintenance 接线、写入排干及完整 H/I 验收
 尚未完成，不得启用生产新写入。GC 默认每轮最多 32 个 retired/abandoned；本轮没有
-自动注册定时任务。superseded 登记前失败需重试原结果，不能仅依赖候选扫描。
+自动注册定时任务。独立 Task 阶段已持久化发布/清理意图，superseded 登记前失败从
+cleanup_pending 重试，不能仅依赖候选扫描。purged 后的迟到写入需要保留身份并显式
+重放精确清理；complete 只表示上次核验为空。生产开启前还需落实意图保留、分页扫描
+及旧写排干/持续对账策略，不能提前删除 Task 后再依赖其 context 做恢复。
 
 ### Milvus schema 兼容
 

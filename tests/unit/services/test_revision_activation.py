@@ -199,7 +199,7 @@ async def test_activation_task_retry_after_report_failure_does_not_reembed(
     key = await get_revision_key(ctx, kb_id="kb", source_id="source")
     plan = _task_plan(key)
     stages = RevisionTaskStages(
-        stager(documents, vectors, embedding), activator=RevisionActivator(documents)
+        stager(documents, vectors, embedding), document_store=documents
     )
     await stages.prepare(ctx, plan)
     await stages.stage(ctx, embedding_dim=2)
@@ -287,10 +287,9 @@ async def test_task_activation_checks_persisted_identity_before_calling_activato
     documents = InMemoryDocumentStore()
     ctx = await _context(InMemoryTaskStore())
     key = await get_revision_key(ctx, kb_id="kb", source_id="source")
-    activator = RevisionActivator(documents)
     stages = RevisionTaskStages(
         stager(documents, FaultyVectors(), FakeEmbedding()),
-        activator=activator,
+        document_store=documents,
         max_context_bytes=10000,
     )
     await stages.prepare(ctx, _task_plan(key))
@@ -303,7 +302,7 @@ async def test_task_activation_checks_persisted_identity_before_calling_activato
         task.context["extra"] = "x" * 10000
     await ctx.put(**task.context)
     activate = AsyncMock()
-    monkeypatch.setattr(activator, "activate", activate)
+    monkeypatch.setattr(documents, "activate_revision", activate)
     with pytest.raises((RevisionConflict, DocumentResourceLimitExceeded)):
         await stages.activate(ctx)
     activate.assert_not_awaited()

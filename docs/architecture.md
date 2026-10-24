@@ -173,14 +173,44 @@ Stager 只写到 ready；`RevisionActivator` 复用 Store 的幂等 reserve、�
 abandon（拒绝 active），再按 KB/source/revision 删除向量并核验剩余数为零，最后清父块
 并保留 purged 墓碑。删除、计数或父块事务失败保留候选，重试删除零行也算成功。
 `sweep(limit=32)` 单次只处理一批 retired/abandoned；单项失败记录并继续，取消继续传播。
-登记提交前失败的 ready 不在扫描队列里，调用方必须重试登记。生产 Task 还需持久化
-独立 GC 阶段及 superseded 结果，并先排干该 revision 的写入；服务未接入生产
+登记提交前失败的 ready 不在扫描队列里，调用方必须重试登记。独立 Task 阶段已持久化
+发布结果和 GC 意图；生产接线还需落实旧写排干和补偿调度，服务未接入生产
 `IngestRunner` 或 maintenance。读侧可显式配置或注入
 DocumentStore，默认关闭。M4 的完整完成标准见 `tasks/m4_todo.md`，不能由切片通过推定。
+
+### revision 任务恢复协议
+
+`RevisionTaskStages` 的发布阶段显式注入 `document_store=`，清理另注入
+`garbage_collector=`。Task context 中的 `revision_publication` 是版本 1 的窄记录：
+revision key、plan 指纹、task_id、generation、phase；不复制父块正文或向量。
+所有写入经过 `put_bounded`，整份 context 继续受 32 MiB 限制和任务所有权围栏约束。
+阶段入口从幂等 reserve 复验计划/任务身份、generation 和 manifest 事实。
+
+| phase | 已持久化的含义 | 恢复动作 |
+|---|---|---|
+| `activating` | 已登记发布意图，结果尚未确认 | 重试原 manifest 的激活，不重新 embedding；不能据此执行 GC |
+| `active` | 曾观察到该版本激活成功 | 重新核验 manifest；已被替换则先保存 cleanup_pending，再清理 |
+| `cleanup_pending` | 已得到 superseded 结果，必须清理本 revision | 原子 abandon、精确删除、零残留核验、purge，最后保存完成回执 |
+| `cleanup_complete` | 上次清理已完成，保留精确身份 | 显式重放时仍执行删除与核验，不能直接跳过 |
+
+`activate(ctx)` 与 `cleanup(ctx)` 是独立 StagePipeline 阶段，不共用“失败回滚激活”的
+处理器。激活提交后结果写回失败，保留 activating 并恢复 Store 的事实；abandon/purge
+或 Task 确认响应丢失时保留原身份，重试不能重新 stage 或分配新 generation。
+进入发布恢复后 `stage(ctx)` 明确拒绝重写。阶段边界的取消/租约丢失会停止后续 IO，
+但已提交的 active、abandoned 或 purged 不会被回滚。
+
+**迟到 upsert 是跨库边界。** 已发出的旧请求可能在 GC 之后落入 Milvus；它不通过
+revision-aware 可见性检查，但 purged 不在普通 sweep 候选里，因而仍会占用存储。
+`collect_inactive(key)` 复用既有 Store 原语提供精确补偿，active 保护仍早于任何向量 IO。
+清理成功仅证明本次核验时为空，不能证明未来不会再落库。生产开启前必须明确旧写
+排干或持续对账、Task 意图保留期限与分页扫描；删除 Task 后不能再依赖其意图恢复。
+本批没有自动注册补偿扫描、修改候选状态集合或增加 Store/Task/schema 字段。
 
 Milvus 的计数和删除 ID 选择固定使用 Strong，检索仍保留配置的一致性偏好；跨客户端
 旧快照不能作为 GC 完成依据。这使用上游已有的 query 参数，见
 [Milvus 2.6 query 一致性文档](https://milvus.io/api-reference/pymilvus/v2.6.x/MilvusClient/Vector/query.md)。
+
+### 检索边界
 
 检索侧刻意把完整存储生命周期与只读能力分开：`AsyncVectorSearchPort` 只暴露 dense
 召回，`AsyncKeywordSearchPort` 只暴露关键词召回。`RetrievalService` 按请求选择一路或

@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
+from enum import StrEnum
 from uuid import UUID, uuid4
 
 from comet_rag.engines.chunkers import ChunkDraft
 from comet_rag.ports import DocumentResourceLimitExceeded
 from comet_rag.ports.document_store import (
+    DocumentStore,
     RevisionConflict,
     RevisionDraft,
     RevisionKey,
+    RevisionNotReady,
+    RevisionStatus,
     StoredRevision,
 )
 from comet_rag.services.chunking import (
@@ -29,6 +34,7 @@ from comet_rag.services.indexing import (
     revision_chunk_id,
 )
 from comet_rag.services.revision_activation import ActivationOutcome, RevisionActivator
+from comet_rag.services.revision_gc import RevisionGarbageCollector
 from comet_rag.tasks import TaskContext
 from comet_rag.tasks.runner import TaskContextTooLarge
 
@@ -60,6 +66,19 @@ _DROP_ON_HANDOFF = {
     "chunk_drafts",
     "chunks",
 }
+
+
+class _PublicationPhase(StrEnum):
+    ACTIVATING = "activating"
+    ACTIVE = "active"
+    CLEANUP_PENDING = "cleanup_pending"
+    CLEANUP_COMPLETE = "cleanup_complete"
+
+
+@dataclass(frozen=True, slots=True)
+class _Publication:
+    generation: int
+    phase: _PublicationPhase
 
 
 def _object(value: object, fields: set[str]) -> dict[str, object]:
@@ -258,19 +277,26 @@ async def get_revision_key(
 
 
 class RevisionTaskStages:
-    """实验性 prepare/ready/activate 阶段；不注册生产 runner，不执行 GC。"""
+    """独立 revision 阶段与有界恢复记录；不注册生产 runner 或 maintenance。
+
+    Task 保存激活意图、结果与清理进度，DocumentStore 决定当前事实。清理完成记录
+    保留精确身份供补偿，不能视为远端旧 RPC 已排干的证明。
+    """
 
     def __init__(
         self,
         stager: RevisionStager,
         *,
-        activator: RevisionActivator | None = None,
+        document_store: DocumentStore | None = None,
+        garbage_collector: RevisionGarbageCollector | None = None,
         max_context_bytes: int = DEFAULT_MAX_REVISION_CONTEXT_BYTES,
     ) -> None:
         if type(max_context_bytes) is not int or max_context_bytes <= 0:
             raise ValueError("max_context_bytes 必须是正整数")
         self._stager = stager
-        self._activator = activator
+        self._documents = document_store
+        self._activator = RevisionActivator(document_store) if document_store else None
+        self._gc = garbage_collector
         self._limit = max_context_bytes
 
     def _load(self, context: dict[str, object], task_id: str) -> IndexHandoff:
@@ -282,6 +308,58 @@ class RevisionTaskStages:
         ):
             raise RevisionConflict(handoff.draft.key, "移交不属于当前任务")
         return handoff
+
+    def _publication(
+        self, context: dict[str, object], draft: RevisionDraft
+    ) -> _Publication | None:
+        if "revision_publication" not in context:
+            return None
+        value = _object(
+            context["revision_publication"],
+            {"version", "key", "plan_sha256", "task_id", "generation", "phase"},
+        )
+        if type(value["version"]) is not int or value["version"] != 1:
+            raise ValueError("不支持的 publication version")
+        if (
+            _key(value["key"]) != draft.key
+            or value["plan_sha256"] != draft.plan_sha256
+            or value["task_id"] != draft.task_id
+        ):
+            raise RevisionConflict(draft.key, "发布记录不属于当前任务计划")
+        generation = _integer(value["generation"])
+        if generation <= 0:
+            raise ValueError("publication generation 必须为正整数")
+        return _Publication(generation, _PublicationPhase(_text(value["phase"])))
+
+    async def _save_publication(
+        self, ctx: TaskContext, draft: RevisionDraft, publication: _Publication
+    ) -> None:
+        try:
+            await ctx.put_bounded(
+                self._limit,
+                revision_publication={
+                    "version": 1,
+                    "key": _dump_key(draft.key),
+                    "plan_sha256": draft.plan_sha256,
+                    "task_id": draft.task_id,
+                    "generation": publication.generation,
+                    "phase": publication.phase.value,
+                },
+            )
+        except TaskContextTooLarge as exc:
+            raise DocumentResourceLimitExceeded(str(exc)) from exc
+
+    async def _manifest(
+        self, ctx: TaskContext, draft: RevisionDraft, publication: _Publication | None
+    ) -> StoredRevision:
+        if self._documents is None:
+            raise ValueError("发布阶段必须显式注入 DocumentStore")
+        await ctx.checkpoint()
+        manifest = await self._documents.reserve_revision(draft)
+        if publication is not None and publication.generation != manifest.generation:
+            raise RevisionConflict(draft.key, "发布记录 generation 与 manifest 不一致")
+        await ctx.checkpoint()
+        return manifest
 
     async def prepare(
         self, ctx: TaskContext, plan: IndexPlan | None = None
@@ -318,6 +396,10 @@ class RevisionTaskStages:
         """保留窄 payload 供失败续跑；激活完成前不能当作任务成功。"""
         task = await ctx.snapshot()
         handoff = self._load(task.context, ctx.task_id)
+        if self._publication(task.context, handoff.draft) is not None:
+            raise RevisionConflict(
+                handoff.draft.key, "已进入发布恢复阶段，禁止重写向量"
+            )
         ready = await self._stager.resume(
             handoff, embedding_dim=embedding_dim, checkpoint=ctx.checkpoint
         )
@@ -327,16 +409,85 @@ class RevisionTaskStages:
     async def activate(self, ctx: TaskContext) -> ActivationOutcome:
         """独立阶段重试同一 manifest；提交成功后报告失败也不能重新准备或回滚。"""
         if self._activator is None:
-            raise ValueError("activate 阶段必须显式注入 RevisionActivator")
+            raise ValueError("activate 阶段必须显式注入 DocumentStore")
         task = await ctx.snapshot()
         handoff = self._load(task.context, ctx.task_id)
-        outcome = await self._activator.activate(
-            handoff.draft, checkpoint=ctx.checkpoint
-        )
+        draft = handoff.draft
+        publication = self._publication(task.context, draft)
+        manifest = await self._manifest(ctx, draft, publication)
+        if publication is not None and publication.phase in (
+            _PublicationPhase.CLEANUP_PENDING,
+            _PublicationPhase.CLEANUP_COMPLETE,
+        ):
+            # 已有 GC 意图的 abandoned/purged 不得再经过激活器或重新 stage。
+            if manifest.status not in (
+                RevisionStatus.READY,
+                RevisionStatus.RETIRED,
+                RevisionStatus.ABANDONED,
+                RevisionStatus.PURGED,
+            ):
+                raise RevisionConflict(draft.key, "清理意图与 manifest 状态冲突")
+            outcome = ActivationOutcome(manifest, superseded=True)
+        else:
+            if manifest.status not in (
+                RevisionStatus.READY,
+                RevisionStatus.ACTIVE,
+            ) and not (
+                manifest.activated_at is not None
+                and manifest.status in (RevisionStatus.RETIRED, RevisionStatus.PURGED)
+            ):
+                raise RevisionNotReady(draft.key, f"当前状态为 {manifest.status}")
+            # 先持久化意图，也提前验证整份 context 预算；提交后写回失败只能恢复，不能回滚。
+            await self._save_publication(
+                ctx,
+                draft,
+                _Publication(manifest.generation, _PublicationPhase.ACTIVATING),
+            )
+            outcome = await self._activator.activate(draft, checkpoint=ctx.checkpoint)
+            await self._save_publication(
+                ctx,
+                draft,
+                _Publication(
+                    outcome.revision.generation,
+                    _PublicationPhase.CLEANUP_PENDING
+                    if outcome.superseded
+                    else _PublicationPhase.ACTIVE,
+                ),
+            )
         await ctx.report(
             message="已被更新版本取代" if outcome.superseded else "文档版本已激活"
         )
         return outcome
+
+    async def cleanup(self, ctx: TaskContext) -> None:
+        """独立重试清理意图；complete 也重放，以补偿核验后才落库的旧 RPC。"""
+        if self._gc is None:
+            raise ValueError("cleanup 阶段必须显式注入 RevisionGarbageCollector")
+        task = await ctx.snapshot()
+        draft = self._load(task.context, ctx.task_id).draft
+        publication = self._publication(task.context, draft)
+        if publication is None or publication.phase is _PublicationPhase.ACTIVATING:
+            raise RevisionConflict(draft.key, "激活结果尚未持久化，不能清理")
+        manifest = await self._manifest(ctx, draft, publication)
+        if publication.phase is _PublicationPhase.ACTIVE:
+            if manifest.status is RevisionStatus.ACTIVE:
+                return
+            if (
+                manifest.status not in (RevisionStatus.RETIRED, RevisionStatus.PURGED)
+                or manifest.activated_at is None
+            ):
+                raise RevisionConflict(draft.key, "已激活回执与 manifest 状态冲突")
+            # 保存结果后也可能被更新版本取代；先登记意图，再执行不可逆的清理。
+            publication = _Publication(
+                publication.generation, _PublicationPhase.CLEANUP_PENDING
+            )
+            await self._save_publication(ctx, draft, publication)
+        await self._gc.collect_inactive(draft.key, checkpoint=ctx.checkpoint)
+        await self._save_publication(
+            ctx,
+            draft,
+            _Publication(publication.generation, _PublicationPhase.CLEANUP_COMPLETE),
+        )
 
 
 def _validate_budget(max_bytes: int) -> None:

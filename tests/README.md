@@ -331,6 +331,15 @@ GC 用例在独立 PostgreSQL/Milvus 连接中覆盖 superseded、retired、部�
 共享 Store 契约验证废弃后不可再激活，以及候选列表只包含 retired/abandoned。
 这验收独立 GC 切片，不代表生产 Task/maintenance 已接线或覆盖迟到写入。
 
+第十七批补充 `unit/services/test_revision_publication.py` 和
+`integration/test_revision_publication_recovery.py`：覆盖发布意图/结果写回前后失败、
+abandon/purge/Task 确认响应丢失、旧 active 回执被新版本替换、清理阶段单独续跑、
+身份/generation/预算校验，以及 abandon/delete/purge 后取消或租约丢失。
+事件控制的故障边界延迟旧请求执行，真实 Milvus 客户端验证 GC 后仍能落库；独立
+PostgreSQL Task/DocumentStore 与 Milvus 读连接仅凭保留意图补偿，不依赖原 Outcome。
+六种检索组合仍只见新 active。该注入不模拟 Milvus 内部调度或真实进程 SIGKILL。
+普通 sweep 不扫描 purged 的局限保留为特征化断言；未注册生产补偿扫描。
+
 单元反向验证覆盖 context UTF-8 上限/CAS 冲突重验、模型返回后所有权围栏、完整计划
 指纹及 UUID 重用；32 MiB 是整份 context 的持久化上限，不是进程峰值内存预算。
 

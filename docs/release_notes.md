@@ -24,7 +24,8 @@ IngestRunner 的正规化与分块改用已有 run_sync，取消后等待同步�
 ### 实验性 revision 激活恢复
 
 新增 `services.revision_activation.RevisionActivator`，只依赖 DocumentStore 现有原语；
-`RevisionTaskStages` 可显式注入 `activator=` 并独立执行 `activate(ctx)`。事务失败交给
+`RevisionTaskStages` 现在显式注入 `document_store=` 并独立执行 `activate(ctx)`，替代
+实验切片原来的 `activator=` 参数，以便恢复时复验 manifest。事务失败交给
 调用方重试同一 manifest；提交后响应丢失返回 already_active，旧任务返回 superseded，
 不覆盖较新的 active。准备、激活与 GC 各有独立重试边界，激活阶段不重新 embedding。
 返回值是本次尝试的快照，不保证返回后仍为当前版本。未新增 schema、Port 或生产开关；
@@ -37,8 +38,12 @@ IngestRunner 的正规化与分块改用已有 run_sync，取消后等待同步�
 的 retired/abandoned，返回成功/失败 key 并记录失败。原子拒绝 active 早于向量 IO，
 向量删除和零残留核验早于父块清理及 purged 墓碑。缺失 collection 视为空，连接异常
 不能视为空；不会清理 legacy 或其他 source/KB。
-未新增 Store 方法、schema、生产开关或定时任务。生产接线仍需先排干 revision 写入，
-持久化 GC 阶段与 superseded 结果；本服务不替代任务租约或跨存储事务。
+新增 `collect_inactive(key, checkpoint=...)` 用于从持久化身份精确恢复和补偿 purged 的
+迟到写入。Task 阶段注入 `garbage_collector=` 后可独立执行 `cleanup(ctx)`；context 保存
+activating/active/cleanup_pending/cleanup_complete，complete 重放仍会删除并核验。
+未新增 Store 方法、Task 字段、schema、生产开关或定时任务。旧任务没有发布记录时可
+从原 ready/active manifest 恢复。生产接线仍需旧写排干/对账和意图保留策略；本服务
+不替代任务租约或跨存储事务。协议与边界见 [架构](architecture.md#revision-任务恢复协议)。
 
 ### Milvus 完整性读取
 

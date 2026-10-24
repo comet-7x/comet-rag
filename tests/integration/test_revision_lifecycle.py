@@ -29,7 +29,6 @@ from comet_rag.services.retrieval import (
     SearchMode,
     SearchQuery,
 )
-from comet_rag.services.revision_activation import RevisionActivator
 from comet_rag.services.revision_context import RevisionTaskStages, get_revision_key
 from comet_rag.tasks import (
     Done,
@@ -262,7 +261,7 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
             parent_batch_size=1,
             embed_window=1,
         ),
-        activator=RevisionActivator(io_documents),
+        document_store=io_documents,
     )
     flow = StagePipeline()
 
@@ -381,6 +380,13 @@ async def test_revision_task_handoff_uses_only_persisted_context_across_workers(
             "generation": 1,
             **({"already_active": True, "superseded": False} if publish else {}),
         }
+        if publish:
+            publication = done.context["revision_publication"]
+            assert publication["phase"] == "active"
+            assert publication["generation"] == 1
+            assert publication["key"]["revision_id"] == revision
+        else:
+            assert "revision_publication" not in done.context
         assert [s.stage for s in done.stage_history].count("chunking") == 1
         assert [s.stage for s in done.stage_history].count("indexing") == 2
         assert [s.stage for s in done.stage_history].count("activation") == (
