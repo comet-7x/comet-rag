@@ -1,8 +1,8 @@
 # Implementation Plan: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：独立入库/激活/GC 与读侧切片已实现，生产完整接线未完成（规格 v1.9）
+> 状态：可选生产 revision 接线已实现，实际迁移/部署与完整出口待完成（规格 v1.10）
 > 后续执行顺序：[V2 后续计划](v2_next_steps.md)，状态校准于 2026-10-24
-> 依据：`tasks/m4_spec.md` v1.9、`tasks/m4_t6_design.md`
+> 依据：`tasks/m4_spec.md` v1.10、`tasks/m4_t6_design.md`
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 开始日期：2026-09-14
 > 起始分支：`feature/m4-hierarchical-indexing`（历史上堆叠于 `feature/m4-chunking`）

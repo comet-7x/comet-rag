@@ -1815,3 +1815,99 @@ API 节点显示准入可暂停，对账节点显示缺载荷保留；说明卡�
 实际查看最终 1440×900 浅色与 2048×1320 深色主图。源码/HTML 与通过回执的字节匹配，
 无机器绝对路径或外部加载资源；最终 137 个本地链接、README/配置冒烟及 6 张
 Mermaid 语法通过。工具、截图和机器检查回执留在临时目录，没有加入项目依赖或提交。
+
+# 第二十一批：新命名空间生产 revision runner
+
+> 基于 `4b54d24`，2026-10-24 开始实施。用户要求接通生产 kind/跨道，并重点验证激活
+> 响应丢失、superseded 和 GC 失败重试。复用现有阶段和 Store 原语，未改变 Task 字段、
+> Store 抽象接口、表、向量 schema 或中间件依赖。
+
+## 实施与边界
+
+1. 抽取两条链路共用的 DocumentExtraction，保持原取源、正规化、取消排干及临时输入
+   清理顺序；整个提取 context 现在也受写入预算约束。get_revision_key 用有界 CAS，
+   writer、load_recovery_draft 和对账共享配置预算，不再出现 writer 允许而恢复固定
+   32 MiB 拒绝的错配。扫描游标仍独立 4 KiB；默认源 context 预算仍为 32 MiB。
+2. 新增 RevisionIngestRunner，不继承旧 writer、不复制激活/GC 实现：同一 StagePipeline
+   编排 extracting/preparing（CPU）、indexing/activating/cleanup（IO）。prepare 仍先
+   持久化意图、写父块、保存 handoff，再释放原文；队列仅 task_id。恢复由持久化意图
+   与阶段共同决定；发布后即使人工 from_scratch 也不重新取源或 embedding。
+3. 新 revision_ingestion 默认关闭，启用必须有配套 ARQ/PostgreSQL/Milvus、判活读取、
+   来源为 revision-ingest 的持续对账及新 KB 清单。初版只支持无 legacy ingest 任务的
+   独立 Task 存储范围；检查不能代替外部存储隔离证明，不支持直接复用旧任务表。
+   有父块大小时使用已有 HierarchyBuilder/RecursiveChunker，null 使用 ChunkingService。
+4. 组合根只注册一个入库 writer。API 按模式选 kind，内部 request 保存不含凭据的绑定
+   摘要；API 重试和消费者都核验存储、模型、Pipeline/父块设置和 KB 范围。恢复载荷与
+   请求 KB 不一致也拒绝；跨模式/跨绑定重试不先改原 Task。暂停覆盖两种 kind，状态
+   端点暴露 ingest_kind。完整 Pipeline 设置固定身份，调整批量/并发前也需排干原任务。
+5. 新 active 的前任 GC 缺口已确认：现有 cleanup 只处理自身被取代，未同步回收前任。
+   现在依据 manifest.replaces_revision_id 精确回收，失败保留 cleanup 续跑；superseded
+   仍清自身。新 active 不因后续 GC 或 Task 确认失败而回滚，持续对账仍重访旧源 Task。
+6. 保留现有瞬时异常分类；未知 SDK/契约异常可能落 FAILED 后需人工重试，不把所有
+   错误都包装成可重试。默认 legacy 配置不变，未开启用户生产配置、迁移资料或切流。
+
+配置、模式/绑定、分块及部署边界见 [生产配置](../docs/revision_migration.md#生产-revision-runner-配置)。
+现有先问再动、依赖、测试与提交纪律继续适用；状态以版本控制内的 spec/计划为准。
+
+## 故障与反向验证
+
+新增生产 runner/装配专项单测，验证 namespace/KB/模型/计划绑定、只注册新 writer、
+启动失败清理、API kind 与重试、阶段路由、准备确认丢失、发布后不重算、superseded、
+自身/前任 GC 重试、上下文预算及迟到写补偿。旧线程取消用例改在共享提取阶段注入，
+保持原排干/资源关闭断言；未删除或弱化故障断言，没有保留旧私有字段别名。
+
+新增 6 项真实 PG/Redis/Milvus 测试：生成 DOCX 经实际 POST /ingest 提交，CPU worker
+完成父块和 handoff 后停止；删除源文件，由新 IO Context 仅凭持久化数据续跑。ready/
+activation 提交响应丢失时复用 generation，模型调用不增加；新任务先激活后，旧任务
+正常 superseded 并重试清理；新 active 的前任 GC 确认丢失只重试 cleanup，保留新版本。
+另验证 IO 计划错配在 embedding 前拒绝，所有发布场景覆盖六种检索组合。
+
+测试使用同一测试进程中的原生 ARQ workers 与独立 Context/连接，不宣称模拟跨主机、
+真实 SIGKILL/断电或远端内部调度。模型是确定性替身，三种存储/调度服务是真实中间件。
+首轮定向 6 passed，28.85s；预算统一前复核 6 passed，29.26s；最终完整集成包含同组。
+
+独立副本注入 15 项单元缺陷：漏绑定、重新提取、跨请求 KB、提前丢原文、忽略身份/
+对账预算、漏前任/自身 GC、漏配对读取、忽略 legacy 命名空间、API 错 kind/漏绑定、
+错误配置手动重试及遗漏 Pipeline/模型身份。全部由目标断言检出，无收集/夹具错误。
+另在真实副本让 ready 重试重新 embedding、删除前任 GC、忽略 IO 绑定，3 项均以
+一个目标断言失败检出，Milvus 集合基线恢复；工作区未注入反向缺陷。
+
+## 最终全量验证
+
+| 检查 | 结果 |
+|---|---|
+| 普通完整 unit | 3275 passed、15 skipped、1 xfailed；9.51s；较早完整复核 3273 项为 9.59s，历史超预算记录仍保留 |
+| unit 覆盖率 | 89.32%；插桩 13.52s，不作为 10 秒预算依据 |
+| 最终真实全量 integration | 287 passed、2 skipped、43 条上游警告，无 teardown error；472.91s |
+| E2E / benchmark | 50 passed / 7 passed；4.50s / 3.88s |
+| 三层合并覆盖率 | 整体 92.75%、tasks 95.97%（905/943） |
+| 本批主要覆盖率 | revision_ingestion 98.06%、revision_config 95.45%、ingestion 97.50% |
+| 静态 | 全仓 Ruff，Pyright 0 errors / 0 warnings；20 个改动 Python 文件格式通过 |
+| core-only | 复用无 extras 独立环境，CI 库入口与生成 DOCX 解析/分块通过；未重新安装依赖 |
+
+首轮全量为 287 passed、2 skipped，466.93s；复核发现 writer/恢复的自定义预算不一致，
+修正并增加预算故障/反向断言后，重新执行上表最终全量。最终运行时字节在验收开始时
+记录并复验未变，不把较早结果冒充最终版本。测试增量还包含新模块的 AST 分层守卫。
+验证日志在 `/tmp/comet-v2-batch21-validation/`，mutations-final.log、real-mutations.log
+记录独立反向副本位置。期间误触及无关文件的格式调整已逐文件核对 AST 等价并恢复，
+本批不包含那些文件或任何 DOCX 快照更新。
+
+SQL/Redis 为专用 PostgreSQL 17/Redis 7，原生 worker 使用专用 Redis DB 10；Milvus
+服务端 2.6.22，仅固定测试库，定向、两轮全量和反向均确认测试前后 1 个既有集合不变。
+仅跳过未起 MinIO 和未配置 MinerU，不将 skip 当成验收。上游 ARQ close 警告保留。
+完成后专用容器/网络 down -v 成功，两个已记录匿名卷逐一确认已移除；未操作开发资源。
+
+## 后续门禁
+
+本批交付 opt-in 生产路径，不代表实际资料迁移或全环境发布。历史缺载荷实际恢复、
+目标模型/语料质量、隔离配置预检、跨进程/主机恢复与真实关停演练、迁移读切换/回退
+及完整 H/I 仍待完成。下一批先针对选定目标做可复核预检与受控演练；未取得具体用户
+资料和目标配置前，不自选生产库或把开关默认打开。交互图随本批固定提交更新。
+
+## 第二十一批提交复核
+
+按共享阶段、生产接线、验收/门禁、交互图四项职责本地提交，未推送。
+共享阶段为 `4f80c2f`，生产接线为 `84a0f76`。第一组暂存快照独立运行提取/取消、
+准备/对账和装配测试，141 passed、1.40s，并确认导入来自快照。
+源代码字节与最终验收开始时记录一致；后续文档/图不改变运行时实现。Commitizen
+核验提交信息。交互图将固定到包含上述代码与本批文档的提交，避免自引用。

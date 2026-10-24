@@ -1,6 +1,6 @@
 # Spec: M4 Chunking 与层级索引
 
-> 状态：独立入库/激活/GC 与读侧切片已实现，生产完整接线未完成（v1.9）
+> 状态：可选生产 revision 接线已实现，实际迁移/部署与完整出口待完成（v1.10）
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 起始开发分支：`feature/m4-hierarchical-indexing`（历史上堆叠于 `feature/m4-chunking`）
 > 现状校准：2026-10-24；历史实施日期保留。下一步见 [V2 后续计划](v2_next_steps.md)
@@ -618,3 +618,13 @@ prepare 已写父块但 handoff 未提交的取消任务仍保留输入并 defer
 心跳不当作完成进度。首轮接线不新增通知中间件。原 IngestRunner、legacy 退出/迁移、
 命名空间及完整 H/I 仍是生产门禁。故障、反向与本批验证见 v2_plan.md，现行策略见
 [对账设计](v2_reconciliation_design.md)。
+
+## 28. V2 可选生产 revision runner（第二十一批）
+
+新命名空间可显式启用 revision_ingestion，组合根只注册 revision-ingest，POST /ingest
+按配置选路并写配置绑定摘要。CPU 提取/准备，IO 向量/激活/清理，继续复用 StagePipeline、
+Task context CAS 与既有 Store 原语。新 active 的前任通过 manifest 记录精确 GC，失败
+从 cleanup 恢复；superseded 不覆盖新版本。writer/恢复/对账共享 context 配置预算。
+
+默认配置仍为 legacy；实际资料重建、跨主机/断电部署、真实模型质量和切换/回退未验收。
+M4 H/I 不能只凭生产 kind 的本地真实中间件测试勾选，最终记录见 v2_plan.md。

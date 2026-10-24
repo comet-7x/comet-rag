@@ -1,7 +1,7 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：独立入库/激活/GC 与读侧切片已验收，生产完整接线未完成（2026-10-24 校准）
-> 规格：`tasks/m4_spec.md` v1.9
+> 状态：可选生产 revision 接线已验收，实际迁移/部署与完整出口未完成（2026-10-24 校准）
+> 规格：`tasks/m4_spec.md` v1.10
 > 计划：`tasks/m4_plan.md`、`tasks/m4_t6_design.md`；下一批见 [V2 后续计划](v2_next_steps.md)
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 起始开发分支：`feature/m4-hierarchical-indexing`（历史记录）
@@ -150,18 +150,18 @@ separator 配置不可被原地修改。
 - [x] 独立激活阶段复用 Store 原语：事务失败保留旧版本、提交响应丢失幂等恢复、旧任务 superseded
 - [x] 独立 GC：superseded 登记、有界候选扫描、零残留核验、部分失败重试及 active 保护
 - [x] 独立 Task 发布意图/结果与 GC 阶段持久化，complete/purged 精确补偿重放
-- [ ] 父块、子向量、激活与旧版本回收按规格排序
-- [ ] 按持久化阶段恢复；发布前失败保留旧 active，激活提交后的错误不回滚 active
-- [ ] 重试幂等，不产生重复可见记录
-- [ ] Task progress/context 保持有界并支持断点续跑
+- [x] 父块、子向量、激活与旧版本回收按规格排序（opt-in 新命名空间路径）
+- [x] 按持久化阶段恢复；发布前失败保留旧 active，激活提交后的错误不回滚 active（opt-in）
+- [x] 重试幂等，不产生重复可见记录（opt-in）
+- [x] Task progress/context 保持有界并支持断点续跑（opt-in）
 
 2026-10-03 第二切片完成有界移交与 ready 续跑；原文只在父块和移交数据提交成功后清除。
 IO 分批读取父块、复验完整指纹后才写向量，embedding 返回后仍检查所有权/取消。
 V2 第十五批补齐独立 activation/superseded 恢复切片；Redis worker 验证激活响应丢失
 只重试 activation，PostgreSQL 真事务回滚与独立 Milvus Strong 读验证可见性。
 第十六批补齐独立 GC，第十七批补齐独立 Task 的发布/清理恢复记录并复现迟到写。
-生产 Task/maintenance 全生命周期尚未完成，故完整 context/progress 条目仍未勾选。
-不能把测试 kind 的成功当成生产 ingest 或 Checkpoint H。未发布的 stale ready
+第二十一批已通过新 kind 接入生产生命周期并验证有界恢复，相关条目限定于 opt-in 新命名空间。
+当前测试已使用生产 revision-ingest；仍不能据此宣称实际部署迁移或 H/I 出口完成。未发布的 stale ready
 由显式 collect_superseded 或持久化 cleanup_pending 废弃并清理；登记提交前失败必须重试。
 普通扫描不含 purged，补偿完成也不能证明未来无迟到写。第十八批通过保留 Task 身份
 持续对账，交付独立有界补偿页；游标按 created_at/task_id 持久化，应用删除守卫不被
@@ -178,8 +178,8 @@ handoff 即可回收；独立维护可显式配置由 IO worker 定时触发，�
 - [ ] legacy 退出/迁移与全新存储命名空间验收；空计数不能证明旧 RPC 排干
 
 依据见 [对账设计](v2_reconciliation_design.md) 和 [迁移边界](../docs/revision_migration.md)。
-第二十批已选新命名空间重建；本批的诊断/准入与隔离测试不等于实际资料迁移、生产
-runner 接线或全部署切换/回退，不能删除恢复身份后再声称可自动回收。
+第二十批已选新命名空间重建；诊断/准入与隔离测试不等于实际资料迁移或全部署切换/回退。
+第二十一批已补齐 opt-in 生产 runner；不能删除恢复身份后再声称可自动回收。
 
 ### M4-T9 — 父块回填与检索兼容（M）
 
@@ -195,7 +195,7 @@ runner 接线或全部署切换/回退，不能删除恢复身份后再声称可
 - [x] Milvus dense/BM25 请求显式指定配置的一致性级别；count 与删除选择固定 Strong
 - [x] 真实 Milvus 双客户端 Strong 验收与 PostgreSQL 指针联合故障恢复
 - [x] 配置化装配 DocumentStore、默认关闭的读开关与资源配对校验
-- [x] 独立旧 revision GC（生产 maintenance 接线仍待完成）
+- [x] 独立及可选生产路径旧 revision GC / 持续对账接线
 
 2026-10-03 读侧支持 `retrieval.revision_aware` 显式配置或注入 DocumentStore，默认
 不创建资源；CLI 已接线但生产配置未开启，新写入仍关闭。父块 key 必须与 child 的 KB/source/revision
