@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -53,6 +54,7 @@ def _submit(tasks: TaskService) -> asyncio.Task[IngestAccepted]:
             tasks,
             SourcePolicy(),
             None,
+            SimpleNamespace(ingest_kind="ingest", revision_ingest_binding=None),  # type: ignore[arg-type]
         )
     )
 

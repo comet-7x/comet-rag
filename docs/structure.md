@@ -141,7 +141,8 @@ flowchart TD
 
 ## 入库流程
 
-下图是当前生产 IngestRunner 的三个阶段；后文的独立 revision 切片尚未接入这条路径。
+下图是默认 legacy IngestRunner 的三个阶段。第二十一批增加显式启用的新命名空间
+revision runner，复用共同提取阶段，生产路径由组合根选择，见后文。
 
 ```mermaid
 flowchart TD
@@ -184,10 +185,26 @@ flowchart TD
 库 `Pipeline` 与服务 `IngestRunner` 共用同一个 `ChunkingService` 和
 materializer，因此同源文档的 chunk ID、顺序和基础 metadata 不会因入口不同而漂移。
 
-## 独立 revision 切片（尚未生产接线）
+## 可选生产 revision 路径与独立协议
 
-下图表示已有组件的合法调用顺序，不表示 IngestRunner 已自动执行激活或 maintenance
-已自动执行 GC。独立 Task 阶段已保存发布/清理意图；旧写排干和补偿调度仍见后续计划。
+启用 revision_ingestion 后，POST /ingest 选择 revision-ingest，只注册新 writer；默认
+legacy 链路不改变。新路径如下，持久化阶段与同一套 StagePipeline 完成跨道/重试：
+
+```mermaid
+flowchart TD
+    A["POST /ingest：KB 范围与配置绑定"] --> E["extracting：共享 DocumentExtraction"]
+    E --> P["preparing · CPU：IndexPlanner + Task prepare"]
+    P --> H["父块与 handoff 确认后释放原文"]
+    H -->|"只传 task_id，indexing 续跑"| I["indexing · IO：子向量、核验、ready"]
+    I --> V["activating：持久化意图 + 原子激活"]
+    V --> G["cleanup：自身 superseded 或新 active 的前任"]
+    G --> D["Done：revision_id / superseded"]
+    V -->|"丢响应"| V
+    G -->|"失败重试"| G
+```
+
+下面仍是可独立使用的组件协议。只有明确配置的 IO worker 才自动调度持续对账，
+不把独立阶段能力等同于实际用户数据迁移或生产流量已切换。
 
 ```mermaid
 flowchart TD
@@ -208,7 +225,7 @@ flowchart TD
     abandon --> delete["按 KB/source/revision 删除向量并确认零残留"]
     delete --> purge["purge：清父块，保留 purged 墓碑"]
     purge --> complete["Task context：cleanup_complete，保留身份"]
-    complete -->|"显式补偿重放，尚无自动调度"| collect
+    complete -->|"持续对账或显式补偿重放"| collect
 ```
 
 向量删除、计数或父块事务失败会保留重试入口；登记提交前失败的 ready 不在候选列表，
@@ -218,7 +235,8 @@ complete 不证明远端旧 RPC 已排干，普通 sweep 也不会扫描 purged�
 第十八批增加有界 RevisionReconciler 和任务保留守卫；第十九批在父块写入前先持久化
 准备意图，取消版本可在没有完整 handoff 时精确回收。独立维护默认关闭，显式配置后
 仅 IO worker 通过原生 cron 每次触发一页；源任务不进入新队列，维护游标也不参与业务
-PENDING 补投。生产 IngestRunner 未切换，历史缺载荷、legacy 命名空间/迁移及整体验收
+PENDING 补投。默认 legacy IngestRunner 不变；新路径已可显式装配，历史缺载荷、
+实际 legacy 迁移和全环境切换及整体验收
 仍在门禁内，见 [对账设计](../tasks/v2_reconciliation_design.md)。
 
 ## 检索流程
@@ -326,5 +344,5 @@ hybrid 遇到判活、schema 或参数等不可降级错误，会取消并排干
 
 
 第二十批增加 API 入库准入暂停（不停止已受理任务）和历史终态缺载荷的
-missing_payload 分类。生产入库仍为上述三个阶段；选择新命名空间重建后核验切换，
-具体前置、资料证据与尚待接线范围见 [迁移边界](revision_migration.md)。
+missing_payload 分类。第二十一批另增 opt-in 五阶段路径，默认 legacy 仍为三个阶段。
+新命名空间重建与切换的前置、资料证据及部署范围见 [迁移边界](revision_migration.md)。

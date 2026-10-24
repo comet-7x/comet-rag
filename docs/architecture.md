@@ -174,9 +174,22 @@ abandon（拒绝 active），再按 KB/source/revision 删除向量并核验剩�
 并保留 purged 墓碑。删除、计数或父块事务失败保留候选，重试删除零行也算成功。
 `sweep(limit=32)` 单次只处理一批 retired/abandoned；单项失败记录并继续，取消继续传播。
 登记提交前失败的 ready 不在扫描队列里，调用方必须重试登记。独立 Task 阶段已持久化
-发布结果和 GC 意图。独立对账可显式配置由 IO worker 定时触发，生产
-`IngestRunner` 仍未切换；旧数据/写入迁移仍需验收。读侧可显式配置或注入
+发布结果和 GC 意图。独立对账可显式配置由 IO worker 定时触发；第二十一批
+新增 opt-in RevisionIngestRunner，默认 legacy IngestRunner 不变，旧数据/写入迁移仍需验收。读侧可显式配置或注入
 DocumentStore，默认关闭。M4 的完整完成标准见 `tasks/m4_todo.md`，不能由切片通过推定。
+
+### 显式生产 revision runner
+
+组合根按 revision_ingestion 选择唯一 writer；新模式只注册 revision-ingest，要求判活读、
+持久化维护和新 KB 清单。API、消费与手动 retry 复验配置摘要/KB 范围，队列仍只有 task_id。
+DocumentExtraction 为两条链路共享取源阶段，StagePipeline 管 CPU→IO 移交；新 runner
+只编排准备、向量、激活、清理，不重写 Store 事务。完整配置与部署边界见
+[迁移说明](revision_migration.md#生产-revision-runner-配置)。
+
+新 active cleanup 从 manifest.replaces_revision_id 得到前任的可靠身份，精确清理失败
+从 cleanup 重试。superseded 清理自身后正常结束。发布后人工 from_scratch 也不重新
+取源/embedding；无效载荷失败保留，不能由重新提取掩盖。任务失败不等于激活未提交。
+writer、恢复和对账共享配置预算，提取/身份写入也受整份 context CAS 限制。
 
 ### revision 任务恢复协议
 

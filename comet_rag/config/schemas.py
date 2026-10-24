@@ -599,6 +599,26 @@ class RevisionReconciliationConfig(BaseModel):
         return self
 
 
+class RevisionIngestionConfig(BaseModel):
+    """新命名空间的显式写入选择；KB 清单不能代替部署方的旧写隔离证明。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=False, strict=True)
+    kb_ids: list[str] = Field(default_factory=list, max_length=32)
+    parent_chunk_size: int | None = Field(default=8000, gt=0, strict=True)
+
+    @model_validator(mode="after")
+    def _scope(self) -> Self:
+        if any(not kb.strip() or len(kb) > 128 for kb in self.kb_ids):
+            raise ValueError("revision 入库 KB 必须是非空且最多 128 字符的标识")
+        if len(set(self.kb_ids)) != len(self.kb_ids):
+            raise ValueError("revision 入库 KB 清单不能重复")
+        if self.enabled and not self.kb_ids:
+            raise ValueError("revision 入库启用时必须明确新命名空间的 KB 清单")
+        return self
+
+
 class RetrievalConfig(BaseModel):
     """检索预算与实验性 revision 读路径；不控制写入或激活。"""
 
@@ -637,9 +657,18 @@ class APPConfig(BaseModel):
     revision_reconciliation: RevisionReconciliationConfig = Field(
         default_factory=RevisionReconciliationConfig
     )
+    revision_ingestion: RevisionIngestionConfig = Field(
+        default_factory=RevisionIngestionConfig
+    )
 
     @model_validator(mode="after")
     def _revision_storage_is_shared(self) -> Self:
+        if self.revision_ingestion.enabled and (
+            not self.retrieval.revision_aware
+            or not self.revision_reconciliation.enabled
+            or self.revision_reconciliation.task_kind != "revision-ingest"
+        ):
+            raise ValueError("revision 入库需要配套判活读取及 revision-ingest 持续对账")
         if self.revision_reconciliation.enabled and (
             self.backends.task_executor is not Backend.ARQ
             or self.backends.task_store is not Backend.POSTGRES

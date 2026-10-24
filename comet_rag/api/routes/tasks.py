@@ -7,7 +7,11 @@ from typing import Annotated
 from fastapi import APIRouter, Query, status
 
 from ...services.ingestion import INGEST_KIND
-from ...tasks import TaskStatus
+from ...services.revision_ingestion import (
+    REVISION_INGEST_KIND,
+    validate_revision_request,
+)
+from ...tasks import TaskBusy, TaskStatus
 from ..deps import ContextDep, TaskServiceDep, ensure_ingest_accepting
 from ..schemas.task import TaskListResponse, TaskView
 
@@ -62,7 +66,20 @@ async def retry_task(
     from_scratch: FromScratchQuery = False,
 ) -> TaskView:
     original = await tasks.store.require(task_id)
-    if original.kind == INGEST_KIND:
+    if original.kind in (INGEST_KIND, REVISION_INGEST_KIND):
         ensure_ingest_accepting(ctx)
+        if original.kind != ctx.ingest_kind:
+            raise TaskBusy("当前部署不接受另一种入库模式的重试")
+        if original.kind == REVISION_INGEST_KIND:
+            if ctx.revision_ingest_binding is None:
+                raise TaskBusy("revision 入库未配置")
+            try:
+                validate_revision_request(
+                    original.request,
+                    binding=ctx.revision_ingest_binding,
+                    kb_ids=ctx.revision_ingest_kb_ids,
+                )
+            except ValueError as exc:
+                raise TaskBusy(str(exc)) from exc
     task = await tasks.retry(task_id, from_scratch=from_scratch)
     return task.public_view()

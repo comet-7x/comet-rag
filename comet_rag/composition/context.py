@@ -13,19 +13,30 @@ from comet_rag.composition.resources import (
     run_cleanup,
     wait_for_cleanup,
 )
-from comet_rag.engines.pipelines import AsyncHookRegistry
+from comet_rag.config.schemas import RevisionIngestionConfig
+from comet_rag.engines.chunkers import RecursiveChunker
+from comet_rag.engines.indexing import HierarchyBuilder
+from comet_rag.engines.pipelines import AsyncHookRegistry, PipelineConfig
 from comet_rag.infrastructure.sources import AsyncAutoLoader
 from comet_rag.ports import AsyncEmbeddingPort, AsyncRerankerPort, AsyncVectorStore
 from comet_rag.ports.document_store import DocumentStore
 from comet_rag.ports.knowledge_base import KnowledgeBaseRepository
+from comet_rag.services.indexing import RevisionStager
 from comet_rag.services.ingestion import (
     DEFAULT_MAX_CHUNK_CONTEXT_BYTES,
     INGEST_KIND,
+    DocumentExtraction,
     IngestRunner,
     register_ingest_runner,
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
+from comet_rag.services.revision_context import RevisionTaskStages
+from comet_rag.services.revision_gc import RevisionGarbageCollector
+from comet_rag.services.revision_ingestion import (
+    REVISION_INGEST_KIND,
+    RevisionIngestRunner,
+)
 from comet_rag.services.revision_maintenance import RevisionMaintenance
 from comet_rag.tasks import TaskExecutor, TaskService, TaskStore
 from comet_rag.tasks.runner import RunnerRegistry
@@ -54,6 +65,9 @@ class Context:
     revision_maintenance: RevisionMaintenance | None = None
     #: API 准入暂停不撤销已受理任务；执行器继续消费以便排干。
     accept_new_ingest_tasks: bool = True
+    ingest_kind: str = INGEST_KIND
+    revision_ingest_binding: str | None = None
+    revision_ingest_kb_ids: frozenset[str] = frozenset()
     #: 对模型服务的进程级并发闸门。放进 Context 是为了让 /admin/health
     #: 能读到它的实时统计 —— 过载时最先想看的就是这几个数。
     model_gate: Any = None
@@ -109,7 +123,12 @@ class Context:
             self._extra_closers.clear()
 
 
-def wire_runners(context: Context, *, ingest_config: Any = None) -> None:
+def wire_runners(
+    context: Context,
+    *,
+    ingest_config: Any = None,
+    revision_config: RevisionIngestionConfig | None = None,
+) -> None:
     """把业务 runner 绑到任务框架上。
 
     单独成函数而非塞进 `build_context`：worker 进程也要调它（它需要 runner，
@@ -125,6 +144,57 @@ def wire_runners(context: Context, *, ingest_config: Any = None) -> None:
         )
         context.ingest_loader = loader
         context._extra_closers.append(loader)
+    if revision_config is not None and revision_config.enabled:
+        documents = context.document_store
+        binding = context.revision_ingest_binding
+        if documents is None or binding is None:
+            raise ValueError("revision 入库缺少绑定资源")
+        pipeline = ingest_config or PipelineConfig()
+        hierarchy = (
+            HierarchyBuilder(
+                RecursiveChunker(revision_config.parent_chunk_size, 0),
+                RecursiveChunker(pipeline.chunk_size, pipeline.chunk_overlap),
+            )
+            if revision_config.parent_chunk_size is not None
+            else None
+        )
+        revision_runner = RevisionIngestRunner(
+            extraction=DocumentExtraction(
+                loader=loader,
+                config=pipeline,
+                hooks=context.pipeline_hooks,
+                max_extracted_text_bytes_by_type=context.extracted_text_limits,
+                max_context_bytes=context.max_chunk_context_bytes,
+            ),
+            stages=RevisionTaskStages(
+                RevisionStager(
+                    document_store=documents,
+                    vector_store=context.vector_store,
+                    embedding_model=context.embedding_model,
+                    embed_window=pipeline.embed_batch_size,
+                    max_concurrency=pipeline.max_concurrency,
+                ),
+                document_store=documents,
+                garbage_collector=RevisionGarbageCollector(
+                    document_store=documents, vector_store=context.vector_store
+                ),
+                max_context_bytes=context.max_chunk_context_bytes,
+            ),
+            knowledge_base=context.knowledge_base,
+            config=pipeline,
+            hooks=context.pipeline_hooks,
+            binding=binding,
+            kb_ids=revision_config.kb_ids,
+            hierarchy=hierarchy,
+            max_context_bytes=context.max_chunk_context_bytes,
+        )
+        context.runners.register(REVISION_INGEST_KIND)(revision_runner)
+        context._hook_cleanups.append(
+            lambda: context.runners.unregister(
+                REVISION_INGEST_KIND, expected=revision_runner
+            )
+        )
+        return
     runner = IngestRunner(
         embedding_model=context.embedding_model,
         vector_store=context.vector_store,

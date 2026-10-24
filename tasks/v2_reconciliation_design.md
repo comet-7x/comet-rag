@@ -134,3 +134,13 @@ Redis 调度停止等“无人执行便无日志”的故障，应通过外部�
 新命名空间重建后切换；API 准入暂停只控制新提交和手动 ingest 重试，已受理工作继续
 排干。部署范围、数据证据、命名空间、生产接线与回退门禁统一见
 [历史恢复与迁移边界](../docs/revision_migration.md)。当前生产 runner 仍是 legacy。
+
+
+## 第二十一批：生产 writer 配对
+
+revision_ingestion 明确开启后，组合根注册 revision-ingest 并要求相同来源的维护和
+revision-aware 读取；默认 legacy 路径不变。新 active 的 cleanup 同步精确回收 manifest
+记录的前任，失败续跑 cleanup；持续对账仍按旧源 Task 身份重访，不能据一次 GC 完成
+删除旧意图。writer/恢复/对账共用配置的源 context 预算，游标仍是独立 4 KiB。
+新路径已接线，实际用户资料迁移和全环境切换/回退仍未验收，详见
+[生产配置](../docs/revision_migration.md#生产-revision-runner-配置)。

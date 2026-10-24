@@ -140,7 +140,7 @@ comet-rag config --config /etc/comet-rag/prod.yaml   # 打印生效配置（密�
 ## 暂停入库准入
 
 维护/迁移时设置 `ingest_policy.accept_new_tasks: false` 并部署到所有 API 实例。
-新入库与手动 ingest 重试返回 503，已受理任务继续执行；状态可查询
+新入库与两种 ingest kind 的手动重试返回 503，已受理任务继续执行；状态可查询
 `/admin/limits.accept_new_ingest_tasks`。它不阻止旧 API、库调用、自定义生产者或在途请求，
 也不取消自动重试，不是远端写入排干证明。恢复设为 true 后重新部署。
 新命名空间、历史缺载荷处置与生产切换范围见 [迁移说明](revision_migration.md)。
@@ -319,7 +319,8 @@ retrieval:
 DocumentStore，Milvus 配 PostgreSQL DocumentStore 和 Strong。Milvus 模式要求
 `backends.task_store=postgres`、SQL/Milvus 连接配置，并先应用三表迁移。
 候选预算必须是 1～2048 的整数，读开关须为布尔值；拼错字段或未实现的写开关会报错。
-此配置**不启用 revision 写入或激活**，生产配置仍应保持关闭直到完整读写验收。
+此配置**单独不启用 revision 写入或激活**。第二十一批的新命名空间写入需要下文配套配置，
+现有生产配置仍不默认开启。
 
 仍可向 `await build_context(..., document_store=...)` 显式注入资源；这也是显式启用读侧。
 启动前拒绝持久化资源错配，以及自行注入的非 Strong AsyncMilvusStore。组合根拥有自动创建
@@ -329,8 +330,8 @@ DocumentStore，Milvus 配 PostgreSQL DocumentStore 和 Strong。Milvus 模式�
 retired 和被新版本替代的 legacy 均不可见。旧候选挤满上限时允许少返回，诊断为
 `revision_candidate_cap`。判活存储故障或结果不完整时返回安全 503，**不会降级为返回
 全部版本**。未配置 DocumentStore 的旧链路遇到 revision candidate 也拒绝查询。
-独立激活/GC 切片已验收，但生产入库切换、legacy 迁移及完整 H/I 验收
-尚未完成，不得据独立切片启用生产新写入。GC 默认每轮最多 32 个 retired/abandoned。
+独立激活/GC 和 opt-in 新命名空间生产接线已验收，但实际 legacy 迁移、目标部署切换
+及完整 H/I 尚未完成，默认配置仍不启用新写入。GC 默认每轮最多 32 个 retired/abandoned。
 独立 Task 阶段已持久化发布/清理意图，superseded 登记前失败从
 cleanup_pending 重试，不能仅依赖候选扫描。purged 后的迟到写入需要保留身份并显式
 重放精确清理；complete 只表示上次核验为空。生产开启前还需落实意图保留、分页扫描
@@ -356,8 +357,8 @@ revision_reconciliation:
   timeout_seconds: 30.0
 ```
 
-开启前，task_kind 必须是已经采用 RevisionTaskStages 的实际任务 kind。仓库生产
-`ingest` 仍是旧路径，没有可直接套用的新生产 kind；配置对账不会完成这部分迁移。
+开启前，task_kind 必须是实际采用 RevisionTaskStages 的来源 kind；新生产路径为
+`revision-ingest`，默认 `ingest` 仍是旧路径。单独配置维护不会启用新 writer。
 API/worker 必须共享相同配置与存储，且至少运行一个 IO worker。
 启用前先升级所有参与 PENDING 补投的 worker；旧版本不认识维护 kind 的排除规则。
 回退到旧版本前也需先停用并排干维护，保留游标并明确其迁移处置，不能假设跨版本混跑安全。
@@ -379,6 +380,15 @@ serve 不加载租约维护，也不启动后台循环。页上限 32 项/30 秒
 `revision_reconciliation_recovery_required` 为已确认页中的缺载荷发出错误信号。最近页会被
 覆盖，旧 result 可能缺少新字段；日志/处置清单需持久采集，不把后一页为空当作已解决。
 项目提供告警信号，不部署通知中间件；无人执行时需通过外部轮询发现无进展。
+
+### 新命名空间生产入库
+
+第二十一批提供默认关闭的 revision_ingestion。启用后 POST /ingest 选择独立的
+revision-ingest kind，注册五阶段 runner；必须配套 ARQ/PostgreSQL/Milvus、判活读侧、
+相同来源的维护及新 KB 清单。同一 TaskStore 中发现 legacy ingest 任务会拒绝启动。
+完整配置、绑定/预算、父子块与失败语义见
+[生产 revision 配置](revision_migration.md#生产-revision-runner-配置)。
+`/admin/limits.ingest_kind` 可确认当前进程选择，不能据此证明全部署一致或资料已迁移。
 
 ### Milvus schema 兼容
 

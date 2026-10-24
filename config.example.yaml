@@ -107,10 +107,19 @@ retrieval:
 # 独立维护：默认关闭，不开启 revision 读写；仅 ARQ/PostgreSQL/Milvus 组合支持自动调度。
 revision_reconciliation:
   enabled: false
-  # 开启前必须填入已采用 RevisionTaskStages 的真实任务 kind，不能把示例当作已有 runner。
+  # 新生产路径使用 revision-ingest；其他独立阶段必须填写实际来源 kind。
   task_kind: null
   page_size: 8
   timeout_seconds: 30.0
+
+# 新命名空间生产写：默认关闭。启用需 ARQ/PostgreSQL/Milvus、revision-aware 读、
+# 上方维护 enabled=true/task_kind=revision-ingest，以及已核验隔离的新 KB 清单。
+revision_ingestion:
+  enabled: false
+  kb_ids: []
+  # null 使用现有 ChunkingService 生成 flat revision；非空使用 HierarchyBuilder。
+  # 子块沿用 PipelineConfig（CLI 默认 2000/200），父块 overlap 固定为 0。
+  parent_chunk_size: 8000
 
 limits:
   # 本进程对模型服务的**总**并发上限。注意不是每个任务的，是整个进程的：

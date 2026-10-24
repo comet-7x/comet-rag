@@ -16,6 +16,7 @@ from comet_rag.composition.resources import (
     run_cleanup,
     wait_for_cleanup,
 )
+from comet_rag.composition.revision_config import revision_binding
 from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.core.concurrency import Gate, build_gate
 from comet_rag.core.degradation import DegradationController, DegradationSettings
@@ -51,9 +52,11 @@ from comet_rag.ports.document_store import DocumentStore
 from comet_rag.ports.knowledge_base import (
     KnowledgeBaseRepository,
 )
+from comet_rag.services.ingestion import INGEST_KIND
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
 from comet_rag.services.revision_gc import RevisionGarbageCollector
+from comet_rag.services.revision_ingestion import REVISION_INGEST_KIND
 from comet_rag.services.revision_maintenance import RevisionMaintenance
 from comet_rag.services.revision_reconciliation import (
     RevisionReconciler,
@@ -538,6 +541,7 @@ async def build_context(
     ):
         raise ValueError("自动对账必须由组合根创建配套持久化存储，不接受不透明存储注入")
     resolved_pipeline = resolve_pipeline_config(config.limits, pipeline_config)
+    writing_binding = revision_binding(config, resolved_pipeline)
     validate_vision_model(resolved_pipeline.docx.vision_model, asynchronous=True)
     if task_executor is not None:
         runners = _executor_runners(task_executor, runners)
@@ -663,6 +667,12 @@ async def build_context(
             rollback.push_async_callback(close_resource, vector_store)
         if task_store is None:
             task_store = build_task_store(config, database)
+        if writing_binding is not None and await task_store.list_tasks(
+            kind=INGEST_KIND, limit=1
+        ):
+            raise ValueError(
+                "revision 生产写要求独立任务命名空间，发现 legacy ingest 记录"
+            )
         if task_executor is None:
             task_executor = build_task_executor(
                 config, task_store, lane=executor_lane, runners=runners
@@ -726,6 +736,11 @@ async def build_context(
             knowledge_base=knowledge_base,
             embedding_dim=embedding_settings.dim,
             accept_new_ingest_tasks=config.ingest_policy.accept_new_tasks,
+            ingest_kind=REVISION_INGEST_KIND
+            if writing_binding is not None
+            else INGEST_KIND,
+            revision_ingest_binding=writing_binding,
+            revision_ingest_kb_ids=frozenset(config.revision_ingestion.kb_ids),
             pipeline_hooks=pipeline_hooks,
             runners=runners,
             database=database,
@@ -769,6 +784,7 @@ async def build_context(
                     task_kind=source_kind,
                     page_size=config.revision_reconciliation.page_size,
                     timeout_seconds=config.revision_reconciliation.timeout_seconds,
+                    max_context_bytes=config.limits.task_chunk_context_max_bytes,
                 ),
                 task_kind=source_kind,
                 resource_identity=repr(
@@ -784,7 +800,14 @@ async def build_context(
             )
             await maintenance.initialize()
             context.revision_maintenance = maintenance
-        wire_runners(context, ingest_config=resolved_pipeline)
+        if writing_binding is not None:
+            wire_runners(
+                context,
+                ingest_config=resolved_pipeline,
+                revision_config=config.revision_ingestion,
+            )
+        else:
+            wire_runners(context, ingest_config=resolved_pipeline)
 
         logger.info(
             f"资源装配完成 vector_store={config.backends.vector_store} "

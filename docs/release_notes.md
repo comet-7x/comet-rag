@@ -93,7 +93,7 @@ TaskService 新增可选 `pending_kinds` 回调；应用按当前注册的业务
 `accept_new_ingest_tasks`。这是 API 准入控制，不改 TaskService、Store 或执行器契约，
 不能当作远端写入围栏。变更配置需重新构建 Context/部署所有 API 实例。
 
-迁移选择新命名空间重建后切换；本批没有迁移用户数据或接入生产 revision 写入。
+第二十批确定新命名空间重建后切换；后续生产接线见下文，实际用户资料迁移仍待完成。
 证据分类、配置范围与后续验收见 [历史恢复与迁移边界](revision_migration.md)。
 
 ### 共享提取与有界恢复
@@ -101,8 +101,32 @@ TaskService 新增可选 `pending_kinds` 回调；应用按当前注册的业务
 入库的取源/解析/正规化提为 `DocumentExtraction`，旧 IngestRunner 和新路径共用，
 取消后仍排干同步工作再清理临时输入。整份提取 context 在写入前也执行字节预算。
 `get_revision_key` 改为有界 CAS；`load_recovery_draft` 与 RevisionReconciler 新增可选
-预算参数，调用方可显式使用同一份限额。
+预算参数，由组合根将 writer、恢复、维护统一到 `limits.task_chunk_context_max_bytes`。
 默认仍为 32 MiB；没有修改解析内容、DOCX 快照、Store 抽象接口或持久化 schema。
+
+### 可选生产 revision 入库
+
+新增默认关闭的 `revision_ingestion`：显式 KB 清单、可选 parent_chunk_size。
+启用要求 ARQ/PostgreSQL/Milvus、配套 revision-aware 读侧，以及来源 kind 为
+`revision-ingest` 的持续对账。组合根只注册新 writer，不同时注册 legacy ingest；
+发现同一 TaskStore 已有 legacy ingest 记录会拒绝启动。配置与实际新命名空间隔离
+仍由部署方核验，不把空计数当作证明。
+
+POST /ingest 按配置选择 kind；新模式保存配置绑定摘要，消费者在 IO 前复验存储、模型、
+Pipeline 设置和 KB 范围。手动重试同样复验，错配返回 409；暂停开关覆盖两种 kind。
+配置绑定不保存凭据，凭据轮换不改变身份；同一批 pending 任务需要保持计划配置一致。
+/admin/limits 新增 ingest_kind。API 不接受客户端控制内部绑定值。
+
+新 RevisionIngestRunner 复用 StagePipeline/RevisionTaskStages：CPU extracting/preparing，
+IO indexing/activating/cleanup；只有 ready 不能写成功。激活确认丢失从同一版本恢复，
+持久化发布后即使 from_scratch 也不重新取源/embedding。superseded 清理自己后正常完成。
+active 的 cleanup 现在按 manifest.replaces_revision_id 精确清理前任，失败重试 cleanup；
+这也作用于直接使用 RevisionTaskStages 的调用方。提交后的新 active 保持可见，Task
+仍可能因后续 GC 失败处于重试/失败状态，不能据此回滚 active。
+
+网络/超时/限流继续使用现有瞬时错误分类；其他错误落 FAILED 后可人工重试，并不保证
+每种 SDK 异常都会自动重试。实际资料迁移、全环境部署切换/回退和完整 H/I 仍待验收。
+配置和边界见 [生产 revision 配置](revision_migration.md#生产-revision-runner-配置)。
 
 ### Milvus 完整性读取（既有行为）
 

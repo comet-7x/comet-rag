@@ -28,6 +28,8 @@ def application(*, accepting=False):
     app.state.ctx = SimpleNamespace(
         task_service=TaskService(store, executor),
         accept_new_ingest_tasks=accepting,
+        ingest_kind="ingest",
+        revision_ingest_binding=None,
         source_policy=policy,
         degradation=None,
     )

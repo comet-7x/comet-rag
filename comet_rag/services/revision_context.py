@@ -550,6 +550,16 @@ class RevisionTaskStages:
         manifest = await self._manifest(ctx, draft, publication)
         if publication.phase is PublicationPhase.ACTIVE:
             if manifest.status is RevisionStatus.ACTIVE:
+                # 激活事务已持久化被替换者；失败从 cleanup 重试，不重新写入或回退 active。
+                if manifest.replaces_revision_id is not None:
+                    await self._gc.collect_inactive(
+                        RevisionKey(
+                            draft.key.kb_id,
+                            draft.key.source_id,
+                            manifest.replaces_revision_id,
+                        ),
+                        checkpoint=ctx.checkpoint,
+                    )
                 return
             if (
                 manifest.status not in (RevisionStatus.RETIRED, RevisionStatus.PURGED)

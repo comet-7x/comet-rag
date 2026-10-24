@@ -429,3 +429,15 @@ uv run coverage report --include="*/comet_rag/tasks/*"     # 96%
 新 KB/集合前缀测试在旧端零计数后实际提交迟到 flat 写，验证新端六种检索组合、active
 和父块隔离；测试共享 PostgreSQL，不冒充完整跨库部署迁移或用户资料迁移。
 反向缺陷在独立副本中注入；本批最终验收和局限见 [V2 记录](../tasks/v2_plan.md)。
+
+
+第二十一批新增 unit/services/test_revision_ingestion.py、unit/test_revision_ingestion_wiring.py
+和 integration/test_revision_ingestion_worker.py。生成 DOCX 经实际 POST /ingest 接受，
+原生 CPU worker 保存父块/handoff 后停止，再由全新 IO Context 从数据库恢复；原文件
+删除后仍可完成。注入 ready/激活响应丢失、superseded、自身/前任 GC 确认丢失，核验
+重试次数和阶段、模型调用数、原 generation、六种检索组合及新 active 不回退。
+
+真实测试采用同一测试进程中的原生 ARQ workers、独立 Context/连接，不声称是真实
+断电/SIGKILL 或跨主机部署演练。模型为确定性替身，PostgreSQL/Redis/Milvus 为真实服务。
+独立代码副本的反向验证覆盖错误绑定、重新取源、提前释放、错误 KB、漏 GC、配置门禁
+和 API 选路；日志及最终全量数字见 [V2 记录](../tasks/v2_plan.md)。
