@@ -7,12 +7,14 @@
 第十九批增加显式 IO cron、独立对账/GC 与 DocumentStore：维护默认关闭，页进度和
 错误可查询/告警；准备意图覆盖移交前取消，生产 ingest 仍未切换。维护箭头不表示
 当前生产 IngestRunner 已经调用 revision 准备/发布阶段，也不表示默认打开定时补偿。
+第二十批标出 API 准入可暂停及缺载荷保留；暂停不停止已受理任务，也不证明远端排干。
+历史载荷处置、新命名空间重建和生产切换门禁见 [迁移边界](../revision_migration.md)。
 详细恢复流程仍见 [架构](../architecture.md) 和 [对账设计](../../tasks/v2_reconciliation_design.md)。
 
 ## 源数据与证据
 
 - [comet-rag.architecture.json](comet-rag.architecture.json) 是可编辑的图源；HTML 是生成产物，不手改。
-- 本图源码证据固定到 `7b1201a7b722cca06c97d2ed59a68c0a432bb6c7`，各节点列出相对路径与行号。
+- 本图源码证据固定到 `9182b756ad3f9c2b45daaab370c33e27ff81ede3`，各节点列出相对路径与行号。
   固定的是被说明的代码提交，不要求等于包含生成图的提交，避免自引用。
 - 当前为 `local-only` 源码模式：保留路径、行号和版本，不假设尚未推送的提交可在 GitHub 打开。
 - 使用 [Archify 3.2.0](https://github.com/tt-a1i/archify/tree/25cf37080fc8b1dbe758a4efc3935b55f3327083)，
