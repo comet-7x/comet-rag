@@ -15,6 +15,27 @@ def new_task_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+@dataclass(frozen=True, slots=True)
+class TaskCursor:
+    """任务倒序总序的排他锚点；不依赖锚点行继续存在。"""
+
+    created_at: datetime
+    task_id: str
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.created_at, datetime)
+            or self.created_at.utcoffset() is None
+        ):
+            raise ValueError("游标时间必须含时区")
+        if (
+            not isinstance(self.task_id, str)
+            or not self.task_id
+            or len(self.task_id) > 64
+        ):
+            raise ValueError("游标 task_id 必须是 1～64 字符的字符串")
+
+
 # 枚举
 class TaskStatus(StrEnum):
     """外部可见状态。

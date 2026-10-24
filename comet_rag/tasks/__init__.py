@@ -4,6 +4,7 @@ from .executor import InProcessExecutor, StoreDrivenExecutor, TaskExecutor
 from .models import (
     StageRecord,
     Task,
+    TaskCursor,
     TaskError,
     TaskEvent,
     TaskStatus,
@@ -44,6 +45,7 @@ __all__ = [
     "StageRecord",
     "StoreDrivenExecutor",
     "Task",
+    "TaskCursor",
     "TaskBusy",
     "TaskCancelled",
     "TaskContext",

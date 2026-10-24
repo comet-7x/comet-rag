@@ -9,7 +9,7 @@ from typing import Any
 
 from comet_rag.core.time import Time
 
-from .models import Task, TaskEvent, TaskStatus
+from .models import Task, TaskCursor, TaskEvent, TaskStatus
 from .store import TaskNotFound, TaskStore, VersionConflict
 
 
@@ -66,8 +66,15 @@ class InMemoryTaskStore(TaskStore):
             self._tasks[task.task_id] = _clone(task)
             return _clone(task)
 
-    async def _remove(self, task_id: str) -> bool:
+    async def _remove(
+        self, task_id: str, *, expected_version: int | None = None
+    ) -> bool:
         async with self._lock:
+            current = self._tasks.get(task_id)
+            if current is None:
+                return False
+            if expected_version is not None and current.version != expected_version:
+                raise VersionConflict(f"任务 {task_id} 删除时版本已变化")
             self._events.pop(task_id, None)
             return self._tasks.pop(task_id, None) is not None
 
@@ -80,6 +87,7 @@ class InMemoryTaskStore(TaskStore):
         idempotency_key: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        before: TaskCursor | None = None,
     ) -> list[Task]:
         async with self._lock:
             rows = [
@@ -89,9 +97,14 @@ class InMemoryTaskStore(TaskStore):
                 and (status is None or t.status is status)
                 and (owner_id is None or t.owner_id == owner_id)
                 and (idempotency_key is None or t.idempotency_key == idempotency_key)
+                and (
+                    before is None
+                    or (t.created_at, t.task_id) < (before.created_at, before.task_id)
+                )
             ]
-        rows.sort(key=lambda t: t.created_at, reverse=True)
-        return [_clone(t) for t in rows[offset : offset + limit]]
+            rows.sort(key=lambda t: (t.created_at, t.task_id), reverse=True)
+            # 快照也在锁内形成，不能在释放锁后复制期间变化的 Task。
+            return [_clone(t) for t in rows[offset : offset + limit]]
 
     async def _append_event(
         self,

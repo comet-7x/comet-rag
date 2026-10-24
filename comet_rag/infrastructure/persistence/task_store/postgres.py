@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, select, text, tuple_, update
 from sqlalchemy.exc import IntegrityError
 
 from comet_rag.core.time import Time
 from comet_rag.infrastructure.persistence.sql.models import TaskEventRow, TaskRow
 from comet_rag.infrastructure.persistence.sql.session import Database, affected_rows
-from comet_rag.tasks.models import Task, TaskEvent, TaskStatus
+from comet_rag.tasks.models import Task, TaskCursor, TaskEvent, TaskStatus
 from comet_rag.tasks.store import TaskNotFound, TaskStore, VersionConflict
 
 #: 这些字段在 Task 上是复杂结构，落库走 JSON 列。
@@ -127,12 +127,25 @@ class PostgresTaskStore(TaskStore):
         task.version = next_version
         return await self.require(task.task_id)
 
-    async def _remove(self, task_id: str) -> bool:
+    async def _remove(
+        self, task_id: str, *, expected_version: int | None = None
+    ) -> bool:
         async with self._db.transaction() as session:
-            result = await session.execute(
-                delete(TaskRow).where(TaskRow.task_id == task_id)
-            )
-            return bool(affected_rows(result))
+            stmt = delete(TaskRow).where(TaskRow.task_id == task_id)
+            if expected_version is not None:
+                stmt = stmt.where(TaskRow.version == expected_version)
+            result = await session.execute(stmt)
+            if affected_rows(result):
+                return True
+            if (
+                expected_version is not None
+                and await session.scalar(
+                    select(TaskRow.task_id).where(TaskRow.task_id == task_id)
+                )
+                is not None
+            ):
+                raise VersionConflict(f"任务 {task_id} 删除时版本已变化")
+            return False
 
     async def _query(
         self,
@@ -143,8 +156,16 @@ class PostgresTaskStore(TaskStore):
         idempotency_key: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        before: TaskCursor | None = None,
     ) -> list[Task]:
-        stmt = select(TaskRow).order_by(TaskRow.created_at.desc())
+        # 与内存实现保持同一字符串总序，不依赖数据库 locale 的大小写/重音排序。
+        task_id_order = TaskRow.task_id.collate("C")
+        stmt = select(TaskRow).order_by(TaskRow.created_at.desc(), task_id_order.desc())
+        if before is not None:
+            stmt = stmt.where(
+                tuple_(TaskRow.created_at, task_id_order)
+                < (before.created_at, before.task_id)
+            )
         if kind is not None:
             stmt = stmt.where(TaskRow.kind == kind)
         if status is not None:

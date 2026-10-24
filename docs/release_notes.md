@@ -45,6 +45,18 @@ activating/active/cleanup_pending/cleanup_complete，complete 重放仍会删除
 从原 ready/active manifest 恢复。生产接线仍需旧写排干/对账和意图保留策略；本服务
 不替代任务租约或跨存储事务。协议与边界见 [架构](architecture.md#revision-任务恢复协议)。
 
+### TaskStore 游标与受保护删除
+
+第十八批增加 `TaskCursor` 和 `list_tasks_before(kind=..., before=..., limit=...)`。
+排序为 created_at/task_id 倒序，before 排他；原 offset 接口保留供普通查询，不用于持续
+对账。自定义 TaskStore 实现需支持 `_query(..., before=...)`，并在
+`_remove(task_id, expected_version=...)` 原子比较版本，不符抛 VersionConflict。
+public delete 新增 guard/expected_version；force 不绕过 guard。未显式传版本时冲突
+重新读取并复验，显式版本冲突原样传播。没有降级成先查后删的兼容兜底。
+
+TaskService 新增可选 delete_guard，调用方可注入基于版本化字段的纯保留规则；
+force 不绕过该规则，已知保留项在请求取消前即拒绝。
+
 ### Milvus 完整性读取
 
 Milvus count 与删除 ID 选择固定使用 Strong，dense/keyword 检索仍遵循配置。

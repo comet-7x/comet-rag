@@ -14,6 +14,7 @@ from .models import (
     FIELD_NAMES,
     StageRecord,
     Task,
+    TaskCursor,
     TaskError,
     TaskEvent,
     TaskStatus,
@@ -74,7 +75,10 @@ class TaskStore(ABC):
         """
 
     @abstractmethod
-    async def _remove(self, task_id: str) -> bool: ...
+    async def _remove(
+        self, task_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        """原子按版本删除；版本不符抛 VersionConflict，不存在返回 False。"""
 
     @abstractmethod
     async def _query(
@@ -86,6 +90,7 @@ class TaskStore(ABC):
         idempotency_key: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        before: TaskCursor | None = None,
     ) -> list[Task]: ...
 
     @abstractmethod
@@ -150,6 +155,24 @@ class TaskStore(ABC):
         return await self._query(
             kind=kind, status=status, owner_id=owner_id, limit=limit, offset=offset
         )
+
+    async def list_tasks_before(
+        self,
+        *,
+        kind: str | None = None,
+        before: TaskCursor | None = None,
+        limit: int = 50,
+    ) -> list[Task]:
+        """按 (created_at, task_id) 倒序读取排他游标之后的一页。
+
+        新到任务不会把旧页向后挤；已越过的新增/状态变化在下一轮从头复验。
+        这不是数据库快照，不保证本轮包含并发回填到已读区间的记录。
+        """
+        if type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError("分页 limit 必须为 1～200 的整数")
+        if before is not None and not isinstance(before, TaskCursor):
+            raise TypeError("before 必须是 TaskCursor")
+        return await self._query(kind=kind, before=before, limit=limit)
 
     async def _cas(
         self,
@@ -432,20 +455,40 @@ class TaskStore(ABC):
                     candidates.append(task)
         return candidates
 
-    async def delete(self, task_id: str, *, force: bool = False) -> bool:
+    async def delete(
+        self,
+        task_id: str,
+        *,
+        force: bool = False,
+        expected_version: int | None = None,
+        guard: Callable[[Task], None] | None = None,
+    ) -> bool:
         """删除。原稿对 RUNNING 任务的行为是未定义的，这里显式规定：
 
         默认拒绝删在跑的任务（应先 `TaskService.cancel()` 等它停）；
         `force=True` 才允许硬删，此时执行器那边的协程会在下一个检查点自然消亡。
+        guard 是基于版本化字段的纯保留规则，force 不绕过它。删除与版本比较原子执行；
+        未显式传版本时冲突重读并复验，传了版本则把冲突交给调用方。
         """
-        task = await self._load(task_id)
-        if task is None:
-            return False
-        if task.status.is_active and not force:
-            raise TaskBusy(
-                f"任务 {task_id} 正在执行（{task.status.value}），请先取消或 force=True"
-            )
-        return await self._remove(task_id)
+        conflict: VersionConflict | None = None
+        for _ in range(_CAS_RETRIES):
+            task = await self._load(task_id)
+            if task is None:
+                return False
+            self._check_version(task, expected_version)
+            if guard is not None:
+                guard(task)
+            if task.status.is_active and not force:
+                raise TaskBusy(
+                    f"任务 {task_id} 正在执行（{task.status.value}），请先取消或 force=True"
+                )
+            try:
+                return await self._remove(task_id, expected_version=task.version)
+            except VersionConflict as exc:
+                if expected_version is not None:
+                    raise
+                conflict = exc
+        raise conflict  # type: ignore[misc] —— 重试轮次为正，未返回时必有冲突
 
     # 阶段留痕
     async def enter_stage(self, task_id: str, stage: str, **fields: Any) -> Task:

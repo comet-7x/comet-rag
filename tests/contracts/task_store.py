@@ -12,13 +12,13 @@
 CAS 语义、心跳不涨版本、租约回收这些规则散落在模板方法里，
 换实现时最容易在不经意间破坏，而破坏后只在生产偶发。
 
-契约只依赖 `TaskStore` 的公开 API，不碰任何实现细节。
+通过公开 API 观察结果；故障注入可替换抽象原语，不依赖具体后端表或连接。
 """
 
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -28,6 +28,7 @@ from comet_rag.tasks import (
     InvalidTransition,
     Task,
     TaskBusy,
+    TaskCursor,
     TaskError,
     TaskNotFound,
     TaskStatus,
@@ -38,6 +39,127 @@ from comet_rag.tasks.store import TaskLeaseLost
 
 
 class TaskStoreContract:
+    async def test_cursor_total_order_survives_insertions_and_deleted_anchor(
+        self, store: TaskStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = iter(["000000000003", "000000000001", "000000000002", "000000000004"])
+        monkeypatch.setattr("comet_rag.tasks.store.new_task_id", lambda: next(ids))
+        at = datetime(2026, 1, 1, tzinfo=UTC)
+        for _ in range(3):
+            await store.create("cursor-test", created_at=at)
+        rows = await store.list_tasks_before(kind="cursor-test", limit=2)
+        assert [row.task_id for row in rows] == ["000000000003", "000000000002"]
+        cursor = TaskCursor(at, "000000000002")
+        await store.delete("000000000002")
+        await store.create("cursor-test", created_at=at + timedelta(seconds=1))
+        tail = await store.list_tasks_before(kind="cursor-test", before=cursor, limit=2)
+        assert [row.task_id for row in tail] == ["000000000001"]
+        assert (
+            await store.list_tasks_before(
+                kind="cursor-test", before=TaskCursor(at, "000000000001")
+            )
+            == []
+        )
+        head = await store.list_tasks_before(kind="cursor-test", limit=1)
+        assert [row.task_id for row in head] == ["000000000004"]
+
+        text_ids = iter(["00000000000A", "00000000000a", "00000000000é"])
+        monkeypatch.setattr("comet_rag.tasks.store.new_task_id", lambda: next(text_ids))
+        for _ in range(3):
+            await store.create("cursor-text", created_at=at)
+        text_rows = await store.list_tasks_before(kind="cursor-text", limit=3)
+        assert [row.task_id for row in text_rows] == [
+            "00000000000é",
+            "00000000000a",
+            "00000000000A",
+        ]
+
+    @pytest.mark.parametrize("limit", [0, -1, 201, True, 1.5])
+    async def test_cursor_rejects_invalid_page_size(
+        self, store: TaskStore, limit
+    ) -> None:
+        with pytest.raises(ValueError):
+            await store.list_tasks_before(limit=limit)
+
+    async def test_conditional_remove_preserves_task_and_events_on_conflict(
+        self, store: TaskStore
+    ) -> None:
+        original = await store.create("conditional-delete")
+        updated = await store.update(original.task_id, context={"retained": True})
+        with pytest.raises(VersionConflict):
+            await store._remove(original.task_id, expected_version=original.version)
+        assert (await store.require(original.task_id)).context == {"retained": True}
+        assert len(await store.events(original.task_id)) == 1
+        assert await store._remove(original.task_id, expected_version=updated.version)
+        assert await store.get(original.task_id) is None
+
+    @pytest.mark.parametrize("force", [False, True])
+    async def test_delete_rechecks_retention_guard_after_version_race(
+        self, store: TaskStore, monkeypatch: pytest.MonkeyPatch, force: bool
+    ) -> None:
+        task = await store.create("guarded-delete")
+        remove = store._remove
+        injected = False
+        versions: list[int] = []
+
+        async def racing(task_id, *, expected_version=None):
+            nonlocal injected
+            if not injected:
+                injected = True
+                await store.update(task_id, context={"protected": True})
+            return await remove(task_id, expected_version=expected_version)
+
+        def guard(current: Task) -> None:
+            versions.append(current.version)
+            if current.context.get("protected"):
+                raise TaskBusy("retained")
+
+        monkeypatch.setattr(store, "_remove", racing)
+        with pytest.raises(TaskBusy, match="retained"):
+            await store.delete(task.task_id, force=force, guard=guard)
+        assert versions == [0, 1]
+        assert (await store.require(task.task_id)).context == {"protected": True}
+        assert len(await store.events(task.task_id)) == 1
+
+    async def test_delete_rechecks_running_status_after_version_race(
+        self, store: TaskStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        task = await store.create("delete-claim-race")
+        remove = store._remove
+        injected = False
+
+        async def claimed(task_id, *, expected_version=None):
+            nonlocal injected
+            if not injected:
+                injected = True
+                await store.transition(
+                    task_id, TaskStatus.RUNNING, worker_id="winner", attempts=1
+                )
+            return await remove(task_id, expected_version=expected_version)
+
+        monkeypatch.setattr(store, "_remove", claimed)
+        with pytest.raises(TaskBusy):
+            await store.delete(task.task_id)
+        assert (await store.require(task.task_id)).status is TaskStatus.RUNNING
+
+    async def test_explicit_delete_version_conflict_is_not_retried(
+        self, store: TaskStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        task = await store.create("explicit-delete-race")
+        remove = store._remove
+        calls = 0
+
+        async def racing(task_id, *, expected_version=None):
+            nonlocal calls
+            calls += 1
+            await store.update(task_id, context={"new": True})
+            return await remove(task_id, expected_version=expected_version)
+
+        monkeypatch.setattr(store, "_remove", racing)
+        with pytest.raises(VersionConflict):
+            await store.delete(task.task_id, expected_version=task.version)
+        assert calls == 1 and await store.get(task.task_id) is not None
+
     async def test_guarded_transition_rechecks_owner_after_cas_conflict(
         self,
         store: TaskStore,

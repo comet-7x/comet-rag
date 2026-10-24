@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from comet_rag.core.logging import logger
@@ -45,11 +46,13 @@ class TaskService:
         executor: TaskExecutor,
         *,
         max_backlog: int = 0,
+        delete_guard: Callable[[Task], None] | None = None,
     ) -> None:
         self.store = store
         self.executor = executor
         #: 待执行任务上限，0 = 不限（单进程/当库用时的默认）
         self._max_backlog = max_backlog
+        self._delete_guard = delete_guard
 
     # 提交与查询
     async def submit(
@@ -162,6 +165,12 @@ class TaskService:
         return await self.store.require(task_id)
 
     async def delete(self, task_id: str, *, force: bool = False) -> bool:
+        if self._delete_guard is not None:
+            task = await self.store.get(task_id)
+            if task is None:
+                return False
+            # 已知应保留时，不先取消正在执行的任务。最终删除仍须在版本围栏内复验。
+            self._delete_guard(task)
         if force:
             await self.executor.request_cancel(task_id)
-        return await self.store.delete(task_id, force=force)
+        return await self.store.delete(task_id, force=force, guard=self._delete_guard)
