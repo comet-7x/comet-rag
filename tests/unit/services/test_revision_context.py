@@ -375,13 +375,13 @@ async def test_revision_identity_commit_response_loss_reuses_same_key(
     monkeypatch,
 ) -> None:
     ctx = await _context(InMemoryTaskStore())
-    put = ctx.put
+    put = ctx.put_bounded
 
-    async def lose_response(**values):
-        await put(**values)
+    async def lose_response(limit, **values):
+        await put(limit, **values)
         raise ConnectionError("identity response lost")
 
-    monkeypatch.setattr(ctx, "put", lose_response)
+    monkeypatch.setattr(ctx, "put_bounded", lose_response)
     with pytest.raises(ConnectionError):
         await get_revision_key(ctx, kb_id="kb", source_id="source")
     stored = (await ctx.snapshot()).context["revision_key"]

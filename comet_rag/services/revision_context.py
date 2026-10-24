@@ -290,13 +290,17 @@ def load_index_handoff(
 
 
 async def get_revision_key(
-    ctx: TaskContext, *, kb_id: str, source_id: str
+    ctx: TaskContext,
+    *,
+    kb_id: str,
+    source_id: str,
+    max_bytes: int = DEFAULT_MAX_REVISION_CONTEXT_BYTES,
 ) -> RevisionKey:
     """单一任务拥有者生成一次身份；context 提交后响应丢失也必须复用。"""
     task = await ctx.snapshot()
     if "revision_key" not in task.context:
         key = RevisionKey(kb_id, source_id, uuid4().hex)
-        await ctx.put(revision_key=_dump_key(key))
+        await ctx.put_bounded(max_bytes, revision_key=_dump_key(key))
         return key
     key = _task_key(task.context["revision_key"])
     if key.kb_id != kb_id or key.source_id != source_id:
@@ -350,14 +354,15 @@ def load_publication(
 
 
 def load_recovery_draft(
-    context: dict[str, object], task_id: str
+    context: dict[str, object],
+    task_id: str,
+    *,
+    max_bytes: int = DEFAULT_MAX_REVISION_CONTEXT_BYTES,
 ) -> RevisionDraft | None:
     """完整移交优先；移交前仅允许用已验证的准备意图做精确回收。"""
     if context.get("revision_index") is not None:
-        return load_task_handoff(context, task_id).draft
-    _validate_json_payload(
-        context, name="Revision context", max_bytes=DEFAULT_MAX_REVISION_CONTEXT_BYTES
-    )
+        return load_task_handoff(context, task_id, max_bytes=max_bytes).draft
+    _validate_json_payload(context, name="Revision context", max_bytes=max_bytes)
     return load_preparation(context, task_id)
 
 

@@ -478,3 +478,15 @@ async def test_reconciliation_rejects_generation_mismatch_before_vector_io(
     with pytest.raises(RevisionConflict, match="generation"):
         await reconciler(ctx.store, documents, vectors).reconcile(await ctx.snapshot())
     delete.assert_not_awaited()
+
+
+async def test_reconciliation_uses_explicit_source_context_budget():
+    from comet_rag.ports import DocumentResourceLimitExceeded
+
+    ctx, documents, vectors, _ = await completed_environment()
+    before = await ctx.snapshot()
+    with pytest.raises(DocumentResourceLimitExceeded):
+        await reconciler(ctx.store, documents, vectors, max_context_bytes=10).reconcile(
+            before
+        )
+    assert await ctx.snapshot() == before

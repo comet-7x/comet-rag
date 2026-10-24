@@ -518,7 +518,7 @@ async def test_enabled_mineru_propagates_pdf_task_context_limit(
     assert context.max_chunk_context_bytes == 4096
     runner = context.runners.get("ingest")
     assert isinstance(runner, IngestRunner)
-    assert runner._max_extracted_text_bytes_by_type == {"pdf": 1024}  # noqa: SLF001
+    assert runner._extraction._max_extracted_text_bytes_by_type == {"pdf": 1024}  # noqa: SLF001
     assert runner._max_chunk_context_bytes == 4096  # noqa: SLF001
     await context.close()
 

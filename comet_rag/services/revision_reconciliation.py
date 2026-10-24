@@ -15,6 +15,7 @@ from comet_rag.ports.document_store import (
     RevisionStatus,
 )
 from comet_rag.services.revision_context import (
+    DEFAULT_MAX_REVISION_CONTEXT_BYTES,
     PublicationPhase,
     load_publication,
     load_recovery_draft,
@@ -85,6 +86,7 @@ class RevisionReconciler:
         task_kind: str,
         page_size: int = 8,
         timeout_seconds: float = 30,
+        max_context_bytes: int = DEFAULT_MAX_REVISION_CONTEXT_BYTES,
     ) -> None:
         if not isinstance(task_kind, str) or not task_kind:
             raise ValueError("task_kind 必须为非空字符串")
@@ -104,6 +106,9 @@ class RevisionReconciler:
         self._kind = task_kind
         self._page_size = page_size
         self._timeout = timeout_seconds
+        if type(max_context_bytes) is not int or max_context_bytes <= 0:
+            raise ValueError("max_context_bytes 必须为正整数")
+        self._context_limit = max_context_bytes
 
     def _cursor(self, context: dict[str, object]) -> TaskCursor | None:
         if _SCAN_KEY not in context:
@@ -157,7 +162,9 @@ class RevisionReconciler:
             return ReconciliationDisposition.IGNORED
         if not task.status.is_terminal:
             return ReconciliationDisposition.DEFERRED
-        draft = load_recovery_draft(task.context, task.task_id)
+        draft = load_recovery_draft(
+            task.context, task.task_id, max_bytes=self._context_limit
+        )
         if draft is None:
             # 第十九批之前的缺载荷旧记录没有可靠计划身份，仍需迁移/人工恢复。
             logger.warning(

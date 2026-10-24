@@ -96,6 +96,14 @@ TaskService 新增可选 `pending_kinds` 回调；应用按当前注册的业务
 迁移选择新命名空间重建后切换；本批没有迁移用户数据或接入生产 revision 写入。
 证据分类、配置范围与后续验收见 [历史恢复与迁移边界](revision_migration.md)。
 
+### 共享提取与有界恢复
+
+入库的取源/解析/正规化提为 `DocumentExtraction`，旧 IngestRunner 和新路径共用，
+取消后仍排干同步工作再清理临时输入。整份提取 context 在写入前也执行字节预算。
+`get_revision_key` 改为有界 CAS；`load_recovery_draft` 与 RevisionReconciler 新增可选
+预算参数，调用方可显式使用同一份限额。
+默认仍为 32 MiB；没有修改解析内容、DOCX 快照、Store 抽象接口或持久化 schema。
+
 ### Milvus 完整性读取（既有行为）
 
 Milvus count 与删除 ID 选择固定使用 Strong，dense/keyword 检索仍遵循配置。

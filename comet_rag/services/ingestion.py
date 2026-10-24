@@ -53,6 +53,7 @@ from comet_rag.tasks import (
     RunnerRegistry,
     StagePipeline,
     TaskContext,
+    TaskContextTooLarge,
 )
 
 INGEST_KIND = "ingest"
@@ -128,6 +129,93 @@ def _classify(exc: Exception, stage: str) -> Exception:
     return exc
 
 
+class DocumentExtraction:
+    """两种入库共用的取源/解析阶段；同步工作和临时输入仍按原顺序排干。"""
+
+    def __init__(
+        self,
+        *,
+        loader: AsyncSourceLoaderPort,
+        config: PipelineConfig,
+        hooks: AsyncHookProvider,
+        normalizer: DocumentNormalizationStrategy | None = None,
+        max_extracted_text_bytes_by_type: Mapping[str, int] | None = None,
+        max_context_bytes: int = DEFAULT_MAX_CHUNK_CONTEXT_BYTES,
+    ) -> None:
+        self._loader = loader
+        self._config = config
+        self._hooks = hooks
+        self._normalizer = normalizer or MarkdownDocumentNormalizer()
+        self._max_chunk_context_bytes = max_context_bytes
+        self._max_extracted_text_bytes_by_type = {
+            kind.lower(): limit
+            for kind, limit in (max_extracted_text_bytes_by_type or {}).items()
+        }
+        if type(max_context_bytes) is not int or max_context_bytes <= 0:
+            raise ValueError("max_context_bytes 必须为正整数")
+        if any(limit <= 0 for limit in self._max_extracted_text_bytes_by_type.values()):
+            raise ValueError("提取文本限制必须大于 0")
+
+    async def extract(self, ctx: TaskContext) -> None:
+        """取源 + 解析 + 清洗 → markdown 文本。"""
+        task = await ctx.snapshot()
+        request = IngestRequest.model_validate(task.request)
+
+        loader_content: LoadedResource | None = None
+        try:
+            # 下载也属于 extracting 阶段，必须位于同一个异常分类边界内。
+            # 否则连接超时会绕过 _classify，第一次失败就把任务判死。
+            loader_content = await self._loader.load(SourceContent(request.source))
+            file_type = str(loader_content.metadata.get("file_type", "")).lower()
+            extracted = await self._hooks.extract(
+                file_type, loader_content, self._config
+            )
+            self._validate_extracted_text_size(extracted.markdown, file_type)
+            document = await run_sync(self._normalizer.normalize, extracted)
+            text = document.markdown
+            self._validate_extracted_text_size(text, file_type)
+            extracted_text_bytes = len(text.encode("utf-8"))
+
+            await ctx.put_bounded(
+                self._max_chunk_context_bytes,
+                text=text,
+                # 提取器溯源信息必须跨过 CPU/IO worker 的道次边界；否则 API
+                # 入库与库 Pipeline 会为同一文档生成不同的 chunk metadata。
+                document_metadata=dict(document.metadata),
+                document_blocks=dump_document_blocks(
+                    document.blocks,
+                    max_bytes=self._max_chunk_context_bytes,
+                ),
+                # 原文会在 chunking 后清掉；保留这个小标量才能在终态任务上
+                # 观察外部提取量，而不把整份 Markdown 长期留在任务表。
+                extracted_text_bytes=extracted_text_bytes,
+                file_type=file_type,
+                source_id=loader_content.source.source_id,
+                source=loader_content.source.source,
+                file_name=loader_content.metadata.get("file_name"),
+            )
+            await ctx.report(message=f"已提取 {len(text)} 字符")
+        except TaskContextTooLarge as exc:
+            raise DocumentResourceLimitExceeded(str(exc)) from exc
+        except Exception as exc:
+            raise _classify(exc, "extracting") from exc
+        finally:
+            # 同步工作先排干，再删除输入；清理本身也可能阻塞或被重复取消。
+            if loader_content is not None:
+                await run_sync(loader_content.cleanup)
+
+    def _validate_extracted_text_size(self, text: str, file_type: str) -> None:
+        """在跨 worker 持久化前复验；不能只信任某个 provider 的入口检查。"""
+        limit = self._max_extracted_text_bytes_by_type.get(file_type)
+        if limit is None:
+            return
+        size = len(text.encode("utf-8"))
+        if size > limit:
+            raise DocumentResourceLimitExceeded(
+                f"{file_type} 提取文本超过 Task context 限制：{size} > {limit} bytes"
+            )
+
+
 class IngestRunner:
     """`kind="ingest"` 的 runner。
 
@@ -151,27 +239,18 @@ class IngestRunner:
         self._embedding_model = embedding_model
         self._vector_store = vector_store
         self._kb = knowledge_base
-        self._loader = loader
         self._config = config or PipelineConfig()
         self._hooks = hooks or AsyncPipelineHooks
-        self._normalizer = normalizer or MarkdownDocumentNormalizer()
         self._chunking = ChunkingService(self._config, self._hooks)
-        if max_chunk_context_bytes <= 0:
-            raise ValueError("max_chunk_context_bytes 必须大于 0")
         self._max_chunk_context_bytes = max_chunk_context_bytes
-        self._max_extracted_text_bytes_by_type = {
-            file_type.lower(): limit
-            for file_type, limit in (max_extracted_text_bytes_by_type or {}).items()
-        }
-        invalid_limits = {
-            file_type: limit
-            for file_type, limit in self._max_extracted_text_bytes_by_type.items()
-            if limit <= 0
-        }
-        if invalid_limits:
-            raise ValueError(
-                f"max_extracted_text_bytes_by_type 必须全部大于 0：{invalid_limits!r}"
-            )
+        self._extraction = DocumentExtraction(
+            loader=loader,
+            config=self._config,
+            hooks=self._hooks,
+            normalizer=normalizer,
+            max_extracted_text_bytes_by_type=max_extracted_text_bytes_by_type,
+            max_context_bytes=max_chunk_context_bytes,
+        )
         self._flow = self._build_flow()
 
     async def __call__(self, ctx: TaskContext) -> Outcome:
@@ -206,60 +285,7 @@ class IngestRunner:
         return flow
 
     async def _extract(self, ctx: TaskContext) -> None:
-        """取源 + 解析 + 清洗 → markdown 文本。"""
-        task = await ctx.snapshot()
-        request = IngestRequest.model_validate(task.request)
-
-        loader_content: LoadedResource | None = None
-        try:
-            # 下载也属于 extracting 阶段，必须位于同一个异常分类边界内。
-            # 否则连接超时会绕过 _classify，第一次失败就把任务判死。
-            loader_content = await self._loader.load(SourceContent(request.source))
-            file_type = str(loader_content.metadata.get("file_type", "")).lower()
-            extracted = await self._hooks.extract(
-                file_type, loader_content, self._config
-            )
-            self._validate_extracted_text_size(extracted.markdown, file_type)
-            document = await run_sync(self._normalizer.normalize, extracted)
-            text = document.markdown
-            self._validate_extracted_text_size(text, file_type)
-            extracted_text_bytes = len(text.encode("utf-8"))
-
-            await ctx.put(
-                text=text,
-                # 提取器溯源信息必须跨过 CPU/IO worker 的道次边界；否则 API
-                # 入库与库 Pipeline 会为同一文档生成不同的 chunk metadata。
-                document_metadata=dict(document.metadata),
-                document_blocks=dump_document_blocks(
-                    document.blocks,
-                    max_bytes=self._max_chunk_context_bytes,
-                ),
-                # 原文会在 chunking 后清掉；保留这个小标量才能在终态任务上
-                # 观察外部提取量，而不把整份 Markdown 长期留在任务表。
-                extracted_text_bytes=extracted_text_bytes,
-                file_type=file_type,
-                source_id=loader_content.source.source_id,
-                source=loader_content.source.source,
-                file_name=loader_content.metadata.get("file_name"),
-            )
-            await ctx.report(message=f"已提取 {len(text)} 字符")
-        except Exception as exc:
-            raise _classify(exc, "extracting") from exc
-        finally:
-            # 同步工作先排干，再删除输入；清理本身也可能阻塞或被重复取消。
-            if loader_content is not None:
-                await run_sync(loader_content.cleanup)
-
-    def _validate_extracted_text_size(self, text: str, file_type: str) -> None:
-        """在跨 worker 持久化前复验；不能只信任某个 provider 的入口检查。"""
-        limit = self._max_extracted_text_bytes_by_type.get(file_type)
-        if limit is None:
-            return
-        size = len(text.encode("utf-8"))
-        if size > limit:
-            raise DocumentResourceLimitExceeded(
-                f"{file_type} 提取文本超过 Task context 限制：{size} > {limit} bytes"
-            )
+        await self._extraction.extract(ctx)
 
     async def _chunk(self, ctx: TaskContext) -> None:
         task = await ctx.snapshot()

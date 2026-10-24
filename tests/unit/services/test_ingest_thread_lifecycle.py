@@ -271,7 +271,7 @@ async def test_context_waits_for_ingest_thread_before_terminal_state_and_resourc
             def normalize(self, extracted: ExtractedDocument) -> NormalizedDocument:
                 return probe.run(lambda: NormalizedDocument(extracted.markdown))
 
-        monkeypatch.setattr(ingest, "_normalizer", Normalizer())
+        monkeypatch.setattr(ingest._extraction, "_normalizer", Normalizer())
     else:
 
         @ctx.pipeline_hooks.document_chunker("stub")
