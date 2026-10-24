@@ -204,6 +204,11 @@ class RevisionMaintenance:
                 f"event=revision_reconciliation_partial_failure task_id={claim.task_id} "
                 f"failed={len(report.failed)}"
             )
+        if report.missing_payload:
+            logger.error(
+                f"event=revision_reconciliation_recovery_required task_id={claim.task_id} "
+                f"missing_payload={len(report.missing_payload)}"
+            )
         logger.info(
             f"event=revision_reconciliation_page task_id={claim.task_id} "
             f"scanned={report.scanned} cycle_complete={report.cycle_complete}"

@@ -53,6 +53,7 @@ class ReconciliationDisposition(StrEnum):
     CLEANED = "cleaned"
     DEFERRED = "deferred"
     IGNORED = "ignored"
+    MISSING_PAYLOAD = "missing_payload"
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +64,8 @@ class ReconciliationReport:
     ignored: tuple[str, ...]
     failed: tuple[str, ...]
     cycle_complete: bool
+    # 与仍在执行/可重试的 deferred 分开；这类记录需要外部恢复证据，等待本身无效。
+    missing_payload: tuple[str, ...] = ()
 
 
 class RevisionReconciler:
@@ -160,7 +163,7 @@ class RevisionReconciler:
             logger.warning(
                 f"event=revision_reconciliation_missing_prepare task_id={task.task_id}"
             )
-            return ReconciliationDisposition.DEFERRED
+            return ReconciliationDisposition.MISSING_PAYLOAD
         publication = load_publication(task.context, draft)
         if checkpoint is not None:
             await checkpoint()
@@ -203,6 +206,7 @@ class RevisionReconciler:
             deferred: list[str] = []
             ignored: list[str] = []
             failed: list[str] = []
+            missing_payload: list[str] = []
             scanned = 0
             for _ in range(self._page_size):
                 await ctx.checkpoint()
@@ -218,6 +222,7 @@ class RevisionReconciler:
                         tuple(ignored),
                         tuple(failed),
                         True,
+                        tuple(missing_payload),
                     )
                 if len(rows) != 1:
                     raise ValueError("TaskStore 未遵守单条分页上限")
@@ -244,6 +249,8 @@ class RevisionReconciler:
                         cleaned.append(task.task_id)
                     elif disposition is ReconciliationDisposition.DEFERRED:
                         deferred.append(task.task_id)
+                    elif disposition is ReconciliationDisposition.MISSING_PAYLOAD:
+                        missing_payload.append(task.task_id)
                     else:
                         ignored.append(task.task_id)
                 # 顺序不可提前；IO 中断或确认响应丢失时，新 Context 从持久化锚点恢复。
@@ -258,4 +265,5 @@ class RevisionReconciler:
                 tuple(ignored),
                 tuple(failed),
                 False,
+                tuple(missing_payload),
             )

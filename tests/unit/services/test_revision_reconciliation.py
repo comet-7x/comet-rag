@@ -379,7 +379,7 @@ async def test_missing_handoff_is_reported_without_reserving_or_guessing_a_plan(
         await reconciler(ctx.store, documents, vectors).reconcile(
             await ctx.store.require(task.task_id)
         )
-        is ReconciliationDisposition.DEFERRED
+        is ReconciliationDisposition.MISSING_PAYLOAD
     )
     reserve.assert_not_awaited()
 

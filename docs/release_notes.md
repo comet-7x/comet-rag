@@ -79,6 +79,14 @@ TaskService 新增可选 `pending_kinds` 回调；应用按当前注册的业务
 错误码和超过 180 秒无页确认的 overdue。完整调度/告警、取消和存储命名空间边界见
 [设计](../tasks/v2_reconciliation_design.md)。没有新增告警服务或对外通知。
 
+### 历史缺载荷诊断
+
+第二十批把缺少准备意图和 handoff 的终态记录从 `deferred` 分离为
+`ReconciliationDisposition.MISSING_PAYLOAD`，页报告新增 `missing_payload` ID 列表。
+损坏的非空载荷继续进入 failed；不调用猜测的 reserve/GC，不修改源任务。维护最近页
+持久化该字段，并新增错误日志事件 `revision_reconciliation_recovery_required`。
+旧维护 result 可能没有新字段，调用方按空列表兼容；最近页不是全历史审计。
+
 ### Milvus 完整性读取（既有行为）
 
 Milvus count 与删除 ID 选择固定使用 Strong，dense/keyword 检索仍遵循配置。
