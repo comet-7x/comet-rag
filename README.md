@@ -8,13 +8,15 @@
 两者共用同一份解析代码。这个双重定位由 `pyproject.toml` 的依赖分组
 **在安装期强制**，并由 AST 层级守卫在 CI 里盯着（`tests/unit/test_layering.py`）。
 
-> 当前进度（2026-10-24）：V2 第十九批实现与功能验证完成，代码已按职责提交。M4 已有结构感知分块、DocumentStore、
+> 当前进度（2026-10-24）：V2 第二十批完成历史恢复边界与迁移前置验证。M4 已有结构感知分块、DocumentStore、
 > ready 续跑、独立激活/GC 及 revision-aware 读取；生产 Task/maintenance 完整接线
 > 和 H/I 验收尚未完成，revision 新写入未启用。见 [下一步计划](tasks/v2_next_steps.md)。
 > 第十七/十八批补齐独立发布/清理恢复、迟到写补偿、游标续页与应用删除保护。
 > 第十九批在外部写入前持久化准备意图，并交付默认关闭的 IO worker 定时对账及告警信号；
 > 不自动切换生产入库或开启 revision 检索。生产接线范围及门禁见
 > [对账设计](tasks/v2_reconciliation_design.md)，当前入库路径保持不变。
+> 第二十批单列历史缺载荷诊断，新增 API 入库准入暂停；已选择新命名空间重建后核验切换，
+> [迁移范围与验收](docs/revision_migration.md)仍不等于生产写入或用户数据迁移已完成。
 
 | 你要做什么 | 从这里开始 |
 |---|---|
