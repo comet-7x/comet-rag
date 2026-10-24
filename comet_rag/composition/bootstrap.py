@@ -725,6 +725,7 @@ async def build_context(
             kb_repository=kb_repository,
             knowledge_base=knowledge_base,
             embedding_dim=embedding_settings.dim,
+            accept_new_ingest_tasks=config.ingest_policy.accept_new_tasks,
             pipeline_hooks=pipeline_hooks,
             runners=runners,
             database=database,

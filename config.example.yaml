@@ -150,6 +150,8 @@ limits:
 # POST /ingest 的 source 是调用方给的字符串，会被交给 loader 去读文件或发请求 ——
 # 不加约束的话，服务能读到的文件、能连到的网络，调用方都能拿到。
 ingest_policy:
+  # 维护时暂停 API 新入库及手动 ingest 重试；已受理任务继续执行，不是旧写排干证明。
+  accept_new_tasks: true
   # 是否允许从**服务器本地路径**入库。默认 false：开了等于给调用方一个
   # 任意文件读取通道（读到的内容会切块入库，再从 /search 读出来）。
   allow_local: false

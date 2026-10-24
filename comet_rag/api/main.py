@@ -5,11 +5,14 @@
 而且 services 层不该为了 HTTP 语义去 import fastapi。
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from comet_rag.api.deps import IngestPaused
 from comet_rag.api.lifespan import make_lifespan
 from comet_rag.api.middleware import TraceMiddleware, get_trace_id
 from comet_rag.api.routes import admin, ingest, kb, search, tasks
@@ -46,6 +49,10 @@ def _problem(request: Request, code: int, message: str) -> JSONResponse:
 
 
 def _install_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(IngestPaused)
+    async def ingest_paused(request: Request, exc: IngestPaused) -> JSONResponse:  # noqa: RUF029
+        return _problem(request, status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+
     @app.exception_handler(RevisionVisibilityError)
     async def revision_visibility_unavailable(
         request: Request, exc: RevisionVisibilityError

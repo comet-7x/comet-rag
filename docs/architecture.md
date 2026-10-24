@@ -235,10 +235,14 @@ flowchart LR
     C["扫描 Task 的持久化游标"] --> Q["总序游标读取一条任务"]
     Q --> E{"到尾部？"}
     E -->|是| R["重置锚点，结束本页"]
-    E -->|否| D{"manifest 允许清理？"}
+    E -->|否| P{"恢复载荷可验证？"}
+    P -->|是| D{"manifest 允许清理？"}
     D -->|是| G["精确 GC"]
     D -->|延后或忽略| A["确认游标"]
     D -->|单项校验失败| F["报告失败，保留源任务"]
+    P -->|缺恢复载荷| M["报告 missing_payload，保留源任务"]
+    P -->|载荷损坏| F
+    M --> A
     G -->|单项存储失败| F
     G -->|成功| A
     F --> A
@@ -247,7 +251,8 @@ flowchart LR
 ```
 
 对账不发布版本、不修改源任务，也不把 FAILED 的 staging/ready 擅自废弃。准备意图可
-覆盖移交前取消；缺两种载荷的历史任务仍 deferred，并发激活仍由 Store 原子保护。
+覆盖移交前取消；缺两种载荷的终态历史任务单列 missing_payload，完整载荷损坏列为 failed。
+二者都保留源记录且不猜测 GC，并发激活仍由 Store 原子保护。
 
 第十九批新增 `RevisionMaintenance`：同一来源 kind 幂等复用一个持久化游标 Task，
 绑定向量存储命名空间摘要；每次触发以版本 CAS 认领，唯一 owner/单调 attempts 围栏
@@ -263,6 +268,16 @@ flowchart LR
 `/admin/limits` 暴露维护状态、最近页和 180 秒无确认页进度的 overdue，配合稳定日志
 事件告警；心跳不能掩盖无进展。完整策略、暂停/取消边界和剩余生产门禁见
 [对账设计](../tasks/v2_reconciliation_design.md)。
+
+
+### 迁移前的 API 入库暂停
+
+组合根把 `ingest_policy.accept_new_tasks` 放入 Context，API 的新入库与手动 ingest
+重试共用准入检查。关闭时在来源 IO/任务写入之前返回 503；执行器仍处理已受理任务，
+状态、读取和取消不依赖该开关。通用 TaskService/Executor 不认识迁移策略，低层调用
+不受 API 开关约束。该控制不能证明旧进程或远端 RPC 排干。
+新命名空间重建与后续生产阶段接线见 [迁移边界](revision_migration.md)。
+
 
 Milvus 的计数和删除 ID 选择固定使用 Strong，检索仍保留配置的一致性偏好；跨客户端
 旧快照不能作为 GC 完成依据。这使用上游已有的 query 参数，见

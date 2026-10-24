@@ -137,6 +137,14 @@ comet-rag config --config /etc/comet-rag/prod.yaml   # 打印生效配置（密�
 
 ---
 
+## 暂停入库准入
+
+维护/迁移时设置 `ingest_policy.accept_new_tasks: false` 并部署到所有 API 实例。
+新入库与手动 ingest 重试返回 503，已受理任务继续执行；状态可查询
+`/admin/limits.accept_new_ingest_tasks`。它不阻止旧 API、库调用、自定义生产者或在途请求，
+也不取消自动重试，不是远端写入排干证明。恢复设为 true 后重新部署。
+新命名空间、历史缺载荷处置与生产切换范围见 [迁移说明](revision_migration.md)。
+
 ## 入库来源准入（安全）
 
 `POST /ingest` 的 `source` 是调用方给的字符串，会被交给 loader 去读文件或发请求。
@@ -364,9 +372,12 @@ serve 不加载租约维护，也不启动后台循环。页上限 32 项/30 秒
 
 `GET /admin/limits` 的 revision_reconciliation 提供 task_id/status、last_page、error_code
 和 overdue。超过 180 秒未确认一页即 overdue；认领、重试、心跳不算完成进度。
-监控规则应覆盖整页失败、last_page.failed 非空、overdue，以及配置开启却没有 IO worker。
+监控规则应覆盖整页失败、last_page.failed / last_page.missing_payload 非空、overdue，
+以及配置开启却没有 IO worker。missing_payload 是需要恢复证据的历史项，不是可正常延期。
 日志事件 `revision_reconciliation_failed` / `revision_reconciliation_partial_failure` /
 `revision_reconciliation_missing_prepare` 分别对应整页失败、坏记录和历史恢复缺口。
+`revision_reconciliation_recovery_required` 为已确认页中的缺载荷发出错误信号。最近页会被
+覆盖，旧 result 可能缺少新字段；日志/处置清单需持久采集，不把后一页为空当作已解决。
 项目提供告警信号，不部署通知中间件；无人执行时需通过外部轮询发现无进展。
 
 ### Milvus schema 兼容

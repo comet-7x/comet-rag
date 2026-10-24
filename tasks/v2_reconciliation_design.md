@@ -21,7 +21,7 @@ handoff 确认前后失败，可重放原计划或已提交的 handoff，不重�
 
 FAILED 的 staging/ready 保留业务重试，不能因一次失败就废弃；CANCELLED 不可重开，
 对账可凭准备意图精确清理其部分父块。完整 handoff 与准备意图同时存在时必须一致。
-第十九批之前既无 handoff、也无准备意图的旧记录仍 deferred，保留输入并记录明确告警；
+第二十批把既无 handoff、也无准备意图的终态旧记录单列为 missing_payload，保留输入并记录明确告警；
 这些旧记录需要经核验的迁移/恢复，不能事后猜指纹，也不宣称全部历史失败都已自动修复。
 
 ## 持续对账的保证
@@ -53,6 +53,7 @@ offset 已复现持续插入下的饥饿。游标采用 `(created_at, task_id)` 
 4 KiB 扫描 context 只保存版本、来源 kind 与锚点。任务 result 只覆盖最近一页的有界结果，
 不是无限失败列表或完整审计账本；不把一页通过描述成全轮无故障。
 
+- 历史缺载荷：本页 missing_payload 单列 ID，不猜测 reserve/GC、不阻塞后续项；处置需外部可信证据。
 - 单项存储/校验失败：报告失败 ID，推进到下一项，下轮重访，避免坏头部阻塞所有旧记录。
 - 查询、游标校验、预算或确认失败：整页异常，恢复已提交游标。
 - 取消/租约丢失：停止后续 IO；GC 已提交状态保留，重放幂等。
@@ -107,6 +108,7 @@ CANCELLED 显示已停状态，不因人为停用持续报 overdue。未开启�
 
 - `revision_reconciliation_failed`：整页失败；结合 error_code 与持续时间告警。
 - `revision_reconciliation_partial_failure`：最近页有坏记录，结合该页 failed ID 与单项异常定位。
+- `revision_reconciliation_recovery_required`：本页缺载荷，读取 last_page.missing_payload 并保留处置清单。
 - `revision_reconciliation_missing_prepare`：历史缺载荷记录，需恢复/迁移，不能把普通 deferred 都当故障。
 - `revision_reconciliation_retry` / `revision_reconciliation_page`：恢复与进展记录。
 
@@ -125,3 +127,10 @@ Redis 调度停止等“无人执行便无日志”的故障，应通过外部�
 旧 flat 写的无 revision 数据不属于精确 GC 过滤；空集合不是在途旧 RPC 排干证明，再建
 同名 KB 也不是新命名空间。限定从未用于旧写的 KB/存储命名空间，或经过明确验收的
 迁移批次。不能把有独立维护入口或 cron 存在，推定整个生产写路径已安全。
+
+## 第二十批：迁移处置范围
+
+历史终态缺载荷与普通延期分离，但没有补造原计划或自动修复历史记录。用户选择
+新命名空间重建后切换；API 准入暂停只控制新提交和手动 ingest 重试，已受理工作继续
+排干。部署范围、数据证据、命名空间、生产接线与回退门禁统一见
+[历史恢复与迁移边界](../docs/revision_migration.md)。当前生产 runner 仍是 legacy。

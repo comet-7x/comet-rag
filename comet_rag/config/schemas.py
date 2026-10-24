@@ -511,6 +511,11 @@ class IngestPolicyConfig(BaseModel):
     （任意文件读取 + SSRF）。**默认是拒绝**，需要的能力显式打开。
     """
 
+    accept_new_tasks: bool = Field(
+        default=True,
+        strict=True,
+        description="API 是否受理新入库与手动入库重试；关闭不取消已受理任务，也不是写入围栏",
+    )
     allow_local: bool = Field(
         default=False,
         description="是否允许从**服务器本地路径**入库。默认关：这是危险能力，"

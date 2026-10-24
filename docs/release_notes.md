@@ -79,13 +79,22 @@ TaskService 新增可选 `pending_kinds` 回调；应用按当前注册的业务
 错误码和超过 180 秒无页确认的 overdue。完整调度/告警、取消和存储命名空间边界见
 [设计](../tasks/v2_reconciliation_design.md)。没有新增告警服务或对外通知。
 
-### 历史缺载荷诊断
+### 历史缺载荷诊断与入库准入暂停
 
 第二十批把缺少准备意图和 handoff 的终态记录从 `deferred` 分离为
 `ReconciliationDisposition.MISSING_PAYLOAD`，页报告新增 `missing_payload` ID 列表。
 损坏的非空载荷继续进入 failed；不调用猜测的 reserve/GC，不修改源任务。维护最近页
 持久化该字段，并新增错误日志事件 `revision_reconciliation_recovery_required`。
 旧维护 result 可能没有新字段，调用方按空列表兼容；最近页不是全历史审计。
+
+新增 `ingest_policy.accept_new_tasks`，严格布尔，默认 true。false 时 API 新入库及手动
+`ingest` 重试返回 HTTP 503，早于来源 IO/任务写入；`from_scratch` 也不绕过。已受理任务
+继续消费，读取/取消/其他 kind 不受此开关影响。`/admin/limits` 新增
+`accept_new_ingest_tasks`。这是 API 准入控制，不改 TaskService、Store 或执行器契约，
+不能当作远端写入围栏。变更配置需重新构建 Context/部署所有 API 实例。
+
+迁移选择新命名空间重建后切换；本批没有迁移用户数据或接入生产 revision 写入。
+证据分类、配置范围与后续验收见 [历史恢复与迁移边界](revision_migration.md)。
 
 ### Milvus 完整性读取（既有行为）
 

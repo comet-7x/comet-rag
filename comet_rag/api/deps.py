@@ -4,6 +4,8 @@
 否则每个请求都会新建连接池（spec S4-4），关停时也没人知道该释放什么。
 """
 
+from __future__ import annotations
+
 from typing import Annotated
 
 from fastapi import Depends, Request
@@ -50,6 +52,16 @@ VectorStoreDep = Annotated[AsyncVectorStore, Depends(get_vector_store)]
 KnowledgeBaseDep = Annotated[KnowledgeBaseService, Depends(get_knowledge_base)]
 
 
+class IngestPaused(RuntimeError):
+    """运维暂停 API 入库准入；不表示旧写已停止或迁移已完成。"""
+
+
+def ensure_ingest_accepting(ctx: Context) -> None:
+    """新提交和手动入库重试共用准入边界，已受理任务继续由执行器处理。"""
+    if not ctx.accept_new_ingest_tasks:
+        raise IngestPaused("入库准入已暂停，请等待维护完成")
+
+
 def admission_guard(ctx: ContextDep) -> None:
     """降级的**最后一级**：拒绝新的写入任务（spec S4-5）。
 
@@ -62,6 +74,7 @@ def admission_guard(ctx: ContextDep) -> None:
     顺带一提，闸门的饱和度也在这里报给控制器：每个写请求都会经过它，
     采样频率天然跟着负载走，负载越高看得越勤。
     """
+    ensure_ingest_accepting(ctx)
     degradation = getattr(ctx, "degradation", None)
     if degradation is None:
         return

@@ -32,6 +32,7 @@ async def limits(request: Request) -> dict[str, Any]:
     degradation = getattr(ctx, "degradation", None)
     maintenance = getattr(ctx, "revision_maintenance", None)
     return {
+        "accept_new_ingest_tasks": ctx.accept_new_ingest_tasks,
         "model_gate": asdict(gate.stats) if gate is not None else None,
         "mineru_gate": (asdict(mineru_gate.stats) if mineru_gate is not None else None),
         "backlog": backlog,

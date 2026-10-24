@@ -52,6 +52,8 @@ class Context:
     reranker: AsyncRerankerPort | None = None
     document_store: DocumentStore | None = None
     revision_maintenance: RevisionMaintenance | None = None
+    #: API 准入暂停不撤销已受理任务；执行器继续消费以便排干。
+    accept_new_ingest_tasks: bool = True
     #: 对模型服务的进程级并发闸门。放进 Context 是为了让 /admin/health
     #: 能读到它的实时统计 —— 过载时最先想看的就是这几个数。
     model_gate: Any = None

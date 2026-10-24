@@ -351,7 +351,7 @@ PostgreSQL Task/DocumentStore 与 Milvus 读连接仅凭保留意图补偿，不
 故障注入定位于客户端提交/确认边界，不宣称模拟真实 SIGKILL 或服务端内部调度。
 
 未传业务 guard 的底层删除会丢失恢复身份、offset 可饥饿，以及旧协议既无准备意图、
-也无 handoff 的取消任务仍 deferred，均保留特征化测试；不把已知缺口写成完成承诺。
+也无 handoff 的取消任务单列 missing_payload，均保留特征化测试；不把已知缺口写成完成承诺。
 16 类单元/契约反向缺陷及 2 项真实后端反向实验均由目标断言检出；策略与生产门禁见
 [持续对账设计](../tasks/v2_reconciliation_design.md)。
 
@@ -419,3 +419,13 @@ uv run coverage report --include="*/comet_rag/tasks/*"     # 96%
 
 把"要中间件才能覆盖的代码"算成未覆盖，会推着人去写 mock 掉一切的假单测 ——
 那种测试通过率很好看，但换个后端立刻失效。契约测试的存在正是为了不走那条路。
+
+
+第二十批新增 `unit/services/test_revision_recovery_boundaries.py`、`unit/test_ingest_pause.py`
+和 `integration/test_revision_migration_boundaries.py`。缺载荷与非空损坏载荷分别报告，
+既不猜测 manifest，也不误删源 Task/父块/向量；真实独立连接验证最近页持久化及重访。
+暂停测试覆盖新提交早于来源 IO、手动 ingest 重试不改恢复状态、其他 kind 和取消仍可用，
+以及原生 IO worker 在 API 暂停后继续消费已受理的持久化续跑点。
+新 KB/集合前缀测试在旧端零计数后实际提交迟到 flat 写，验证新端六种检索组合、active
+和父块隔离；测试共享 PostgreSQL，不冒充完整跨库部署迁移或用户资料迁移。
+反向缺陷在独立副本中注入；本批最终验收和局限见 [V2 记录](../tasks/v2_plan.md)。

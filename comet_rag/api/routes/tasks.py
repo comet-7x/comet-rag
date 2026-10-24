@@ -1,11 +1,14 @@
 """任务查询与控制。"""
 
+from __future__ import annotations
+
 from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
+from ...services.ingestion import INGEST_KIND
 from ...tasks import TaskStatus
-from ..deps import TaskServiceDep
+from ..deps import ContextDep, TaskServiceDep, ensure_ingest_accepting
 from ..schemas.task import TaskListResponse, TaskView
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -55,7 +58,11 @@ async def cancel_task(task_id: str, tasks: TaskServiceDep) -> dict[str, bool]:
 async def retry_task(
     task_id: str,
     tasks: TaskServiceDep,
+    ctx: ContextDep,
     from_scratch: FromScratchQuery = False,
 ) -> TaskView:
+    original = await tasks.store.require(task_id)
+    if original.kind == INGEST_KIND:
+        ensure_ingest_accepting(ctx)
     task = await tasks.retry(task_id, from_scratch=from_scratch)
     return task.public_view()
