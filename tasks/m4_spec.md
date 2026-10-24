@@ -601,3 +601,20 @@ prepare 已写父块但 handoff 未提交的取消任务仍保留输入并 defer
 特征化测试。生产接线还需扫描生命周期/调度/告警、该缺口恢复，以及 legacy 退出或
 隔离命名空间/迁移验收；空集合不是远端排干证明。完整 H/I 仍未完成，详见
 [对账设计](v2_reconciliation_design.md) 和 v2_plan.md 的本批验证。
+
+## 27. V2 准备意图与维护生命周期（2026-10-24）
+
+第十九批在 RevisionTaskStages.prepare 的首次外部 IO 前，用现有有界 context CAS 保存
+准备计划身份；父块完成后再原子保存 handoff、释放原文。新协议的移交前取消版本可
+凭准备意图精确回收，失败重试复验同一计划、任务归属与原 generation。不新增 Task
+字段或表；历史同时缺两种载荷的旧记录保留并告警，恢复/迁移仍待验收。
+
+独立 RevisionMaintenance 幂等保留一个游标 Task，复用 TaskStore CAS/状态机和原有
+90 秒租约维护。维护 Task 不进入业务队列，成功释放回 PENDING，整页失败下次触发
+从原游标恢复。默认关闭，仅配置完整的 ARQ/PostgreSQL/Milvus 组合支持 IO worker
+原生 cron 每次一页；不为单进程挂租约、不启用 revision 读取或生产新写入。
+
+/admin/limits 暴露最近页、错误和 180 秒无页确认的 overdue；稳定日志事件供采集告警，
+心跳不当作完成进度。首轮接线不新增通知中间件。原 IngestRunner、legacy 退出/迁移、
+命名空间及完整 H/I 仍是生产门禁。故障、反向与本批验证见 v2_plan.md，现行策略见
+[对账设计](v2_reconciliation_design.md)。

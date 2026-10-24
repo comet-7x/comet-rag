@@ -165,12 +165,14 @@ V2 第十五批补齐独立 activation/superseded 恢复切片；Redis worker �
 由显式 collect_superseded 或持久化 cleanup_pending 废弃并清理；登记提交前失败必须重试。
 普通扫描不含 purged，补偿完成也不能证明未来无迟到写。第十八批通过保留 Task 身份
 持续对账，交付独立有界补偿页；游标按 created_at/task_id 持久化，应用删除守卫不被
-force 或 complete 绕过。没有注册生产定时调度，也没有解决缺 handoff 的取消版本。
+force 或 complete 绕过。第十九批在外部写入前保存准备意图，取消的新记录无需完整
+handoff 即可回收；独立维护可显式配置由 IO worker 定时触发，不改变生产 ingest。
 
 - [x] 明确持续对账、长期保留和受版本保护的删除策略
 - [x] 独立分页补偿：取消/租约围栏、单项失败隔离、预算与重启续页
-- [ ] 扫描任务生命周期、独占所有权、定时触发与告警接线
-- [ ] prepare 写父块后、handoff 提交前失败的完整恢复
+- [x] 独立维护游标生命周期、CAS 所有权、显式 IO worker 定时触发与告警信号
+- [x] 新协议 prepare 写父块后、handoff 提交前失败的恢复与取消回收
+- [ ] 历史既无准备意图、也无 handoff 的记录恢复/迁移
 - [ ] legacy 退出/迁移与全新存储命名空间验收；空计数不能证明旧 RPC 排干
 
 依据见 [对账设计](v2_reconciliation_design.md)，不能删除恢复身份后再声称可自动回收。
