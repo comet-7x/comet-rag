@@ -2,13 +2,13 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Comet-RAG：库与当前入库主链路",
+    "title": "Comet-RAG：库、入库与可选维护",
     "locale": "zh-CN",
     "output": "docs/diagrams/comet-rag.html",
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "d622b6e865c4c4f8ab935886705a894410670152",
+      "revision": "7b1201a7b722cca06c97d2ed59a68c0a432bb6c7",
       "link_mode": "local-only"
     }
   },
@@ -29,8 +29,8 @@
       "sources": [
         {
           "path": "README.md",
-          "line": 33,
-          "end_line": 43
+          "line": 34,
+          "end_line": 44
         }
       ]
     },
@@ -113,8 +113,8 @@
         },
         {
           "path": "comet_rag/composition/bootstrap.py",
-          "line": 670,
-          "end_line": 676
+          "line": 685,
+          "end_line": 691
         }
       ]
     },
@@ -160,13 +160,13 @@
         },
         {
           "path": "comet_rag/tasks/service.py",
-          "line": 58,
-          "end_line": 79
+          "line": 60,
+          "end_line": 138
         },
         {
-          "path": "comet_rag/services/retrieval.py",
-          "line": 429,
-          "end_line": 485
+          "path": "comet_rag/composition/bootstrap.py",
+          "line": 693,
+          "end_line": 705
         }
       ]
     },
@@ -196,8 +196,8 @@
         },
         {
           "path": "comet_rag/composition/bootstrap.py",
-          "line": 212,
-          "end_line": 253
+          "line": 218,
+          "end_line": 259
         }
       ],
       "tag": "三个阶段"
@@ -223,8 +223,8 @@
         },
         {
           "path": "comet_rag/composition/bootstrap.py",
-          "line": 601,
-          "end_line": 622
+          "line": 614,
+          "end_line": 635
         }
       ]
     },
@@ -244,18 +244,18 @@
       "sources": [
         {
           "path": "comet_rag/composition/bootstrap.py",
-          "line": 134,
-          "end_line": 146
-        },
-        {
-          "path": "comet_rag/services/revision_reconciliation.py",
-          "line": 40,
-          "end_line": 260
+          "line": 140,
+          "end_line": 152
         },
         {
           "path": "comet_rag/services/revision_context.py",
-          "line": 425,
-          "end_line": 506
+          "line": 420,
+          "end_line": 467
+        },
+        {
+          "path": "comet_rag/services/revision_maintenance.py",
+          "line": 20,
+          "end_line": 211
         }
       ]
     },
@@ -275,13 +275,108 @@
       "sources": [
         {
           "path": "comet_rag/composition/bootstrap.py",
-          "line": 73,
-          "end_line": 99
+          "line": 79,
+          "end_line": 105
         },
         {
           "path": "comet_rag/services/ingestion.py",
           "line": 328,
           "end_line": 373
+        },
+        {
+          "path": "comet_rag/services/retrieval.py",
+          "line": 429,
+          "end_line": 485
+        }
+      ]
+    },
+    {
+      "id": "io-cron",
+      "type": "backend",
+      "label": "IO worker cron",
+      "sublabel": "默认关闭 · 每分钟一页",
+      "tag": "默认关闭",
+      "pos": [
+        860,
+        480
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/workers/base.py",
+          "line": 90,
+          "end_line": 111
+        },
+        {
+          "path": "comet_rag/workers/maintenance.py",
+          "line": 60,
+          "end_line": 77
+        },
+        {
+          "path": "comet_rag/config/schemas.py",
+          "line": 572,
+          "end_line": 648
+        }
+      ]
+    },
+    {
+      "id": "revision-maintenance",
+      "type": "backend",
+      "label": "独立对账 / GC",
+      "sublabel": "游标 · CAS · 所有权围栏",
+      "pos": [
+        860,
+        690
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/services/revision_maintenance.py",
+          "line": 20,
+          "end_line": 211
+        },
+        {
+          "path": "comet_rag/services/revision_reconciliation.py",
+          "line": 194,
+          "end_line": 261
+        },
+        {
+          "path": "comet_rag/services/revision_gc.py",
+          "line": 60,
+          "end_line": 93
+        }
+      ]
+    },
+    {
+      "id": "documents",
+      "type": "database",
+      "label": "DocumentStore",
+      "sublabel": "PostgreSQL · manifest",
+      "tag": "revision / 父块",
+      "pos": [
+        560,
+        690
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/composition/bootstrap.py",
+          "line": 155,
+          "end_line": 175
+        },
+        {
+          "path": "comet_rag/infrastructure/persistence/document_store/postgres.py",
+          "line": 435,
+          "end_line": 491
         }
       ]
     }
@@ -356,6 +451,34 @@
       "to": "mineru",
       "label": "PDF 启用时 HTTP",
       "variant": "default"
+    },
+    {
+      "id": "cron-page",
+      "from": "io-cron",
+      "to": "revision-maintenance",
+      "label": "一页 / 次",
+      "variant": "default"
+    },
+    {
+      "id": "maintenance-cursor",
+      "from": "revision-maintenance",
+      "to": "task-store",
+      "label": "游标 CAS",
+      "variant": "default"
+    },
+    {
+      "id": "maintenance-vectors",
+      "from": "revision-maintenance",
+      "to": "vectors",
+      "label": "精确补偿",
+      "variant": "default"
+    },
+    {
+      "id": "maintenance-documents",
+      "from": "revision-maintenance",
+      "to": "documents",
+      "label": "abandon / purge",
+      "variant": "default"
     }
   ],
   "cards": [
@@ -375,7 +498,8 @@
         "当前仍是 extracting → chunking → indexing；来源准入拒绝时不创建任务。",
         "单进程执行器在 API 进程运行；ARQ 模式通过 Redis 仅传 task_id，CPU/IO worker 分道。",
         "TaskStore 与向量后端按配置选择；默认内存状态在重启后丢失，图中未画每个部署副本。",
-        "服务侧模型适配器复用 HTTP 客户端并共享进程级闸门；这不是远端模型服务的部署约束。"
+        "服务侧模型适配器复用 HTTP 客户端并共享进程级闸门；这不是远端模型服务的部署约束。",
+        "应用按已注册业务 kind 统计积压；内部维护游标不占业务准入，也不进入业务队列。"
       ]
     },
     {
@@ -389,12 +513,12 @@
     },
     {
       "dot": "amber",
-      "title": "第十八批：持续对账边界",
+      "title": "第十九批：准备恢复与可选维护",
       "items": [
-        "独立发布/清理协议绑定原 revision 与 generation；生产 IngestRunner 尚未切换。",
-        "持续对账页已实现：有界分页、持久化游标与所有权围栏；定时调度尚未接线。",
-        "组合根已注入任务保留守卫，force 不绕过；complete/purged 仍需重访，不能证明旧 RPC 排干。",
-        "缺 handoff 的失败版本保留输入并 deferred；生产启用前仍需恢复该缺口、调度告警和 legacy 迁移验收。"
+        "Task prepare 先保存有界计划身份，再写父块；完整 handoff 确认后才释放原文。移交前取消可精确回收，FAILED 保留原计划重试。",
+        "自动维护默认关闭；IO worker 可显式开启独立对账，每次有界一页，CAS 认领并保留游标，整页失败下次触发恢复；不是生产入库切换。",
+        "/admin/limits 提供最近页、错误与无页进度 overdue，配合稳定日志事件告警；心跳不代替页确认。",
+        "complete/purged 仍需重访；单次为空不证明未来无迟到写。旧缺载荷与 legacy 迁移、完整 H/I 仍待验收。"
       ]
     }
   ]
