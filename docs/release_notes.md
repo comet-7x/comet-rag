@@ -59,12 +59,25 @@ public delete 新增 guard/expected_version；force 不绕过 guard。未显式�
 新增后台循环、cron 或生产写开关。不支持依赖 Task TTL 丢弃 GC 身份，详见
 [持续对账设计](../tasks/v2_reconciliation_design.md)。
 
-### 准备意图与移交前恢复
+### 准备意图与显式维护调度
 
 第十九批在 `RevisionTaskStages.prepare` 的首次 DocumentStore 写入前，保存有界
 `revision_prepare` 计划身份；完整 handoff 确认后才清空意图/原文。新记录的移交前取消
 可精确回收，失败重试必须匹配原计划；旧缺载荷记录仍保留并告警。未改变 Task 字段、
 表或向量 schema，原 handoff/publication 的版本 1 格式继续可读。
+
+新增默认关闭的 `revision_reconciliation` 配置，明确来源 kind 后才能开启；自动模式
+限定 ARQ/PostgreSQL/Milvus，组合根创建配套存储，不接受不透明存储注入。IO worker
+每分钟处理一页，维护游标幂等保留，失败续页复用既有租约/状态机；不改变生产 ingest。
+启用维护不启用 revision 检索，单进程不启动维护循环。`ArqExecutor.reconcile_pending`
+新增可选 `exclude_kinds`，worker 用它排除维护游标，默认调用方行为不变。
+TaskService 新增可选 `pending_kinds` 回调；应用按当前注册的业务 kind 在查询时统计
+积压，维护游标不挤占业务准入，动态注册仍生效。直接使用通用 TaskService 且不传
+该回调时，继续统计所有 PENDING，原库行为不变。
+
+`GET /admin/limits` 新增 `revision_reconciliation` 状态，默认 null；开启后可读最近页、
+错误码和超过 180 秒无页确认的 overdue。完整调度/告警、取消和存储命名空间边界见
+[设计](../tasks/v2_reconciliation_design.md)。没有新增告警服务或对外通知。
 
 ### Milvus 完整性读取（既有行为）
 

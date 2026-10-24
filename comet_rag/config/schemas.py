@@ -569,6 +569,31 @@ class InfrastructureConfig(BaseModel):
     )
 
 
+class RevisionReconciliationConfig(BaseModel):
+    """显式开启的持久化维护；不控制 revision 入库或读取。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=False, strict=True)
+    task_kind: str | None = Field(
+        default=None, min_length=1, max_length=64, strict=True
+    )
+    page_size: int = Field(default=8, ge=1, le=32, strict=True)
+    timeout_seconds: float = Field(
+        default=30.0, gt=0, le=30, allow_inf_nan=False, strict=True
+    )
+
+    @model_validator(mode="after")
+    def _source_kind(self) -> Self:
+        if self.enabled and (
+            self.task_kind is None
+            or not self.task_kind.strip()
+            or self.task_kind == "revision-reconciliation"
+        ):
+            raise ValueError("对账启用时必须明确独立的来源 task_kind")
+        return self
+
+
 class RetrievalConfig(BaseModel):
     """检索预算与实验性 revision 读路径；不控制写入或激活。"""
 
@@ -604,9 +629,23 @@ class APPConfig(BaseModel):
         default_factory=IngestPolicyConfig, description="入库来源准入策略"
     )
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    revision_reconciliation: RevisionReconciliationConfig = Field(
+        default_factory=RevisionReconciliationConfig
+    )
 
     @model_validator(mode="after")
     def _revision_storage_is_shared(self) -> Self:
+        if self.revision_reconciliation.enabled and (
+            self.backends.task_executor is not Backend.ARQ
+            or self.backends.task_store is not Backend.POSTGRES
+            or self.backends.vector_store is not Backend.MILVUS
+            or self.infrastructure_config.database is None
+            or self.infrastructure_config.vector_database is None
+            or self.infrastructure_config.redis is None
+        ):
+            raise ValueError(
+                "自动 revision 对账需要 ARQ/PostgreSQL/Milvus 及完整连接配置"
+            )
         if self.retrieval.revision_aware:
             backend = self.backends.vector_store
             if backend is Backend.MILVUS:

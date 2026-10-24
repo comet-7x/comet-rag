@@ -174,11 +174,17 @@ abandon（拒绝 active），再按 KB/source/revision 删除向量并核验剩�
 并保留 purged 墓碑。删除、计数或父块事务失败保留候选，重试删除零行也算成功。
 `sweep(limit=32)` 单次只处理一批 retired/abandoned；单项失败记录并继续，取消继续传播。
 登记提交前失败的 ready 不在扫描队列里，调用方必须重试登记。独立 Task 阶段已持久化
-发布结果和 GC 意图；生产接线还需落实旧写排干和补偿调度，服务未接入生产
-`IngestRunner` 或 maintenance。读侧可显式配置或注入
+发布结果和 GC 意图。独立对账可显式配置由 IO worker 定时触发，生产
+`IngestRunner` 仍未切换；旧数据/写入迁移仍需验收。读侧可显式配置或注入
 DocumentStore，默认关闭。M4 的完整完成标准见 `tasks/m4_todo.md`，不能由切片通过推定。
 
 ### revision 任务恢复协议
+
+第十九批在 reserve/写父块之前先保存 `revision_prepare`（version + RevisionDraft），
+绑定原任务、revision 和完整计划指纹，不保存父块正文或向量。父块完成后，一次 CAS
+保存完整 handoff、清空准备意图并释放原文；写父块或确认失败保留恢复身份与重建输入。
+FAILED 可重试同一计划；CANCELLED 则可凭准备意图精确回收部分写入，不必等完整 handoff。
+旧记录既无 handoff、也无准备意图时仍保留并告警，不能事后猜测计划。
 
 `RevisionTaskStages` 的发布阶段显式注入 `document_store=`，清理另注入
 `garbage_collector=`。Task context 中的 `revision_publication` 是版本 1 的窄记录：
@@ -240,9 +246,23 @@ flowchart LR
     A -->|达到页上限| X["结束本次调用"]
 ```
 
-对账不发布版本、不修改源任务，也不把 FAILED 的 staging/ready 擅自废弃。缺 handoff
-的旧任务保留输入并报告 deferred，不能猜计划来清理。独立页能力尚未接入定时维护；
-生产入库也未切换，前置条件见 [对账设计](../tasks/v2_reconciliation_design.md)。
+对账不发布版本、不修改源任务，也不把 FAILED 的 staging/ready 擅自废弃。准备意图可
+覆盖移交前取消；缺两种载荷的历史任务仍 deferred，并发激活仍由 Store 原子保护。
+
+第十九批新增 `RevisionMaintenance`：同一来源 kind 幂等复用一个持久化游标 Task，
+绑定向量存储命名空间摘要；每次触发以版本 CAS 认领，唯一 owner/单调 attempts 围栏
+释放。成功回到 PENDING，失败落 FAILED，下次触发继续原游标；显式取消不自动复活。
+维护 Task 不进入业务队列，普通 PENDING 补投排除其 kind。它复用 TaskStore 原语，
+不改变状态机，也不创建另一套队列或后台工作流。
+应用 TaskService 另按本 Context 当前注册的业务 kind 统计 backlog，过滤早于分页上限；
+保留的维护游标不消耗业务容量。通用门面未传范围回调时仍保持原全局 PENDING 计数。
+
+自动调度默认关闭，仅明确配置的 ARQ/PostgreSQL/Milvus 组合开启。仅 IO worker
+每分钟第 23 秒及启动时触发一页，页工作预算 30 秒、cron 外层 45 秒；失联复用既有
+90 秒租约回收。单进程不挂维护；启用对账不会顺带打开 revision 读取或切换生产写入。
+`/admin/limits` 暴露维护状态、最近页和 180 秒无确认页进度的 overdue，配合稳定日志
+事件告警；心跳不能掩盖无进展。完整策略、暂停/取消边界和剩余生产门禁见
+[对账设计](../tasks/v2_reconciliation_design.md)。
 
 Milvus 的计数和删除 ID 选择固定使用 Strong，检索仍保留配置的一致性偏好；跨客户端
 旧快照不能作为 GC 完成依据。这使用上游已有的 query 参数，见

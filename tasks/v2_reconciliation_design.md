@@ -1,75 +1,127 @@
-# V2 第十八批：持续对账与生产接线边界
+# V2：准备恢复与持续对账
 
-本批基于 `8c1ef8a`。用户已明确授权最小扩展 TaskStore：按 `(created_at, task_id)`
-游标分页，以及带版本条件/保留守卫的删除。不新增表、持久化字段或中间件，
-DocumentStore、向量 Store 原语继续复用。本文件记录本批决定，验证结果见 v2_plan.md。
+第十八批经用户授权最小扩展 TaskStore：排他游标分页，以及带版本条件/保留守卫的删除。
+第十九批复用这些能力和既有 DocumentStore/向量 Store 原语，补齐准备意图与维护接线。
+不增加表、Task 字段、向量 schema、中间件或通用任务框架。验证记录见 [v2_plan.md](v2_plan.md)。
 
-## 选择持续对账，不认领远端排干
+## 准备意图先于外部写入
 
-本地协程、线程与 SDK 返回/取消都不能证明所有旧远端 RPC 从未提交或不会继续落库。
-没有可验证的服务端围栏/远端写生命周期，本轮不引入“等待 N 秒就已排干”的判断。
-采用至少一次、反复精确对账；成功只表示本次核验为空。读侧 active 指针隔离过期向量，
-Store 原子 abandon 保护 active，补偿持续删除非 active revision 的迟到写。
+`RevisionTaskStages.prepare` 的顺序为：
 
-只有在对账持续运行、恢复身份保留、依赖最终恢复、旧写最终停止的条件下，才能承诺
-最终清理；没有有限时刻的永久空集保证。FAILED 的 staging/ready 仍需供业务 retry，
-不能因为暂时终态就废弃。CANCELLED 不可重开；完整移交记录允许精确清理其未发布版本。
-父块写入后、handoff 保存前失败的旧记录可能缺完整 draft；保留输入并报告 deferred，
-不通过猜测计划、分配新 generation 或重新发布来“修复”。
+1. 校验原 revision key、完整计划和 context 预算。
+2. 用 `put_bounded` 保存 `revision_prepare={version: 1, draft: ...}`，早于 reserve/父块写入。
+   draft 包含 Task/revision 身份、指纹、计数和来源元数据，不含父块正文、child 正文或向量。
+3. 用原计划幂等 reserve/写父块；失败保留输入和准备意图。
+4. 父块写入完成后，一次 CAS 保存完整 handoff、清空准备意图并释放原文等重建输入。
+
+准备意图确认丢失时，不继续外部写入；新 Context 重读原意图并复验同一计划。父块提交后
+handoff 确认前后失败，可重放原计划或已提交的 handoff，不重新分配 revision/generation。
+仅有准备意图时，`prepare(ctx, plan)` 仍需调用方从保留输入重建同一计划；它不猜测父块正文。
+`prepare(ctx)` 无计划的快捷恢复只适用于完整 handoff，向量化仍先核对所有父块与完整指纹。
+
+FAILED 的 staging/ready 保留业务重试，不能因一次失败就废弃；CANCELLED 不可重开，
+对账可凭准备意图精确清理其部分父块。完整 handoff 与准备意图同时存在时必须一致。
+第十九批之前既无 handoff、也无准备意图的旧记录仍 deferred，保留输入并记录明确告警；
+这些旧记录需要经核验的迁移/恢复，不能事后猜指纹，也不宣称全部历史失败都已自动修复。
+
+## 持续对账的保证
+
+本地协程/线程/SDK 返回或取消，不能证明所有旧远端 RPC 已停止。采用至少一次、反复
+精确对账，不引入“等 N 秒就已排干”的判断。complete/purged 仍重访；本次清理成功只
+说明本次核验为空。active 由 Store 原子 abandon 拒绝保护，不凭调用方旧快照授权删除。
+
+只有对账持续运行、身份保留、依赖最终恢复且旧写最终停止时，才能承诺最终清理；
+没有某次空集后永久为空的保证。源任务不因对账改变状态、发布回执、输入或重试次数。
 
 ## 身份保留与删除
 
-所有含 revision_key、revision_index、revision_publication 的任务都保留，包括记录为
-None/损坏、active、cleanup_complete、FAILED/CANCELLED/SUCCEEDED，以及很久以前的任务。
-revision_scan 游标任务同样保留。目前没有自动到期日，也不开放“再等一会就可删”的例外。
-这意味着存储保留成本，不能在没有可靠替代账本时删 Task 又声称仍能恢复。
+含 revision_key、revision_prepare、revision_index、revision_publication 的任务都保留，
+包括 None/损坏、active、complete、终态和很久以前的任务；revision_scan 游标任务同样
+保留。没有 TTL 或 force 例外。这需要存储保留成本，没有可靠替代账本不能先删 Task。
 
-业务守卫由组合根注入 TaskService；force 只放宽活跃状态限制，不绕过保留。删除在
-Store 内以刚复验的 version 执行，冲突时重新读取并复验 guard；显式 expected_version
-冲突则交给调用方。TaskService 在请求取消前先检查已知保留条件。底层未传 guard 的
-Store.delete 是通用/特权原语，不提供 RAG 意图保留保证，不能被应用 TTL 或维护任务直接使用。
+组合根给 TaskService 注入纯业务守卫，先拒绝已知保留项再考虑取消；实际删除以刚复验
+的 version 原子执行，冲突重读并复验，显式版本冲突交给调用方。Task 内核不认识 RAG。
+底层未传 guard 的 Store.delete 是通用/特权原语，不能用于应用 TTL 或例行维护清理。
 
-Task 内核只理解 Callable[[Task], None]，不导入 RAG 或认识任何业务 context 键。
-目前没有 HTTP Task 删除端点；不为本批新加删除接口。
+## 有界页与恢复
 
-## 有界分页与失败语义
+offset 已复现持续插入下的饥饿。游标采用 `(created_at, task_id)` 排他倒序，PostgreSQL
+用 C 排序与内存一致；锚点行删除、同时间戳不会打乱总序，新头部下轮再读。这不是快照，
+不承诺无限回填旧时间时一轮必定结束，也不承诺数据增长超过处理速率时能及时完成全轮。
 
-offset 已复现饥饿：每页新增量与 offset 前进量相同，扫描可永久重复同一页。新接口采用
-(created_at, task_id) 排他倒序总序，PostgreSQL 显式 C 排序与内存一致。锚点行可以删除，
-同时间戳也不会跳过/重复；新到头部记录在下一轮处理，不挤动本轮位置。这不是 MVCC 快照，
-也不承诺并发无限回填旧时间的情况下本轮一定结束。
+每次默认 8、最多 32 项，页工作预算最多 30 秒；逐条查询 limit=1，处理后才保存游标。
+4 KiB 扫描 context 只保存版本、来源 kind 与锚点。任务 result 只覆盖最近一页的有界结果，
+不是无限失败列表或完整审计账本；不把一页通过描述成全轮无故障。
 
-RevisionReconciler 每次最多一页（默认 8，最多 32 条）、默认 30 秒工作预算。逐条查询
-limit=1，避免多份大 context 同时驻留；逐条处理后用 TaskContext.put_bounded 保存游标。
-扫描上下文限制 4 KiB，保存 scope kind 和版本；不保存模型向量、原文或无界失败列表。
+- 单项存储/校验失败：报告失败 ID，推进到下一项，下轮重访，避免坏头部阻塞所有旧记录。
+- 查询、游标校验、预算或确认失败：整页异常，恢复已提交游标。
+- 取消/租约丢失：停止后续 IO；GC 已提交状态保留，重放幂等。
+- 到尾部：只重置游标并结束本次调用，不在一次触发中从头扫到空。
 
-- 单项存储/校验失败：报告并记录 task_id，保留源记录，推进到下一项；下一轮重访。
-- 扫描查询失败、游标非法、预算/确认写回失败：整页异常传播，按已提交游标恢复。
-- 扫描者取消/租约丢失：传播且不越过未确认的当前项；GC 已提交状态保留，重放幂等。
-- 到尾部只重置游标，结束本次调用；不在同一次调用从头循环扫空。
-- 持久化 scan TaskContext 必须由执行器单一拥有并按其 attempts 围栏；不由服务启动后台循环。
+## 持久化维护任务生命周期
 
-扫描只读取目标业务任务，不改变其状态、发布回执或重试次数。缺移交记录、仍执行中、
-当前 active 或仍可业务续跑的 staging/ready 报 deferred；旧版本/明确清理意图才进入精确 GC。
-源 Task 与游标必须保留，资源恢复后才有下轮重试；不将 cursor 当作“已经永久处理”的账本。
+`RevisionMaintenance` 持有一个维护游标 Task，不进入业务执行队列；不改 Task 状态机。
+它用既有 TaskStore CAS 认领/释放，再调用既有 `RevisionReconciler.run_page`。
 
-## 本批生产范围
+| 事件 | 行为 |
+|---|---|
+| API/worker 启动 | 按来源 kind 幂等创建/加载同一个游标，校验存储命名空间摘要 |
+| 一次触发 | PENDING → RUNNING，比较版本；分配唯一 invocation worker_id，attempts 单调增加 |
+| 一页确认成功 | 保存最近一页 result，RUNNING → PENDING，释放 owner；下一次触发继续 |
+| 整页失败 | FAILED + 稳定错误码；下一次定时触发显式 FAILED → PENDING 后重新认领，保留游标 |
+| 单项失败 | 本页结果记录 failed ID 并打错误日志，下一页继续，下轮重访 |
+| 进程退出/外部取消 | 不写假成功；现有 90 秒租约回收将失联维护任务判 FAILED，后续触发恢复 |
+| 显式取消维护 Task | 落 CANCELLED，保留游标，不自动重建或复活；普通启停应使用配置而非 Task cancel |
 
-本批接入应用的删除保留守卫，交付可显式调用、可持久化续页的独立对账服务。
-不切换生产 IngestRunner、不注册 cron、不默认开启 revision 读写，也不宣布完整 H/I。
-这项范围收缩来自已复现的恢复与发现约束，不能由补偿入口存在推定部署已经持续对账。
+`max_attempts=1` 让通用租约回收把失联维护 Task 判 FAILED，而不把它重投业务队列；
+它不是维护轮次数上限。worker 的 PENDING 补投显式排除维护 kind，即使维护配置关闭也
+不误投。SUCCEEDED 不用于页完成，FAILED 由维护触发恢复，不借业务重试队列执行。
+应用准入和 backlog 按本 Context 当前注册的业务 kind 在 Store 查询时过滤，再应用上限，
+不让内部维护游标挤占业务容量。TaskService 的 pending_kinds 是可选回调；直接使用通用
+门面且未提供范围时，仍统计所有 PENDING，低层调用方自行明确其业务范围。
 
-生产入库接线前还需：
+同一 TaskStore/来源 kind 只绑定一个向量 endpoint/database/prefix 摘要；切换命名空间
+会拒绝启动，不能另建游标扫描同一批来源。摘要不包含凭据。不同 Context 不共享全局
+对象；正确性依赖数据库 CAS 与 owner/attempts 围栏，cron unique 只减少重复触发。
 
-1. 第十九批确定并落实扫描 Task 生命周期、独占所有权、定时触发、游标保留与告警；
-   单进程不得为此挂租约回收。多个 Context 不得靠全局对象共享游标或混用存储命名空间。
-2. prepare 到 handoff 的中断恢复须覆盖完整持久化意图；不能把缺载荷的取消版本永远 deferred
-   却宣称所有失败版本都可自动回收。保留任务只是保护恢复来源，并非该缺口已解决。
-3. 明确 legacy 任务退出/迁移。旧 flat 写入的无 revision 数据不属于精确 revision GC 过滤，
-   不能把新协议当成旧写围栏。先限定未用于旧写的全新 KB 标识/存储命名空间，或经过
-   显式验收的迁移批次；空集合计数不是排干证明，再创建同名 KB 也不是新命名空间。
-4. 生产路径使用可恢复的 PostgreSQL Task/DocumentStore 与匹配的 Milvus 命名空间；
-   内存实现只证明契约，不提供重启后的持久性。回滚与迟到旧写需在真实环境联验。
+启动后续装配失败时，已登记的游标保留，资源按现有回滚关闭；没有后台生产者需要偷跑。
+停用配置需停止/排干旧 IO worker 后再关闭连接。重新启用复用 PENDING/FAILED 游标；
+显式取消是终止该维护身份，需要经核验的维护迁移，不能用普通 retry 复活 CANCELLED。
 
-以上条件满足后，再组合已有 prepare/ready/activate/cleanup；不新增一套队列、注册器、
-泛化工作流或全库向量扫描来绕过边界。
+## 调度与告警接线
+
+自动维护默认关闭。启用必须有 ARQ/PostgreSQL/Milvus 与完整连接配置，并明确来源 kind；
+组合根创建配套持久化存储，不接受不透明 Task/Document/VectorStore 注入来冒充持久化。
+低层服务仍可显式注入内存实现验证契约，但不提供重启后的持久性。
+
+仅 IO worker 挂 cron，每分钟第 23 秒、启动时也触发，每次最多一页；外层 45 秒预算，
+已有租约回收在第 7 秒运行，租约 90 秒。IO worker 必须保留租约回收；CPU worker 不挂
+revision 对账 cron。单进程 serve 不加载 workers.maintenance，也不启动隐式维护循环。
+这不是生产 revision 写入开关；只启用维护也不会顺带启用 revision-aware 检索。
+
+`GET /admin/limits` 增加 `revision_reconciliation`：任务 ID、状态、最近页、错误码和 overdue。
+超过 180 秒没有确认一页即 overdue，初始以创建时间计；认领、心跳和重试不重置该进度时钟。
+CANCELLED 显示已停状态，不因人为停用持续报 overdue。未开启维护时该字段为 null。
+
+稳定日志事件用于现有日志采集/告警规则：
+
+- `revision_reconciliation_failed`：整页失败；结合 error_code 与持续时间告警。
+- `revision_reconciliation_partial_failure`：最近页有坏记录，结合该页 failed ID 与单项异常定位。
+- `revision_reconciliation_missing_prepare`：历史缺载荷记录，需恢复/迁移，不能把普通 deferred 都当故障。
+- `revision_reconciliation_retry` / `revision_reconciliation_page`：恢复与进展记录。
+
+监控应同时检查错误、部分失败和 overdue；只有 RUNNING/心跳不代表维护有效。
+overdue 只衡量页进度，不保证全轮及时完成；应另外从 page 日志的 cycle_complete=True
+统计轮次耗时，并按数据规模设阈值，不能把每页有进展当成全库补偿 SLA。仓库交付
+这些可查询/可采集的信号与规则，不新增告警中间件或对外发送通知。没有 IO worker、
+Redis 调度停止等“无人执行便无日志”的故障，应通过外部轮询 overdue 发现。
+
+## 生产写入仍需验收
+
+本批接入默认关闭的独立维护，不切换 IngestRunner，不默认开启 revision 读写，不勾选
+完整 H/I。生产新写前仍需处理旧缺载荷记录、legacy 退出与命名空间/迁移验收，并完成
+准备→激活→清理的生产整体接线、部署和回滚验收。
+
+旧 flat 写的无 revision 数据不属于精确 GC 过滤；空集合不是在途旧 RPC 排干证明，再建
+同名 KB 也不是新命名空间。限定从未用于旧写的 KB/存储命名空间，或经过明确验收的
+迁移批次。不能把有独立维护入口或 cron 存在，推定整个生产写路径已安全。

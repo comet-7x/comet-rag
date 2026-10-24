@@ -37,6 +37,7 @@ class Environment:
     read_tasks: PostgresTaskStore
     writer: AsyncMilvusStore
     reader: AsyncMilvusStore
+    prefix: str
     model: _Embedding
     ctx: TaskContext
     plan: IndexPlan
@@ -115,6 +116,7 @@ async def publication_env(
             read_tasks,
             writer,
             reader,
+            prefix,
             model,
             ctx,
             plan,

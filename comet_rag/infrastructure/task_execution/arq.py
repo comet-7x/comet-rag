@@ -212,7 +212,11 @@ class ArqExecutor(StoreDrivenExecutor):
         await self.submit(task_id)
 
     async def reconcile_pending(
-        self, *, limit: int = 100, exclude_ids: frozenset[str] = frozenset()
+        self,
+        *,
+        limit: int = 100,
+        exclude_ids: frozenset[str] = frozenset(),
+        exclude_kinds: frozenset[str] = frozenset(),
     ) -> int:
         """有界补投，轮转分页；返回成功 submit 数（含 Redis 去重），仅 worker 调用。"""
         if limit < 1:
@@ -225,7 +229,7 @@ class ArqExecutor(StoreDrivenExecutor):
         )
         delivered = 0
         for task in pending:
-            if task.task_id in exclude_ids:
+            if task.task_id in exclude_ids or task.kind in exclude_kinds:
                 continue
             try:
                 await self.submit(task.task_id)

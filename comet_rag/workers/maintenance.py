@@ -10,6 +10,7 @@ from arq.cron import CronJob
 
 from comet_rag.core.logging import logger
 from comet_rag.infrastructure.task_execution.arq import ArqExecutor
+from comet_rag.services.revision_maintenance import RECONCILIATION_KIND
 from comet_rag.tasks import TaskStore
 
 #: 回收租约。远大于 `TaskContext.heartbeat_interval`（10s）—— 见模块文档。
@@ -50,7 +51,30 @@ async def sweep_stale_tasks(ctx: dict[str, Any]) -> int:
             logger.exception(f"任务 {task_id} 回收后重投失败")
     # 即使本轮没有失联任务，也必须对账。建任务/重试/移交后进程退出或
     # Redis 不可用留下的 PENDING，不会出现在 sweep_stale 的候选中。
-    return requeued + await executor.reconcile_pending(exclude_ids=frozenset(revived))
+    return requeued + await executor.reconcile_pending(
+        exclude_ids=frozenset(revived),
+        exclude_kinds=frozenset({RECONCILIATION_KIND}),
+    )
+
+
+async def reconcile_revisions(ctx: dict[str, Any]) -> None:
+    """cron 只触发一页，不把持久化维护游标投进业务队列。"""
+    maintenance = ctx["context"].revision_maintenance
+    if maintenance is not None:
+        await maintenance.run_once()
+
+
+def reconciliation_cron() -> CronJob:
+    """仅 IO worker 挂载，每分钟一页；45 秒外层预算给 30 秒页留收尾时间。"""
+    return cron(
+        reconcile_revisions,
+        name="reconcile_revisions",
+        second=23,
+        run_at_startup=True,
+        unique=True,
+        timeout=45,
+        max_tries=1,
+    )
 
 
 def sweep_cron(*, second: int = SWEEP_SECOND) -> CronJob:
@@ -72,4 +96,11 @@ def sweep_cron(*, second: int = SWEEP_SECOND) -> CronJob:
     )
 
 
-__all__ = ["DEFAULT_LEASE", "SWEEP_SECOND", "sweep_cron", "sweep_stale_tasks"]
+__all__ = [
+    "DEFAULT_LEASE",
+    "SWEEP_SECOND",
+    "reconcile_revisions",
+    "reconciliation_cron",
+    "sweep_cron",
+    "sweep_stale_tasks",
+]

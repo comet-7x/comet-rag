@@ -1,5 +1,7 @@
 """管理相关路由。"""
 
+from __future__ import annotations
+
 from dataclasses import asdict
 from typing import Any
 
@@ -28,9 +30,13 @@ async def limits(request: Request) -> dict[str, Any]:
     mineru_gate = getattr(ctx, "mineru_gate", None)
     backlog = await ctx.task_service.backlog()
     degradation = getattr(ctx, "degradation", None)
+    maintenance = getattr(ctx, "revision_maintenance", None)
     return {
         "model_gate": asdict(gate.stats) if gate is not None else None,
         "mineru_gate": (asdict(mineru_gate.stats) if mineru_gate is not None else None),
         "backlog": backlog,
         "degradation": degradation.stats if degradation is not None else None,
+        "revision_reconciliation": (
+            await maintenance.status() if maintenance is not None else None
+        ),
     }

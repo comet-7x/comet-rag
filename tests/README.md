@@ -350,10 +350,28 @@ PostgreSQL Task/DocumentStore 与 Milvus 读连接仅凭保留意图补偿，不
 从新 Context 或新 worker 尝试续页，重复清理 purged 后迟到向量，并核验六种检索组合。
 故障注入定位于客户端提交/确认边界，不宣称模拟真实 SIGKILL 或服务端内部调度。
 
-未传业务 guard 的底层删除会丢失恢复身份、offset 可饥饿，以及 prepare 写父块后
-handoff 未保存的取消任务仍 deferred，均保留特征化测试；不把已知缺口写成完成承诺。
+未传业务 guard 的底层删除会丢失恢复身份、offset 可饥饿，以及旧协议既无准备意图、
+也无 handoff 的取消任务仍 deferred，均保留特征化测试；不把已知缺口写成完成承诺。
 16 类单元/契约反向缺陷及 2 项真实后端反向实验均由目标断言检出；策略与生产门禁见
 [持续对账设计](../tasks/v2_reconciliation_design.md)。
+
+第十九批新增 `unit/services/test_revision_preparation.py`、
+`unit/services/test_revision_maintenance.py`、`unit/test_revision_maintenance_wiring.py`
+和 `integration/test_revision_preparation_maintenance.py`。准备意图先于外部 IO 的断言在
+reserve/写父块现场读取 Task 验证；父块提交后取消的特征化用例现断言精确回收成功，
+不删除旧协议缺载荷的局限测试。故障覆盖准备/移交确认丢失、计划/归属不符、取消与重试。
+
+维护测试覆盖并发快照 CAS、唯一游标/命名空间、旧调用收尾围栏、失败重访、显式取消、
+失联租约恢复、进度告警和业务队列排除。配置接线验证仅 IO worker 挂默认关闭的 cron、
+启用维护不打开 revision 读写，以及后续启动失败回滚。7 项真实 PG/Redis/Milvus 用例
+验证独立连接恢复、并发认领和原生 ARQ cron 在新 worker Context 中恢复；该组使用
+专用 Redis DB 10（11–15 仍归原有测试），先停生产者/排干，最后关资源。
+
+23 类独立副本反向缺陷均由目标断言检出，包括先写父块后存意图、丢准备身份、忽略
+CAS/owner/scope、误投维护 Task、隐式打开读开关、漏 cron/告警/状态接口、维护挤占
+业务容量和重复统计 kind。容量用例先在错误实现复现，再验证 query 过滤早于 limit；
+通用门面的默认全局计数保持回归。真实反向
+实验与本轮全量数字统一记录在 v2_plan.md；不把故障注入描述成真实 SIGKILL。
 
 单元反向验证覆盖 context UTF-8 上限/CAS 冲突重验、模型返回后所有权围栏、完整计划
 指纹及 UUID 重用；32 MiB 是整份 context 的持久化上限，不是进程峰值内存预算。

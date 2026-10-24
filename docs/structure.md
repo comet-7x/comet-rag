@@ -191,7 +191,8 @@ materializer，因此同源文档的 chunk ID、顺序和基础 metadata 不会�
 
 ```mermaid
 flowchart TD
-    plan["IndexPlanner：稳定 ID 与计划"] --> prepare["RevisionStager.prepare：父块落库"]
+    plan["IndexPlanner：稳定 ID 与计划"] --> preparing["Task prepare：先持久化计划身份"]
+    preparing --> prepare["RevisionStager.prepare：父块落库"]
     prepare --> resume["resume：子向量写入、计数核验"]
     resume --> ready["ready：尚不可见"]
     ready --> intent["Task context：activating 意图"]
@@ -214,9 +215,11 @@ flowchart TD
 须重试原 superseded 结果。激活响应丢失不能被解释为“失败后可删除当前版本”。
 complete 不证明远端旧 RPC 已排干，普通 sweep 也不会扫描 purged；本次为空之后的
 迟到写入需按保留的身份对账，详见 [恢复协议](architecture.md#revision-任务恢复协议)。
-第十八批增加独立 RevisionReconciler：有界分页、持久化游标与逐项补偿；组合根已给
-TaskService 注入意图/游标保留守卫。尚未注册生产定时任务或切换 IngestRunner，缺
-handoff 的恢复及 legacy 命名空间验收仍是接线前置，见 [对账设计](../tasks/v2_reconciliation_design.md)。
+第十八批增加有界 RevisionReconciler 和任务保留守卫；第十九批在父块写入前先持久化
+准备意图，取消版本可在没有完整 handoff 时精确回收。独立维护默认关闭，显式配置后
+仅 IO worker 通过原生 cron 每次触发一页；源任务不进入新队列，维护游标也不参与业务
+PENDING 补投。生产 IngestRunner 未切换，历史缺载荷、legacy 命名空间/迁移及整体验收
+仍在门禁内，见 [对账设计](../tasks/v2_reconciliation_design.md)。
 
 ## 检索流程
 

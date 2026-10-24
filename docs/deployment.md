@@ -321,17 +321,53 @@ DocumentStore，Milvus 配 PostgreSQL DocumentStore 和 Strong。Milvus 模式�
 retired 和被新版本替代的 legacy 均不可见。旧候选挤满上限时允许少返回，诊断为
 `revision_candidate_cap`。判活存储故障或结果不完整时返回安全 503，**不会降级为返回
 全部版本**。未配置 DocumentStore 的旧链路遇到 revision candidate 也拒绝查询。
-独立激活/GC 切片已验收，但生产 Task 与 maintenance 接线、写入排干及完整 H/I 验收
-尚未完成，不得启用生产新写入。GC 默认每轮最多 32 个 retired/abandoned；本轮没有
-自动注册定时任务。独立 Task 阶段已持久化发布/清理意图，superseded 登记前失败从
+独立激活/GC 切片已验收，但生产入库切换、legacy 迁移及完整 H/I 验收
+尚未完成，不得据独立切片启用生产新写入。GC 默认每轮最多 32 个 retired/abandoned。
+独立 Task 阶段已持久化发布/清理意图，superseded 登记前失败从
 cleanup_pending 重试，不能仅依赖候选扫描。purged 后的迟到写入需要保留身份并显式
 重放精确清理；complete 只表示上次核验为空。生产开启前还需落实意图保留、分页扫描
 及旧写排干/持续对账策略，不能提前删除 Task 后再依赖其 context 做恢复。
 第十八批已接入 TaskService 删除保留守卫，并提供独立、带持久化游标的有界对账页。
 源任务与扫描游标当前无自动到期日，force 不绕过保留；没有新加 HTTP 删除端点。
-对账尚未注册 cron，缺移交记录仍报告 deferred；这不是可直接启用 revision 写入的
-生产配置。部署前须落实扫描任务生命周期/所有权、触发与告警，以及 legacy 迁移，
-详见 [持续对账设计](../tasks/v2_reconciliation_design.md)。
+第十九批先持久化准备意图再写父块；新记录即使缺完整 handoff，取消后也可精确回收。
+旧协议既无准备意图、也无 handoff 的记录仍保留并告警。完整策略见
+[持续对账设计](../tasks/v2_reconciliation_design.md)。
+
+### 独立 revision 对账
+
+默认关闭，不改变生产 ingest 或 revision 读开关。自动模式要求完整的
+ARQ/PostgreSQL/Milvus 配置，由组合根创建配套 Task/Document/VectorStore；不接受
+不透明存储注入。同一来源 kind 的游标绑定 endpoint/database/prefix 摘要，配置切换
+命名空间会拒绝启动，不能悄悄把同一批来源交给另一组存储。
+
+```yaml
+revision_reconciliation:
+  enabled: false
+  task_kind: null
+  page_size: 8
+  timeout_seconds: 30.0
+```
+
+开启前，task_kind 必须是已经采用 RevisionTaskStages 的实际任务 kind。仓库生产
+`ingest` 仍是旧路径，没有可直接套用的新生产 kind；配置对账不会完成这部分迁移。
+API/worker 必须共享相同配置与存储，且至少运行一个 IO worker。
+启用前先升级所有参与 PENDING 补投的 worker；旧版本不认识维护 kind 的排除规则。
+回退到旧版本前也需先停用并排干维护，保留游标并明确其迁移处置，不能假设跨版本混跑安全。
+
+开启后仅 embedder 挂载原生 ARQ cron，每分钟第 23 秒及启动时处理一页；单进程
+serve 不加载租约维护，也不启动后台循环。页上限 32 项/30 秒，cron 外层 45 秒，
+失联由原 90 秒租约回收恢复。维护游标不会作为业务任务补投到队列。
+业务 backlog 按本 Context 已注册的业务 kind 统计，保留的维护游标不占业务准入额度。
+
+普通暂停使用配置并排干旧 IO worker；重启/重新启用继续原游标。显式取消维护 Task
+表示终止该维护身份，不能用普通业务 retry 复活；需要经核验的维护迁移。
+
+`GET /admin/limits` 的 revision_reconciliation 提供 task_id/status、last_page、error_code
+和 overdue。超过 180 秒未确认一页即 overdue；认领、重试、心跳不算完成进度。
+监控规则应覆盖整页失败、last_page.failed 非空、overdue，以及配置开启却没有 IO worker。
+日志事件 `revision_reconciliation_failed` / `revision_reconciliation_partial_failure` /
+`revision_reconciliation_missing_prepare` 分别对应整页失败、坏记录和历史恢复缺口。
+项目提供告警信号，不部署通知中间件；无人执行时需通过外部轮询发现无进展。
 
 ### Milvus schema 兼容
 

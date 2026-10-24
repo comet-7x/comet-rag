@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from comet_rag.composition.context import Context, wire_runners
 from comet_rag.composition.pipeline_config import resolve_pipeline_config
@@ -52,7 +53,12 @@ from comet_rag.ports.knowledge_base import (
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
-from comet_rag.services.revision_reconciliation import guard_revision_task_deletion
+from comet_rag.services.revision_gc import RevisionGarbageCollector
+from comet_rag.services.revision_maintenance import RevisionMaintenance
+from comet_rag.services.revision_reconciliation import (
+    RevisionReconciler,
+    guard_revision_task_deletion,
+)
 from comet_rag.services.source_policy import SourcePolicy, build_source_policy
 from comet_rag.tasks import (
     LANE_CPU,
@@ -526,6 +532,11 @@ async def build_context(
     """
     # APPConfig 只有配置数据；python 模式保留 SecretStr，且让嵌套配置重新校验。
     config = type(config).model_validate(config.model_dump(mode="python"))
+    maintenance_enabled = config.revision_reconciliation.enabled
+    if maintenance_enabled and any(
+        resource is not None for resource in (task_store, document_store, vector_store)
+    ):
+        raise ValueError("自动对账必须由组合根创建配套持久化存储，不接受不透明存储注入")
     resolved_pipeline = resolve_pipeline_config(config.limits, pipeline_config)
     validate_vision_model(resolved_pipeline.docx.vision_model, asynchronous=True)
     if task_executor is not None:
@@ -535,7 +546,7 @@ async def build_context(
     if document_store is not None:
         _validate_revision_resources(config, document_store, vector_store)
     needs_document_database = (
-        config.retrieval.revision_aware
+        (config.retrieval.revision_aware or maintenance_enabled)
         and document_store is None
         and config.backends.vector_store is Backend.MILVUS
         and not isinstance(vector_store, AsyncInMemoryVectorStore)
@@ -588,7 +599,9 @@ async def build_context(
         database = build_database(config) if needs_database else None
         if database is not None:
             rollback.push_async_callback(close_resource, database)
-        if config.retrieval.revision_aware and document_store is None:
+        if (
+            config.retrieval.revision_aware or maintenance_enabled
+        ) and document_store is None:
             document_store = build_document_store(
                 config, database, vector_store=vector_store
             )
@@ -643,7 +656,9 @@ async def build_context(
 
         if vector_store is None:
             vector_store = build_vector_store(
-                config, revision_aware=document_store is not None
+                config,
+                revision_aware=document_store is not None
+                and (config.retrieval.revision_aware or not maintenance_enabled),
             )
             rollback.push_async_callback(close_resource, vector_store)
         if task_store is None:
@@ -686,6 +701,7 @@ async def build_context(
                 task_executor,
                 max_backlog=config.limits.max_backlog,
                 delete_guard=guard_revision_task_deletion,
+                pending_kinds=runners.kinds,
             ),
             retrieval=RetrievalService(
                 embedding_model=embedding_model,
@@ -698,7 +714,11 @@ async def build_context(
                 knowledge_base=knowledge_base,
                 reranker=reranker,
                 degradation=degradation,
-                document_store=document_store,
+                document_store=(
+                    document_store
+                    if config.retrieval.revision_aware or not maintenance_enabled
+                    else None
+                ),
                 max_revision_candidates=config.retrieval.max_revision_candidates,
                 timeout_seconds=config.retrieval.timeout_seconds,
             ),
@@ -726,6 +746,43 @@ async def build_context(
             ],
             _hook_cleanups=hook_cleanups,
         )
+        if maintenance_enabled:
+            # 配套存储由上面的组合根创建；摘要仅作命名空间绑定，不保存凭据。
+            vector_settings = config.infrastructure_config.vector_database
+            source_kind = config.revision_reconciliation.task_kind
+            if vector_settings is None or source_kind is None or document_store is None:
+                raise ValueError("自动对账缺少配套资源")
+            endpoint = urlsplit(
+                vector_settings.endpoint
+                if "://" in vector_settings.endpoint
+                else "http://" + vector_settings.endpoint
+            )
+            maintenance = RevisionMaintenance(
+                task_store=task_store,
+                reconciler=RevisionReconciler(
+                    task_store=task_store,
+                    document_store=document_store,
+                    garbage_collector=RevisionGarbageCollector(
+                        document_store=document_store, vector_store=vector_store
+                    ),
+                    task_kind=source_kind,
+                    page_size=config.revision_reconciliation.page_size,
+                    timeout_seconds=config.revision_reconciliation.timeout_seconds,
+                ),
+                task_kind=source_kind,
+                resource_identity=repr(
+                    (
+                        endpoint.scheme,
+                        endpoint.hostname,
+                        endpoint.port,
+                        endpoint.path,
+                        vector_settings.database_name,
+                        vector_settings.collection_prefix,
+                    )
+                ),
+            )
+            await maintenance.initialize()
+            context.revision_maintenance = maintenance
         wire_runners(context, ingest_config=resolved_pipeline)
 
         logger.info(

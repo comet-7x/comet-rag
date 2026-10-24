@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from comet_rag.core.logging import logger
@@ -47,12 +47,14 @@ class TaskService:
         *,
         max_backlog: int = 0,
         delete_guard: Callable[[Task], None] | None = None,
+        pending_kinds: Callable[[], Sequence[str]] | None = None,
     ) -> None:
         self.store = store
         self.executor = executor
         #: 待执行任务上限，0 = 不限（单进程/当库用时的默认）
         self._max_backlog = max_backlog
         self._delete_guard = delete_guard
+        self._pending_kinds = pending_kinds
 
     # 提交与查询
     async def submit(
@@ -85,10 +87,10 @@ class TaskService:
         而运维只需要知道"到顶了没有"。
         """
         cap = self._max_backlog or 1000
-        pending = await self.store.list_tasks(status=TaskStatus.PENDING, limit=cap)
+        pending = await self._pending_count(cap)
         return {
-            "pending": len(pending),
-            "at_least": len(pending) >= cap,  # 到了上限就说明可能还有更多
+            "pending": pending,
+            "at_least": pending >= cap,  # 到了上限就说明可能还有更多
             "max_backlog": self._max_backlog or None,
         }
 
@@ -96,13 +98,31 @@ class TaskService:
         """创建记录前做有界查询；该准入检查允许并发提交造成短暂超额。"""
         if not self._max_backlog:
             return
-        pending = await self.store.list_tasks(
-            status=TaskStatus.PENDING, limit=self._max_backlog
-        )
-        if len(pending) >= self._max_backlog:
+        pending = await self._pending_count(self._max_backlog)
+        if pending >= self._max_backlog:
             raise Backlogged(
                 f"待执行任务已达上限 {self._max_backlog}，暂不受理新任务，请稍后重试"
             )
+
+    async def _pending_count(self, cap: int) -> int:
+        """仅统计调用方负责的业务 kind；默认仍统计所有 PENDING。
+
+        过滤在 Store 查询时执行，不能先取一页再丢弃维护记录，否则会漏计页后的业务。
+        kind 列表动态读取，保留组合根之后显式注册 runner 的行为；总计最多读 cap 条。
+        """
+        if self._pending_kinds is None:
+            return len(
+                await self.store.list_tasks(status=TaskStatus.PENDING, limit=cap)
+            )
+        count = 0
+        for kind in sorted(set(self._pending_kinds())):
+            rows = await self.store.list_tasks(
+                kind=kind, status=TaskStatus.PENDING, limit=cap - count
+            )
+            count += len(rows)
+            if count >= cap:
+                break
+        return count
 
     async def _enqueue(self, task_id: str) -> None:
         """仅忽略任务已被其他提交者或 worker 接手的竞态。"""

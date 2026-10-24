@@ -104,6 +104,14 @@ retrieval:
 # 资源上限（spec S4-1、S4-2）。默认值按"一块消费级 GPU 上跑一个 vLLM"来定，
 # 请按模型服务的实际能力调整 —— 调大不会更快，只会让请求在服务端排队，
 # 反而拖长 p99。运行时可从 GET /admin/limits 看实时数字。
+# 独立维护：默认关闭，不开启 revision 读写；仅 ARQ/PostgreSQL/Milvus 组合支持自动调度。
+revision_reconciliation:
+  enabled: false
+  # 开启前必须填入已采用 RevisionTaskStages 的真实任务 kind，不能把示例当作已有 runner。
+  task_kind: null
+  page_size: 8
+  timeout_seconds: 30.0
+
 limits:
   # 本进程对模型服务的**总**并发上限。注意不是每个任务的，是整个进程的：
   # 前者会随任务数翻倍（曾实测配 4 实际 128，见 core/concurrency.py）。

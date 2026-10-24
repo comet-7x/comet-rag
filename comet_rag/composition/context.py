@@ -26,6 +26,7 @@ from comet_rag.services.ingestion import (
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
+from comet_rag.services.revision_maintenance import RevisionMaintenance
 from comet_rag.tasks import TaskExecutor, TaskService, TaskStore
 from comet_rag.tasks.runner import RunnerRegistry
 
@@ -50,6 +51,7 @@ class Context:
     runners: RunnerRegistry
     reranker: AsyncRerankerPort | None = None
     document_store: DocumentStore | None = None
+    revision_maintenance: RevisionMaintenance | None = None
     #: 对模型服务的进程级并发闸门。放进 Context 是为了让 /admin/health
     #: 能读到它的实时统计 —— 过载时最先想看的就是这几个数。
     model_gate: Any = None

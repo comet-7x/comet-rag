@@ -10,7 +10,8 @@ from comet_rag.config.schemas import APPConfig, Backend
 from comet_rag.config.settings import get_config
 from comet_rag.core.logging import logger, setup_logging
 from comet_rag.infrastructure.task_execution.arq import LANE_QUEUES, run_task
-from comet_rag.workers.maintenance import DEFAULT_LEASE, sweep_cron
+from comet_rag.tasks import LANE_IO
+from comet_rag.workers.maintenance import DEFAULT_LEASE, reconciliation_cron, sweep_cron
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,17 +85,30 @@ def build_settings(
     `build_context` —— 与 `make_lifespan` 完全同一套口子。集成测试借此把
     假模型注进 worker 进程，于是测到的是**真实装配路径**，而不是另抄一份。
     """
-    settings = (config or get_config()).infrastructure_config.redis
+    effective_config = config or get_config()
+    settings = effective_config.infrastructure_config.redis
     if settings is None:
         raise ValueError("起 worker 需要 infrastructure_config.redis")
+    if (
+        effective_config.revision_reconciliation.enabled
+        and profile.lane == LANE_IO
+        and not profile.sweep
+    ):
+        raise ValueError("自动 revision 对账的 IO worker 必须启用租约回收")
 
     from arq.connections import RedisSettings  # noqa: PLC0415
+
+    maintenance_jobs = (
+        [reconciliation_cron()]
+        if effective_config.revision_reconciliation.enabled and profile.lane == LANE_IO
+        else []
+    )
 
     class WorkerSettings:
         functions = [run_task]  # noqa: RUF012 —— arq 要求的就是普通类属性
         # 单进程模式（InProcessExecutor）永远走不到这里 —— 它根本不加载
         # workers/，所以"单进程不得启用回收"是结构上保证的，不靠开关。
-        cron_jobs = [sweep_cron()] if profile.sweep else []  # noqa: RUF012
+        cron_jobs = ([sweep_cron()] if profile.sweep else []) + maintenance_jobs  # noqa: RUF012
         queue_name = profile.queue
         redis_settings = RedisSettings.from_dsn(settings.url)
         max_jobs = profile.max_jobs
