@@ -214,6 +214,9 @@ flowchart TD
 须重试原 superseded 结果。激活响应丢失不能被解释为“失败后可删除当前版本”。
 complete 不证明远端旧 RPC 已排干，普通 sweep 也不会扫描 purged；本次为空之后的
 迟到写入需按保留的身份对账，详见 [恢复协议](architecture.md#revision-任务恢复协议)。
+第十八批增加独立 RevisionReconciler：有界分页、持久化游标与逐项补偿；组合根已给
+TaskService 注入意图/游标保留守卫。尚未注册生产定时任务或切换 IngestRunner，缺
+handoff 的恢复及 legacy 命名空间验收仍是接线前置，见 [对账设计](../tasks/v2_reconciliation_design.md)。
 
 ## 检索流程
 

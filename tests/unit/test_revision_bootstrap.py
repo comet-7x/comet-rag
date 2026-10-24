@@ -236,3 +236,23 @@ async def test_document_only_postgres_requirement_is_not_lost_when_other_stores_
     builder.assert_called_once()
     await context.close()
     database.close.assert_awaited_once()
+
+
+async def test_composition_installs_revision_retention_before_forced_cancellation() -> (
+    None
+):
+    from comet_rag.services.revision_reconciliation import RevisionTaskRetained
+
+    context = await bootstrap.build_context(
+        config(enabled=False), embedding_model=Embedding()
+    )
+    try:
+        task = await context.task_store.create("ingest", context={"revision_key": None})
+        with pytest.raises(RevisionTaskRetained):
+            await context.task_service.delete(task.task_id, force=True)
+        assert await context.task_store.get(task.task_id) is not None
+        assert (
+            await context.task_store.require(task.task_id)
+        ).status.value == "pending"
+    finally:
+        await context.close()

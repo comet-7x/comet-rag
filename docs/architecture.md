@@ -202,9 +202,47 @@ revision key、plan 指纹、task_id、generation、phase；不复制父块正�
 **迟到 upsert 是跨库边界。** 已发出的旧请求可能在 GC 之后落入 Milvus；它不通过
 revision-aware 可见性检查，但 purged 不在普通 sweep 候选里，因而仍会占用存储。
 `collect_inactive(key)` 复用既有 Store 原语提供精确补偿，active 保护仍早于任何向量 IO。
-清理成功仅证明本次核验时为空，不能证明未来不会再落库。生产开启前必须明确旧写
-排干或持续对账、Task 意图保留期限与分页扫描；删除 Task 后不能再依赖其意图恢复。
-本批没有自动注册补偿扫描、修改候选状态集合或增加 Store/Task/schema 字段。
+清理成功仅证明本次核验时为空，不能证明未来不会再落库。生产开启前必须落实旧写
+排干或持续对账、Task 意图保留与分页扫描；删除 Task 后不能再依赖其意图恢复。
+第十七批未自动注册补偿扫描、修改候选状态集合或增加 Task/schema 字段；
+第十八批的对账与删除约束如下。
+
+### 持续对账与任务保留
+
+第十八批经确认最小扩展 TaskStore：`TaskCursor(created_at, task_id)` 与
+`list_tasks_before` 提供排他倒序页；`delete` 支持 guard 和 expected_version，底层删除
+带版本条件，冲突重读时复验守卫。guard 必须是依赖版本化字段的纯函数；心跳不涨版本，
+不能用它证明 GC 身份可以释放。其余 Store Port、Task 字段与 schema 不变。
+
+组合根向 TaskService 注入 `guard_revision_task_deletion`，保留 revision 身份、回执和
+扫描游标；终态、年龄与 complete 都不是删除许可，force 也不绕过。底层未传 guard 的
+Store.delete 仍是通用/特权原语，不能用于应用 TTL 清理。任务内核不认识业务 context 键。
+
+`RevisionReconciler.run_page` 接收带 worker/attempts 围栏的扫描 TaskContext。默认每页
+8 条、最多 32 条、30 秒工作预算，逐条查询 limit=1，避免多份大 context 同时驻留。
+4 KiB 有界扫描 context 保存 kind/游标版本与锚点；处理后才确认位置。单项失败报告并
+保留源记录供下一轮重访，查询/确认失败、超时、取消或租约丢失向上传播。到尾部重置
+游标即结束调用，不在一次运行中循环扫空。这不是 MVCC 快照。
+
+```mermaid
+flowchart LR
+    C["扫描 Task 的持久化游标"] --> Q["总序游标读取一条任务"]
+    Q --> E{"到尾部？"}
+    E -->|是| R["重置锚点，结束本页"]
+    E -->|否| D{"manifest 允许清理？"}
+    D -->|是| G["精确 GC"]
+    D -->|延后或忽略| A["确认游标"]
+    D -->|单项校验失败| F["报告失败，保留源任务"]
+    G -->|单项存储失败| F
+    G -->|成功| A
+    F --> A
+    A -->|余量允许| Q
+    A -->|达到页上限| X["结束本次调用"]
+```
+
+对账不发布版本、不修改源任务，也不把 FAILED 的 staging/ready 擅自废弃。缺 handoff
+的旧任务保留输入并报告 deferred，不能猜计划来清理。独立页能力尚未接入定时维护；
+生产入库也未切换，前置条件见 [对账设计](../tasks/v2_reconciliation_design.md)。
 
 Milvus 的计数和删除 ID 选择固定使用 Strong，检索仍保留配置的一致性偏好；跨客户端
 旧快照不能作为 GC 完成依据。这使用上游已有的 query 参数，见

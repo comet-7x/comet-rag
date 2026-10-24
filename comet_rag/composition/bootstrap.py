@@ -52,6 +52,7 @@ from comet_rag.ports.knowledge_base import (
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
+from comet_rag.services.revision_reconciliation import guard_revision_task_deletion
 from comet_rag.services.source_policy import SourcePolicy, build_source_policy
 from comet_rag.tasks import (
     LANE_CPU,
@@ -681,7 +682,10 @@ async def build_context(
             task_store=task_store,
             task_executor=task_executor,
             task_service=TaskService(
-                task_store, task_executor, max_backlog=config.limits.max_backlog
+                task_store,
+                task_executor,
+                max_backlog=config.limits.max_backlog,
+                delete_guard=guard_revision_task_deletion,
             ),
             retrieval=RetrievalService(
                 embedding_model=embedding_model,

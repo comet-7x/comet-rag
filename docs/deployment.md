@@ -327,6 +327,11 @@ retired 和被新版本替代的 legacy 均不可见。旧候选挤满上限时�
 cleanup_pending 重试，不能仅依赖候选扫描。purged 后的迟到写入需要保留身份并显式
 重放精确清理；complete 只表示上次核验为空。生产开启前还需落实意图保留、分页扫描
 及旧写排干/持续对账策略，不能提前删除 Task 后再依赖其 context 做恢复。
+第十八批已接入 TaskService 删除保留守卫，并提供独立、带持久化游标的有界对账页。
+源任务与扫描游标当前无自动到期日，force 不绕过保留；没有新加 HTTP 删除端点。
+对账尚未注册 cron，缺移交记录仍报告 deferred；这不是可直接启用 revision 写入的
+生产配置。部署前须落实扫描任务生命周期/所有权、触发与告警，以及 legacy 迁移，
+详见 [持续对账设计](../tasks/v2_reconciliation_design.md)。
 
 ### Milvus schema 兼容
 

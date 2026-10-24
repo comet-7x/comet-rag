@@ -54,10 +54,12 @@ activating/active/cleanup_pending/cleanup_complete，complete 重放仍会删除
 public delete 新增 guard/expected_version；force 不绕过 guard。未显式传版本时冲突
 重新读取并复验，显式版本冲突原样传播。没有降级成先查后删的兼容兜底。
 
-TaskService 新增可选 delete_guard，调用方可注入基于版本化字段的纯保留规则；
-force 不绕过该规则，已知保留项在请求取消前即拒绝。
+应用 TaskService 新增可选 delete_guard；组合根已接入 revision 保留策略，普通任务
+删除不变。新增独立 RevisionReconciler，从带所有权围栏的 TaskContext 有界续页；不
+新增后台循环、cron 或生产写开关。不支持依赖 Task TTL 丢弃 GC 身份，详见
+[持续对账设计](../tasks/v2_reconciliation_design.md)。
 
-### Milvus 完整性读取
+### Milvus 完整性读取（既有行为）
 
 Milvus count 与删除 ID 选择固定使用 Strong，dense/keyword 检索仍遵循配置。
 这避免把跨客户端旧快照作为完整性判断依据，可能增加读取延迟，但不改过滤语义或数据格式。

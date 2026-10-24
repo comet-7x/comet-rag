@@ -340,6 +340,21 @@ PostgreSQL Task/DocumentStore 与 Milvus 读连接仅凭保留意图补偿，不
 六种检索组合仍只见新 active。该注入不模拟 Milvus 内部调度或真实进程 SIGKILL。
 普通 sweep 不扫描 purged 的局限保留为特征化断言；未注册生产补偿扫描。
 
+第十八批补充 `unit/services/test_revision_reconciliation.py` 与
+`integration/test_revision_reconciliation_recovery.py`。共享 TaskStore 契约增加 11 项
+参数化用例，覆盖同时间戳/Unicode 总序、锚点删除、插入新头部、分页校验及带版本删除
+竞态；PostgreSQL 与内存必须通过同一套断言。应用组合根另验保留守卫，force 不能绕过。
+
+持续对账覆盖页间新增、单项坏记录、预算、游标/作用域/整份 context 上限、确认提交
+前后响应丢失、扫描者取消/租约丢失和并发激活保护。6 项真实 PG/Redis/Milvus 用例
+从新 Context 或新 worker 尝试续页，重复清理 purged 后迟到向量，并核验六种检索组合。
+故障注入定位于客户端提交/确认边界，不宣称模拟真实 SIGKILL 或服务端内部调度。
+
+未传业务 guard 的底层删除会丢失恢复身份、offset 可饥饿，以及 prepare 写父块后
+handoff 未保存的取消任务仍 deferred，均保留特征化测试；不把已知缺口写成完成承诺。
+16 类单元/契约反向缺陷及 2 项真实后端反向实验均由目标断言检出；策略与生产门禁见
+[持续对账设计](../tasks/v2_reconciliation_design.md)。
+
 单元反向验证覆盖 context UTF-8 上限/CAS 冲突重验、模型返回后所有权围栏、完整计划
 指纹及 UUID 重用；32 MiB 是整份 context 的持久化上限，不是进程峰值内存预算。
 

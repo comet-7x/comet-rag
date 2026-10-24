@@ -68,7 +68,9 @@ _DROP_ON_HANDOFF = {
 }
 
 
-class _PublicationPhase(StrEnum):
+class PublicationPhase(StrEnum):
+    """持久化意图/回执；不能作为当前 active 或远端已排干的证明。"""
+
     ACTIVATING = "activating"
     ACTIVE = "active"
     CLEANUP_PENDING = "cleanup_pending"
@@ -76,9 +78,11 @@ class _PublicationPhase(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class _Publication:
+class Publication:
+    """绑定已分配 generation 的恢复记录，事实仍须回 Store 复验。"""
+
     generation: int
-    phase: _PublicationPhase
+    phase: PublicationPhase
 
 
 def _object(value: object, fields: set[str]) -> dict[str, object]:
@@ -276,6 +280,47 @@ async def get_revision_key(
     return key
 
 
+def load_task_handoff(
+    context: dict[str, object],
+    task_id: str,
+    *,
+    max_bytes: int = DEFAULT_MAX_REVISION_CONTEXT_BYTES,
+) -> IndexHandoff:
+    """同时验证整份预算与 Task/revision 归属，拒绝跨任务重放。"""
+    _validate_json_payload(context, name="Revision context", max_bytes=max_bytes)
+    handoff = load_index_handoff(context["revision_index"], max_bytes=max_bytes)
+    if (
+        handoff.draft.key != _task_key(context["revision_key"])
+        or handoff.draft.task_id != task_id
+    ):
+        raise RevisionConflict(handoff.draft.key, "移交不属于当前任务")
+    return handoff
+
+
+def load_publication(
+    context: dict[str, object], draft: RevisionDraft
+) -> Publication | None:
+    """旧任务可无回执；有记录时必须与同一任务计划严格匹配。"""
+    if "revision_publication" not in context:
+        return None
+    value = _object(
+        context["revision_publication"],
+        {"version", "key", "plan_sha256", "task_id", "generation", "phase"},
+    )
+    if type(value["version"]) is not int or value["version"] != 1:
+        raise ValueError("不支持的 publication version")
+    if (
+        _key(value["key"]) != draft.key
+        or value["plan_sha256"] != draft.plan_sha256
+        or value["task_id"] != draft.task_id
+    ):
+        raise RevisionConflict(draft.key, "发布记录不属于当前任务计划")
+    generation = _integer(value["generation"])
+    if generation <= 0:
+        raise ValueError("publication generation 必须为正整数")
+    return Publication(generation, PublicationPhase(_text(value["phase"])))
+
+
 class RevisionTaskStages:
     """独立 revision 阶段与有界恢复记录；不注册生产 runner 或 maintenance。
 
@@ -300,39 +345,10 @@ class RevisionTaskStages:
         self._limit = max_context_bytes
 
     def _load(self, context: dict[str, object], task_id: str) -> IndexHandoff:
-        _validate_json_payload(context, name="Revision context", max_bytes=self._limit)
-        handoff = load_index_handoff(context["revision_index"], max_bytes=self._limit)
-        if (
-            handoff.draft.key != _task_key(context["revision_key"])
-            or handoff.draft.task_id != task_id
-        ):
-            raise RevisionConflict(handoff.draft.key, "移交不属于当前任务")
-        return handoff
-
-    def _publication(
-        self, context: dict[str, object], draft: RevisionDraft
-    ) -> _Publication | None:
-        if "revision_publication" not in context:
-            return None
-        value = _object(
-            context["revision_publication"],
-            {"version", "key", "plan_sha256", "task_id", "generation", "phase"},
-        )
-        if type(value["version"]) is not int or value["version"] != 1:
-            raise ValueError("不支持的 publication version")
-        if (
-            _key(value["key"]) != draft.key
-            or value["plan_sha256"] != draft.plan_sha256
-            or value["task_id"] != draft.task_id
-        ):
-            raise RevisionConflict(draft.key, "发布记录不属于当前任务计划")
-        generation = _integer(value["generation"])
-        if generation <= 0:
-            raise ValueError("publication generation 必须为正整数")
-        return _Publication(generation, _PublicationPhase(_text(value["phase"])))
+        return load_task_handoff(context, task_id, max_bytes=self._limit)
 
     async def _save_publication(
-        self, ctx: TaskContext, draft: RevisionDraft, publication: _Publication
+        self, ctx: TaskContext, draft: RevisionDraft, publication: Publication
     ) -> None:
         try:
             await ctx.put_bounded(
@@ -350,7 +366,7 @@ class RevisionTaskStages:
             raise DocumentResourceLimitExceeded(str(exc)) from exc
 
     async def _manifest(
-        self, ctx: TaskContext, draft: RevisionDraft, publication: _Publication | None
+        self, ctx: TaskContext, draft: RevisionDraft, publication: Publication | None
     ) -> StoredRevision:
         if self._documents is None:
             raise ValueError("发布阶段必须显式注入 DocumentStore")
@@ -396,7 +412,7 @@ class RevisionTaskStages:
         """保留窄 payload 供失败续跑；激活完成前不能当作任务成功。"""
         task = await ctx.snapshot()
         handoff = self._load(task.context, ctx.task_id)
-        if self._publication(task.context, handoff.draft) is not None:
+        if load_publication(task.context, handoff.draft) is not None:
             raise RevisionConflict(
                 handoff.draft.key, "已进入发布恢复阶段，禁止重写向量"
             )
@@ -413,11 +429,11 @@ class RevisionTaskStages:
         task = await ctx.snapshot()
         handoff = self._load(task.context, ctx.task_id)
         draft = handoff.draft
-        publication = self._publication(task.context, draft)
+        publication = load_publication(task.context, draft)
         manifest = await self._manifest(ctx, draft, publication)
         if publication is not None and publication.phase in (
-            _PublicationPhase.CLEANUP_PENDING,
-            _PublicationPhase.CLEANUP_COMPLETE,
+            PublicationPhase.CLEANUP_PENDING,
+            PublicationPhase.CLEANUP_COMPLETE,
         ):
             # 已有 GC 意图的 abandoned/purged 不得再经过激活器或重新 stage。
             if manifest.status not in (
@@ -441,17 +457,17 @@ class RevisionTaskStages:
             await self._save_publication(
                 ctx,
                 draft,
-                _Publication(manifest.generation, _PublicationPhase.ACTIVATING),
+                Publication(manifest.generation, PublicationPhase.ACTIVATING),
             )
             outcome = await self._activator.activate(draft, checkpoint=ctx.checkpoint)
             await self._save_publication(
                 ctx,
                 draft,
-                _Publication(
+                Publication(
                     outcome.revision.generation,
-                    _PublicationPhase.CLEANUP_PENDING
+                    PublicationPhase.CLEANUP_PENDING
                     if outcome.superseded
-                    else _PublicationPhase.ACTIVE,
+                    else PublicationPhase.ACTIVE,
                 ),
             )
         await ctx.report(
@@ -465,11 +481,11 @@ class RevisionTaskStages:
             raise ValueError("cleanup 阶段必须显式注入 RevisionGarbageCollector")
         task = await ctx.snapshot()
         draft = self._load(task.context, ctx.task_id).draft
-        publication = self._publication(task.context, draft)
-        if publication is None or publication.phase is _PublicationPhase.ACTIVATING:
+        publication = load_publication(task.context, draft)
+        if publication is None or publication.phase is PublicationPhase.ACTIVATING:
             raise RevisionConflict(draft.key, "激活结果尚未持久化，不能清理")
         manifest = await self._manifest(ctx, draft, publication)
-        if publication.phase is _PublicationPhase.ACTIVE:
+        if publication.phase is PublicationPhase.ACTIVE:
             if manifest.status is RevisionStatus.ACTIVE:
                 return
             if (
@@ -478,15 +494,15 @@ class RevisionTaskStages:
             ):
                 raise RevisionConflict(draft.key, "已激活回执与 manifest 状态冲突")
             # 保存结果后也可能被更新版本取代；先登记意图，再执行不可逆的清理。
-            publication = _Publication(
-                publication.generation, _PublicationPhase.CLEANUP_PENDING
+            publication = Publication(
+                publication.generation, PublicationPhase.CLEANUP_PENDING
             )
             await self._save_publication(ctx, draft, publication)
         await self._gc.collect_inactive(draft.key, checkpoint=ctx.checkpoint)
         await self._save_publication(
             ctx,
             draft,
-            _Publication(publication.generation, _PublicationPhase.CLEANUP_COMPLETE),
+            Publication(publication.generation, PublicationPhase.CLEANUP_COMPLETE),
         )
 
 

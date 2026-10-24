@@ -98,6 +98,11 @@ class TaskContext:
         self._last_beat = Time.now()
         self._attempts = attempts
 
+    @property
+    def has_ownership_fence(self) -> bool:
+        """已绑定执行尝试；当前是否仍归本尝试，须由 checkpoint/CAS 写入复验。"""
+        return self.worker_id is not None and self._attempts is not None
+
     async def snapshot(self) -> Task:
         """读当前任务快照（副本，改它不会影响库）。"""
         return await self.store.require(self.task_id)
