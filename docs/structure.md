@@ -6,9 +6,9 @@
 系统边界图画运行时调用，流程图画数据/控制流，不将不同含义的箭头混在一张图中。
 历史接缝见文末。下一步计划只在 [v2_next_steps.md](../tasks/v2_next_steps.md) 维护。
 
-交互浏览可使用 [Archify skill](https://github.com/tt-a1i/archify/blob/main/archify/SKILL.md)
-从固定提交生成独立 HTML，并按该提交核验源码证据。生成器和浏览器检查不作为项目
-运行时依赖；交互图也不能把未提交代码或待接线路径画成当前生产能力。
+交互浏览见 [架构图](diagrams/comet-rag.html)，图源和更新步骤见
+[维护说明](diagrams/README.md)。图由 Archify 从固定代码提交生成并核验源码证据；
+生成器不作为项目运行时依赖，未提交代码或待接线路径不能画成当前生产能力。
 
 ## 系统边界
 

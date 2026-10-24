@@ -1,0 +1,401 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Comet-RAG：库与当前入库主链路",
+    "locale": "zh-CN",
+    "output": "docs/diagrams/comet-rag.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/comet-7x/comet-rag.git",
+      "revision": "d622b6e865c4c4f8ab935886705a894410670152",
+      "link_mode": "local-only"
+    }
+  },
+  "components": [
+    {
+      "id": "library-user",
+      "type": "external",
+      "label": "库调用方",
+      "sublabel": "调用方 Python 进程",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 33,
+          "end_line": 43
+        }
+      ]
+    },
+    {
+      "id": "library",
+      "type": "backend",
+      "label": "Pipeline / AsyncPipeline",
+      "sublabel": "库公开入口",
+      "pos": [
+        300,
+        40
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/pipeline.py",
+          "line": 19,
+          "end_line": 66
+        },
+        {
+          "path": "comet_rag/services/pipeline.py",
+          "line": 130,
+          "end_line": 149
+        },
+        {
+          "path": "comet_rag/services/pipeline.py",
+          "line": 219,
+          "end_line": 225
+        }
+      ],
+      "tag": "嵌入调用方"
+    },
+    {
+      "id": "engines",
+      "type": "backend",
+      "label": "纯计算引擎",
+      "sublabel": "DOCX · 正规化 · 分块",
+      "pos": [
+        560,
+        40
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/engines/pipelines/hooks.py",
+          "line": 204,
+          "end_line": 234
+        },
+        {
+          "path": "comet_rag/engines/pipelines/hooks.py",
+          "line": 248,
+          "end_line": 283
+        }
+      ]
+    },
+    {
+      "id": "mineru",
+      "type": "external",
+      "label": "MinerU HTTP",
+      "sublabel": "可选外部 PDF 服务",
+      "pos": [
+        860,
+        40
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/infrastructure/extractors/mineru.py",
+          "line": 596,
+          "end_line": 609
+        },
+        {
+          "path": "comet_rag/composition/bootstrap.py",
+          "line": 670,
+          "end_line": 676
+        }
+      ]
+    },
+    {
+      "id": "http-user",
+      "type": "external",
+      "label": "服务调用方",
+      "sublabel": "POST /ingest",
+      "pos": [
+        40,
+        260
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/api/routes/ingest.py",
+          "line": 15,
+          "end_line": 43
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "入库 API",
+      "sublabel": "TaskService：准入与投递",
+      "pos": [
+        300,
+        260
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/api/routes/ingest.py",
+          "line": 15,
+          "end_line": 43
+        },
+        {
+          "path": "comet_rag/tasks/service.py",
+          "line": 58,
+          "end_line": 79
+        },
+        {
+          "path": "comet_rag/services/retrieval.py",
+          "line": 429,
+          "end_line": 485
+        }
+      ]
+    },
+    {
+      "id": "execution",
+      "type": "backend",
+      "label": "执行器 / IngestRunner",
+      "sublabel": "进程内或 ARQ 分道",
+      "pos": [
+        560,
+        260
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/services/ingestion.py",
+          "line": 189,
+          "end_line": 244
+        },
+        {
+          "path": "comet_rag/services/ingestion.py",
+          "line": 309,
+          "end_line": 373
+        },
+        {
+          "path": "comet_rag/composition/bootstrap.py",
+          "line": 212,
+          "end_line": 253
+        }
+      ],
+      "tag": "三个阶段"
+    },
+    {
+      "id": "models",
+      "type": "external",
+      "label": "Embedding HTTP",
+      "sublabel": "OpenAI 兼容接口",
+      "pos": [
+        860,
+        260
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/infrastructure/models/embedding/openai.py",
+          "line": 111,
+          "end_line": 145
+        },
+        {
+          "path": "comet_rag/composition/bootstrap.py",
+          "line": 601,
+          "end_line": 622
+        }
+      ]
+    },
+    {
+      "id": "task-store",
+      "type": "database",
+      "label": "TaskStore",
+      "sublabel": "InMemory / PostgreSQL",
+      "pos": [
+        300,
+        480
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/composition/bootstrap.py",
+          "line": 134,
+          "end_line": 146
+        },
+        {
+          "path": "comet_rag/services/revision_reconciliation.py",
+          "line": 40,
+          "end_line": 260
+        },
+        {
+          "path": "comet_rag/services/revision_context.py",
+          "line": 425,
+          "end_line": 506
+        }
+      ]
+    },
+    {
+      "id": "vectors",
+      "type": "database",
+      "label": "向量存储",
+      "sublabel": "InMemory / Milvus",
+      "pos": [
+        560,
+        480
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/composition/bootstrap.py",
+          "line": 73,
+          "end_line": 99
+        },
+        {
+          "path": "comet_rag/services/ingestion.py",
+          "line": 328,
+          "end_line": 373
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "library-entry",
+      "from": "library-user",
+      "to": "library",
+      "label": "Python API",
+      "variant": "emphasis"
+    },
+    {
+      "id": "library-compute",
+      "from": "library",
+      "to": "engines",
+      "label": "解析 / 分块",
+      "variant": "emphasis"
+    },
+    {
+      "id": "ingest-request",
+      "from": "http-user",
+      "to": "api",
+      "label": "HTTP 提交",
+      "variant": "emphasis"
+    },
+    {
+      "id": "task-submit",
+      "from": "api",
+      "to": "execution",
+      "label": "提交 task_id",
+      "variant": "emphasis"
+    },
+    {
+      "id": "task-create",
+      "from": "api",
+      "to": "task-store",
+      "label": "建任务",
+      "variant": "default"
+    },
+    {
+      "id": "task-context",
+      "from": "execution",
+      "to": "task-store",
+      "label": "读取 / 检查点",
+      "variant": "default"
+    },
+    {
+      "id": "ingest-compute",
+      "from": "execution",
+      "to": "engines",
+      "label": "CPU 解析 / 分块",
+      "variant": "default"
+    },
+    {
+      "id": "embedding-request",
+      "from": "execution",
+      "to": "models",
+      "label": "批量向量化",
+      "variant": "default"
+    },
+    {
+      "id": "vector-write",
+      "from": "execution",
+      "to": "vectors",
+      "label": "按窗口写入",
+      "variant": "emphasis"
+    },
+    {
+      "id": "pdf-request",
+      "from": "execution",
+      "to": "mineru",
+      "label": "PDF 启用时 HTTP",
+      "variant": "default"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "库与服务的边界",
+      "items": [
+        "库入口嵌入调用方进程，不是独立服务；默认 DOCX 解析/分块不要求中间件。",
+        "图中箭头是调用/数据路径，不是 import；外部 IO 经适配器，engines 保持纯计算。",
+        "库也可显式注入模型或注册外部 PDF Hook；没有画出这些可选支路。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "当前生产入库",
+      "items": [
+        "当前仍是 extracting → chunking → indexing；来源准入拒绝时不创建任务。",
+        "单进程执行器在 API 进程运行；ARQ 模式通过 Redis 仅传 task_id，CPU/IO worker 分道。",
+        "TaskStore 与向量后端按配置选择；默认内存状态在重启后丢失，图中未画每个部署副本。",
+        "服务侧模型适配器复用 HTTP 客户端并共享进程级闸门；这不是远端模型服务的部署约束。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "检索是另一条用例",
+      "items": [
+        "检索支持 dense / keyword / hybrid，经 RRF、可选重排与父块回填；详情见仓库检索流程图。",
+        "查询共享 deadline，重排失败降级；revision-aware 读取默认关闭。",
+        "本图聚焦库与入库，不将检索到模型/存储的每条连接混入主链路。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "第十八批：持续对账边界",
+      "items": [
+        "独立发布/清理协议绑定原 revision 与 generation；生产 IngestRunner 尚未切换。",
+        "持续对账页已实现：有界分页、持久化游标与所有权围栏；定时调度尚未接线。",
+        "组合根已注入任务保留守卫，force 不绕过；complete/purged 仍需重访，不能证明旧 RPC 排干。",
+        "缺 handoff 的失败版本保留输入并 deferred；生产启用前仍需恢复该缺口、调度告警和 legacy 迁移验收。"
+      ]
+    }
+  ]
+}

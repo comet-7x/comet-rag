@@ -166,6 +166,7 @@ make format
 | -------------------------------------------------------- | ------------------------------------ |
 | [architecture.md](docs/architecture.md)                   | 分层、核心抽象、两种部署形态         |
 | [structure.md](docs/structure.md)                         | 目录结构、依赖图、入库/检索流程图    |
+| [交互架构图](docs/diagrams/comet-rag.html)                 | 离线浏览；图源与更新步骤见 [维护说明](docs/diagrams/README.md) |
 | [model_usage.md](docs/model_usage.md)                     | Embedding、图片与 Reranker 用法      |
 | [deployment.md](docs/deployment.md)                       | 配置、扩容、运维、排查               |
 | [benchmark.md](docs/benchmark.md)                         | 性能基线与它**不能**回答的问题 |
