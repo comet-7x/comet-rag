@@ -163,8 +163,17 @@ V2 第十五批补齐独立 activation/superseded 恢复切片；Redis worker �
 生产 Task/maintenance 全生命周期尚未完成，故完整 context/progress 条目仍未勾选。
 不能把测试 kind 的成功当成生产 ingest 或 Checkpoint H。未发布的 stale ready
 由显式 collect_superseded 或持久化 cleanup_pending 废弃并清理；登记提交前失败必须重试。
-普通扫描不含 purged，补偿完成也不能证明未来无迟到写。生产接线需先确定并落实旧写
-排干/持续对账与 Task 意图保留、分页调度，不能删除恢复身份后再声称可自动回收。
+普通扫描不含 purged，补偿完成也不能证明未来无迟到写。第十八批通过保留 Task 身份
+持续对账，交付独立有界补偿页；游标按 created_at/task_id 持久化，应用删除守卫不被
+force 或 complete 绕过。没有注册生产定时调度，也没有解决缺 handoff 的取消版本。
+
+- [x] 明确持续对账、长期保留和受版本保护的删除策略
+- [x] 独立分页补偿：取消/租约围栏、单项失败隔离、预算与重启续页
+- [ ] 扫描任务生命周期、独占所有权、定时触发与告警接线
+- [ ] prepare 写父块后、handoff 提交前失败的完整恢复
+- [ ] legacy 退出/迁移与全新存储命名空间验收；空计数不能证明旧 RPC 排干
+
+依据见 [对账设计](v2_reconciliation_design.md)，不能删除恢复身份后再声称可自动回收。
 
 ### M4-T9 — 父块回填与检索兼容（M）
 

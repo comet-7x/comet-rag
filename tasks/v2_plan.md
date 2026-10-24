@@ -2,6 +2,7 @@
 
 当前进度：前十六批实现与功能验证完成，均已按职责分批提交。
 第十七批补齐独立 Task 发布/清理恢复协议，复现 GC 后迟到写并提供精确补偿重放；按职责分批提交，记录见文末。
+第十八批完成持续对账页、应用任务保留与经授权的 TaskStore 最小扩展；任务内核与对账服务已按职责分批提交，生产写入与定时调度仍未接线。
 第十六批补齐 superseded 精确回收、部分清理失败重试和 active 保护，未接线生产。
 第十五批补齐独立 revision 激活与故障恢复；单测 10 秒预算仍缺乏稳定余量。
 第十四批补齐入库线程取消与清理，
@@ -16,7 +17,7 @@ Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 下一步的顺序与验收条件统一维护在 [v2_next_steps.md](v2_next_steps.md)；
 2026-10-24 的 skills/RAG 生态复核见 [调研报告](v2_ecosystem_review.md)。
 
-## 当前剩余项复核（第十七批）
+## 当前剩余项复核（第十八批）
 
 | 历史待办 | 对照当前代码的结论 | 后续安排 |
 |---|---|---|
@@ -29,8 +30,9 @@ Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 | 入库线程取消与临时文件清理 | 复核发现 IngestRunner 正规化/分块仍用裸 to_thread，清理直接阻塞事件循环，与既有 run_sync 纪律不一致 | 第十四批已修复并完成故障注入、反向与全量验证；保留线程不可强杀的限制 |
 | 其他真实向量后端 | Qdrant、Weaviate、Chroma、OceanBase 已调研，但没有适配器、装配或真实契约验收；当前仅 Milvus + InMemory | 现行 spec A9 不含多后端；接入第三个实现及扩展 Filter/能力模型需独立确认范围 |
 | 统一查询 deadline | 第十三批建立每次 search 的绝对截止时刻，覆盖 KB 检查、模型排队、召回判活、重排和父块读取；保留取消排干 | 已补故障注入、HTTP 接线与 13 类反向验证；线程不能强杀、清理可超过预算，边界见 query_deadline.md |
-| 真实后端与安装验收缺口 | 第十六批复验 PostgreSQL/Redis/Milvus 全量集成、独立 core-only 冒烟；MinIO、外部模型/MinerU 仍未补验 | 第十六批三层覆盖率：整体 92.48%、tasks 95.95%；其余按相关改造另行验收 |
-| M4 生产闭环 | Stager 止于 ready；独立 Task 已保存发布结果/GC 意图，精确补偿可重放 complete/purged，迟到写局限已复现 | 待接线生产 IngestRunner/maintenance；先明确并落实旧写排干/持续对账、意图保留与有界补偿调度 |
+| 真实后端与安装验收缺口 | 本批复验 PostgreSQL/Redis/Milvus 全量集成、独立 core-only 冒烟；MinIO、外部模型/MinerU 仍未补验 | 本批完整结果见文末；未用跳过项冒充验收 |
+| GC 持续补偿与意图删除 | 已复现 offset 饥饿、未受保护删除丢身份；采用持续对账、长期保留、条件删除和持久化排他游标 | 第十八批交付独立对账页与应用删除守卫；调度、扫描任务生命周期和告警待接线 |
+| M4 生产闭环 | Stager 止于 ready；独立发布/GC 可恢复，持续补偿页已验收；prepare 写父块后移交前失败仍缺完整恢复载荷 | 先解决该缺口与 legacy 命名空间/迁移边界，再接线生产 IngestRunner/maintenance；完整 H/I 未完成 |
 
 第十四批补齐入库线程所有权遗漏；第十五/十六批补齐独立激活与 GC。M4 生产接线、其它向量库适配
 与剩余安装/外部服务验收仍是独立工作；查询能力调研不等于后端已实现。
@@ -1509,3 +1511,95 @@ Pyright（0 errors/0 warnings）和 6 个 Python 文件格式检查通过。核�
 相关检查手工执行。真实集成、反向注入及覆盖率沿用上文实现轮记录，提交准备没有重启
 中间件或重跑这些实验；所有业务/测试文件保留实现轮内容。Archify 交互图作为独立
 辅助产物生成，不将工具或生成依赖引入项目。未推送。
+
+# 第十八批：持续对账、意图保留与有界补偿
+
+> 日期：2026-10-24。基于 `8c1ef8a`；用户明确授权 TaskStore 游标分页及带版本条件/
+> 保留守卫的删除。不新增表、Task 持久化字段、中间件或向量 schema。实现轮结果如下，提交复核见本节末尾。
+
+## 复核结论与职责
+
+1. 本地等待或取消不证明远端旧写排干。采用持续精确对账；complete/purged 仍重访，
+   不设“等 N 秒即可删除”的期限。最终清理依赖对账持续运行、身份保留、依赖最终恢复
+   和旧写最终停止，不保证某次为空后永远为空。
+2. 已复现未受保护的 Task 删除会丢失恢复来源。业务保留守卫由组合根注入 TaskService，
+   revision 身份/扫描游标键即使损坏、为 None 或处于终态也保留；force 不绕过。
+   通用 TaskStore 不认识 RAG，未传 guard 的底层删除仍是特权操作。
+3. 删除以复验后的 version 原子执行，版本冲突重新读取并复验纯 guard/状态；显式版本
+   冲突直接传播。TaskService 对已知保留项先拒绝，再考虑取消，避免无意取消保留任务。
+4. 已复现 offset 在持续头部插入时饥饿。TaskCursor 采用 created_at/task_id 排他倒序；
+   PostgreSQL 用 C 排序与 Python 一致，锚点行删除和同时间戳不破坏总序。不是快照，
+   新头部在下一轮处理，不承诺无限并发回填旧时间时扫描一定结束。
+5. RevisionReconciler 只做独立补偿页：默认 8、最多 32 项，默认 30 秒工作预算，逐条
+   查询 limit=1，处理后才持久化游标，扫描 context 上限 4 KiB。单项失败记录并跳到
+   下一项、下轮重访；查询/确认/预算失败传播。取消与租约丢失停止当前页；到尾部重置
+   游标并返回，不在一次调用中循环扫空。扫描 Task 必须有执行器所有权围栏。
+6. 抽取既有 handoff/publication 读取校验供原阶段与对账共享，不创建模型或新工作流。
+   FAILED 的 staging/ready 保留业务重试；CANCELLED 不可重开且完整移交时可回收。
+   active 由 Store 原子保护，旧快照不能授权删除新激活版本。
+
+完整决策见 [持续对账设计](v2_reconciliation_design.md)，接口迁移见
+[版本说明](../docs/release_notes.md#taskstore-游标与受保护删除)。
+
+## 故障注入与反向验证
+
+新增 34 项对账单测、1 项组合根守卫测试、共享 TaskStore 契约的 11 项参数化用例及
+6 项真实后端用例。真实 PostgreSQL/Redis/Milvus 从独立 Context/新 attempts 恢复，
+覆盖游标确认前后丢响应、worker 重试、GC 后迟到向量重清理、源任务不变、保留守卫，
+以及取消版本与并发激活竞态；六种检索组合仍只见 active。保留既有事件控制的客户端
+故障边界说明，不宣称真实 SIGKILL 或复现 Milvus 内部调度。
+
+故障用例还覆盖单项坏记录、分页新增、取消/租约丢失、整页时间预算、作用域/游标/
+context 超限和 generation 不符。实际注入父块提交成功后 prepare 失败，确认缺 handoff
+的取消任务仍保留输入并 deferred；这是未解决缺口的特征化测试，不当成恢复成功。
+
+独立副本注入 16 类单元/契约缺陷：盲删、force 绕过、忽略删除版本、丢弃游标、只按
+时间排序、漏保留扫描记录、先取消后守卫、漏组合根接线、提前推进游标、信任 complete、
+不重启扫描轮次、无所有权扫描、单项失败中止整页、取消时间预算、忽略作用域及忽略
+generation。均由目标断言检出，无收集错误。另在真实后端副本移除 PostgreSQL 删除
+版本条件、让 complete 跳过补偿，两项均按预期失败；Milvus 集合清单恢复。
+
+## 全量验收
+
+| 检查 | 结果 |
+|---|---|
+| 完整默认 unit | 3153 passed、15 skipped、1 xfailed；9.60s |
+| unit 覆盖率 | 88.99%；插桩运行 13.29s，不作为 10 秒预算依据 |
+| 真实全量 integration | 270 passed、2 skipped，无 teardown error；395.21s |
+| 定向真实对账恢复 | 6 passed；25.16s |
+| E2E | 50 passed；4.21s（带覆盖率） |
+| benchmark | 7 passed；3.74s |
+| 三层合并覆盖率 | 整体 92.52%、tasks 95.92%（894/932） |
+| 本批主要服务覆盖率 | revision_reconciliation 93.28%、revision_context 94.25%、revision_gc 100% |
+| 静态与文档 | 全仓 Ruff、Pyright（0 errors/0 warnings）、14 个 Python 文件格式；109 个本地链接、README 冒烟与 6 张 Mermaid 语法通过 |
+| core-only | 复用既有无 extras 的独立环境，CI 库入口及生成 DOCX 解析/分块通过；未重新安装 |
+
+全量集成使用独立 PostgreSQL 17/Redis 7 与专用 Milvus 测试库（服务端 2.6.22），仅
+跳过未起的 MinIO 与未配置的 MinerU。上游 ARQ close 的 26 条 DeprecationWarning
+保留。全量、定向和真实反向实验均核验 Milvus 集合清单，1 个既有集合保持原样。
+本轮独立 PostgreSQL/Redis 测试容器与网络已关闭移除，开发环境未操作。
+运行记录在 `/tmp/comet-v2-reconciliation-validation/`，反向副本位置记录在 mutations.log、
+generation-mutation.log 与 real-mutations.log。单测本次低于 10 秒，历史波动仍存在，
+不宣称稳定余量已经解决。
+
+## 生产范围与下一批
+
+本批只将删除保留守卫接入应用，交付可显式调用的独立对账页；没有注册 cron、启动
+后台循环、切换生产 IngestRunner 或启用 revision 读写，不勾选完整 H/I。
+下一批先落实扫描任务生命周期/定时调度/告警、prepare→handoff 缺口恢复，并限定
+legacy 退出/迁移与命名空间范围。旧 flat 写不属于 revision 精确过滤；空集合计数
+不能证明在途旧 RPC 排干，再建同名 KB 也不构成新命名空间。满足这些前置后才组合
+已有准备、激活和清理阶段，不另建一套队列或泛化框架。
+
+## 第十八批提交前复核
+
+按四项职责组织提交：TaskStore 游标/条件删除及共享契约、独立对账与应用保留策略及
+故障测试、V2 验收/后续门禁、版本控制内的交互架构图。前两项代码分别为 `fd060fc`
+和 `3a5831d`；文档和图不改变运行时实现。检查每批暂存范围与接口说明，遵循约定式
+提交，未推送。交互图按用户要求纳入 docs，生成源数据、HTML 与更新说明一并维护。
+
+从第一项暂存快照独立运行任务测试：261 passed，1.25s；完整工作区默认 unit 复验为
+3153 passed、15 skipped、1 xfailed，9.50s。Ruff、Pyright（0 errors/0 warnings）
+和改动 Python 格式检查通过。仓库没有已安装的 Git 钩子，未绕过钩子；提交信息另经
+Commitizen 核验。真实集成、反向注入、覆盖率与 core-only 沿用上文实现轮记录，提交
+准备没有重启中间件或重跑这些实验。没有修改 DOCX 快照、测试选择或生产开关。

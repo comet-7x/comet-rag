@@ -12,6 +12,8 @@
 > ready 续跑、独立激活/GC 及 revision-aware 读取；生产 Task/maintenance 完整接线
 > 和 H/I 验收尚未完成，revision 新写入未启用。见 [下一步计划](tasks/v2_next_steps.md)。
 > 第十七批补齐独立 Task 发布/清理恢复记录及迟到写精确补偿入口，尚未自动调度。
+> 第十八批补齐游标续页、持续对账与应用删除保护；生产接线范围及门禁见
+> [对账设计](tasks/v2_reconciliation_design.md)，当前入库路径保持不变。
 
 | 你要做什么 | 从这里开始 |
 |---|---|
