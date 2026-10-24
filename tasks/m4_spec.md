@@ -1,9 +1,9 @@
 # Spec: M4 Chunking 与层级索引
 
-> 状态：M4-T7 已完成；T8 有界移交/ready 续跑与 T9 读侧切片已实现，生产未启用（v1.9）
+> 状态：独立入库/激活/GC 与读侧切片已实现，生产完整接线未完成（v1.9）
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
-> 开发分支：`feature/m4-hierarchical-indexing`（堆叠于 `feature/m4-chunking`）
-> 最后更新：2026-10-03
+> 起始开发分支：`feature/m4-hierarchical-indexing`（历史上堆叠于 `feature/m4-chunking`）
+> 现状校准：2026-10-24；历史实施日期保留。下一步见 [V2 后续计划](v2_next_steps.md)
 
 ## 1. 目标
 

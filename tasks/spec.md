@@ -1,7 +1,8 @@
 # Spec: Comet-RAG
 
-> 状态：M1～M3 已完成；M4-T8 有界移交/ready 续跑与 T9 读侧切片已实现，生产未启用（v1.12）
-> 最后更新：2026-10-22（V2 启动现状校准，不改变产品范围与边界）
+> 状态：M1～M3 已完成；M4 独立激活/GC 与读侧切片已验收，生产完整接线未完成（v1.12）
+> 最后更新：2026-10-24（现状校准，不改变产品范围与边界）
+> 下一步顺序：[V2 后续计划](v2_next_steps.md)；历史实现与验证仍见 v2_plan.md
 > 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md`；M3 见 `tasks/m3_spec.md`；M4 见 `tasks/m4_spec.md` 与 `tasks/m4_todo.md`
 
 ---
@@ -56,7 +57,7 @@
 | **M1** | **DOCX 全链路** —— 上传 docx → 解析 → 分块 → 向量化 → 入 Milvus → 检索命中 | §8 的 S1–S5 全绿（已完成） |
 | **M2** | **PDF 支持（通过 HTTP 连接外部 MinerU 服务）** | 本地、URL、S3 PDF 复用 M1 入库链路；默认安装不含 MinerU 运行时（已完成） |
 | **M3** | **混合检索（Milvus BM25 + RRF）** | 两路召回、纯 RRF、通道降级与真实 Milvus 链路全绿（已完成） |
-| **M4** | **可追溯 Chunking + 可选父子索引** | 分块、schema 决策门与读写切片已完成；生产激活、旧版本回收与完整验收待完成 |
+| **M4** | **可追溯 Chunking + 可选父子索引** | 分块、schema 决策门、独立激活/GC 与读取已完成；生产 Task/maintenance 接线与 H/I 验收待完成 |
 
 M1、M2、M2 后 P1 与 M3 已完成并合入 `develop`。仓库结构归一化和跨格式文档
 规范化也已由 PR #56 合入。M4-T5 已完成：

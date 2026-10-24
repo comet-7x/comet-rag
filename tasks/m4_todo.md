@@ -1,10 +1,10 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：M4-T7 已完成；T8 有界移交/ready 续跑与 T9 读侧切片已实现，生产未启用
-> 规格：`tasks/m4_spec.md` v1.8
-> 计划：`tasks/m4_plan.md` v1.8、`tasks/m4_t6_design.md`
+> 状态：独立入库/激活/GC 与读侧切片已验收，生产完整接线未完成（2026-10-24 校准）
+> 规格：`tasks/m4_spec.md` v1.9
+> 计划：`tasks/m4_plan.md`、`tasks/m4_t6_design.md`；下一批见 [V2 后续计划](v2_next_steps.md)
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
-> 开发分支：`feature/m4-hierarchical-indexing`
+> 起始开发分支：`feature/m4-hierarchical-indexing`（历史记录）
 
 ## Phase 0：调研与契约
 

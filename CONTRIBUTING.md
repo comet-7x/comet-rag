@@ -1,7 +1,7 @@
 # 开发规范
 
 Comet-RAG 同时交付库和参考服务。修改前先读 [规格与边界](tasks/spec.md)、
-[架构](docs/architecture.md)；当前工作顺序见 [V2 实施记录](tasks/v2_plan.md)。
+[架构](docs/architecture.md)；当前工作顺序见 [V2 后续计划](tasks/v2_next_steps.md)。
 配置字段和工具规则以 `pyproject.toml`、`config.example.yaml` 与源码为准。
 
 ## 职责与依赖
@@ -70,6 +70,7 @@ DOCX 快照先看 diff 再决定更新；不得直接刷新以消除失败。
 | 信息 | 维护位置 |
 |---|---|
 | 产品范围、需确认的边界 | [tasks/spec.md](tasks/spec.md) |
+| 下一批工作与验收条件 | [tasks/v2_next_steps.md](tasks/v2_next_steps.md) |
 | 历史实现和验证记录 | [tasks/v2_plan.md](tasks/v2_plan.md) |
 | 模块边界与调用流程 | [架构](docs/architecture.md)、[结构与流程图](docs/structure.md) |
 | 库使用、部署配置、注释标准 | 各自已有使用文档；README 只提供入口 |

@@ -10,7 +10,7 @@
 
 > 当前进度（2026-10-24）：V2 前十六批已提交。M4 已有结构感知分块、DocumentStore、
 > ready 续跑、独立激活/GC 及 revision-aware 读取；生产 Task/maintenance 完整接线
-> 和 H/I 验收尚未完成，revision 新写入未启用。见 [V2 实施记录](tasks/v2_plan.md)。
+> 和 H/I 验收尚未完成，revision 新写入未启用。见 [下一步计划](tasks/v2_next_steps.md)。
 
 | 你要做什么 | 从这里开始 |
 |---|---|
@@ -171,3 +171,5 @@ make format
 | [mineru_integration.md](docs/mineru_integration.md)       | PDF / MinerU 部署、配置与验收        |
 | [comment_style.md](docs/comment_style.md)                 | 注释与 Docstring 的编写、评审标准    |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                         | 开发规范、质量门与变更边界          |
+| [v2_next_steps.md](tasks/v2_next_steps.md)                 | 当前剩余项、后续批次与验收条件      |
+| [v2_ecosystem_review.md](tasks/v2_ecosystem_review.md)     | skills / RAG 工具链调研及适用判断   |
