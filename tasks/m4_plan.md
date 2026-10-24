@@ -29,8 +29,9 @@ T8 第二切片已实现 UUID 一次持久化、32 MiB 整份 context 限额及 
 移交。真实 PG/Redis/Milvus 验收在停止 CPU worker 后，仅凭 task_id 和持久化 context
 续跑到 ready，并覆盖向量提交后响应丢失。V2 第十五批补齐独立激活/响应丢失与
 superseded 恢复，复用现有 Store 原语并保持独立 Task 阶段；第十六批补齐独立精确 GC，
-包括 superseded 废弃、部分失败恢复、active 保护与有界扫描。下一项接线生产
-IngestRunner/maintenance，持久化独立 GC 阶段并排干旧写入；生产新写入保持关闭。
+包括 superseded 废弃、部分失败恢复、active 保护与有界扫描。第十七批持久化独立 Task
+发布/清理阶段，复现 purged 后迟到写并提供精确补偿。下一项接线生产前，先明确并
+落实旧写排干/持续对账、意图保留及有界补偿调度；生产新写入保持关闭。
 
 ## Dependency Graph
 

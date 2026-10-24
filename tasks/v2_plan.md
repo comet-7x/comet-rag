@@ -1,6 +1,7 @@
 # Comet-RAG V2：实施记录
 
 当前进度：前十六批实现与功能验证完成，均已按职责分批提交。
+第十七批补齐独立 Task 发布/清理恢复协议，复现 GC 后迟到写并提供精确补偿重放；按职责分批提交，记录见文末。
 第十六批补齐 superseded 精确回收、部分清理失败重试和 active 保护，未接线生产。
 第十五批补齐独立 revision 激活与故障恢复；单测 10 秒预算仍缺乏稳定余量。
 第十四批补齐入库线程取消与清理，
@@ -15,7 +16,7 @@ Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 下一步的顺序与验收条件统一维护在 [v2_next_steps.md](v2_next_steps.md)；
 2026-10-24 的 skills/RAG 生态复核见 [调研报告](v2_ecosystem_review.md)。
 
-## 当前剩余项复核（第十六批）
+## 当前剩余项复核（第十七批）
 
 | 历史待办 | 对照当前代码的结论 | 后续安排 |
 |---|---|---|
@@ -29,7 +30,7 @@ Redis/PostgreSQL worker 与存储验收，其余缺口见下表。
 | 其他真实向量后端 | Qdrant、Weaviate、Chroma、OceanBase 已调研，但没有适配器、装配或真实契约验收；当前仅 Milvus + InMemory | 现行 spec A9 不含多后端；接入第三个实现及扩展 Filter/能力模型需独立确认范围 |
 | 统一查询 deadline | 第十三批建立每次 search 的绝对截止时刻，覆盖 KB 检查、模型排队、召回判活、重排和父块读取；保留取消排干 | 已补故障注入、HTTP 接线与 13 类反向验证；线程不能强杀、清理可超过预算，边界见 query_deadline.md |
 | 真实后端与安装验收缺口 | 第十六批复验 PostgreSQL/Redis/Milvus 全量集成、独立 core-only 冒烟；MinIO、外部模型/MinerU 仍未补验 | 第十六批三层覆盖率：整体 92.48%、tasks 95.95%；其余按相关改造另行验收 |
-| M4 生产闭环 | Stager 止于 ready，独立 Activator/Task 激活阶段和独立精确 GC 已实现；superseded 显式登记、部分失败重试和 active 保护已有故障测试 | 待接线生产 IngestRunner/maintenance；持久化独立 GC 阶段与结果并排干 revision 写入 |
+| M4 生产闭环 | Stager 止于 ready；独立 Task 已保存发布结果/GC 意图，精确补偿可重放 complete/purged，迟到写局限已复现 | 待接线生产 IngestRunner/maintenance；先明确并落实旧写排干/持续对账、意图保留与有界补偿调度 |
 
 第十四批补齐入库线程所有权遗漏；第十五/十六批补齐独立激活与 GC。M4 生产接线、其它向量库适配
 与剩余安装/外部服务验收仍是独立工作；查询能力调研不等于后端已实现。
@@ -1422,3 +1423,89 @@ DeprecationWarning。全量与 SQL 反向验证前后均严格比对 Milvus 集�
 全仓 Ruff、Pyright（0 errors/0 warnings）、README DOCX/来源策略/请求 schema 冒烟、
 72 个本地链接及五张 Mermaid 语法检查通过；本轮没有业务代码变更，未重跑真实中间件。
 没有安装的 pre-commit/commit-msg 钩子未被绕过，相应单测和提交消息检查手工执行。
+
+# 第十七批：发布/清理恢复协议与迟到写补偿
+
+> 日期：2026-10-24；起点 `7c6aa28`。复用现有 TaskContext/DocumentStore/VectorStore 原语，
+> 不变更 Task 字段、Store Port、schema、metadata 或生产开关；实现与文档按职责分批提交，未推送。
+
+## 确认的问题与改造
+
+1. 原 activate 仅返回 Outcome 和报告消息，Task 中没有发布结果或 GC 意图。现在先保存
+   activating，再保存 active/cleanup_pending；独立 cleanup 完成后保存 cleanup_complete。
+   版本化窄记录绑定 key、plan 指纹、task_id、generation，经过整份 context 的有界 CAS。
+   DocumentStore 仍是当前事实来源，恢复不能只信旧 active 回执。
+2. 已复现 GC/purge 后旧 upsert 落库：普通 sweep 只列 retired/abandoned，无法发现该
+   purged 残留。新增 collect_inactive 精确补偿；完成回执保留身份，重放仍执行删除、
+   零残留核验和幂等 purge，不以 complete/purged 提前返回。原子 active 保护早于向量 IO。
+3. 激活提交后结果写回丢失，按原 manifest 恢复，不重做 embedding 或增加 generation。
+   GC 登记/清理/确认响应丢失从独立阶段重放；已 abandoned/purged 的清理意图不再激活。
+   已发布回执若被新 generation 替换，先记录清理意图再回收；进入发布恢复后拒绝 stage。
+4. abandon、delete、purge 前后设所有权/取消检查点。取消或租约丢失不撤销已提交状态，
+   也不继续后续向量 IO 或保存虚假完成回执。旧 ready 来源的 GC 登记前失败仍需重试意图。
+
+实验性 RevisionTaskStages 的 activator= 参数改为 document_store=，清理另显式注入
+垃圾收集器，所有调用方已迁移。说明集中在 architecture.md，release_notes 记录此变化，
+使用/部署图及 M4 TODO 同步校准，没有另建一套恢复框架或接入生产 runner。
+
+## 故障注入与反向验证
+
+新增 37 项零网络单测和 8 项真实 PostgreSQL/Milvus 用例。故障矩阵包括意图/结果写回
+前后失败、abandon 提交前/后失败、删除/清父块响应丢失、Task 确认前/后失败、旧回执
+被替换、仅 cleanup 阶段续跑、身份/generation/预算拒绝，以及三个清理边界的取消/租约
+丢失。真实 Redis/PostgreSQL/Milvus 移交测试另核验发布记录，ready-only 不产生发布意图。
+
+迟到写用事件精确控制先 GC 后提交；最终写入用真实 Milvus 客户端，并从独立 Task、
+DocumentStore 和 Milvus 连接恢复补偿。六种 dense/keyword/hybrid × child/parent 检索
+组合始终只见新 active。该故障边界模拟已接受但延迟执行的请求，不是 Milvus 内部调度
+或真实 SIGKILL 实验，也不将本地 await 完成当作远端从未提交的证明。
+
+独立代码副本中移除意图/结果保存、完成回执重放、身份/generation 绑定、active 保护、
+abandon 后检查点、revision 精确条件，或提前确认/信旧 active/重新激活清理意图，共
+12 类反向缺陷均导致目标断言失败，无收集错误。初次精确条件突变暴露补偿用例只检查
+pointer 的缺口，补上新 active 向量保留断言后重新验证通过。另在真实后端副本中让
+complete 直接返回，残留核验按预期失败；工作区实现未注入缺陷，测试集合清单恢复。
+
+## 全量验收
+
+| 检查 | 结果 |
+|---|---|
+| 完整默认 unit | 3101 passed、15 skipped、1 xfailed；9.27s |
+| unit 覆盖率 | 89.03%；插桩运行 12.90s，不作为 10 秒预算依据 |
+| 真实全量 integration | 253 passed、2 skipped、无 teardown error；361.27s |
+| 定向真实发布/清理恢复 | 8 passed；31.73s |
+| 强化真实 worker 发布记录断言后复验 | 2 passed；8.84s |
+| E2E | 50 passed；4.08s（带覆盖率） |
+| benchmark | 7 passed；4.05s |
+| 三层合并覆盖率 | 整体 92.51%、tasks 96.18%（855/889） |
+| 新增协议所在模块 | revision_context 94.20%、revision_gc 100% |
+| 静态与文档 | 全仓 Ruff、Pyright；6 个 Python 文件格式；97 个本地链接与 README 冒烟；5 张 Mermaid 语法通过 |
+| core-only | 复用第十五批无 extras 的独立环境，重跑 CI 库入口和生成 DOCX 解析/分块；未重新安装 |
+
+使用独立 PostgreSQL 17/Redis 7 测试容器和专用 Milvus 测试库（服务端 2.6.22）。仅跳过
+未配置的 MinIO/MinerU，上游 ARQ close 的 24 条 DeprecationWarning 保留。真实全量、
+定向、worker 和反向验证均比对 Milvus 测试前后集合清单（1 个既有集合），没有新增残留。
+临时 PostgreSQL/Redis 容器和网络已关闭移除。默认 unit 本次低于 10 秒，历史耗时波动
+仍在，不据单次结果宣称预算已稳定解决。验证记录在 `/tmp/comet-v2-publication-validation/`，
+反向副本位置见 mutations-final.log 与 real-mutation.log。
+
+## 保证与下一步
+
+清理完成仅说明本次核验为空，现有跨存储原语不能阻止任意未来迟到写入。本批保留
+恢复身份并提供精确补偿，但没有自动调度；Task 删除会丢失这条恢复来源。第十八批
+生产接线前需明确旧写排干/持续对账、意图保留期限/删除约束及有界分页重试，再由
+维护批次落实调度。不能把普通 sweep 扩成无界全库扫描或把 purged 假装成永久空集。
+生产 IngestRunner/maintenance、默认关闭的读开关、DOCX 快照和完整 H/I 状态保持原样。
+
+## 第十七批提交前复核
+
+按两项职责提交：恢复协议/精确补偿及其单元、真实后端测试和接口说明；完整验证记录、
+架构流程图、M4 现状与生产前置计划。保留生产未接线和迟到写无法由单次 GC 永久阻止
+的边界，不将实验参数迁移或补偿入口描述成完整生产能力。
+
+重新运行完整默认 unit：3101 passed、15 skipped、1 xfailed，9.64s；全仓 Ruff、
+Pyright（0 errors/0 warnings）和 6 个 Python 文件格式检查通过。核对每批暂存内容、
+文档链接/围栏、git diff --check 和 Commitizen 消息；没有安装的 Git 钩子未被绕过，
+相关检查手工执行。真实集成、反向注入及覆盖率沿用上文实现轮记录，提交准备没有重启
+中间件或重跑这些实验；所有业务/测试文件保留实现轮内容。Archify 交互图作为独立
+辅助产物生成，不将工具或生成依赖引入项目。未推送。

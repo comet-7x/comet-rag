@@ -72,7 +72,8 @@ DocumentStore、内存/PostgreSQL 适配器与三表迁移。T8 准备阶段与 
 `RevisionStager` 只写到 ready；V2 第十五批的独立 `RevisionActivator` 和 Task 激活阶段
 已补齐事务失败、提交响应丢失及 superseded 恢复切片。第十六批独立 GC 复用原子
 abandon 和 purge，精确删除向量、零残留核验后保留墓碑，并支持有界扫描恢复。
-生产 Task/maintenance 完整接线仍待完成，需持久化独立 GC 阶段并排干 revision 写入。
+第十七批已持久化独立 Task 发布/GC 阶段，复现 purged 后迟到 upsert 并提供精确重放。
+生产 Task/maintenance 完整接线仍待完成，需落实旧写排干/对账、意图保留与补偿调度。
 生产检索开关默认关闭，不能把切片通过视为完整 M4 验收。
 
 V2 已完成现状校准、配置合并、启动清理、检索失败边界与全仓双模式类迁移，移除旧

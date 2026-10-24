@@ -149,8 +149,9 @@ separator 配置不可被原地修改。
 - [x] CPU 父块落库后交接，IO 从 task_id/context 续跑到 ready，真实三后端验证
 - [x] 独立激活阶段复用 Store 原语：事务失败保留旧版本、提交响应丢失幂等恢复、旧任务 superseded
 - [x] 独立 GC：superseded 登记、有界候选扫描、零残留核验、部分失败重试及 active 保护
+- [x] 独立 Task 发布意图/结果与 GC 阶段持久化，complete/purged 精确补偿重放
 - [ ] 父块、子向量、激活与旧版本回收按规格排序
-- [ ] 任一阶段失败只回滚本 revision，旧 active 数据仍可查询
+- [ ] 按持久化阶段恢复；发布前失败保留旧 active，激活提交后的错误不回滚 active
 - [ ] 重试幂等，不产生重复可见记录
 - [ ] Task progress/context 保持有界并支持断点续跑
 
@@ -158,10 +159,12 @@ separator 配置不可被原地修改。
 IO 分批读取父块、复验完整指纹后才写向量，embedding 返回后仍检查所有权/取消。
 V2 第十五批补齐独立 activation/superseded 恢复切片；Redis worker 验证激活响应丢失
 只重试 activation，PostgreSQL 真事务回滚与独立 Milvus Strong 读验证可见性。
-第十六批补齐独立 GC，生产 Task/maintenance 全生命周期尚未完成，故完整 context/progress 条目仍未勾选。
+第十六批补齐独立 GC，第十七批补齐独立 Task 的发布/清理恢复记录并复现迟到写。
+生产 Task/maintenance 全生命周期尚未完成，故完整 context/progress 条目仍未勾选。
 不能把测试 kind 的成功当成生产 ingest 或 Checkpoint H。未发布的 stale ready
-由显式 collect_superseded 废弃并清理；登记提交前失败必须重试原结果。生产接线需先
-持久化独立 GC 阶段和 superseded 结果并排干该 revision 的写入。
+由显式 collect_superseded 或持久化 cleanup_pending 废弃并清理；登记提交前失败必须重试。
+普通扫描不含 purged，补偿完成也不能证明未来无迟到写。生产接线需先确定并落实旧写
+排干/持续对账与 Task 意图保留、分页调度，不能删除恢复身份后再声称可自动回收。
 
 ### M4-T9 — 父块回填与检索兼容（M）
 

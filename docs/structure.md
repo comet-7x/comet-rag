@@ -6,6 +6,10 @@
 系统边界图画运行时调用，流程图画数据/控制流，不将不同含义的箭头混在一张图中。
 历史接缝见文末。下一步计划只在 [v2_next_steps.md](../tasks/v2_next_steps.md) 维护。
 
+交互浏览可使用 [Archify skill](https://github.com/tt-a1i/archify/blob/main/archify/SKILL.md)
+从固定提交生成独立 HTML，并按该提交核验源码证据。生成器和浏览器检查不作为项目
+运行时依赖；交互图也不能把未提交代码或待接线路径画成当前生产能力。
+
 ## 系统边界
 
 库入口是嵌入调用方进程的 Python API，不是一个独立部署的服务。参考服务按配置选择
@@ -183,27 +187,33 @@ materializer，因此同源文档的 chunk ID、顺序和基础 metadata 不会�
 ## 独立 revision 切片（尚未生产接线）
 
 下图表示已有组件的合法调用顺序，不表示 IngestRunner 已自动执行激活或 maintenance
-已自动执行 GC。GC 的输入必须停止写入；持久化清理阶段/结果及迟到写对账仍见后续计划。
+已自动执行 GC。独立 Task 阶段已保存发布/清理意图；旧写排干和补偿调度仍见后续计划。
 
 ```mermaid
 flowchart TD
     plan["IndexPlanner：稳定 ID 与计划"] --> prepare["RevisionStager.prepare：父块落库"]
     prepare --> resume["resume：子向量写入、计数核验"]
     resume --> ready["ready：尚不可见"]
-    ready --> activate["RevisionActivator：原子激活或幂等恢复"]
+    ready --> intent["Task context：activating 意图"]
+    intent --> activate["RevisionActivator：原子激活或幂等恢复"]
     activate --> active["active：由指针决定可见"]
     activate --> superseded["superseded：低 generation 或已被替换"]
-    superseded --> collect["显式 collect_superseded"]
+    superseded --> receipt["Task context：cleanup_pending"]
+    receipt --> collect["独立 cleanup / collect_superseded"]
     collect --> abandon["原子 abandon：拒绝 active"]
     candidates["retired / abandoned 持久化候选"] --> sweep["sweep：一批有界扫描"]
     activate -->|"旧 active 变为 retired"| candidates
     sweep --> abandon
     abandon --> delete["按 KB/source/revision 删除向量并确认零残留"]
     delete --> purge["purge：清父块，保留 purged 墓碑"]
+    purge --> complete["Task context：cleanup_complete，保留身份"]
+    complete -->|"显式补偿重放，尚无自动调度"| collect
 ```
 
 向量删除、计数或父块事务失败会保留重试入口；登记提交前失败的 ready 不在候选列表，
 须重试原 superseded 结果。激活响应丢失不能被解释为“失败后可删除当前版本”。
+complete 不证明远端旧 RPC 已排干，普通 sweep 也不会扫描 purged；本次为空之后的
+迟到写入需按保留的身份对账，详见 [恢复协议](architecture.md#revision-任务恢复协议)。
 
 ## 检索流程
 

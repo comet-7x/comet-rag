@@ -1,19 +1,20 @@
 # V2 后续重构计划
 
-> 校准：2026-10-24；基线提交 `3c3699d`。本文件维护下一步工作，历史证据留在
+> 校准：2026-10-24；第十七批基于 `7c6aa28` 继续实施。本文件维护下一步工作，历史证据留在
 > [v2_plan.md](v2_plan.md)，M4 出口以 [m4_todo.md](m4_todo.md) 为准。
 
 ## 当前判断
 
 前十六批已完成并分批提交：配置/资源生命周期、同步异步分离、原生 Milvus、DOCX 热点、
 Filter 与 metadata 契约、重排边界、RunnerRegistry、查询 deadline、入库取消，以及
-独立 revision 激活与 GC。最后一轮完整验收为 unit 3064 passed、integration 245 passed/
+独立 revision 激活与 GC。第十六批完整验收为 unit 3064 passed、integration 245 passed/
 2 skipped、E2E 50、benchmark 7；整体覆盖率 92.48%、tasks 95.95%。这些是既有记录，
-不是本轮重新运行结果。提交快照有超过 10 秒的单测记录，预算仍不稳定。
+不是第十七批运行结果；本批验证见实施记录。历史提交快照有超过 10 秒的单测记录，预算仍不稳定。
 
-**V2 尚未完成生产闭环。** 当前 `IngestRunner` 仍是 extracting → chunking → indexing，
-独立 RevisionTaskStages 的 activate 返回结果，没有把激活/GC 结果持久化为完整恢复协议；
-GC 尚未注册 production maintenance。revision-aware 读开关默认关闭，仍只有两种向量实现。
+**V2 尚未完成生产闭环。** 第十七批在独立 RevisionTaskStages 中持久化发布意图、激活
+结果和清理阶段，并提供 complete/purged 的精确补偿重放；已复现迟到写与普通扫描遗漏。
+当前 `IngestRunner` 仍是 extracting → chunking → indexing，GC/补偿尚未注册生产
+maintenance。revision-aware 读开关默认关闭，仍只有两种向量实现。
 
 依据：[入库 runner](../comet_rag/services/ingestion.py)、
 [revision 阶段](../comet_rag/services/revision_context.py)、
@@ -24,7 +25,7 @@ GC 尚未注册 production maintenance。revision-aware 读开关默认关闭，
 
 | 批次建议 | 改造重点 | 完成条件 |
 |---|---|---|
-| **第十七批：恢复协议** | 持久化激活结果、GC 意图与恢复阶段；明确迟到写入边界 | 下列故障矩阵成为可执行测试，保持现有生产写路径 |
+| 第十七批：独立恢复协议（本批） | 已保存发布结果/GC 意图并复现迟到写，支持精确补偿 | 故障矩阵与反向验证见实施记录，保持现有生产写路径；自动对账尚未接线 |
 | 第十八批：生产入库接线 | 组合既有 prepare/ready/activate/GC；明确 legacy 路径与 revision 路径选择 | InProcess 与 ARQ 只凭持久化状态续跑，真实读写回归通过；未完成发布门前仍不默认启用 |
 | 第十九批：维护与回收接线 | 给跨进程 runtime 显式注入 GC；有界执行、错误隔离、关停排干 | 单进程不挂租约维护；多 Context 不串资源，maintenance 失败不撤销 active，重试有明确入口 |
 | 第二十批：M4 出口 | 固定样本质量评测、安装/部署/回滚与文档验收 | 关闭已知验收缺口后，才讨论默认启用与发布 |
@@ -32,13 +33,13 @@ GC 尚未注册 production maintenance。revision-aware 读开关默认关闭，
 批次号表示建议顺序，不是工期或已批准的新接口。发现必须改变 schema、核心 Port 或
 中间件时先提最小设计并按 spec 确认，不将其藏在“接线”里。
 
-## 第十七批先做什么
+## 第十七批落实与生产前置条件
 
 复用 `TaskContext.put_bounded`、既有 revision key/窄 handoff 和 StagePipeline。
 优先在现有 revision 领域模块内定义少量明确状态，不创建第二套通用任务框架。
 不增加 Task 表字段；context 仍受整份 32 MiB 上限约束，不存父块正文或模型向量。
 
-需要先回答并验证的恢复点：
+本批的可执行恢复点（验证结果见实施记录）：
 
 1. 激活已经提交，但任务结果保存失败：重试识别原 revision，不重新 embedding，
    generation/activated_at 不重复推进。
@@ -48,11 +49,13 @@ GC 尚未注册 production maintenance。revision-aware 读开关默认关闭，
 5. 激活后又被更高 generation 替换：恢复为 superseded，不能因旧结果持久化而回退 pointer。
 6. 取消、租约丢失与进程关停发生在各边界：已发布版本保留，生产者先停、排干再关资源。
 7. **迟到 upsert**：旧 RPC 在 GC 后才落库时，向量仍不可见，但可能成为不再进入普通
-   候选扫描的残留。先注入并复现，再决定排干、残留对账或补偿清理的最小方案。
+   候选扫描的残留。已注入并复现；保留 Task 意图并提供精确补偿入口。
    本地协程已结束不等于远端 RPC 未提交；不能直接宣称 Store 行锁解决跨库原子性。
 
-第 7 项是生产启用前的硬门：若现有原语不能证明回收保证，应明确剩余保证、给出方案
-并再决定后续接线。GC 的扫描与具体任务结果也不能混为一个“失败整体重跑”的阶段。
+第 7 项仍是生产启用前的硬门：现有原语不能证明任意旧 RPC 将来都不会落库，complete
+仅表示上次核验为空。第十八批接线前先确定旧写排干或持续对账，以及 Task 意图保留
+期限/删除约束、分页扫描和失败重试策略；第十九批落实调度，不能仅凭补偿入口放开生产。
+GC 候选扫描与具体任务结果仍分开；不将二者混为“失败整体重跑”的阶段。
 
 验证至少覆盖：零网络故障单测、反向注入、真实 PostgreSQL/Milvus 的独立客户端恢复；
 涉及跨道或执行器时加真实 Redis worker。检查默认 unit 耗时，并按 tests/README 合并

@@ -577,3 +577,11 @@ M4-T6 已提交 schema/迁移/回滚设计，后半段决策门已于 2026-09-16
 生产 Task/maintenance 尚未接线：需持久化独立 GC 阶段和 superseded 结果，登记失败
 不得当成成功；GC 前需排干该 revision 的写入，不能由跨存储清理保证迟到 upsert 的
 原子隔离。仍未宣称完整 Checkpoint H/I。实现、故障注入、反向与全量验证见 v2_plan.md。
+
+## 25. V2 独立任务恢复协议（2026-10-24）
+
+第十七批已在既有 Task context 中持久化发布意图、激活结果与 GC 阶段，复验 manifest
+身份/generation，支持 abandoned/purged 的独立清理恢复。迟到 upsert 在 GC 后落库已
+通过故障注入和真实 Milvus 客户端复现；保留的完成回执可精确重放补偿，普通候选扫描
+仍不含 purged。清理完成不证明未来无迟到写，生产开启前仍需旧写排干/持续对账及
+意图保留、分页调度策略。未改变 Store Port、Task 字段、schema 或完整 H/I 状态。

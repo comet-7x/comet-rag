@@ -11,6 +11,7 @@
 > 当前进度（2026-10-24）：V2 前十六批已提交。M4 已有结构感知分块、DocumentStore、
 > ready 续跑、独立激活/GC 及 revision-aware 读取；生产 Task/maintenance 完整接线
 > 和 H/I 验收尚未完成，revision 新写入未启用。见 [下一步计划](tasks/v2_next_steps.md)。
+> 第十七批补齐独立 Task 发布/清理恢复记录及迟到写精确补偿入口，尚未自动调度。
 
 | 你要做什么 | 从这里开始 |
 |---|---|
