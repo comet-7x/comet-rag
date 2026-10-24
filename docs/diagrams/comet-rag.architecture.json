@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "9182b756ad3f9c2b45daaab370c33e27ff81ede3",
+      "revision": "942f966e61047e83dc8f86706906220565726625",
       "link_mode": "local-only"
     }
   },
@@ -29,8 +29,8 @@
       "sources": [
         {
           "path": "README.md",
-          "line": 36,
-          "end_line": 46
+          "line": 37,
+          "end_line": 47
         }
       ]
     },
@@ -113,8 +113,8 @@
         },
         {
           "path": "comet_rag/composition/bootstrap.py",
-          "line": 685,
-          "end_line": 691
+          "line": 695,
+          "end_line": 701
         }
       ]
     },
@@ -135,7 +135,7 @@
         {
           "path": "comet_rag/api/routes/ingest.py",
           "line": 15,
-          "end_line": 43
+          "end_line": 53
         }
       ]
     },
@@ -143,7 +143,7 @@
       "id": "api",
       "type": "backend",
       "label": "入库 API",
-      "sublabel": "准入可暂停 · API",
+      "sublabel": "准入 · kind · 配置绑定",
       "pos": [
         300,
         260
@@ -154,19 +154,19 @@
       ],
       "sources": [
         {
-          "path": "comet_rag/api/deps.py",
-          "line": 55,
-          "end_line": 89
+          "path": "comet_rag/api/routes/ingest.py",
+          "line": 15,
+          "end_line": 53
+        },
+        {
+          "path": "comet_rag/api/routes/tasks.py",
+          "line": 61,
+          "end_line": 85
         },
         {
           "path": "comet_rag/tasks/service.py",
           "line": 60,
           "end_line": 138
-        },
-        {
-          "path": "comet_rag/api/routes/tasks.py",
-          "line": 57,
-          "end_line": 68
         }
       ]
     },
@@ -174,7 +174,7 @@
       "id": "execution",
       "type": "backend",
       "label": "执行器 / IngestRunner",
-      "sublabel": "进程内或 ARQ 分道",
+      "sublabel": "默认 legacy · 按 kind 分派",
       "pos": [
         560,
         260
@@ -185,22 +185,22 @@
       ],
       "sources": [
         {
-          "path": "comet_rag/services/ingestion.py",
-          "line": 189,
-          "end_line": 244
+          "path": "comet_rag/composition/context.py",
+          "line": 126,
+          "end_line": 211
         },
         {
           "path": "comet_rag/services/ingestion.py",
-          "line": 309,
-          "end_line": 373
+          "line": 260,
+          "end_line": 425
         },
         {
-          "path": "comet_rag/composition/bootstrap.py",
-          "line": 218,
-          "end_line": 259
+          "path": "comet_rag/tasks/executor.py",
+          "line": 124,
+          "end_line": 163
         }
       ],
-      "tag": "三个阶段"
+      "tag": "可选 revision"
     },
     {
       "id": "models",
@@ -217,14 +217,14 @@
       ],
       "sources": [
         {
-          "path": "comet_rag/infrastructure/models/embedding/openai.py",
-          "line": 111,
-          "end_line": 145
+          "path": "comet_rag/infrastructure/models/embedding/qwen3_vl.py",
+          "line": 553,
+          "end_line": 586
         },
         {
           "path": "comet_rag/composition/bootstrap.py",
-          "line": 614,
-          "end_line": 635
+          "line": 618,
+          "end_line": 639
         }
       ]
     },
@@ -234,7 +234,7 @@
       "label": "TaskStore",
       "sublabel": "InMemory / PostgreSQL",
       "pos": [
-        300,
+        40,
         480
       ],
       "size": [
@@ -244,13 +244,13 @@
       "sources": [
         {
           "path": "comet_rag/composition/bootstrap.py",
-          "line": 140,
-          "end_line": 152
+          "line": 143,
+          "end_line": 155
         },
         {
-          "path": "comet_rag/services/revision_context.py",
-          "line": 420,
-          "end_line": 467
+          "path": "comet_rag/tasks/service.py",
+          "line": 60,
+          "end_line": 81
         },
         {
           "path": "comet_rag/services/revision_maintenance.py",
@@ -275,18 +275,18 @@
       "sources": [
         {
           "path": "comet_rag/composition/bootstrap.py",
-          "line": 79,
-          "end_line": 105
+          "line": 82,
+          "end_line": 108
         },
         {
           "path": "comet_rag/services/ingestion.py",
-          "line": 328,
-          "end_line": 373
+          "line": 335,
+          "end_line": 425
         },
         {
-          "path": "comet_rag/services/retrieval.py",
-          "line": 429,
-          "end_line": 485
+          "path": "comet_rag/services/indexing.py",
+          "line": 471,
+          "end_line": 501
         }
       ]
     },
@@ -318,7 +318,7 @@
         {
           "path": "comet_rag/config/schemas.py",
           "line": 577,
-          "end_line": 653
+          "end_line": 682
         }
       ]
     },
@@ -343,8 +343,8 @@
         },
         {
           "path": "comet_rag/services/revision_reconciliation.py",
-          "line": 146,
-          "end_line": 269
+          "line": 156,
+          "end_line": 276
         },
         {
           "path": "comet_rag/services/revision_gc.py",
@@ -357,10 +357,10 @@
       "id": "documents",
       "type": "database",
       "label": "DocumentStore",
-      "sublabel": "PostgreSQL · manifest",
+      "sublabel": "PostgreSQL · 版本与父块",
       "tag": "revision / 父块",
       "pos": [
-        560,
+        300,
         690
       ],
       "size": [
@@ -369,14 +369,51 @@
       ],
       "sources": [
         {
-          "path": "comet_rag/composition/bootstrap.py",
-          "line": 155,
-          "end_line": 175
+          "path": "comet_rag/services/indexing.py",
+          "line": 375,
+          "end_line": 410
         },
         {
           "path": "comet_rag/infrastructure/persistence/document_store/postgres.py",
-          "line": 435,
+          "line": 334,
           "end_line": 491
+        },
+        {
+          "path": "comet_rag/services/revision_context.py",
+          "line": 541,
+          "end_line": 584
+        }
+      ]
+    },
+    {
+      "id": "revision-ingest",
+      "type": "backend",
+      "label": "RevisionIngestRunner",
+      "sublabel": "默认关闭 · CPU → IO",
+      "tag": "新命名空间",
+      "pos": [
+        300,
+        480
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/services/revision_ingestion.py",
+          "line": 40,
+          "end_line": 190
+        },
+        {
+          "path": "comet_rag/services/revision_context.py",
+          "line": 425,
+          "end_line": 584
+        },
+        {
+          "path": "comet_rag/services/indexing.py",
+          "line": 375,
+          "end_line": 501
         }
       ]
     }
@@ -479,6 +516,41 @@
       "to": "documents",
       "label": "abandon / purge",
       "variant": "default"
+    },
+    {
+      "id": "dispatch-revision",
+      "from": "execution",
+      "to": "revision-ingest",
+      "label": "启用 revision",
+      "variant": "default"
+    },
+    {
+      "id": "revision-intent",
+      "from": "revision-ingest",
+      "to": "task-store",
+      "label": "意图 / 移交",
+      "variant": "default"
+    },
+    {
+      "id": "revision-embedding",
+      "from": "revision-ingest",
+      "to": "models",
+      "label": "子块向量化",
+      "variant": "default"
+    },
+    {
+      "id": "revision-vectors",
+      "from": "revision-ingest",
+      "to": "vectors",
+      "label": "子块写入",
+      "variant": "default"
+    },
+    {
+      "id": "revision-documents",
+      "from": "revision-ingest",
+      "to": "documents",
+      "label": "准备 / 发布 / GC",
+      "variant": "default"
     }
   ],
   "cards": [
@@ -493,14 +565,13 @@
     },
     {
       "dot": "emerald",
-      "title": "当前生产入库",
+      "title": "默认 legacy 与可选生产路径",
       "items": [
-        "当前仍是 extracting → chunking → indexing；来源准入拒绝时不创建任务。",
-        "accept_new_tasks=false 时，新入库与手动 ingest 重试返回 503；已受理任务继续执行。它只管当前 API，不是旧写围栏。",
-        "单进程执行器在 API 进程运行；ARQ 模式通过 Redis 仅传 task_id，CPU/IO worker 分道。",
-        "TaskStore 与向量后端按配置选择；默认内存状态在重启后丢失，图中未画每个部署副本。",
-        "服务侧模型适配器复用 HTTP 客户端并共享进程级闸门；这不是远端模型服务的部署约束。",
-        "应用按已注册业务 kind 统计积压；内部维护游标不占业务准入，也不进入业务队列。"
+        "默认 IngestRunner 仍为三阶段；显式启用后只注册 revision-ingest，不混合注册旧 writer。图中执行器也承担默认 legacy 链路。",
+        "API 暂停覆盖两种入库 kind；新路径先核验 KB 范围与配置绑定，手动重试错配不会先改原 Task。",
+        "ARQ 队列只传 task_id，CPU/IO 从 Store 续跑；新路径须配套 PostgreSQL/Milvus、判活读侧和持续对账。",
+        "TaskStore 与向量后端按配置选择；默认内存状态重启后丢失。新生产路径仅支持显式的持久化组合。",
+        "模型侧复用 HTTP 客户端与进程级闸门；维护游标不占业务积压，也不进入业务队列。"
       ]
     },
     {
@@ -514,13 +585,13 @@
     },
     {
       "dot": "amber",
-      "title": "第二十批：历史恢复与迁移边界",
+      "title": "第二十一批：生产接线与恢复",
       "items": [
-        "准备意图先于父块写入；完整 handoff 后才释放原文。有效载荷按原 manifest 恢复，FAILED 保留重试。",
-        "历史缺载荷单列 missing_payload，损坏载荷列 failed；都保留源记录，不凭 key 或原文猜计划、分配 generation 或清理。",
-        "独立维护默认关闭，IO cron 每次一页；CAS 保留游标，最近页与稳定日志报告历史恢复缺口，最近页不代表全历史。",
-        "已选择新命名空间重建后核验切换；当前仍是 legacy 生产 ingest，没有新的生产 revision runner、用户数据迁移或流量切换。",
-        "新 KB/集合前缀已验证迟到旧写隔离；它是专项测试，全部署切换/回退及完整 H/I 仍待验收。"
+        "新 runner 复用共享提取和五阶段协议：CPU 提取/准备父块，IO 向量/激活/清理；只有 ready 不能结束任务。",
+        "激活响应丢失恢复同一版本；发布后即使 from_scratch 也不重新取源或 embedding。superseded 清理自身，不覆盖新版本。",
+        "新 active 按 manifest 中的前任身份精确 GC，失败从 cleanup 重试；Task 失败不是回滚 active 的理由。",
+        "writer、恢复与对账共用源 context 预算；历史缺载荷保留并单列，complete/purged 仍持续重访。",
+        "默认开关关闭。真实中间件验证不等于用户资料已迁移；目标模型/语料、跨主机恢复及部署切换/回退仍待验收。"
       ]
     }
   ]
