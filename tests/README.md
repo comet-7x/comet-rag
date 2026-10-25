@@ -494,3 +494,15 @@ revision_process_worker.py：真实 SIGTERM 排干/停止拉取、SIGKILL 激活
 一胜一负的外层执行结束，闸门等待明确排队数/事件循环回调；不以固定 200/150ms 撑开
 窗口。独立副本移除 CAS、阻塞事件循环、遗漏取消归还，确认优化后的守卫仍会失败。
 时间结果只说明当前机器样本，不把收集缓存波动或插桩耗时算成代码性能收益。
+
+## 第三十批：覆盖与原生单元审计
+
+`test_structured_chunking.py`、`test_hierarchy.py`、`test_chunking.py`覆盖有区间结果的
+首中尾遗漏、倒序、block非空间隔与合法重叠/空白。`test_ingestion.py`注入漏块，
+只经TaskStore观察失败，并检查embedding和向量写入未发生。旧spanless能力有限，
+使用特征化测试记录，不假造位置。
+
+`test_pdf_inspection.py`使用纯本地JSON fixture检查来源/canonical、严格页事实、
+重叠引用和错误页、fenced示例、坏HTML表格及实际单块完整性；不依赖PDF或网络。
+17种临时源码变异已被目标断言检出，见
+[第三十批报告](../docs/evaluations/native_evidence_20261025.md)。

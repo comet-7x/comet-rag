@@ -493,3 +493,8 @@ GPU）；加载另配一个（护本机文件描述符与对外连接）；Miner
 - [Pipeline 用法](pipeline_usage.md) —— 只当库用时看这个
 - [docx 解析内幕](docx_parser_internals.md)
 - [MinerU 集成](mineru_integration.md) —— M2
+
+第三十批补纯覆盖守卫：结构策略验证block和整篇，层级验证父/子覆盖，服务验证全部
+有区间的文档Hook；默认算法不变。仓库 `evals.pdf.inspect` 读取已保存的原生产物，
+离线检查canonical一致性、引用候选和单表/行完整性，不发HTTP、不评分或批准标签。
+具体边界见[原生证据报告](evaluations/native_evidence_20261025.md)。

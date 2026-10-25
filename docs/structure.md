@@ -361,3 +361,8 @@ missing_payload 分类。第二十一批另增 opt-in 五阶段路径，默认 l
 部署补丁、源码摘要与安装器。它们不在comet-rag包内，也不从组合根或进程入口启动；
 应用仍通过既有HTTP适配器消费。外部服务生成页Markdown，engines只处理通用文档
 结构与原文区间，不能把部署扩展画成引擎内SDK调用。
+
+原生解析核验 `evals.pdf.parse` 显式访问外部HTTP；`evals.pdf.inspect` 则只读取已保存
+的文件做证据/表格诊断，二者不属于生产索引。运行时覆盖守卫位于
+`engines/chunkers/_coverage.py`，由结构策略、HierarchyBuilder和服务文档Hook复用；
+不新增Store、模型或配置。见[第三十批报告](evaluations/native_evidence_20261025.md)。
