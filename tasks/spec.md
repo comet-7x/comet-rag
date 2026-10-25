@@ -7,6 +7,8 @@
 
 第二十二批提供离线新旧/多角色配置预检，并以独立 SQL database、Redis DB 与 Milvus
 prefix 演练重建、切读和回退；实际资料、目标部署与完整 M4 出口仍未完成。
+第二十三批补单机独立进程的 SIGTERM/SIGKILL revision 恢复及单测预算；不替代跨主机、
+断电、真实模型质量或用户生产切换验收。
 
 ---
 

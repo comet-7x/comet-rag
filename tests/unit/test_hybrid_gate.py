@@ -20,6 +20,7 @@ from comet_rag.core.concurrency import (
     _AsyncWaiter,
     _SyncWaiter,
 )
+from tests.contracts.support import wait_until
 
 
 def _available(gate: Gate) -> int:
@@ -78,31 +79,40 @@ async def test_sync_and_async_share_one_budget() -> None:
 async def test_async_waiter_does_not_block_the_event_loop() -> None:
     """排队不能占着事件循环 —— 否则闸门一满，整个进程停摆。"""
     gate = Gate(limit=1)
-    ticks = 0
+    loop = asyncio.get_running_loop()
+    held, progressed = asyncio.Event(), asyncio.Event()
+    release, expired = threading.Event(), threading.Event()
 
-    async def heartbeat() -> None:
-        nonlocal ticks
-        while True:
-            await asyncio.sleep(0.002)
-            ticks += 1
+    def hold() -> None:
+        with gate:
+            loop.call_soon_threadsafe(held.set)
+            # 缺陷若阻塞事件循环，外部看门狗仍可释放线程，让断言失败而不是整套挂死。
+            if not release.wait(1):
+                expired.set()
 
-    beat = asyncio.create_task(heartbeat())
-    await asyncio.sleep(0)
-
-    holder = threading.Thread(target=lambda: _hold_sync(gate, 0.15))
+    holder = threading.Thread(target=hold)
     holder.start()
-    await asyncio.sleep(0.01)  # 确保名额已被同步侧占住
-    async with gate:  # 必然要排队
-        pass
-    holder.join()
-    beat.cancel()
+    await asyncio.wait_for(held.wait(), 1)
+    waiter = asyncio.create_task(_acquire_and_release(gate))
+    try:
+        await _wait_for_waiters(gate, 1)
+        loop.call_soon(progressed.set)
+        await asyncio.wait_for(progressed.wait(), 1)
+        assert not waiter.done() and not expired.is_set(), (
+            "同步侧未释放前，事件循环必须能推进排队之外的工作"
+        )
+    finally:
+        release.set()
+        await asyncio.wait_for(waiter, 1)
+        holder.join(timeout=1)
+    assert not holder.is_alive()
 
-    assert ticks >= 10, f"排队期间事件循环只调度了 {ticks} 次 —— 被堵住了"
 
+async def _wait_for_waiters(gate: Gate, count: int) -> None:
+    async def queued() -> bool:
+        return gate.stats.waiting == count
 
-def _hold_sync(gate: Gate, seconds: float) -> None:
-    with gate:
-        time.sleep(seconds)
+    await wait_until(queued, timeout=1, message=f"未观察到 {count} 个闸门等待者")
 
 
 # ── 名额不许漏 ─────────────────────────────────────────────────────────────
@@ -119,7 +129,7 @@ async def test_cancelling_a_waiting_coroutine_does_not_leak_a_permit() -> None:
 
     async with gate:  # 占满
         waiters = [asyncio.create_task(_acquire_and_release(gate)) for _ in range(5)]
-        await asyncio.sleep(0.02)
+        await _wait_for_waiters(gate, 5)
         assert gate.stats.waiting == 5
         for task in waiters:
             task.cancel()
@@ -192,7 +202,7 @@ async def test_waiting_seats_are_still_bounded() -> None:
 
     async with gate:
         queued = [asyncio.create_task(_acquire_and_release(gate)) for _ in range(2)]
-        await asyncio.sleep(0.02)
+        await _wait_for_waiters(gate, 2)
 
         with pytest.raises(Overloaded, match="等待席位已满"):
             async with gate:
@@ -251,7 +261,7 @@ async def test_release_transfers_the_permit_instead_of_pooling_it() -> None:
     gate = Gate(limit=1)
     await gate.acquire()
     queued = [asyncio.create_task(_acquire_and_release(gate)) for _ in range(2)]
-    await asyncio.sleep(0.02)
+    await _wait_for_waiters(gate, 2)
     assert gate.stats.waiting == 2
 
     gate.release()

@@ -6,6 +6,9 @@
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
 > 起始开发分支：`feature/m4-hierarchical-indexing`（历史记录）
 
+第二十三批补齐单机独立进程的 SIGTERM 排干、SIGKILL 激活前后恢复和排干超时边界。
+它不代表真实模型、跨主机/断电或全部署切换已完成；剩余 H/I 出口仍保留。
+
 ## Phase 0：调研与契约
 
 ### M4-T1 — 开源调研、现状审计与基线（S）

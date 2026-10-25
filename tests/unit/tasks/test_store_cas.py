@@ -180,19 +180,26 @@ async def test_two_executors_cannot_both_claim_the_same_task() -> None:
     a = InProcessExecutor(store, runners=runners, worker_id="worker-A")
     b = InProcessExecutor(store, runners=runners, worker_id="worker-B")
     store.armed = True
-    running = asyncio.ensure_future(
-        asyncio.gather(
-            a.execute(task.task_id), b.execute(task.task_id), return_exceptions=True
-        )
-    )
+    running = [
+        asyncio.create_task(executor.execute(task.task_id)) for executor in (a, b)
+    ]
     try:
-        await asyncio.sleep(0.2)  # 两边都走到 runner / 重试之后再看
+        # 正确实现只有输家返回；赢家仍在 gate 内。无需按机器速度猜一个等待时长。
+        done, pending = await asyncio.wait(
+            running, timeout=1, return_when=asyncio.FIRST_COMPLETED
+        )
+        assert len(done) == 1 and len(pending) == 1, (
+            "两个执行者未形成一胜一负的认领结果"
+        )
+        for completed in done:
+            completed.result()
         claimed_while_running = list(runs)
         gate.set()
-        await running
+        await asyncio.gather(*running)
     finally:
         store.armed = False
         gate.set()
+        await asyncio.gather(*running, return_exceptions=True)
         await a.shutdown(timeout=5.0)
         await b.shutdown(timeout=5.0)
 

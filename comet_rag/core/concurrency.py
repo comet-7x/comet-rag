@@ -259,7 +259,7 @@ class Gate:
         self._give_back(waiter, rejected=False)
         raise RuntimeError(
             f"{self.name} 闸门：不能在事件循环线程上等待同步名额。"
-            f"协程里请用 `async with gate:`（或模型/加载器的 a* 入口）；"
+            f"协程里请用 `async with gate:` 或模型/加载器的异步类；"
             f"确需同步 API 时把它放进 `asyncio.to_thread`。"
         )
 
