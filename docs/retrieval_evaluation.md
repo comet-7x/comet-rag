@@ -188,3 +188,20 @@ uv run python -m evals.retrieval real --config /path/to/models.yaml \
 配对 run 的 elapsed_ms 仅覆盖重排调用，settings.timing_scope 明确区分完整 search。
 评分器仍只认原文：标题前缀含答案、返回正文不含答案时证据得分为零；不会将定位文字
 复制到引用结果。新增字符数只用于审查输入成本，不等于 token 数、SLO 或存储增量。
+
+## 真实 PDF 与独立标签复核
+
+第二十七批补充公开原生文本PDF的12个物理页、24条中文查询和作者拟定证据，覆盖
+跨页段落、表格和脚注。方法、矩阵与全部逐查询结果见
+[PDF/page报告](evaluations/pdf_page_20261025.md)，来源与复现命令见
+[PDF评测工具](../evals/pdf/README.md)。这与生成式样本分开，不覆盖历史标签与快照。
+
+独立人工复核仍pending；盲审包只含来源、问题与unreviewed表，不提供作者等级、
+no-answer分类或检索排名。复核人需按物理页而非印刷页码逐项确认，裁决后另发新金标。
+没有正确MinerU protocol v2配置时，只能称独立参考提取后的page评测，不能宣称生产
+解析已验收，也不把pypdf挂成服务fallback。
+
+512/1024正文预算使用指定reranker的原生raw-text编码，只保留原排序完整前缀。
+它不含query、指令和chat template，不等于另一模型的上下文或推理成本；预算投影
+清除原search计时。固定权重、tokenizer/template与服务版本仍需部署工件清单，
+不能把模型名称、max_model_len或少数token探针稳定当作权重锁定。

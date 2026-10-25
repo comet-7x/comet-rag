@@ -179,6 +179,7 @@ make format
 | [真实模型实测](docs/evaluations/model_retrieval_20261025.md) | 六组结果、标签自审、逐查询证据与限制 |
 | [长文/困难负例对照](docs/evaluations/retrieval_challenge_20261025.md) | 标题合并取舍、实体混淆与原生后端验证 |
 | [标题上下文对照](docs/evaluations/title_context_20261025.md) | 原文/硬边界不变的重排视图实验与回退 |
+| [真实 PDF/page 评测](docs/evaluations/pdf_page_20261025.md) | 物理页证据、盲审包与正文 token 预算边界 |
 | [pipeline_usage.md](docs/pipeline_usage.md)               | 只当库用时看这个                     |
 | [docx_parser_internals.md](docs/docx_parser_internals.md) | docx 解析内幕                        |
 | [mineru_integration.md](docs/mineru_integration.md)       | PDF / MinerU 部署、配置与验收        |

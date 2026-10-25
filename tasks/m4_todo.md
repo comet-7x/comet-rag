@@ -235,6 +235,9 @@ recursive/markdown/hierarchy 的 12 组确定性回归。规则与限制见
 第二十六批冻结候选池，对照仅重排的完整/祖先标题输入，原文区间与 page/section 边界
 不变；因首位证据回退未接入生产。方法和反例见
 [标题上下文报告](../docs/evaluations/title_context_20261025.md)，仍不关闭 T10/H/I。
+第二十七批补公开PDF参考页、盲审包和原生正文token预算的真实模型对照，见
+[PDF报告](../docs/evaluations/pdf_page_20261025.md)。独立人工裁决、生产MinerU、固定模型
+工件与完整部署质量仍待验收，不能把独立参考提取或小样本高分当作T10出口。
 
 ## 提交与 PR 边界
 

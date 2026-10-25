@@ -37,6 +37,13 @@ CI 在 unit 后单独跑这组确定性回归，不将其计入默认单测预�
 中间件。跳级标题祖先与纯标题事实守卫在 `unit/engines/test_markdown_structure.py`
 和 `test_structured_chunking.py`，原 DOCX 快照不变。
 
+第二十七批增加 `benchmark/test_pdf_quality.py`：固定公开PDF的参考页、物理页/父子
+边界、800字符完整quote缺口，以及模型/计数故障后的资源关闭。模型使用替身，HTTP
+使用MockTransport；快照读取不需要pypdf、网络或GPU。这组同样在CI的独立benchmark
+步骤运行，不计入普通unit时间预算。`unit/test_pdf_evaluation.py`校验来源/页身份、
+盲审不泄漏和正文token前缀；真实PDF字节与提取版本另在外部PDF工具环境核验。
+方法、人工复核状态与命令见[PDF评测工具](../evals/pdf/README.md)。
+
 ## 查询 deadline 回归
 
 共享预算、排队、超时降级和取消排干用例位于

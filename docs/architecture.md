@@ -143,6 +143,10 @@ ARQ/Redis 与 PyMilvus 均如此。`AsyncMilvusStore` 只持有 `AsyncMilvusClie
 结果按原索引映射回正文；不改变区间、硬边界、向量或服务默认行为。完整与祖先路径均
 出现回退，未进入运行时。方法见[标题上下文报告](evaluations/title_context_20261025.md)。
 
+真实PDF评测也在仓库evals内：读取已核验的物理页快照，复用现有入库/检索，再按原生
+正文token计数投影完整排名前缀。独立参考提取不接入生产MinerU，盲审未完成时不批准
+生产质量。职责与边界见[PDF/page报告](evaluations/pdf_page_20261025.md)。
+
 ## 核心抽象
 
 每一个都配有一套**与实现无关的契约测试**（`tests/contracts/`）。
