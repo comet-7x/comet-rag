@@ -139,6 +139,11 @@ comet-rag config --config /etc/comet-rag/prod.yaml   # 打印生效配置（密�
 
 ## 暂停入库准入
 
+新命名空间启用前，在服务依赖环境运行 `comet-rag revision-preflight` 对照旧端与新
+API/CPU/IO 四份配置。它只读配置，不连接远端或授权切流；退出 0 后仍需核验实际
+实例、资源、资料和回退增量。完整命令、保守隔离条件与演练见
+[迁移预检](revision_migration.md#离线配置预检)。
+
 维护/迁移时设置 `ingest_policy.accept_new_tasks: false` 并部署到所有 API 实例。
 新入库与两种 ingest kind 的手动重试返回 503，已受理任务继续执行；状态可查询
 `/admin/limits.accept_new_ingest_tasks`。它不阻止旧 API、库调用、自定义生产者或在途请求，

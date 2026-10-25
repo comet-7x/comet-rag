@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：可选生产 revision 接线已验收，实际迁移/部署与完整出口未完成（2026-10-24 校准）
+> 状态：可选生产接线、离线预检与隔离切换/回退演练已验收；实际迁移/部署与完整出口未完成（2026-10-25 校准）
 > 规格：`tasks/m4_spec.md` v1.10
 > 计划：`tasks/m4_plan.md`、`tasks/m4_t6_design.md`；下一批见 [V2 后续计划](v2_next_steps.md)
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)

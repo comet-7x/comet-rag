@@ -1,9 +1,12 @@
 # Spec: Comet-RAG
 
 > 状态：M1～M3 已完成；M4 可选生产 revision 接线已验收，实际迁移/部署与出口待完成（v1.13）
-> 最后更新：2026-10-24（现状校准，不改变产品范围与边界）
+> 最后更新：2026-10-25（现状校准，不改变产品范围与边界）
 > 下一步顺序：[V2 后续计划](v2_next_steps.md)；历史实现与验证仍见 v2_plan.md
 > 验收记录：M1 见 `tasks/plan.md` Checkpoint F；M2 见 `tasks/m2_spec.md`；M3 见 `tasks/m3_spec.md`；M4 见 `tasks/m4_spec.md` 与 `tasks/m4_todo.md`
+
+第二十二批提供离线新旧/多角色配置预检，并以独立 SQL database、Redis DB 与 Milvus
+prefix 演练重建、切读和回退；实际资料、目标部署与完整 M4 出口仍未完成。
 
 ---
 

@@ -186,6 +186,10 @@ DocumentExtraction 为两条链路共享取源阶段，StagePipeline 管 CPU→I
 只编排准备、向量、激活、清理，不重写 Store 事务。完整配置与部署边界见
 [迁移说明](revision_migration.md#生产-revision-runner-配置)。
 
+部署前的 `revision-preflight` 属于 CLI→composition 配置检查，不经过 Context 或
+任何 Store。它对照旧端与三角色的声明配置、复用实际 Pipeline 合并和 writer 绑定；
+不调度重建、不切流、不证明远端隔离/排干。受控重建仍走上述唯一生产 runner。
+
 新 active cleanup 从 manifest.replaces_revision_id 得到前任的可靠身份，精确清理失败
 从 cleanup 重试。superseded 清理自身后正常结束。发布后人工 from_scratch 也不重新
 取源/embedding；无效载荷失败保留，不能由重新提取掩盖。任务失败不等于激活未提交。

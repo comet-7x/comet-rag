@@ -441,3 +441,11 @@ uv run coverage report --include="*/comet_rag/tasks/*"     # 96%
 断电/SIGKILL 或跨主机部署演练。模型为确定性替身，PostgreSQL/Redis/Milvus 为真实服务。
 独立代码副本的反向验证覆盖错误绑定、重新取源、提前释放、错误 KB、漏 GC、配置门禁
 和 API 选路；日志及最终全量数字见 [V2 记录](../tasks/v2_plan.md)。
+
+第二十二批新增 unit/test_revision_preflight.py，覆盖旧端暂停、各角色绑定、逻辑命名空间
+复用/别名、CLI 失败退出及不泄露输入、程序化三方 Pipeline；独立副本注入反向缺陷。
+integration/test_revision_deployment_rehearsal.py 使用不同 SQL database（执行现有迁移）、
+Redis DB 与 Milvus 随机前缀，实际运行新旧 API/CPU/IO。冻结生成资料，验证激活前失败
+不影响旧端、响应丢失恢复、六种新端检索、切读与无新增写回退；切换后有更新时先证明
+直接回退遗漏，再补齐差异核验短文/尾块。路由由测试调用方选择，没有新增流量控制器。
+单进程原生 workers 与模型替身仍不代表跨主机、断电、真实模型或生产全量资料验收。

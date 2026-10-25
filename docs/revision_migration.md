@@ -2,7 +2,8 @@
 
 迁移采用**新命名空间重建、核验后切换**。第二十一批交付默认关闭的
 `RevisionIngestRunner`，复用准备/发布/清理协议；默认 IngestRunner 继续使用 legacy。
-本批没有迁移用户资料、开启项目生产配置或切换流量。独立阶段和维护协议见[对账设计](../tasks/v2_reconciliation_design.md)。
+第二十二批补齐离线配置预检及独立测试命名空间的重建/切读/回退演练；没有迁移用户
+资料、开启项目生产配置或切换真实流量。独立阶段和维护协议见[对账设计](../tasks/v2_reconciliation_design.md)。
 
 ## 历史任务按证据处置
 
@@ -105,8 +106,9 @@ ingest_policy:
 ```
 
 沿用已有配置创建新资源并应用现有三表迁移，然后分别启动 serve、preprocessor、embedder。
-`COMET_RAG_CONFIG` 可统一指定配置路径；Alembic 也从该应用配置取 SQL 地址，不传入
-其他 ini/DSN 覆盖。服务来源策略仍须单独开放并限制需要的 Local/URL/S3/PDF 能力。
+`COMET_RAG_CONFIG` 可统一指定配置路径；Alembic 默认从该应用配置取 SQL 地址。部署
+时避免其他 ini/DSN 覆盖造成迁移目标错配；工具本身支持显式覆盖，不是禁用此能力。
+服务来源策略仍须单独开放并限制需要的 Local/URL/S3/PDF 能力。
 建 KB 后再向 POST /ingest 提交相应 kb_id；不在 kb_ids 的请求在来源 IO 前拒绝。
 CLI 的子块配置沿用 PipelineConfig 默认 2000/200；程序化注入 PipelineConfig 时，必须
 给 API 和两道 worker 同时传入相同值，不存在额外的 YAML chunk_size 写开关。
@@ -140,6 +142,34 @@ FAILED 后人工重试，不把未知错误全部伪装成瞬时故障。改模�
 保留新配置与 revision-aware 读取协议，不能在同一新存储上直接关闭 writer 配置后改跑
 旧部署。旧二进制或已启动的旧 worker 不受新门禁保护，物理命名空间隔离仍是部署前提。
 
+## 离线配置预检
+
+在操作远端前，使用旧端已暂停的配置和新端三种角色的配置执行：
+
+```bash
+uv run comet-rag revision-preflight \
+  --previous-config /path/to/legacy-paused.yaml \
+  --api-config /path/to/new-api.yaml \
+  --preprocessor-config /path/to/new-cpu.yaml \
+  --embedder-config /path/to/new-io.yaml
+```
+
+四个路径必须显式提供；不修改 `COMET_RAG_CONFIG`，不启动 Context、不连接中间件、
+不建 KB/collection、不修改配置或切流。JSON 的 `scope` 为 `configuration-only`；
+退出码 0 仅表示配置约束通过，2 表示校验/读取失败。输出检查名和不含凭据的绑定，
+配置错误只标角色，不输出原始异常或配置。报告的 `unverified` 仍须逐项验收。
+
+检查旧端准入暂停、四方显式 PG/ARQ/Milvus 资源，以及新 API/CPU/IO writer 绑定一致。
+新旧必须使用不同 SQL database 名、Redis DB index，以及不同 Milvus database 或
+prefix。这是初版保守范围：即使连接地址不同，也不能凭字符串排除主机别名/代理复用；
+不同服务器复用同名资源需人工证明，命令不会放行。不同名称同样不能证明代理未重写
+路由，或该命名空间从未用过。Redis 固定队列名必须依靠 DB/实例隔离。
+
+CLI 按真实入口使用 `resolve_pipeline_config(limits)` 计算默认计划。程序化部署需调用
+`inspect_revision_deployment(..., pipelines={"api": ..., "preprocessor": ..., "embedder": ...})`
+并同时传三方覆盖，避免漏一方时偷用默认值；不核验任意注入资源。模型实际维度、
+schema/索引、权限、网络、正在运行的代码/配置、资料摘要与查询质量均未连接验证。
+
 ## 重建与切换验收
 
 当前已经提供 opt-in 生产 runner，但资料清点、存储隔离、部署和切换仍由操作者执行。
@@ -163,6 +193,31 @@ FAILED 后人工重试，不把未知错误全部伪装成瞬时故障。改模�
 回退读流量之前，须明确新端在切换后是否接收过新资料。旧端若已落后，直接切回会丢失
 可见更新；应先停止新端入库并保存差异，完成差异重建或使用已验收备份。保留 revision
 读代码，不能让旧 M3 二进制读取已有 revision 数据，也不能直接 drop manifest 三表。
+
+## 本地受控演练及回退证据
+
+`tests/integration/test_revision_deployment_rehearsal.py` 使用生成 DOCX、独立新旧 SQL
+database、独立 Redis DB 和固定 Milvus 测试库中的两个随机 prefix。旧端实际 legacy
+API/CPU/IO 与新端 revision API/CPU/IO 共用既有阶段，不创建第二套迁移执行器。
+新旧可使用相同 KB/source 名，用真实数据证明隔离，不靠改文档标识避开问题。
+
+| 时点或故障 | 操作与验收 |
+|---|---|
+| 固定输入 | 原文件 SHA256 在旧端入库和新端重建间不变；旧端暂停后提交为 503 |
+| 新端激活前失败 | 旧端查询保持，未激活新端为空；原 Task 从失败阶段人工重试 |
+| 激活已提交但响应丢失 | 自动重试同一任务，核验六种模式/返回层级的 revision 与正文 |
+| 无切换后新写 | 调用方将查询路由切到新 API，再暂停新端并切回旧 API，核对原结果 |
+| 切换后新增更新 | 先复现直接回退旧端遗漏更新；保存差异、暂停新端，在隔离旧端重建后核验短文只剩新块 |
+
+上述查询路由是测试调用方选择 API，不代表项目有自动流量控制器。暂停由单 API
+Context 模拟部署完成后的值；不证明全副本已重启或远端写已排干。所有原生 ARQ workers
+在同一测试进程，模型是确定性替身；新建 SQL DB 执行现有 Alembic 迁移并在关闭资源后
+删除。它覆盖协议与数据边界，不替代跨主机/断电、真实模型质量、生产权限及运维演练。
+
+实际执行应留存：冻结资料清单/摘要、预检 JSON、代码和配置绑定、全部署停投/排干
+记录、每来源 Task/revision 与 active/父子计数、查询验收、切换时刻、切换后增量和回退
+验收。先暂停产生增量的一侧，再补齐差异；测试中的单来源成功不等于真实全库对账。
+不能用 Task 终态或一次查询成功，跳过差异完整性和旧端内容验证。
 
 生产 H/I、实际资料迁移、部署切换/回退和完整旧端退出仍未完成；本文件给出实施范围与
 验收条件，不声称本批已经迁移用户数据或完成 M4。

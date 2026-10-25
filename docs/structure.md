@@ -187,6 +187,10 @@ materializer，因此同源文档的 chunk ID、顺序和基础 metadata 不会�
 
 ## 可选生产 revision 路径与独立协议
 
+独立 CLI `revision-preflight` 只读旧端与新 API/CPU/IO 配置，复用 composition 的计划
+合并与绑定；不创建 Context 或存储资源，因此不接入下面的运行时 IO 箭头。切换与
+回退由部署/调用方执行，资料与增量核验见[迁移说明](revision_migration.md)。
+
 启用 revision_ingestion 后，POST /ingest 选择 revision-ingest，只注册新 writer；默认
 legacy 链路不改变。新路径如下，持久化阶段与同一套 StagePipeline 完成跨道/重试：
 
