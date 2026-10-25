@@ -176,6 +176,7 @@ make format
 | [deployment.md](docs/deployment.md)                       | 配置、扩容、运维、排查               |
 | [benchmark.md](docs/benchmark.md)                         | 性能基线与它**不能**回答的问题 |
 | [retrieval_evaluation.md](docs/retrieval_evaluation.md)   | 固定语料、检索标签、评分规则与模型实测入口 |
+| [真实模型实测](docs/evaluations/model_retrieval_20261025.md) | 六组结果、标签自审、逐查询证据与限制 |
 | [pipeline_usage.md](docs/pipeline_usage.md)               | 只当库用时看这个                     |
 | [docx_parser_internals.md](docs/docx_parser_internals.md) | docx 解析内幕                        |
 | [mineru_integration.md](docs/mineru_integration.md)       | PDF / MinerU 部署、配置与验收        |

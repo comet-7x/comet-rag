@@ -23,6 +23,8 @@ class QueryRun(StrictModel):
     degraded: bool = False
     error: str | None = None
     elapsed_ms: Annotated[float, Field(ge=0)] | None = None
+    reranked: bool | None = None
+    fetched: Annotated[int, Field(ge=0)] | None = None
 
 
 class Run(StrictModel):
@@ -72,6 +74,10 @@ def score(dataset: Dataset, run: Run) -> dict[str, object]:
         query = queries[result.query_id]
         if result.error is not None or result.degraded:
             raise ValueError(f"query {query.id} 失败或降级；不能计为健康质量基线")
+        if run.settings["rerank"] and result.hits and result.reranked is not True:
+            raise ValueError("请求重排但缺少实际完成重排的证据")
+        if not run.settings["rerank"] and result.reranked is True:
+            raise ValueError("实际重排与 run 配置不一致")
         if len(result.hits) > run.top_k or len({h.id for h in result.hits}) != len(
             result.hits
         ):
@@ -89,12 +95,15 @@ def score(dataset: Dataset, run: Run) -> dict[str, object]:
                 raise ValueError("返回正文必须与规范文档 span 完全一致")
         row: dict[str, object] = {"query_id": query.id, "category": query.category}
         row["elapsed_ms"] = result.elapsed_ms
+        row["reranked"] = result.reranked
+        row["fetched"] = result.fetched
         positive = {did for did, grade in query.relevance.items() if grade > 0}
         for k in (1, 3, 5):
             hits = result.hits[:k]
             names = ("recall", "rr", "ndcg", "evidence")
             if not positive:
                 row.update({f"{name}@{k}": None for name in names})
+                row[f"covered_evidence@{k}"] = []
                 continue
             seen: set[str] = set()
             gains: list[int] = []
@@ -114,20 +123,22 @@ def score(dataset: Dataset, run: Run) -> dict[str, object]:
             )[:k]
             dcg = sum(gain / log2(rank + 1) for rank, gain in enumerate(gains, 1))
             idcg = sum(gain / log2(rank + 1) for rank, gain in enumerate(ideal, 1))
-            covered = sum(
-                any(
+            covered = [
+                eid
+                for eid in query.evidence
+                if any(
                     hit.document_id == evidence[eid].document_id
                     and hit.start <= dataset.spans[eid][0]
                     and hit.end >= dataset.spans[eid][1]
                     for hit in hits
                 )
-                for eid in query.evidence
-            )
+            ]
+            row[f"covered_evidence@{k}"] = covered
             values = (
                 len(positive & seen) / len(positive),
                 1 / relevant_ranks[0] if relevant_ranks else 0.0,
                 dcg / idcg,
-                covered / len(query.evidence),
+                len(covered) / len(query.evidence),
             )
             for name, value in zip(names, values, strict=True):
                 metric = f"{name}@{k}"

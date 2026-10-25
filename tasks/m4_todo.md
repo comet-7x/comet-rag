@@ -223,8 +223,10 @@ standalone 脚本，在隔离端口用内嵌 etcd/本地存储成功验收。真
 
 2026-10-25 第二十四批补可生成 DOCX/Markdown、文档相关度和原文证据标签，以及
 recursive/markdown/hierarchy 的 12 组确定性回归。规则与限制见
-[检索评测](../docs/retrieval_evaluation.md)。尚缺真实 page/PDF、独立标签复核、真实模型
-和目标部署质量验收；不将小样本 top-5 饱和或普通单测一轮通过当成 T10 已完成。
+[检索评测](../docs/retrieval_evaluation.md)。追加六组真实模型/独立内存实测与标签自审，
+见 [模型报告](../docs/evaluations/model_retrieval_20261025.md)。尚缺真实 page/PDF、独立
+标签复核、更大真实分布下模型效果和目标部署质量验收；不将小样本 top-3 饱和或普通
+单测一轮通过当成 T10 已完成。
 
 ## 提交与 PR 边界
 

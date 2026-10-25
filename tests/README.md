@@ -27,6 +27,10 @@ uv run pytest --cov=comet_rag --cov-report=term-missing
 模型均为替身，不需要网络/GPU。运行方式、标签约定及真实模型入口见
 [检索评测](../docs/retrieval_evaluation.md)。回归快照不等于生产质量阈值。
 CI 在 unit 后单独跑这组确定性回归，不将其计入默认单测预算或混入绝对耗时门槛。
+模型实验前标签自审补齐了容量表列标题、纠正平等比较的等级；新旧指纹不混评。
+评分同时核验实际 reranked，防止把“请求过重排”当作“完成了重排”；逐查询输出已覆盖
+的证据 ID。真实服务实测记录另见 [报告](../docs/evaluations/model_retrieval_20261025.md)，
+真实服务不进入 unit/常规 CI。
 
 ## 查询 deadline 回归
 

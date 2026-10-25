@@ -179,6 +179,8 @@ async def collect(
                     hits=hits,
                     degraded=result.degraded is not None or bool(result.degradations),
                     elapsed_ms=elapsed_ms,
+                    reranked=result.reranked,
+                    fetched=result.fetched,
                 )
             )
         return Run(

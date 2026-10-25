@@ -3,8 +3,9 @@
 本项目先评估检索返回的文档与证据。当前没有答案生成链路，不评估答案正确率或
 faithfulness。框架延迟基线仍见 [benchmark](benchmark.md)，两者分别归档。
 
-第二十四批建立的是可重复的合成语料回归集，还不能作为生产质量验收。真实模型服务
-可以单独接入；其结果仍受合成语料和 InMemory 精确召回的范围限制。
+第二十四批建立的是可重复的合成语料回归集，还不能作为生产质量验收。本轮已补
+[真实模型实测与逐查询复核](evaluations/model_retrieval_20261025.md)，结果仍受合成语料、
+未知权重版本和 InMemory 精确召回的范围限制。
 
 ## 固定语料与标签
 
@@ -13,7 +14,7 @@ faithfulness。框架延迟基线仍见 [benchmark](benchmark.md)，两者分别
 旧 revision。生成器从标题、段落和表格生成原文件，DOCX 再经过真实 extractor；两种
 格式都经过现有 MarkdownDocumentNormalizer。不提交生成的 DOCX、运行结果或用户文档。
 
-[judgments.json](../evals/retrieval/judgments.json) 独立维护 18 条查询、14 条证据：16 条
+[judgments.json](../evals/retrieval/judgments.json) 独立维护 18 条查询、15 条证据：16 条
 有答案、2 条无答案，包含事实、改写、数值、表格、多文档与跨环境干扰。文档身份为
 稳定的 id，并映射到 `(kb_id, source_id, revision)`；revision id 全局唯一。每个 source
 恰有一个 active 版本；查询只能将本 KB 的 active 文档标为相关。
@@ -22,6 +23,10 @@ faithfulness。框架延迟基线仍见 [benchmark](benchmark.md)，两者分别
 补充答案文档，0 表示不相关；这个小型封闭集合中，未列出的 active 文档按 0 处理。
 这是本批作者编写的标签，**尚未经过用户或独立双人复核**，不是外部权威数据集。
 新增真实资料时应先盲标、复核分歧并补齐困难负例，再冻结用于比较的版本。
+
+真实模型实验前自审校正了 retention_compare 的平等相关度（2/2），并为两条容量表查询
+补列标题证据；原来只有数据行的标签不够完整。首版 14 条证据和旧指纹保留在历史记录，
+新旧分数不能混评。本次自审不替代上述独立标注验收。
 
 证据用完整原文 quote 标识，必须在规范正文唯一出现，生成时定位为半开字符区间
 `[start, end)`。标签不随 chunk 策略生成：同一答案被切断会降低证据覆盖率，不能靠重标
@@ -49,6 +54,8 @@ chunk 抹掉问题。标识、active 状态、表格列数、证据引用和查�
 无答案查询的 Recall/RR/nDCG/evidence 为 null，排除在正查询 macro 之外，单独报告。
 有答案查询返回空列表是有效的 0 分；服务异常、降级、漏查询、重复查询、未知文档、
 跨 KB 和 inactive 命中是无效 run，评分直接失败，不能静默过滤或从均值删掉。
+每条结果还记录实际 reranked 与 fetched，并列出 covered_evidence@k 的证据 ID。
+请求重排且返回非空结果时，必须观察到 reranked=true；不能只按请求配置声称重排有效。
 
 每次记录 1/3/5 三个截断点、逐查询结果、查询数/分母和正文成本。查询计时覆盖
 RetrievalService.search（含 query embedding、召回、可选重排、父块读取），不含建库、
@@ -87,7 +94,7 @@ top_k=5，长度单位是字符。文件小、section 多数短于父块预算�
 父块策略的优劣。parent 返回更多上下文，需要结合正文成本；相同 k 不等于相同 token 预算。
 
 run 文件包含 `dataset_sha256`、`top_k`、`settings` 和 `results`；每条结果带 query_id、
-hits、degraded/error 和可选 elapsed_ms。hit 包含 id、document_id、start/end、text；
+hits、degraded/error、实际 reranked/fetched 和可选 elapsed_ms。hit 包含 id、document_id、start/end、text；
 已知源身份必须来自检索 metadata，不能按答案内容猜。第三方采集器也可输出该格式再评分。
 settings 必须声明模型、维度、后端、策略、模式、返回级别、重排开关和实现标识；本工具
 额外记录模型版本声明、Python/python-docx 版本、源码指纹、索引/父块条数及正文字符量。
@@ -95,14 +102,14 @@ settings 必须声明模型、维度、后端、策略、模式、返回级别�
 
 ## 当前离线回归基线
 
-固定指纹为 `e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315`。
+固定指纹为 `77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21`。
 [offline_baseline.json](../evals/retrieval/offline_baseline.json) 只固定确定性质量/正文成本与
 条数，不固定耗时、源码指纹或机器信息。它是首次观测后审查的回归快照，指标公式另由
 独立手算用例验证；不能把“快照没变”解释成“标签正确”。
 
 | child / hybrid | Recall@1 | evidence@1 | MRR@5 | nDCG@5 | 平均返回字符@5 |
 |---|---:|---:|---:|---:|---:|
-| recursive | 0.9375 | 0.9375 | 1.0000 | 0.9873 | 322.7 |
+| recursive | 0.9375 | 0.9375 | 1.0000 | 1.0000 | 322.7 |
 | Markdown | 0.8125 | 0.8125 | 0.9375 | 0.9539 | 226.1 |
 | hierarchy | 0.8125 | 0.8125 | 0.9375 | 0.9539 | 226.1 |
 
@@ -129,6 +136,12 @@ PostgreSQL、Redis、Milvus、MinerU 和对象存储不连接。使用相同合�
 model-revision 是调用方声明的部署权重/版本标识（可同时记 embedding/reranker 版本）；
 不能确认时填 unknown，不能只凭模型名称声称权重版本固定。异常或降级使本次失败，
 客户端在成功/失败时都关闭；不因真实模型服务不可用而退回替身。
+
+YAML 入口不自动读取 .env。已有运行期配置可传给 evaluate_configured_models 接收已校验
+的 APPConfig，不必把凭据另存为文件。本轮只从现有 .env 选取模型项，实际探测维度后
+在内存构造配置，并为这两个模型地址设置子进程 NO_PROXY；未创建或修改 config.yaml。
+六组实测中 dense/hybrid 的全部可见候选仅 17/3 条，不存在 ANN 漏召回；具体结果、
+标题孤块、实体混淆与无答案边界见 [实测记录](evaluations/model_retrieval_20261025.md)。
 
 这个入口能测模型在本语料上的效果，不能验收 Milvus ANN 召回率或线上吞吐。实际
 模型基线应另行归档，不能覆盖离线快照。后续需补：独立标签复核、更大困难样本、真实

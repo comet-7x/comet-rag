@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 
 import pytest
 from pydantic import ValidationError
@@ -57,6 +58,12 @@ def row(dataset: Dataset, run: Run, qid: str) -> dict[str, object]:
 
 
 def test_ranking_uses_raw_ranks_and_duplicate_docs_get_no_extra_credit(dataset) -> None:
+    # 手写分级场景独立于真实查询标签，避免为保持指标断言而保留错误标签。
+    labels = dataset.judgments.model_copy(deep=True)
+    for query in labels.queries:
+        if query.id == "retention_compare":
+            query.relevance = {"star": 2, "billing": 1}
+    dataset = replace(dataset, judgments=labels, fingerprint="f" * 64)
     # 相关度 star=2、billing=1；重复 star 占第三位，不能把 billing 提前到第三位。
     hits = [
         full_hit(dataset, "access"),
@@ -96,6 +103,7 @@ def test_doc_hit_is_not_evidence_and_fragments_cannot_be_joined(dataset) -> None
     result = row(dataset, run_with(dataset, "backup_time", fragments), "backup_time")
     assert result["recall@5"] == 1
     assert result["evidence@5"] == 0
+    assert result["covered_evidence@5"] == []
     exact = Hit(id="c", document_id="star", start=start, end=end, text=text[start:end])
     assert (
         row(dataset, run_with(dataset, "backup_time", [exact]), "backup_time")[
@@ -103,6 +111,48 @@ def test_doc_hit_is_not_evidence_and_fragments_cannot_be_joined(dataset) -> None
         ]
         == 1
     )
+
+
+def test_table_row_needs_column_evidence_as_well(dataset) -> None:
+    start, end = dataset.spans["cpu"]
+    text = dataset.documents["workers"].markdown
+    hit = Hit(
+        id="cpu-row", document_id="workers", start=start, end=end, text=text[start:end]
+    )
+    result = row(dataset, run_with(dataset, "cpu_capacity", [hit]), "cpu_capacity")
+    assert result["recall@1"] == 1
+    assert result["evidence@1"] == 0.5
+    assert result["covered_evidence@1"] == ["cpu"]
+    complete = row(
+        dataset,
+        run_with(dataset, "cpu_capacity", [full_hit(dataset, "workers")]),
+        "cpu_capacity",
+    )
+    assert complete["evidence@1"] == 1
+    assert complete["covered_evidence@1"] == ["capacity_columns", "cpu"]
+
+
+def test_equal_comparison_labels_do_not_arbitrarily_prefer_one_policy(dataset) -> None:
+    query = next(q for q in dataset.judgments.queries if q.id == "retention_compare")
+    assert query.relevance == {"star": 2, "billing": 2}
+
+
+@pytest.mark.parametrize("actual", [None, False])
+def test_requested_rerank_needs_observed_completion(dataset, actual) -> None:
+    run = run_with(dataset, "backup_time", [full_hit(dataset, "star")])
+    run.settings["rerank"] = True
+    run.results[0].reranked = actual
+    with pytest.raises(ValueError, match="实际完成重排"):
+        score(dataset, run)
+    run.results[0].reranked = True
+    assert row(dataset, run, "backup_time")["evidence@5"] == 1
+
+
+def test_unrequested_rerank_is_rejected(dataset) -> None:
+    run = run_with(dataset, "backup_time", [full_hit(dataset, "star")])
+    run.results[0].reranked = True
+    with pytest.raises(ValueError, match="run 配置不一致"):
+        score(dataset, run)
 
 
 def test_no_answer_is_excluded_from_positive_macro_and_reported_separately(

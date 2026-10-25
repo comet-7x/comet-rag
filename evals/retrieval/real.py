@@ -8,6 +8,7 @@ from comet_rag.composition.bootstrap import (
     build_model_gate,
     build_reranker,
 )
+from comet_rag.config.schemas import APPConfig
 from comet_rag.config.settings import YamlConfigLoader
 from comet_rag.services.retrieval import ReturnLevel, SearchMode
 from evals.retrieval.baseline import collect
@@ -22,6 +23,13 @@ async def evaluate_models(
     if not config_path.is_file():
         raise ValueError("必须提供存在的模型配置文件")
     config = YamlConfigLoader.get_config(str(config_path))
+    await evaluate_configured_models(config, output, model_revision=model_revision)
+
+
+async def evaluate_configured_models(
+    config: APPConfig, output: Path, *, model_revision: str
+) -> None:
+    """接收已校验模型配置，不要求将运行期凭据另存为 YAML。"""
     dataset = generate(output)
     summary: dict[str, object] = {}
     async with AsyncExitStack() as stack:

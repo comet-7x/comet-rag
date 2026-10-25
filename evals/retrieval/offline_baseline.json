@@ -1,18 +1,18 @@
 {
   "recursive-child-dense": {
-    "dataset_sha256": "e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315",
+    "dataset_sha256": "77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21",
     "macro": {
       "recall@1": 0.875,
       "rr@1": 0.9375,
-      "ndcg@1": 0.8958333333333334,
+      "ndcg@1": 0.9375,
       "evidence@1": 0.8125,
       "recall@3": 1.0,
       "rr@3": 0.96875,
-      "ndcg@3": 0.9642273334101228,
+      "ndcg@3": 0.9769331095982161,
       "evidence@3": 1.0,
       "recall@5": 1.0,
       "rr@5": 0.96875,
-      "ndcg@5": 0.9642273334101228,
+      "ndcg@5": 0.9769331095982161,
       "evidence@5": 1.0
     },
     "mean_returned_chars@5": 323.3888888888889,
@@ -22,19 +22,19 @@
     }
   },
   "recursive-child-keyword": {
-    "dataset_sha256": "e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315",
+    "dataset_sha256": "77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21",
     "macro": {
       "recall@1": 0.9375,
       "rr@1": 1.0,
-      "ndcg@1": 0.9583333333333334,
+      "ndcg@1": 1.0,
       "evidence@1": 0.9375,
       "recall@3": 1.0,
       "rr@3": 1.0,
-      "ndcg@3": 0.9872942238119067,
+      "ndcg@3": 1.0,
       "evidence@3": 1.0,
       "recall@5": 1.0,
       "rr@5": 1.0,
-      "ndcg@5": 0.9872942238119067,
+      "ndcg@5": 1.0,
       "evidence@5": 1.0
     },
     "mean_returned_chars@5": 318.6666666666667,
@@ -44,19 +44,19 @@
     }
   },
   "recursive-child-hybrid": {
-    "dataset_sha256": "e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315",
+    "dataset_sha256": "77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21",
     "macro": {
       "recall@1": 0.9375,
       "rr@1": 1.0,
-      "ndcg@1": 0.9583333333333334,
+      "ndcg@1": 1.0,
       "evidence@1": 0.9375,
       "recall@3": 1.0,
       "rr@3": 1.0,
-      "ndcg@3": 0.9872942238119067,
+      "ndcg@3": 1.0,
       "evidence@3": 1.0,
       "recall@5": 1.0,
       "rr@5": 1.0,
-      "ndcg@5": 0.9872942238119067,
+      "ndcg@5": 1.0,
       "evidence@5": 1.0
     },
     "mean_returned_chars@5": 322.72222222222223,
@@ -66,19 +66,19 @@
     }
   },
   "markdown-child-dense": {
-    "dataset_sha256": "e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315",
+    "dataset_sha256": "77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21",
     "macro": {
       "recall@1": 0.75,
       "rr@1": 0.8125,
-      "ndcg@1": 0.7708333333333334,
+      "ndcg@1": 0.8125,
       "evidence@1": 0.71875,
       "recall@3": 1.0,
       "rr@3": 0.8958333333333334,
-      "ndcg@3": 0.9099104430083389,
+      "ndcg@3": 0.9226162191964322,
       "evidence@3": 0.9375,
       "recall@5": 1.0,
       "rr@5": 0.8958333333333334,
-      "ndcg@5": 0.9099104430083389,
+      "ndcg@5": 0.9226162191964322,
       "evidence@5": 1.0
     },
     "mean_returned_chars@5": 220.38888888888889,
@@ -88,7 +88,7 @@
     }
   },
   "markdown-child-keyword": {
-    "dataset_sha256": "e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315",
+    "dataset_sha256": "77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21",
     "macro": {
       "recall@1": 0.875,
       "rr@1": 0.9375,
@@ -110,7 +110,7 @@
     }
   },
   "markdown-child-hybrid": {
-    "dataset_sha256": "e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315",
+    "dataset_sha256": "77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21",
     "macro": {
       "recall@1": 0.8125,
       "rr@1": 0.875,
@@ -132,19 +132,19 @@
     }
   },
   "hierarchy-child-dense": {
-    "dataset_sha256": "e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315",
+    "dataset_sha256": "77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21",
     "macro": {
       "recall@1": 0.75,
       "rr@1": 0.8125,
-      "ndcg@1": 0.7708333333333334,
+      "ndcg@1": 0.8125,
       "evidence@1": 0.71875,
       "recall@3": 1.0,
       "rr@3": 0.8958333333333334,
-      "ndcg@3": 0.9099104430083389,
+      "ndcg@3": 0.9226162191964322,
       "evidence@3": 0.9375,
       "recall@5": 1.0,
       "rr@5": 0.8958333333333334,
-      "ndcg@5": 0.9099104430083389,
+      "ndcg@5": 0.9226162191964322,
       "evidence@5": 1.0
     },
     "mean_returned_chars@5": 220.38888888888889,
@@ -154,7 +154,7 @@
     }
   },
   "hierarchy-child-keyword": {
-    "dataset_sha256": "e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315",
+    "dataset_sha256": "77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21",
     "macro": {
       "recall@1": 0.875,
       "rr@1": 0.9375,
@@ -176,7 +176,7 @@
     }
   },
   "hierarchy-child-hybrid": {
-    "dataset_sha256": "e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315",
+    "dataset_sha256": "77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21",
     "macro": {
       "recall@1": 0.8125,
       "rr@1": 0.875,
@@ -198,19 +198,19 @@
     }
   },
   "hierarchy-parent-dense": {
-    "dataset_sha256": "e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315",
+    "dataset_sha256": "77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21",
     "macro": {
       "recall@1": 0.75,
       "rr@1": 0.8125,
-      "ndcg@1": 0.7708333333333334,
+      "ndcg@1": 0.8125,
       "evidence@1": 0.71875,
       "recall@3": 1.0,
       "rr@3": 0.8958333333333334,
-      "ndcg@3": 0.9099104430083389,
+      "ndcg@3": 0.9226162191964322,
       "evidence@3": 0.9375,
       "recall@5": 1.0,
       "rr@5": 0.8958333333333334,
-      "ndcg@5": 0.9099104430083389,
+      "ndcg@5": 0.9226162191964322,
       "evidence@5": 1.0
     },
     "mean_returned_chars@5": 237.83333333333334,
@@ -220,7 +220,7 @@
     }
   },
   "hierarchy-parent-keyword": {
-    "dataset_sha256": "e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315",
+    "dataset_sha256": "77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21",
     "macro": {
       "recall@1": 0.875,
       "rr@1": 0.9375,
@@ -242,7 +242,7 @@
     }
   },
   "hierarchy-parent-hybrid": {
-    "dataset_sha256": "e80cef36c1e784878cc21c432c7f934dc01cd89a3644d9d8f2b99ddee6264315",
+    "dataset_sha256": "77b1547c8df1560faddfb5b6f23e6ae1818f42cff7fce6546ac3801687f51c21",
     "macro": {
       "recall@1": 0.8125,
       "rr@1": 0.875,

@@ -70,6 +70,11 @@
       "id": "lab_rto",
       "document_id": "star_lab",
       "quote": "实验环境星桥的恢复时限为 120 分钟。"
+    },
+    {
+      "id": "capacity_columns",
+      "document_id": "workers",
+      "quote": "道次 | 并发槽位 | 扩容方式"
     }
   ],
   "queries": [
@@ -192,6 +197,7 @@
         "workers": 2
       },
       "evidence": [
+        "capacity_columns",
         "cpu"
       ]
     },
@@ -204,6 +210,7 @@
         "workers": 2
       },
       "evidence": [
+        "capacity_columns",
         "io"
       ]
     },
@@ -238,7 +245,7 @@
       "category": "multi",
       "relevance": {
         "star": 2,
-        "billing": 1
+        "billing": 2
       },
       "evidence": [
         "backup",

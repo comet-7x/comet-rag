@@ -27,7 +27,7 @@ def test_generated_bytes_and_manifest_are_repeatable(dataset, tmp_path) -> None:
         generate(tmp_path / "first")
     assert len(dataset.corpus.documents) == 7
     assert len(dataset.judgments.queries) == 18
-    assert len(dataset.judgments.evidence) == 14
+    assert len(dataset.judgments.evidence) == 15
     assert "CPU | 2 | 增加进程" in dataset.documents["workers"].markdown
     assert "03:10" in dataset.documents["star"].markdown
 
