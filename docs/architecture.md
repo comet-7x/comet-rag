@@ -149,6 +149,9 @@ ARQ/Redis 与 PyMilvus 均如此。`AsyncMilvusStore` 只持有 `AsyncMilvusClie
 核验工具显式调用外部 MinerU 文档 API，逐页守卫与 section 回退分列报告，不访问
 生产索引；模型后端与文档服务角色、完整 PDF 和派生页边界见
 [原生解析报告](evaluations/mineru_pdf_20261025.md)。
+可选的逐页部署扩展只在独立MinerU侧复用原生渲染，应用按健康能力协商严格消费
+版本化页字段；没有增加应用SDK、排版器或中间件。完整PDF与物理边界验收见
+[页事实报告](evaluations/mineru_pages_20261025.md)。
 
 ## 核心抽象
 

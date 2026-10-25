@@ -226,6 +226,11 @@ uv run pytest -m integration tests/integration/test_mineru_e2e.py \
 PDF 的解析核验复现命令见 [PDF 工具说明](../evals/pdf/README.md)；缺失页事实必须记为
 section 回退，不计为 page 成功。真实服务结果不写入 unit，也不把小样本当吞吐基准。
 
+完整复杂页用例还需 `COMET_TEST_MINERU_PDF_DIR` 指向来源锁对应的两份原始公开PDF，
+以及支持已协商逐页扩展的单实例文档API。它检查完整7/80物理页、图片、表格及跨页
+正文归属；未给样本目录会skip，给定后不允许用section回退通过。部署/复现见
+[逐页扩展](../deploy/mineru/README.md)。
+
 ### 跑 arq 的用例时，Redis 键怎么隔离
 
 worker 相关的集成测试要真的用 Redis，隔离方式分两种，选哪种取决于

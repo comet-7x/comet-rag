@@ -354,3 +354,10 @@ hybrid 遇到判活、schema 或参数等不可降级错误，会取消并排干
 第二十批增加 API 入库准入暂停（不停止已受理任务）和历史终态缺载荷的
 missing_payload 分类。第二十一批另增 opt-in 五阶段路径，默认 legacy 仍为三个阶段。
 新命名空间重建与切换的前置、资料证据及部署范围见 [迁移边界](revision_migration.md)。
+
+## 独立部署工件
+
+[deploy/mineru](../deploy/mineru/README.md)保存默认关闭的MinerU3.4.5逐页Markdown
+部署补丁、源码摘要与安装器。它们不在comet-rag包内，也不从组合根或进程入口启动；
+应用仍通过既有HTTP适配器消费。外部服务生成页Markdown，engines只处理通用文档
+结构与原文区间，不能把部署扩展画成引擎内SDK调用。

@@ -98,3 +98,8 @@ MinerU TLS/回环规则。先核验全部原 PDF 字节与来源锁，再按单�
 OCR 字词正确、所有物理页均被识别、人工标签有效或模型权重固定，也不跨 canonical
 正文复用旧字符 span 评分。来源锁、正文子集映射与整份回退观测见
 [第二十八批报告](../../docs/evaluations/mineru_pdf_20261025.md)。
+
+要求完整复杂PDF页事实时，加 `--require-pages`；没有原生页事实会直接失败，不将
+section回退写成成功报告。完整公开文件验收需文档服务具备已验证的逐页能力，见
+[独立部署扩展](../../deploy/mineru/README.md)。第二十九批补齐完整7/80页原生核验，
+不改变旧参考快照和标签；报告见[完整页事实验证](../../docs/evaluations/mineru_pages_20261025.md)。

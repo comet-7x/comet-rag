@@ -249,3 +249,8 @@ T1～T5 每项至少一个 Conventional Commit，聚焦 Chunking；T6 只提交�
 保守回退 section；真实正文三页派生子集保留页事实，并显式记录新旧物理页映射。
 [解析报告](../docs/evaluations/mineru_pdf_20261025.md)区分协议、页事实、字词和质量验收；
 复杂整份 page、独立标签、固定模型工件与目标部署仍未完成，不关闭 T10/H/I。
+
+第二十九批在指定单实例MinerU3.4.5部署扩展下补齐完整7/80页复杂PDF的物理页、
+全文重建和分块硬边界；未在应用引入SDK，未把未合并PR当作官方能力。
+[完整页事实报告](../docs/evaluations/mineru_pages_20261025.md)保留独立标签、固定权重、
+正式部署与原生canonical质量门禁；不因此关闭T10/H/I。
