@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "id": "star_old",
+      "kb_id": "ops",
+      "source_id": "star",
+      "revision": "star_old_r1",
+      "active": false,
+      "format": "md",
+      "title": "星桥服务运维旧规程",
+      "sections": [
+        {
+          "heading": "备份窗口",
+          "paragraphs": [
+            "星桥每天 02:00 执行备份，备份保留 7 天。",
+            "旧规程的恢复时限为 60 分钟。"
+          ],
+          "table": []
+        }
+      ]
+    },
+    {
+      "id": "star",
+      "kb_id": "ops",
+      "source_id": "star",
+      "revision": "star_r2",
+      "active": true,
+      "format": "docx",
+      "title": "星桥服务运维规程",
+      "sections": [
+        {
+          "heading": "备份窗口",
+          "paragraphs": [
+            "星桥每天 03:10 执行备份，备份保留 14 天。",
+            "窗口结束后由值班员核对备份校验和，失败时保留上一份已核验备份。"
+          ],
+          "table": []
+        },
+        {
+          "heading": "恢复流程",
+          "paragraphs": [
+            "星桥的恢复时限为 30 分钟。",
+            "恢复先挂载只读快照，再校验账目，最后开放写入。",
+            "演练报告必须记录快照编号、校验结果和恢复耗时。"
+          ],
+          "table": []
+        },
+        {
+          "heading": "升级回退",
+          "paragraphs": [
+            "星桥升级失败时切回上一个已验证的发布包。",
+            "回退期间暂停新写入，查询保持开放。"
+          ],
+          "table": []
+        }
+      ]
+    },
+    {
+      "id": "harbor",
+      "kb_id": "ops",
+      "source_id": "harbor",
+      "revision": "harbor_r1",
+      "active": true,
+      "format": "md",
+      "title": "港湾服务运维规程",
+      "sections": [
+        {
+          "heading": "备份与恢复",
+          "paragraphs": [
+            "港湾每天 01:20 执行备份，保留 21 天。",
+            "港湾的恢复时限为 90 分钟，不能套用星桥的恢复窗口。"
+          ],
+          "table": []
+        },
+        {
+          "heading": "告警处理",
+          "paragraphs": [
+            "港湾连接池使用率连续 5 分钟超过 80% 时通知值班员。"
+          ],
+          "table": []
+        }
+      ]
+    },
+    {
+      "id": "access",
+      "kb_id": "ops",
+      "source_id": "access",
+      "revision": "access_r1",
+      "active": true,
+      "format": "docx",
+      "title": "访问控制手册",
+      "sections": [
+        {
+          "heading": "临时令牌",
+          "paragraphs": [
+            "临时访问令牌有效期为 45 分钟。",
+            "令牌不得写入日志；撤销后现有会话必须重新认证。"
+          ],
+          "table": []
+        },
+        {
+          "heading": "审批规则",
+          "paragraphs": [
+            "生产环境写权限需要两位维护者批准。",
+            "测试环境只读权限由项目负责人批准。"
+          ],
+          "table": []
+        }
+      ]
+    },
+    {
+      "id": "workers",
+      "kb_id": "ops",
+      "source_id": "workers",
+      "revision": "workers_r1",
+      "active": true,
+      "format": "docx",
+      "title": "任务处理容量手册",
+      "sections": [
+        {
+          "heading": "容量表",
+          "paragraphs": [
+            "以下参数属于星桥演练环境，不是公共产品默认值。"
+          ],
+          "table": [
+            [
+              "道次",
+              "并发槽位",
+              "扩容方式"
+            ],
+            [
+              "CPU",
+              "2",
+              "增加进程"
+            ],
+            [
+              "IO",
+              "16",
+              "增加并发"
+            ]
+          ]
+        },
+        {
+          "heading": "关停顺序",
+          "paragraphs": [
+            "关停时先停止接收新任务，再等待在途任务完成，最后关闭连接。",
+            "关停窗口为 40 秒；超时任务进入人工复核清单。"
+          ],
+          "table": []
+        }
+      ]
+    },
+    {
+      "id": "billing",
+      "kb_id": "ops",
+      "source_id": "billing",
+      "revision": "billing_r1",
+      "active": true,
+      "format": "md",
+      "title": "账单归档手册",
+      "sections": [
+        {
+          "heading": "归档",
+          "paragraphs": [
+            "账单每周五归档，归档记录保留 180 天。",
+            "归档副本使用只读账号访问，季度抽查一次。"
+          ],
+          "table": []
+        },
+        {
+          "heading": "恢复",
+          "paragraphs": [
+            "账单归档恢复需要财务负责人批准。"
+          ],
+          "table": []
+        }
+      ]
+    },
+    {
+      "id": "star_lab",
+      "kb_id": "lab",
+      "source_id": "star",
+      "revision": "star_lab_r1",
+      "active": true,
+      "format": "md",
+      "title": "星桥实验环境手册",
+      "sections": [
+        {
+          "heading": "备份窗口",
+          "paragraphs": [
+            "实验环境的星桥每天 05:00 执行备份，备份保留 30 天。",
+            "此环境不接收生产用户请求。"
+          ],
+          "table": []
+        },
+        {
+          "heading": "恢复流程",
+          "paragraphs": [
+            "实验环境星桥的恢复时限为 120 分钟。"
+          ],
+          "table": []
+        }
+      ]
+    }
+  ]
+}

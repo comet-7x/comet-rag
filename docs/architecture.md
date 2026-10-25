@@ -69,6 +69,13 @@ span 表示；`MarkdownSectionStrategy` 或 `PageChunkingStrategy` 再在每个�
 `AsyncMinerUDocumentExtractor` 是 `infrastructure/extractors/`
 中的外部适配器，只有 `composition/` 能把它注册成 PDF Pipeline Hook。
 
+### 仓库级检索评测
+
+仓库级检索评测位于 `evals/retrieval/`，不随库安装，也不进入请求处理路径。语料生成、
+相关性/证据标签和纯评分器分开；采集器复用上述解析/分块与现有 revision 入库、判活、
+检索用例。真实模型入口只调用组合根模型工厂，在内存索引运行，不装配完整 Context
+或连接配置中的中间件。评测约定与剩余门禁见 [检索评测](retrieval_evaluation.md)。
+
 ### 组合根的配置合并
 
 `composition/pipeline_config.py::resolve_pipeline_config` 只接收部署 `LimitsConfig`

@@ -19,6 +19,15 @@ uv run pytest --cov=comet_rag --cov-report=term-missing
 **硬性要求**：`unit/` 不允许打真实网络，也不允许依赖 GPU 服务。
 需要 HTTP 时用 `httpx.MockTransport`（见 `unit/engines/test_url_loader.py`）。
 
+## 固定语料检索评测
+
+`unit/test_retrieval_evaluation.py` 用手算排名、证据碎片和坏标签验证评分器；不访问模型。
+`benchmark/test_retrieval_quality.py` 用可生成 DOCX/Markdown、两个 KB 和留存旧 revision
+跑 12 组真实解析/分块/激活/检索回归，另验证真实模型采集入口的故障关闭与存储隔离。
+模型均为替身，不需要网络/GPU。运行方式、标签约定及真实模型入口见
+[检索评测](../docs/retrieval_evaluation.md)。回归快照不等于生产质量阈值。
+CI 在 unit 后单独跑这组确定性回归，不将其计入默认单测预算或混入绝对耗时门槛。
+
 ## 查询 deadline 回归
 
 共享预算、排队、超时降级和取消排干用例位于

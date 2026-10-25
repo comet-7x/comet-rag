@@ -1,0 +1,289 @@
+{
+  "version": 1,
+  "evidence": [
+    {
+      "id": "backup",
+      "document_id": "star",
+      "quote": "星桥每天 03:10 执行备份，备份保留 14 天。"
+    },
+    {
+      "id": "rto",
+      "document_id": "star",
+      "quote": "星桥的恢复时限为 30 分钟。"
+    },
+    {
+      "id": "restore",
+      "document_id": "star",
+      "quote": "恢复先挂载只读快照，再校验账目，最后开放写入。"
+    },
+    {
+      "id": "rollback",
+      "document_id": "star",
+      "quote": "回退期间暂停新写入，查询保持开放。"
+    },
+    {
+      "id": "harbor_rto",
+      "document_id": "harbor",
+      "quote": "港湾的恢复时限为 90 分钟，不能套用星桥的恢复窗口。"
+    },
+    {
+      "id": "harbor_alarm",
+      "document_id": "harbor",
+      "quote": "港湾连接池使用率连续 5 分钟超过 80% 时通知值班员。"
+    },
+    {
+      "id": "ttl",
+      "document_id": "access",
+      "quote": "临时访问令牌有效期为 45 分钟。"
+    },
+    {
+      "id": "approval",
+      "document_id": "access",
+      "quote": "生产环境写权限需要两位维护者批准。"
+    },
+    {
+      "id": "cpu",
+      "document_id": "workers",
+      "quote": "CPU | 2 | 增加进程"
+    },
+    {
+      "id": "io",
+      "document_id": "workers",
+      "quote": "IO | 16 | 增加并发"
+    },
+    {
+      "id": "shutdown",
+      "document_id": "workers",
+      "quote": "关停时先停止接收新任务，再等待在途任务完成，最后关闭连接。"
+    },
+    {
+      "id": "archive",
+      "document_id": "billing",
+      "quote": "账单每周五归档，归档记录保留 180 天。"
+    },
+    {
+      "id": "lab_backup",
+      "document_id": "star_lab",
+      "quote": "实验环境的星桥每天 05:00 执行备份，备份保留 30 天。"
+    },
+    {
+      "id": "lab_rto",
+      "document_id": "star_lab",
+      "quote": "实验环境星桥的恢复时限为 120 分钟。"
+    }
+  ],
+  "queries": [
+    {
+      "id": "backup_time",
+      "kb_id": "ops",
+      "text": "星桥每天几点备份，保留几天？",
+      "category": "fact",
+      "relevance": {
+        "star": 2
+      },
+      "evidence": [
+        "backup"
+      ]
+    },
+    {
+      "id": "backup_paraphrase",
+      "kb_id": "ops",
+      "text": "星桥备份副本什么时候生成，多久过期？",
+      "category": "paraphrase",
+      "relevance": {
+        "star": 2
+      },
+      "evidence": [
+        "backup"
+      ]
+    },
+    {
+      "id": "restore_target",
+      "kb_id": "ops",
+      "text": "星桥恢复时限是多少分钟？",
+      "category": "fact",
+      "relevance": {
+        "star": 2
+      },
+      "evidence": [
+        "rto"
+      ]
+    },
+    {
+      "id": "restore_steps",
+      "kb_id": "ops",
+      "text": "星桥恢复开放写入前需要做哪些步骤？",
+      "category": "fact",
+      "relevance": {
+        "star": 2
+      },
+      "evidence": [
+        "restore"
+      ]
+    },
+    {
+      "id": "rollback_reads",
+      "kb_id": "ops",
+      "text": "星桥回退时查询和新写入如何处理？",
+      "category": "fact",
+      "relevance": {
+        "star": 2
+      },
+      "evidence": [
+        "rollback"
+      ]
+    },
+    {
+      "id": "compare_rto",
+      "kb_id": "ops",
+      "text": "比较星桥和港湾的恢复时限。",
+      "category": "multi",
+      "relevance": {
+        "star": 2,
+        "harbor": 2
+      },
+      "evidence": [
+        "rto",
+        "harbor_rto"
+      ]
+    },
+    {
+      "id": "alarm",
+      "kb_id": "ops",
+      "text": "港湾连接池何时通知值班员？",
+      "category": "fact",
+      "relevance": {
+        "harbor": 2
+      },
+      "evidence": [
+        "harbor_alarm"
+      ]
+    },
+    {
+      "id": "token_ttl",
+      "kb_id": "ops",
+      "text": "临时访问令牌多久失效？",
+      "category": "paraphrase",
+      "relevance": {
+        "access": 2
+      },
+      "evidence": [
+        "ttl"
+      ]
+    },
+    {
+      "id": "production_approval",
+      "kb_id": "ops",
+      "text": "生产写权限需要谁批准？",
+      "category": "fact",
+      "relevance": {
+        "access": 2
+      },
+      "evidence": [
+        "approval"
+      ]
+    },
+    {
+      "id": "cpu_capacity",
+      "kb_id": "ops",
+      "text": "CPU 道次有几个并发槽位，如何扩容？",
+      "category": "table",
+      "relevance": {
+        "workers": 2
+      },
+      "evidence": [
+        "cpu"
+      ]
+    },
+    {
+      "id": "io_capacity",
+      "kb_id": "ops",
+      "text": "IO 道次并发槽位和扩容方式是什么？",
+      "category": "table",
+      "relevance": {
+        "workers": 2
+      },
+      "evidence": [
+        "io"
+      ]
+    },
+    {
+      "id": "shutdown_order",
+      "kb_id": "ops",
+      "text": "任务处理关停时接收任务、在途任务和连接的顺序？",
+      "category": "fact",
+      "relevance": {
+        "workers": 2
+      },
+      "evidence": [
+        "shutdown"
+      ]
+    },
+    {
+      "id": "archive_policy",
+      "kb_id": "ops",
+      "text": "账单何时归档，保留多久？",
+      "category": "fact",
+      "relevance": {
+        "billing": 2
+      },
+      "evidence": [
+        "archive"
+      ]
+    },
+    {
+      "id": "retention_compare",
+      "kb_id": "ops",
+      "text": "星桥备份和账单归档各保留多久？",
+      "category": "multi",
+      "relevance": {
+        "star": 2,
+        "billing": 1
+      },
+      "evidence": [
+        "backup",
+        "archive"
+      ]
+    },
+    {
+      "id": "lab_backup",
+      "kb_id": "lab",
+      "text": "星桥每天几点备份，保留几天？",
+      "category": "fact",
+      "relevance": {
+        "star_lab": 2
+      },
+      "evidence": [
+        "lab_backup"
+      ]
+    },
+    {
+      "id": "lab_restore",
+      "kb_id": "lab",
+      "text": "星桥恢复时限是多少分钟？",
+      "category": "fact",
+      "relevance": {
+        "star_lab": 2
+      },
+      "evidence": [
+        "lab_rto"
+      ]
+    },
+    {
+      "id": "no_answer_price",
+      "kb_id": "ops",
+      "text": "星桥服务的年度订阅价格是多少？",
+      "category": "no_answer",
+      "relevance": {},
+      "evidence": []
+    },
+    {
+      "id": "no_answer_zone",
+      "kb_id": "lab",
+      "text": "实验环境星桥部署在哪个可用区？",
+      "category": "no_answer",
+      "relevance": {},
+      "evidence": []
+    }
+  ]
+}

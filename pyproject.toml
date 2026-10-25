@@ -82,7 +82,7 @@ addopts = "-m 'not integration and not e2e and not benchmark' --strict-markers"
 markers = [
     "integration: 需要 docker-compose 起中间件（postgres/redis/milvus/minio）",
     "e2e: 端到端链路，可能需要中间件",
-    "benchmark: 性能基线，不参与常规 CI",
+    "benchmark: 性能基线与离线检索质量回归，不参与常规 CI",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -128,7 +128,7 @@ ignore = [
 # 哪几个目录"来维持，迟早会漏。
 # ─────────────────────────────────────────────────────────────────────────────
 [tool.pyright]
-include = ["comet_rag", "tests", "alembic"]
+include = ["comet_rag", "tests", "alembic", "evals"]
 # poc/ 与 draft/ 是 .gitignore 掉的私人草稿，不进版本库，也不该拦住检查通过。
 exclude = ["**/__pycache__", "poc", "draft", "logs", ".venv"]
 pythonVersion = "3.12"

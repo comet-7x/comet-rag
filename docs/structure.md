@@ -81,6 +81,10 @@ comet_rag/
 `vectorstore` 以及顶层 HTTP `schemas` 已删除。内部能力只有一个规范位置；库用户从
 `comet_rag.loaders` 与 `comet_rag.pipeline` 两个稳定门面进入。
 
+仓库级 `evals/retrieval/` 保存固定语料、相关性标签、纯评分器及采集入口，不随 wheel
+安装。它复用以上解析/入库/检索模块，详情见 [检索评测](retrieval_evaluation.md)；
+不是 HTTP 请求处理链路或新的运行时服务。
+
 ## 模块依赖
 
 ```mermaid
