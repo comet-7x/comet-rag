@@ -103,3 +103,24 @@ OCR 字词正确、所有物理页均被识别、人工标签有效或模型权�
 section回退写成成功报告。完整公开文件验收需文档服务具备已验证的逐页能力，见
 [独立部署扩展](../../deploy/mineru/README.md)。第二十九批补齐完整7/80页原生核验，
 不改变旧参考快照和标签；报告见[完整页事实验证](../../docs/evaluations/mineru_pages_20261025.md)。
+
+## 原生 canonical 离线审计
+
+```bash
+uv run python -m evals.pdf.inspect --native-dir /path/to/parse-output \
+  --out /tmp/comet-native-inspection-new-run
+```
+
+只读取本地 report.json 和逐文件 Markdown/page JSON，不访问 HTTP、模型或生产索引。
+输入须通过来源锁、完整物理页、全文重建及规范化报告一致性检查；可编辑报告不证明
+远端身份或固定工件。输出必须是新目录。
+
+`audit.json` 给出旧引用在新 canonical 的严格对齐候选，以及默认800/80/1600字符下
+HTML整表/显式整行是否被一个真实返回单元覆盖。引用须唯一（含重叠重复）且在原期望
+物理页；不匹配留空，匹配仍 pending，不做模糊迁移或独立批准。表格只支持独立行首
+HTML table/tr，忽略代码围栏，坏表格明确失败；不覆盖所有Markdown或单元格语义。
+这是诊断报告，不是盲审包或评分结果。旧选定12页问题不能直接推广到完整87页，
+也不能沿用旧字符span或把多个碎片拼成单块证据。
+
+冻结产物结果、覆盖守卫与下一步边界见
+[第三十批报告](../../docs/evaluations/native_evidence_20261025.md)。

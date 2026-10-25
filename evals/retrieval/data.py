@@ -178,6 +178,17 @@ def validate_sources(corpus: Corpus) -> dict[str, Source]:
     return sources
 
 
+def quote_locations(text: str, quote: str) -> tuple[int, ...]:
+    """最多取两个匹配，足以区分缺失/唯一/歧义；重叠出现也算多次。"""
+    if not quote:
+        raise ValueError("证据 quote 不能为空")
+    first = text.find(quote)
+    if first < 0:
+        return ()
+    second = text.find(quote, first + 1)
+    return (first,) if second < 0 else (first, second)
+
+
 def locate_evidence(
     corpus: Corpus, labels: Judgments, documents: dict[str, NormalizedDocument]
 ) -> dict[str, tuple[int, int]]:
@@ -190,9 +201,10 @@ def locate_evidence(
         if item.document_id not in sources or not sources[item.document_id].active:
             raise ValueError("证据必须引用已知 active 文档")
         text = documents[item.document_id].markdown
-        if text.count(item.quote) != 1:
+        locations = quote_locations(text, item.quote)
+        if len(locations) != 1:
             raise ValueError(f"证据必须唯一匹配规范正文：{item.id}")
-        start = text.index(item.quote)
+        start = locations[0]
         spans[item.id] = (start, start + len(item.quote))
     if len({q.id for q in labels.queries}) != len(labels.queries):
         raise ValueError("重复 query id")
