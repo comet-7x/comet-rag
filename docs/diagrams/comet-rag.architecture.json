@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "04bfda1fccfd9c6edac762df0d6dcca1a817c899",
+      "revision": "07c8c9edb110e3e964a79513d45cf94469db42ce",
       "link_mode": "local-only"
     }
   },
@@ -471,18 +471,18 @@
       "sources": [
         {
           "path": "evals/retrieval/baseline.py",
-          "line": 68,
-          "end_line": 190
+          "line": 71,
+          "end_line": 199
         },
         {
-          "path": "evals/retrieval/real.py",
-          "line": 35,
-          "end_line": 113
+          "path": "evals/pdf/data.py",
+          "line": 52,
+          "end_line": 131
         },
         {
-          "path": "evals/retrieval/title_replay.py",
-          "line": 143,
-          "end_line": 212
+          "path": "evals/pdf/real.py",
+          "line": 23,
+          "end_line": 166
         }
       ]
     }
@@ -716,6 +716,17 @@
         "电话 6118 的正确标题块被不含号码的适用范围块挤掉：两轮、两种上下文和六组召回均复现首位证据回退。部分前三收益不能抵消关键回退，两个方案都未进入生产。",
         "采集/原文重放有 28 条前五排序变化，证据指标不变；完整标题的部分收益在第二轮波动。分别保留轮次，不凭未知权重的小样本宣布达标。",
         "工具只在仓库 evals，借用模型、由外层关闭；排序按原索引回映正文，深复制 metadata。真实模型可用性、32 项回归和六项反向缺陷已验证；独立标签、真实 page/PDF、token/ANN 与 M4-T10/H/I 仍待验收。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "第二十七批：真实 PDF 参考与未关闭门禁",
+      "items": [
+        "两份 NIST 原生文本 PDF，选 12 个物理页；原字节、页数和 pypdf 6.10.0 文本已核验，12 页渲染复核。24 个中文查询、21 份作者拟定证据；跨页答案分列，不伪造单块连续原文。",
+        "用户选择先制作公开 PDF 盲审包：只有原文件、问题、来源/页文本和 unreviewed 填写表，无作者相关度、no-answer 分类或模型排名。独立人工复核仍 pending，不能靠填写姓名自动认定。",
+        "最终 8 组真实模型/192 次 search；另按原生独立正文编码投影 512/1024 预算，不跳过超额块，不改引用，投影清除查询时延。它不等于联合提示词、另一模型上下文或相同推理成本。",
+        "父块+重排 top5 证据@5=1.0，但 512 正文预算降为 0.90。错误首位占预算、三个完整 quote 被当前 child 切断，都有具体反例；未据小样本高分更改生产默认策略。",
+        "当前 MinerU 地址 health=404 且不符合其 TLS 契约；参考提取未接成服务 fallback。模型权重/tokenizer revision 未返回，探针稳定不等于工件锁定。生产解析、人工裁决、固定部署及 M4-T10/H/I 仍待验收。"
       ]
     }
   ]

@@ -25,13 +25,16 @@
 第二十六批补同池重排标题视图实验：page/section 与原文区间不变，但电话事实的首位
 正文证据在两轮均回退，完整/祖先路径都未接入生产。录制/重放属于图左侧仓库工具，
 不代表运行时会增加标题或修改右侧索引。见 [标题上下文报告](../evaluations/title_context_20261025.md)。
+第二十七批补真实PDF的独立参考页、盲审包和正文token预算对照。生产MinerU、人工
+独立复核与固定权重仍待验收；正文预算投影不等于联合提示词或推理成本，未默认启用
+父块或改分块。见 [PDF报告](../evaluations/pdf_page_20261025.md)。
 历史载荷处置、新命名空间重建和生产切换门禁见 [迁移边界](../revision_migration.md)。
 详细恢复流程仍见 [架构](../architecture.md) 和 [对账设计](../../tasks/v2_reconciliation_design.md)。
 
 ## 源数据与证据
 
 - [comet-rag.architecture.json](comet-rag.architecture.json) 是可编辑的图源；HTML 是生成产物，不手改。
-- 本图源码证据固定到 `04bfda1fccfd9c6edac762df0d6dcca1a817c899`，各节点列出相对路径与行号。
+- 本图源码证据固定到 `07c8c9edb110e3e964a79513d45cf94469db42ce`，各节点列出相对路径与行号。
   固定的是被说明的代码提交，不要求等于包含生成图的提交，避免自引用。
 - 当前为 `local-only` 源码模式：保留路径、行号和版本，不假设尚未推送的提交可在 GitHub 打开。
 - 使用 [Archify 3.2.0](https://github.com/tt-a1i/archify/tree/25cf37080fc8b1dbe758a4efc3935b55f3327083)，
