@@ -1,0 +1,388 @@
+{
+  "version": 1,
+  "evidence": [
+    {
+      "id": "taxonomy",
+      "document_id": "nist145",
+      "quote": "This cloud model is composed of five essential characteristics, three service models, and four deployment\nmodels."
+    },
+    {
+      "id": "self_service",
+      "document_id": "nist145",
+      "quote": "On-demand self-service. A consumer can unilaterally provision computing c apabilities, such as\nserver time and network storage, as needed automatically without requiring human\ninteraction with each service provider."
+    },
+    {
+      "id": "location",
+      "document_id": "nist145",
+      "quote": "There is a sense of location\nindependence in that the customer generally has no control or knowledge over the exa ct\nlocation of the provided resources but may be able to specify location at a higher level of\nabstraction (e.g., country, state, or datacenter)."
+    },
+    {
+      "id": "metering",
+      "document_id": "nist145",
+      "quote": "Resource usage can be\nmonitored, controlled, and reported,  providing transparency for both the provider and\nconsumer of the utilized service."
+    },
+    {
+      "id": "saas",
+      "document_id": "nist145",
+      "quote": "The consumer  does not manage or control the\nunderlying cloud infrastructure including network, servers, operating systems, storage, or\neven individual application capabilities, with the possible exception of limited user -\nspecific application configuration settings."
+    },
+    {
+      "id": "paas_begin",
+      "document_id": "nist145",
+      "quote": "Platform as a Service (PaaS). The capability provided to the consumer is to deploy onto the cloud\ninfrastructure consumer -created or acquired applications created using programming"
+    },
+    {
+      "id": "paas_end",
+      "document_id": "nist145",
+      "quote": "languages, libraries, services,  and tools supported by the provider. 3 The consumer does\nnot manage or control the underlying cloud infrastructure including network, servers,\noperating systems, or storage, but has control over the deployed applications and possibly\nconfiguration settings for the application-hosting environment."
+    },
+    {
+      "id": "iaas",
+      "document_id": "nist145",
+      "quote": "The consumer does not manage or control the underlying cloud\ninfrastructure but has control over operating systems, storage, and deployed applications;\nand possibly limited control of select networking components (e.g., host firewalls)."
+    },
+    {
+      "id": "private",
+      "document_id": "nist145",
+      "quote": "It may be owned, managed, and\noperated by the organization, a third party, or some combination of them, and it may exist\non or off premises."
+    },
+    {
+      "id": "hybrid",
+      "document_id": "nist145",
+      "quote": "Hybrid cloud. The cloud infrastructure is a composition of two or more distinct cloud\ninfrastructures (private, community, or public) that remain unique entities , but are bound\ntogether by standardized or proprietary technology that enables data and application\nportability (e.g., cloud bursting for load balancing between clouds)."
+    },
+    {
+      "id": "deployment_assurance",
+      "document_id": "nist144",
+      "quote": "While the choice of deployment model has implications for the security and privacy of a system,\nthe deployment model itself does not dictate the level of securi ty and privacy of specific cloud\nofferings.  That level depends mainly on assurances, such as the soundness of the security and\nprivacy policies, the robustness of the security and privacy controls, and the extent of visibility\ninto performance and management details of the cloud environment, which are furnished by the\ncloud provider or independently attained by the organization (e.g., via independent vulnerability\ntesting or auditing of operations)."
+    },
+    {
+      "id": "paas_security",
+      "document_id": "nist144",
+      "quote": "Security provisions are split between the cloud provider and the cloud\nconsumer."
+    },
+    {
+      "id": "five_layers",
+      "document_id": "nist144",
+      "quote": "Five conceptual layers of a generalized\ncloud environment are identified in the center diagram and apply to public clouds , as well as\neach of the other deployment models.  The arrows at the left and right of the diagram denote the\napproximate range of the cloud provider’s and cloud consumer’s scope and control over the\ncloud environment for each service model.  In general, t he higher the level of support available\nfrom a cloud provider, the more narrow the scope and control the cloud consumer has over the\nsystem."
+    },
+    {
+      "id": "agreement_types",
+      "document_id": "nist144",
+      "quote": "Two types of service agreement s exist: predefined non -negotiable agreements and negotiated\nagreements [Bra10, UCG10]."
+    },
+    {
+      "id": "sla",
+      "document_id": "nist144",
+      "quote": "An SLA represents the understanding\nbetween the cloud consumer and cloud provider about the expecte d level of service to be\ndelivered and, in the event that the provider fails to deliver the service at the level specified, the\ncompensation available to the cloud consumer."
+    },
+    {
+      "id": "uniformity",
+      "document_id": "nist144",
+      "quote": "On the other hand, homogeneity means that a single flaw\nwill be manifested  throughout the cloud, potentially impacting all tenants and services."
+    },
+    {
+      "id": "restore_limit",
+      "document_id": "nist144",
+      "quote": "However,\nnetwork performance over the Internet and the amount of data involved are limiting\nfactors that can affect restoration."
+    },
+    {
+      "id": "media_row",
+      "document_id": "nist144",
+      "quote": "SP 800-88 Guidelines for Media Sanitization"
+    },
+    {
+      "id": "pii_row",
+      "document_id": "nist144",
+      "quote": "SP 800-122 Guide to Protecting the Confidentiality of Personally Identifiable Information (PII)"
+    },
+    {
+      "id": "backup_begin",
+      "document_id": "nist144",
+      "quote": "Backup and Recovery.   The backup and recovery policies and procedures of a cloud\nprovider may be superior to those of the organization and may be more robust."
+    },
+    {
+      "id": "backup_end",
+      "document_id": "nist144",
+      "quote": "maintained within a cloud can be more available, faster to restore, and more reliable in\nmany circumstances than that maintained in a traditional data center , and also meet\noffsite backup storage and geographical compliance requirements ."
+    }
+  ],
+  "queries": [
+    {
+      "id": "q001",
+      "kb_id": "public",
+      "text": "SP 800-145 的云模型有几项基本特征、几种服务模型和几种部署模型？",
+      "category": "fact",
+      "relevance": {
+        "nist145": 2
+      },
+      "evidence": [
+        "taxonomy"
+      ]
+    },
+    {
+      "id": "q002",
+      "kb_id": "public",
+      "text": "按 SP 800-145，按需自服务是否需要与每个服务提供方进行人工交互？",
+      "category": "fact",
+      "relevance": {
+        "nist145": 2
+      },
+      "evidence": [
+        "self_service"
+      ]
+    },
+    {
+      "id": "q003",
+      "kb_id": "public",
+      "text": "SP 800-145 的资源池化是否让用户知道精确物理位置？用户还能指定什么层级？",
+      "category": "fact",
+      "relevance": {
+        "nist145": 2
+      },
+      "evidence": [
+        "location"
+      ]
+    },
+    {
+      "id": "q004",
+      "kb_id": "public",
+      "text": "按 SP 800-145，资源使用的监控、控制和报告为谁提供透明度？",
+      "category": "fact",
+      "relevance": {
+        "nist145": 2
+      },
+      "evidence": [
+        "metering"
+      ]
+    },
+    {
+      "id": "q005",
+      "kb_id": "public",
+      "text": "SP 800-145 中 SaaS 消费者能管理底层操作系统吗？保留了什么配置例外？",
+      "category": "fact",
+      "relevance": {
+        "nist145": 2
+      },
+      "evidence": [
+        "saas"
+      ]
+    },
+    {
+      "id": "q006",
+      "kb_id": "public",
+      "text": "按 SP 800-145，PaaS 消费者部署哪些应用，仍能控制哪些内容？请覆盖跨页定义。",
+      "category": "multi",
+      "relevance": {
+        "nist145": 2
+      },
+      "evidence": [
+        "paas_begin",
+        "paas_end"
+      ]
+    },
+    {
+      "id": "q007",
+      "kb_id": "public",
+      "text": "在 SP 800-145 中，IaaS 消费者可控制操作系统和主机防火墙吗？",
+      "category": "fact",
+      "relevance": {
+        "nist145": 2
+      },
+      "evidence": [
+        "iaas"
+      ]
+    },
+    {
+      "id": "q008",
+      "kb_id": "public",
+      "text": "SP 800-145 中，私有云只能由本组织管理且必须部署在本组织场所内吗？",
+      "category": "fact",
+      "relevance": {
+        "nist145": 2
+      },
+      "evidence": [
+        "private"
+      ]
+    },
+    {
+      "id": "q009",
+      "kb_id": "public",
+      "text": "SP 800-145 中混合云的组成实体是否仍独立，以什么技术实现可移植性？",
+      "category": "fact",
+      "relevance": {
+        "nist145": 2
+      },
+      "evidence": [
+        "hybrid"
+      ]
+    },
+    {
+      "id": "q010",
+      "kb_id": "public",
+      "text": "SP 800-144 是否认为选择部署模型本身就决定具体云服务的安全与隐私水平？",
+      "category": "fact",
+      "relevance": {
+        "nist144": 2
+      },
+      "evidence": [
+        "deployment_assurance"
+      ]
+    },
+    {
+      "id": "q011",
+      "kb_id": "public",
+      "text": "SP 800-144 的 PaaS 安全责任由哪两方分担？",
+      "category": "fact",
+      "relevance": {
+        "nist144": 2
+      },
+      "evidence": [
+        "paas_security"
+      ]
+    },
+    {
+      "id": "q012",
+      "kb_id": "public",
+      "text": "SP 800-144 图1的概念环境分几层？提供方支持越高，消费者控制范围如何变化？",
+      "category": "fact",
+      "relevance": {
+        "nist144": 2
+      },
+      "evidence": [
+        "five_layers"
+      ]
+    },
+    {
+      "id": "q013",
+      "kb_id": "public",
+      "text": "SP 800-144 列出的两类服务协议是什么？",
+      "category": "fact",
+      "relevance": {
+        "nist144": 2
+      },
+      "evidence": [
+        "agreement_types"
+      ]
+    },
+    {
+      "id": "q014",
+      "kb_id": "public",
+      "text": "SP 800-144 中哪份协议约定服务水准，以及服务未达水准时给消费者的补偿？",
+      "category": "fact",
+      "relevance": {
+        "nist144": 2
+      },
+      "evidence": [
+        "sla"
+      ]
+    },
+    {
+      "id": "q015",
+      "kb_id": "public",
+      "text": "SP 800-144 在强调平台同质性的好处时指出什么单点缺陷风险？",
+      "category": "fact",
+      "relevance": {
+        "nist144": 2
+      },
+      "evidence": [
+        "uniformity"
+      ]
+    },
+    {
+      "id": "q016",
+      "kb_id": "public",
+      "text": "SP 800-144 指出哪两项因素会限制经互联网进行的数据恢复？",
+      "category": "fact",
+      "relevance": {
+        "nist144": 2
+      },
+      "evidence": [
+        "restore_limit"
+      ]
+    },
+    {
+      "id": "q017",
+      "kb_id": "public",
+      "text": "SP 800-144 表2中，介质清理指南是哪一份出版物？",
+      "category": "table",
+      "relevance": {
+        "nist144": 2
+      },
+      "evidence": [
+        "media_row"
+      ]
+    },
+    {
+      "id": "q018",
+      "kb_id": "public",
+      "text": "SP 800-144 表2列出的个人可识别信息保密指南编号及完整题名是什么？",
+      "category": "table",
+      "relevance": {
+        "nist144": 2
+      },
+      "evidence": [
+        "pii_row"
+      ]
+    },
+    {
+      "id": "q019",
+      "kb_id": "public",
+      "text": "SP 800-144 的 Backup and Recovery 段如何描述提供方备份流程及数据恢复可用性的潜在优势？请覆盖跨页正文。",
+      "category": "multi",
+      "relevance": {
+        "nist144": 2
+      },
+      "evidence": [
+        "backup_begin",
+        "backup_end"
+      ]
+    },
+    {
+      "id": "q020",
+      "kb_id": "public",
+      "text": "SP 800-145 的模型分类数量，与 SP 800-144 图1的概念层数分别是什么？",
+      "category": "multi",
+      "relevance": {
+        "nist145": 2,
+        "nist144": 2
+      },
+      "evidence": [
+        "taxonomy",
+        "five_layers"
+      ]
+    },
+    {
+      "id": "q021",
+      "kb_id": "public",
+      "text": "这些选定页面给出的某云厂商每月存储100GB的明确美元报价是多少？",
+      "category": "no_answer",
+      "relevance": {},
+      "evidence": []
+    },
+    {
+      "id": "q022",
+      "kb_id": "public",
+      "text": "这些选定页面给出的恢复点目标 RPO 的精确承诺是多少秒？",
+      "category": "no_answer",
+      "relevance": {},
+      "evidence": []
+    },
+    {
+      "id": "q023",
+      "kb_id": "public",
+      "text": "请根据这些选定页面给出 SP 800-53 Revision 5 的第八项控制内容。",
+      "category": "no_answer",
+      "relevance": {},
+      "evidence": []
+    },
+    {
+      "id": "q024",
+      "kb_id": "public",
+      "text": "这些选定页面给出的 SHA-256 算法轮数与逐轮常量是什么？",
+      "category": "no_answer",
+      "relevance": {},
+      "evidence": []
+    }
+  ]
+}

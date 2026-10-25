@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from docx import Document
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from comet_rag.engines.documents.docx.extractor import DocxDocumentExtractor
 from comet_rag.engines.documents.normalization.markdown import (
@@ -39,9 +39,17 @@ class Source(StrictModel):
     source_id: Name
     revision: Name
     active: bool
-    format: Literal["md", "docx"]
+    format: Literal["md", "docx", "pdf"]
     title: Text
-    sections: Annotated[list[Section], Field(min_length=1)]
+    sections: list[Section]
+
+    @model_validator(mode="after")
+    def check_sections(self) -> Source:
+        if self.format == "pdf" and self.sections:
+            raise ValueError("PDF 只能使用外部提取快照，不能用 sections 伪造")
+        if self.format != "pdf" and not self.sections:
+            raise ValueError("生成式文档至少需要一个 section")
+        return self
 
 
 class Corpus(StrictModel):
@@ -220,6 +228,10 @@ def generate(output: Path, *, data: Path = DATA) -> Dataset:
     corpus = read_json(data / "corpus.json", Corpus)
     labels = read_json(data / "judgments.json", Judgments)
     sources = validate_sources(corpus)
+    if any(source.format == "pdf" for source in sources.values()):
+        raise ValueError(
+            "真实 PDF 必须使用冻结页快照加载器，不能生成 Markdown 冒充 PDF"
+        )
     # 原文件可用于失败诊断；只有解析和全部标签校验通过才发布 manifest 指纹。
     files: dict[str, bytes] = {}
     for source in sources.values():

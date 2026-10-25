@@ -82,7 +82,7 @@ jobs:
         run: uv run pytest --cov=comet_rag --cov-report=term-missing --cov-report=xml
 
       - name: 固定语料检索回归（无网络或 GPU）
-        run: uv run pytest tests/benchmark/test_retrieval_quality.py tests/benchmark/test_retrieval_challenge.py -m benchmark
+        run: uv run pytest tests/benchmark/test_retrieval_quality.py tests/benchmark/test_retrieval_challenge.py tests/benchmark/test_pdf_quality.py -m benchmark
 
       - name: 上传覆盖率
         if: always()

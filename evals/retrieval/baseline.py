@@ -10,7 +10,10 @@ from time import perf_counter
 from typing import Any, Literal
 
 from comet_rag.engines.chunkers import RecursiveChunker
-from comet_rag.engines.chunkers.strategies import MarkdownSectionStrategy
+from comet_rag.engines.chunkers.strategies import (
+    MarkdownSectionStrategy,
+    PageChunkingStrategy,
+)
 from comet_rag.engines.indexing import HierarchyBuilder
 from comet_rag.infrastructure.models.embedding.base import AsyncBaseEmbeddingModel
 from comet_rag.infrastructure.persistence.document_store import InMemoryDocumentStore
@@ -33,7 +36,7 @@ from comet_rag.services.retrieval import (
 from evals.retrieval.data import Dataset
 from evals.retrieval.metrics import Hit, QueryRun, Run
 
-Strategy = Literal["recursive", "markdown", "hierarchy"]
+Strategy = Literal["recursive", "markdown", "page", "hierarchy"]
 DIM = 256
 MODEL = "offline-char-bigram-sha256-v1"
 CHILD_SIZE = 100
@@ -79,6 +82,9 @@ async def collect(
     model_revision: str = "fixed algorithm v1",
     vector_store: AsyncVectorStore | None = None,
     backend_name: str | None = None,
+    child_size: int = CHILD_SIZE,
+    child_overlap: int = OVERLAP,
+    parent_size: int = PARENT_SIZE,
 ) -> Run:
     if level is ReturnLevel.PARENT and strategy != "hierarchy":
         raise ValueError("只有 hierarchy 基线比较真实父块回填")
@@ -86,6 +92,11 @@ async def collect(
         raise ValueError("rerank 评测必须提供真实 reranker")
     if vector_store is not None and not backend_name:
         raise ValueError("外部评测存储必须声明后端身份")
+    corpus_scope = (
+        "PDF native-text reference snapshot"
+        if any(source.format == "pdf" for source in dataset.corpus.documents)
+        else "synthetic corpus"
+    )
     async with AsyncExitStack() as stack:
         vectors = (
             vector_store if vector_store is not None else AsyncInMemoryVectorStore()
@@ -116,13 +127,15 @@ async def collect(
         # 旧版本先激活，随后被新版本替换；故意不 GC，验证可见性而不是物理删除。
         for source in sorted(dataset.corpus.documents, key=lambda s: s.active):
             doc = dataset.documents[source.id]
-            child = RecursiveChunker(CHILD_SIZE, OVERLAP)
+            child = RecursiveChunker(child_size, child_overlap)
             if strategy == "hierarchy":
-                chunks = HierarchyBuilder(RecursiveChunker(PARENT_SIZE), child).split(
+                chunks = HierarchyBuilder(RecursiveChunker(parent_size), child).split(
                     doc
                 )
             elif strategy == "markdown":
                 chunks = MarkdownSectionStrategy(child).split(doc)
+            elif strategy == "page":
+                chunks = PageChunkingStrategy(child).split(doc)
             else:
                 chunks = child.split(doc.markdown)
             key = RevisionKey(source.kb_id, source.source_id, source.revision)
@@ -205,9 +218,9 @@ async def collect(
                 "strategy": strategy,
                 "mode": mode.value,
                 "level": level.value,
-                "child_size": CHILD_SIZE,
-                "child_overlap": OVERLAP,
-                "parent_size": PARENT_SIZE,
+                "child_size": child_size,
+                "child_overlap": child_overlap,
+                "parent_size": parent_size,
                 "fetch_k": 50,
                 "indexed_children": child_count,
                 "stored_parents": parent_count,
@@ -217,9 +230,9 @@ async def collect(
                 "parent_text_chars": parent_chars,
                 "scope": "offline regression only"
                 if embedding_model is None
-                else "synthetic corpus, real model, exact InMemory recall"
+                else f"{corpus_scope}, real model, exact InMemory recall"
                 if vector_store is None
-                else f"synthetic corpus, real model, native {backend_name} recall",
+                else f"{corpus_scope}, real model, native {backend_name} recall",
                 "implementation_sha256": implementation_fingerprint(),
                 "python": sys.version.split()[0],
                 "python_docx": version("python-docx"),
