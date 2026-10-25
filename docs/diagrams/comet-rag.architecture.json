@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "debd891e7468f375cc2a36121ae496433ed8188f",
+      "revision": "c406c9b37e8eab19d694724f003b386f6a8200a3",
       "link_mode": "local-only"
     }
   },
@@ -100,8 +100,8 @@
     {
       "id": "mineru",
       "type": "external",
-      "label": "MinerU HTTP",
-      "sublabel": "protocol v2 文档 API",
+      "label": "MinerU 文档 API",
+      "sublabel": "v2 · 逐页扩展可选",
       "pos": [
         860,
         40
@@ -113,20 +113,21 @@
       "sources": [
         {
           "path": "comet_rag/infrastructure/extractors/mineru.py",
-          "line": 239,
-          "end_line": 260
+          "line": 619,
+          "end_line": 639
         },
         {
-          "path": "comet_rag/infrastructure/extractors/mineru.py",
-          "line": 596,
-          "end_line": 615
+          "path": "deploy/mineru/page_markdown.py",
+          "line": 11,
+          "end_line": 68
         },
         {
-          "path": "comet_rag/composition/bootstrap.py",
-          "line": 695,
-          "end_line": 701
+          "path": "deploy/mineru/mineru-3.4.5-page-markdown.patch",
+          "line": 1,
+          "end_line": 30
         }
-      ]
+      ],
+      "tag": "逐页仅 vlm-http-client"
     },
     {
       "id": "http-user",
@@ -514,7 +515,7 @@
         {
           "path": "evals/pdf/parse.py",
           "line": 71,
-          "end_line": 138
+          "end_line": 143
         }
       ]
     }
@@ -777,6 +778,17 @@
         "完整 7/80 页公开 PDF 均解析成功，但图片、表格和列表阻止当前投影，均回退 section。真实正文三页派生文件保留 page；新页 1/2/3 明确对应原物理页 5/6/7，不代表整份已通过。",
         "原生结果仍有字词错误且上游 Markdown 不含部分脚注；页片段一致不等于原 PDF 全保真。人工盲审未返回，权重/tokenizer 工件仍未知，不复用 pypdf 旧字符 span 给新正文评分。",
         "297 项真实集成通过，MinIO 1 项跳过不算验收；普通 unit 两轮 10.47s/11.08s 仍超 10 秒。临时服务和隔离中间件已关停清理；正式文档 API 部署及完整质量门禁尚未关闭。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "第二十九批：完整复杂 PDF 的物理页",
+      "items": [
+        "3.4.5 有原生逐页渲染函数，已发布 HTTP 没有逐页字段；未采用关闭且未合并的 return_md_pages 提案，也未整体迁移 4.x。选择独立文档 API 的可选部署扩展，不在应用安装或调用 SDK。",
+        "health 协商扩展 v1，结果带物理页数和逐页 Markdown；仅单实例 vlm-http-client 完整 PDF 已验收。源码摘要先验再安装；默认关闭，显式禁止跨页表格合并，按页调用上游后处理和同一渲染函数。",
+        "完整原始 7/80 页两轮获得 1–7/1–80 页，逐页重建、规范化和分块硬边界通过；图片页2、勘误表页4、PaaS页6→7和表2物理页52均核对。不是拆页后的派生页或参考提取，也不连接生产索引。",
+        "已协商却返回缺失或错误的页字段明确失败；未声明扩展保留旧路径。按次保存协商值，重提沿用，关闭冗余 content list；空页保留编号，禁止移动内容和渲染污染。真实上游全局 merge 反例被守卫拒绝。",
+        "298 项集成通过、MinIO 1 项跳过；普通 unit 本次9.98s仅一次观测。原生正文仍可能错字、缺脚注，Router/正式部署、独立金标与固定权重仍待验收；按新命名空间重建核验后切换，不在线热改旧索引。"
       ]
     }
   ]
