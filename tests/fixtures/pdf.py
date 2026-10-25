@@ -121,8 +121,39 @@ def build_scanned_pdf(path: Path) -> Path:
     return path
 
 
+def build_paged_pdf(path: Path) -> Path:
+    """两个物理页包含重复句和不同事实，验证页边界不靠正文搜索猜测。"""
+    path.write_bytes(
+        _build_pdf(
+            (
+                b"<< /Type /Catalog /Pages 2 0 R >>",
+                b"<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>",
+                (
+                    b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 640 792] "
+                    b"/Resources << /Font << /F1 7 0 R >> >> /Contents 4 0 R >>"
+                ),
+                _stream(
+                    b"BT /F1 18 Tf 60 500 Td (ALPHA stores red apples.) Tj "
+                    b"0 -36 Td (A shared sentence appears on both pages.) Tj ET"
+                ),
+                (
+                    b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 640 792] "
+                    b"/Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>"
+                ),
+                _stream(
+                    b"BT /F1 18 Tf 60 500 Td (BETA stores blue berries.) Tj "
+                    b"0 -36 Td (A shared sentence appears on both pages.) Tj ET"
+                ),
+                b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            )
+        )
+    )
+    return path
+
+
 __all__ = [
     "build_minimal_pdf",
+    "build_paged_pdf",
     "build_scanned_pdf",
     "minimal_pdf_bytes",
     "scanned_pdf_bytes",

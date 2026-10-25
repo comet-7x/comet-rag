@@ -25,12 +25,16 @@ from comet_rag.config.schemas import (
     MinerUParseMethod,
     ServerConfig,
 )
+from comet_rag.engines.chunkers import RecursiveChunker
+from comet_rag.engines.chunkers.strategies import PageChunkingStrategy
+from comet_rag.engines.documents.normalization import MarkdownDocumentNormalizer
 from comet_rag.engines.pipelines import PipelineConfig
+from comet_rag.infrastructure.extractors import AsyncMinerUDocumentExtractor
 from comet_rag.infrastructure.models.embedding.base import AsyncBaseEmbeddingModel
 from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
 from comet_rag.tasks import Task, TaskStatus
 from tests.contracts.support import wait_for_terminal
-from tests.fixtures.pdf import build_minimal_pdf, build_scanned_pdf
+from tests.fixtures.pdf import build_minimal_pdf, build_paged_pdf, build_scanned_pdf
 
 pytestmark = pytest.mark.integration
 
@@ -264,3 +268,42 @@ async def test_real_mineru_text_and_scanned_pdf_task_chain(
     assert (
         report["observed"]["mineru_peak_in_flight"] <= config.limits.mineru_concurrency
     )
+
+
+async def test_real_mineru_repeated_text_preserves_physical_page_boundaries(
+    tmp_path: Path,
+) -> None:
+    base_url = await _mineru_url()
+    source = build_paged_pdf(tmp_path / "pages.pdf")
+    async with httpx.AsyncClient() as client:
+        extractor = AsyncMinerUDocumentExtractor(
+            base_url,
+            backend=os.environ.get("COMET_TEST_MINERU_BACKEND", "pipeline"),
+            language="en",
+            client=client,
+        )
+        document = await extractor.extract(
+            source, filename=source.name, media_type="application/pdf"
+        )
+
+    assert [page.page_number for page in document.pages] == [1, 2]
+    assert "ALPHA" in document.pages[0].markdown
+    assert "BETA" in document.pages[1].markdown
+    for page in document.pages:
+        assert "A shared sentence appears on both pages." in page.markdown
+    assert "\n\n".join(page.markdown for page in document.pages) == document.markdown
+
+    normalized = MarkdownDocumentNormalizer().normalize(document)
+    assert [block.page_number for block in normalized.blocks] == [1, 2]
+    drafts = PageChunkingStrategy(
+        RecursiveChunker(chunk_size=800, chunk_overlap=0)
+    ).split(normalized)
+    assert {draft.metadata["page_number"] for draft in drafts} == {1, 2}
+    for draft in drafts:
+        start, end = draft.start_char, draft.end_char
+        assert start is not None and end is not None
+        assert draft.text == normalized.markdown[start:end]
+        number = draft.metadata["page_number"]
+        assert type(number) is int
+        block = normalized.blocks[number - 1]
+        assert block.start_char <= start < end <= block.end_char
