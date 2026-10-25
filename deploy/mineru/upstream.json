@@ -1,0 +1,9 @@
+{
+  "version": "3.4.5",
+  "source": "https://github.com/opendatalab/MinerU/tree/mineru-3.4.5-released",
+  "files": {
+    "mineru/cli/common.py": "d1e23e310bddc3da2d7f491be81ef112435824403d1c3a29e438505c1707dbc5",
+    "mineru/backend/vlm/model_output_to_middle_json.py": "ee21aa1d588f307b703067ad2c637409d7133a407e2b12cc09de7dab24b0e8c6",
+    "mineru/cli/fast_api.py": "f7f233d86ae0f5aab6ffe5d8eccef4344c968aeaf879563dae99d4875057ee39"
+  }
+}

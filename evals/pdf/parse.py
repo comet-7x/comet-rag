@@ -74,6 +74,7 @@ async def audit(
     out: Path,
     *,
     data: Path = DATA,
+    require_pages: bool = False,
 ) -> None:
     """只上传来源锁里的公开 PDF；不复用 pypdf 字符 span 给原生解析结果评分。"""
     snapshot = read_json(data / "pages.json", PDFSnapshot)
@@ -93,13 +94,16 @@ async def audit(
         document = await extractor.extract(
             path, filename=path.name, media_type="application/pdf"
         )
+        summary = page_summary(document, sample.total_pages)
+        if require_pages and summary["page_status"] != "verified":
+            raise ValueError("本次验收要求原生页事实，不能以 section 回退通过")
         samples.append(
             {
                 "source_id": path.stem,
                 "source_sha256": _verify_pdf(path, sample),
                 "elapsed_seconds": perf_counter() - started,
                 "provider": dict(document.metadata),
-                **page_summary(document, sample.total_pages),
+                **summary,
             }
         )
         write_json(
@@ -130,12 +134,13 @@ async def main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--mineru-url", required=True)
     parser.add_argument("--backend", default="vlm-http-client")
+    parser.add_argument("--require-pages", action="store_true")
     args = parser.parse_args()
     async with httpx.AsyncClient() as client:
         extractor = AsyncMinerUDocumentExtractor(
             args.mineru_url, backend=args.backend, language="en", client=client
         )
-        await audit(extractor, args.pdf_dir, args.out)
+        await audit(extractor, args.pdf_dir, args.out, require_pages=args.require_pages)
 
 
 if __name__ == "__main__":

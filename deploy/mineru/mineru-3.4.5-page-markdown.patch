@@ -1,0 +1,30 @@
+--- a/mineru/cli/common.py
++++ b/mineru/cli/common.py
+@@ -319,0 +320,5 @@
++        if process_mode == "vlm":
++            from mineru.cli.comet_page_markdown import enabled, render_pages
++            if enabled():
++                page_output = render_pages(pdf_info, make_func, f_make_md_mode, image_dir, md_content_str)
++                md_writer.write_string(f"{pdf_file_name}_comet_pages.json", json.dumps(page_output, ensure_ascii=False))
+--- a/mineru/backend/vlm/model_output_to_middle_json.py
++++ b/mineru/backend/vlm/model_output_to_middle_json.py
+@@ -109 +109,6 @@
+-    merge_para_text_blocks(pdf_info_list)
++    from mineru.cli.comet_page_markdown import enabled
++    if enabled():
++        for page_info in pdf_info_list:
++            merge_para_text_blocks([page_info])
++    else:
++        merge_para_text_blocks(pdf_info_list)
+--- a/mineru/cli/fast_api.py
++++ b/mineru/cli/fast_api.py
+@@ -2,0 +3 @@
++import json
+@@ -463,0 +465,3 @@
++            from mineru.cli.comet_page_markdown import enabled
++            if enabled() and backend == "vlm-http-client":
++                data["comet_page_markdown"] = json.loads(get_infer_result("_comet_pages.json", pdf_name, parse_dir))
+@@ -1376,0 +1381 @@
++    from mineru.cli.comet_page_markdown import enabled
+@@ -1378,0 +1384 @@
++        "extensions": {"comet_page_markdown": 1} if enabled() else {},

@@ -307,3 +307,45 @@ async def test_real_mineru_repeated_text_preserves_physical_page_boundaries(
         assert type(number) is int
         block = normalized.blocks[number - 1]
         assert block.start_char <= start < end <= block.end_char
+
+
+async def test_real_mineru_complete_public_pdfs_preserve_complex_physical_pages(
+    tmp_path: Path,
+) -> None:
+    from evals.pdf.parse import audit
+
+    value = os.environ.get("COMET_TEST_MINERU_PDF_DIR", "")
+    if not value:
+        pytest.skip("未设置公开 PDF 来源目录，跳过完整复杂页验收")
+    base_url = await _mineru_url()
+    async with httpx.AsyncClient() as client:
+        extractor = AsyncMinerUDocumentExtractor(
+            base_url,
+            backend=os.environ.get("COMET_TEST_MINERU_BACKEND", "pipeline"),
+            language="en",
+            client=client,
+        )
+        await audit(extractor, Path(value), tmp_path / "parsed", require_pages=True)
+
+    outputs = {}
+    for name, count in (("nist145", 7), ("nist144", 80)):
+        output = json.loads((tmp_path / "parsed" / f"{name}.json").read_text())
+        assert [page["page_number"] for page in output["pages"]] == list(
+            range(1, count + 1)
+        )
+        outputs[name] = output["pages"]
+    assert "![](images/" in outputs["nist145"][1]["markdown"]
+    assert "<table>" in outputs["nist145"][3]["markdown"]
+    assert "created using programming" in outputs["nist145"][5]["markdown"]
+    assert (
+        "languages, libraries, services, and tools"
+        not in outputs["nist145"][5]["markdown"]
+    )
+    assert (
+        "languages, libraries, services, and tools" in outputs["nist145"][6]["markdown"]
+    )
+    assert (
+        "Table 2: Selected NIST Special Publications"
+        in outputs["nist144"][51]["markdown"]
+    )
+    assert "<table>" in outputs["nist144"][51]["markdown"]
