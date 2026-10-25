@@ -46,6 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
     show = sub.add_parser("config", help="打印生效配置（密码已脱敏）")
     _add_config_option(show)
 
+    preflight = sub.add_parser(
+        "revision-preflight", help="离线对照新旧部署配置，不连接中间件"
+    )
+    for role in ("previous", "api", "preprocessor", "embedder"):
+        preflight.add_argument(f"--{role}-config", required=True, metavar="PATH")
+
     return parser
 
 
@@ -126,9 +132,42 @@ def cmd_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_revision_preflight(args: argparse.Namespace) -> int:
+    import json  # noqa: PLC0415
+
+    import yaml  # noqa: PLC0415
+
+    from comet_rag.composition.revision_preflight import (  # noqa: PLC0415
+        inspect_revision_deployment,
+    )
+    from comet_rag.config.settings import YamlConfigLoader  # noqa: PLC0415
+
+    configurations = {}
+    for role in ("previous", "api", "preprocessor", "embedder"):
+        try:
+            configurations[role] = YamlConfigLoader.get_config(
+                getattr(args, f"{role}_config")
+            )
+        except (OSError, ValueError, TypeError, yaml.YAMLError):
+            print(  # noqa: T201 —— 不打印可能含凭据的配置/异常正文
+                json.dumps(
+                    {"schema_version": 1, "passed": False, "invalid_config": role}
+                )
+            )
+            return 2
+    report = inspect_revision_deployment(**configurations)
+    print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))  # noqa: T201
+    return 0 if report.passed else 2
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    handlers = {"serve": cmd_serve, "worker": cmd_worker, "config": cmd_config}
+    handlers = {
+        "serve": cmd_serve,
+        "worker": cmd_worker,
+        "config": cmd_config,
+        "revision-preflight": cmd_revision_preflight,
+    }
     return handlers[args.command](args)
 
 
