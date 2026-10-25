@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "942f966e61047e83dc8f86706906220565726625",
+      "revision": "f76f7b450b65c4cbeef219b62038d7347cb4d4a6",
       "link_mode": "local-only"
     }
   },
@@ -416,6 +416,38 @@
           "end_line": 501
         }
       ]
+    },
+    {
+      "id": "revision-preflight",
+      "type": "backend",
+      "label": "revision-preflight",
+      "sublabel": "CLI · 离线配置核验",
+      "tag": "不连接中间件",
+      "pos": [
+        40,
+        150
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/cli.py",
+          "line": 49,
+          "end_line": 53
+        },
+        {
+          "path": "comet_rag/cli.py",
+          "line": 135,
+          "end_line": 162
+        },
+        {
+          "path": "comet_rag/composition/revision_preflight.py",
+          "line": 44,
+          "end_line": 158
+        }
+      ]
     }
   ],
   "connections": [
@@ -591,7 +623,18 @@
         "激活响应丢失恢复同一版本；发布后即使 from_scratch 也不重新取源或 embedding。superseded 清理自身，不覆盖新版本。",
         "新 active 按 manifest 中的前任身份精确 GC，失败从 cleanup 重试；Task 失败不是回滚 active 的理由。",
         "writer、恢复与对账共用源 context 预算；历史缺载荷保留并单列，complete/purged 仍持续重访。",
-        "默认开关关闭。真实中间件验证不等于用户资料已迁移；目标模型/语料、跨主机恢复及部署切换/回退仍待验收。"
+        "默认开关关闭；新旧命名空间独立。生产接线与测试演练不代表用户资料已迁移、跨主机恢复或真实生产切流已完成。"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "第二十二批：预检与受控回退",
+      "items": [
+        "revision-preflight 是独立离线入口，只读取旧端及新 API/CPU/IO 配置；图中没有向中间件绘制 IO 箭头。",
+        "检查旧端声明暂停、三角色 writer 绑定和不同 SQL database、Redis DB、Milvus database 或前缀；不证明运行实例已排干或代理未重写地址。",
+        "重建复用右侧现有 API 与五阶段 runner；独立测试命名空间覆盖发布前失败、激活响应丢失及六种查询组合。",
+        "调用方切读后，无新写可核验旧端回退；有更新时必须先暂停新端、保存并重建差异，再核验旧端正文和尾块。",
+        "没有新增自动流量控制器、迁移任务框架或默认开关。真实模型、用户资料、全副本/跨主机及生产切换仍待验收。"
       ]
     }
   ]
