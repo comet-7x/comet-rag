@@ -2,13 +2,13 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Comet-RAG：库、入库与可选维护",
+    "title": "Comet-RAG：库、服务与离线工具",
     "locale": "zh-CN",
     "output": "docs/diagrams/comet-rag.html",
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "27bb42bea33ce2d3159b595738ce78e42025f251",
+      "revision": "a1d025af9365c33a12f5e099db6e0e0ccc19eb8a",
       "link_mode": "local-only"
     }
   },
@@ -448,6 +448,38 @@
           "end_line": 158
         }
       ]
+    },
+    {
+      "id": "retrieval-evaluation",
+      "type": "backend",
+      "label": "检索评测 CLI",
+      "sublabel": "固定语料 · 独立内存",
+      "tag": "不连接生产索引",
+      "pos": [
+        40,
+        690
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "evals/retrieval/data.py",
+          "line": 218,
+          "end_line": 258
+        },
+        {
+          "path": "evals/retrieval/baseline.py",
+          "line": 84,
+          "end_line": 142
+        },
+        {
+          "path": "evals/retrieval/real.py",
+          "line": 18,
+          "end_line": 58
+        }
+      ]
     }
   ],
   "connections": [
@@ -646,6 +678,17 @@
         "独立 CPU/IO 解释器实际验证 SIGTERM、激活前后 SIGKILL 和超时取消。新 IO 在原文件已移除、没有 CPU worker 时复用同一版本，不重新 embedding。",
         "测试确认进程已死后才注入过期 heartbeat，并显式触发同一维护函数；没有等待真实 90 秒，也不宣称验证跨主机、断电或完整 cron 时序。",
         "单测按认领结果、排队状态及回调协调，保留缺陷反向验证。时间分段、当前样本与实际生产剩余门禁见 V2 计划。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "第二十四批：固定语料与检索评测",
+      "items": [
+        "仓库级评测工具不随库安装，不在 HTTP/worker 主链路；生成 DOCX/Markdown，再复用真实解析、分块、revision 激活/判活与检索。",
+        "7 份版本文档、2 KB、18 查询、14 原文证据；旧版本和跨 KB 同名文档保留。标签独立于模型/切块编写，尚待独立人工复核。",
+        "Recall/MRR/nDCG 按原始返回位置，重复文档不重复获益；完整证据覆盖单列。缺查询、坏正文/span、跨 KB、inactive 或降级使评分失败。",
+        "12 组替身回归的 top-5 已饱和，无答案查询仍全部返回结果；不据此改变生产策略、制定任意阈值或关闭 M4 质量出口。",
+        "真实模型入口只访问明确提供的模型服务、使用独立内存索引，未画向生产 Store 的 IO。当前尚无配置路径，真实模型/PDF/page/ANN/目标部署仍待验收。"
       ]
     }
   ]
