@@ -314,6 +314,8 @@ def test_exact_content_list_exposes_real_pages(document_path: Path) -> None:
     "content_list",
     [
         "{not-json",
+        [{"type": [], "page_idx": 0}],
+        [{"type": {}, "page_idx": 0}],
         [{"type": "text", "text": "不是正文", "page_idx": 0}],
         [{"type": "image", "img_path": "x.png", "page_idx": 0}],
         [
@@ -1054,3 +1056,33 @@ def test_constructor_rejects_invalid_wire_configuration(
 def test_constructor_rejects_remote_cleartext_endpoint() -> None:
     with pytest.raises(ValueError, match="HTTPS"):
         MinerUDocumentExtractor("http://mineru.internal:8989")
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_model_health_is_rejected_before_upload_with_service_hint(
+    document_path: Path, async_mode: bool
+) -> None:
+    requests: list[str] = []
+
+    def model_server(request: httpx.Request) -> httpx.Response:
+        requests.append(request.method)
+        # vLLM /health 可以返回空的 200；它不是 MinerU 文档 API。
+        return httpx.Response(200, content=b"")
+
+    transport = httpx.MockTransport(model_server)
+    if async_mode:
+        async with httpx.AsyncClient(transport=transport) as client:
+            extractor = AsyncMinerUDocumentExtractor(BASE_URL, client=client)
+            with pytest.raises(DocumentProtocolError, match="文档 API.*vLLM"):
+                await extractor.extract(
+                    document_path, filename="sample.pdf", media_type="application/pdf"
+                )
+    else:
+        with httpx.Client(transport=transport) as client:
+            sync_extractor = MinerUDocumentExtractor(BASE_URL, client=client)
+            with pytest.raises(DocumentProtocolError, match="文档 API.*vLLM"):
+                sync_extractor.extract(
+                    document_path, filename="sample.pdf", media_type="application/pdf"
+                )
+
+    assert requests == ["GET"]

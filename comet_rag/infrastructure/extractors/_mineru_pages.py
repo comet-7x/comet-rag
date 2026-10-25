@@ -59,6 +59,8 @@ def _page(page_index: int, blocks: list[str]) -> ExtractedPage:
 
 def _render_item(item: Mapping[object, object]) -> str | None:
     item_type = item.get("type")
+    if not isinstance(item_type, str):
+        return None
     if item_type in _IGNORED_PAGE_AUXILIARY_TYPES:
         return ""
     if item_type == "text":

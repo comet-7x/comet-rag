@@ -236,7 +236,13 @@ class _MinerUProtocol:
 
     @classmethod
     def _server_info(cls, response: _BufferedResponse) -> _ServerInfo:
-        payload = cls._payload(response, "health")
+        try:
+            payload = cls._payload(response, "health")
+        except DocumentProtocolError as exc:
+            raise DocumentProtocolError(
+                "MinerU health 必须返回 protocol v2 文档 API 的 JSON；"
+                "请连接 mineru-api / mineru-router，不能直接连接 vLLM 模型后端"
+            ) from exc
         if payload.get("status") != "healthy":
             raise DocumentUpstreamError("MinerU 服务未处于 healthy 状态")
         protocol_version = payload.get("protocol_version")
