@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TypeGuard
 
 from comet_rag.engines.chunkers import ChunkDraft
+from comet_rag.engines.chunkers._coverage import validate_coverage
 from comet_rag.engines.pipelines import ChunkHookProvider, PipelineConfig, PipelineHooks
 from comet_rag.engines.utils import compute_sha256
 from comet_rag.ports import (
@@ -382,6 +383,16 @@ def _validate_drafts(
             raise ValueError(
                 f"ChunkDraft[{expected}] text 与 NormalizedDocument span 不一致"
             )
+
+    if document is not None:
+        spans = [
+            (d.start_char, d.end_char)
+            for d in drafts
+            if d.start_char is not None and d.end_char is not None
+        ]
+        # 旧字符串 Hook 没有可靠区间，不能凭正文搜索补造覆盖证明。
+        if len(spans) == len(drafts):
+            validate_coverage(document.markdown, spans)
 
 
 def _is_int(value: object) -> TypeGuard[int]:

@@ -159,3 +159,70 @@ def test_strategy_rejects_a_chunker_without_source_spans() -> None:
 
     with pytest.raises(DocumentStructureError, match="字符 span"):
         MarkdownSectionStrategy(SpanlessChunker()).split(document)
+
+
+@pytest.mark.parametrize(
+    "spans", [[], [(3, 9)], [(0, 3), (6, 9)], [(0, 6)], [(0, 6), (3, 9), (2, 5)]]
+)
+@pytest.mark.parametrize("kind", ["page", "section"])
+def test_structured_chunker_cannot_silently_drop_or_reorder_content(
+    spans, kind: str
+) -> None:
+    class FaultyChunker:
+        def split(self, text: str, /) -> list[ChunkDraft]:
+            return [
+                ChunkDraft(text[start:end], i, start, end)
+                for i, (start, end) in enumerate(spans)
+            ]
+
+    doc = NormalizedDocument(
+        "AAABBBCCC",
+        blocks=(
+            DocumentBlock(kind, 0, 0, 9, page_number=1 if kind == "page" else None),
+        ),
+    )
+    strategy = (
+        PageChunkingStrategy(FaultyChunker())
+        if kind == "page"
+        else MarkdownSectionStrategy(FaultyChunker())
+    )
+    with pytest.raises(DocumentStructureError):
+        strategy.split(doc)
+
+
+def test_page_blocks_cannot_hide_nonblank_gaps() -> None:
+    doc = NormalizedDocument(
+        "AAABBBCCC",
+        blocks=(
+            DocumentBlock("page", 0, 0, 3, page_number=1),
+            DocumentBlock("page", 1, 6, 9, page_number=2),
+        ),
+    )
+    with pytest.raises(DocumentStructureError, match="遗漏"):
+        PageChunkingStrategy(FixedSizeChunker(9)).split(doc)
+
+
+@pytest.mark.parametrize(
+    "text,spans",
+    [
+        ("AAABBBCCC", [(0, 6), (3, 9)]),
+        ("AAABBBCCC", [(0, 9), (3, 6)]),
+        ("  AAA  BBB  ", [(2, 5), (7, 10)]),
+        ("  \n ", []),
+    ],
+)
+def test_coverage_validation_allows_overlap_and_only_whitespace_gaps(
+    text, spans
+) -> None:
+    class Chunker:
+        def split(self, value: str, /) -> list[ChunkDraft]:
+            return [
+                ChunkDraft(value[start:end], i, start, end)
+                for i, (start, end) in enumerate(spans)
+            ]
+
+    doc = NormalizedDocument(
+        text, blocks=(DocumentBlock("page", 0, 0, len(text), page_number=1),)
+    )
+    result = PageChunkingStrategy(Chunker()).split(doc)
+    assert [(d.start_char, d.end_char) for d in result] == spans

@@ -30,9 +30,7 @@ def test_service_passes_the_complete_document_to_the_strategy() -> None:
     received: list[NormalizedDocument] = []
 
     @hooks.document_chunker("MD")
-    def split(
-        document: NormalizedDocument, config: PipelineConfig
-    ) -> list[ChunkDraft]:
+    def split(document: NormalizedDocument, config: PipelineConfig) -> list[ChunkDraft]:
         received.append(document)
         return [
             ChunkDraft(
@@ -66,9 +64,7 @@ def test_service_rejects_invalid_strategy_results(drafts: object) -> None:
     hooks = HookRegistry(HooksState({}, {}))
 
     @hooks.document_chunker("stub")
-    def split(
-        document: NormalizedDocument, config: PipelineConfig
-    ) -> list[ChunkDraft]:
+    def split(document: NormalizedDocument, config: PipelineConfig) -> list[ChunkDraft]:
         return drafts  # type: ignore[return-value]
 
     with pytest.raises((TypeError, ValueError)):
@@ -134,9 +130,7 @@ def test_document_blocks_round_trip_across_json_task_handoff() -> None:
 
 
 def test_document_block_payload_rejects_non_json_metadata_and_excess_size() -> None:
-    non_json = (
-        DocumentBlock("page", 0, 0, 1, metadata={"bad": object()}),
-    )
+    non_json = (DocumentBlock("page", 0, 0, 1, metadata={"bad": object()}),)
     with pytest.raises(TypeError, match="JSON"):
         dump_document_blocks(non_json)
 
@@ -302,3 +296,35 @@ def test_materialization_rejects_forged_chunk_facts_and_system_fields() -> None:
     assert document_metadata["source_id"] == "forged-document"
     assert request_metadata["page_number"] == 999
     assert draft_metadata["source"] == "forged-chunk"
+
+
+@pytest.mark.parametrize(
+    "spans", [[], [(3, 9)], [(0, 3), (6, 9)], [(0, 6)], [(0, 6), (3, 9), (2, 5)]]
+)
+def test_service_rejects_silent_omissions_from_positioned_hooks(spans) -> None:
+    hooks = HookRegistry(HooksState({}, {}))
+
+    @hooks.document_chunker("stub")
+    def split(document: NormalizedDocument, config: PipelineConfig) -> list[ChunkDraft]:
+        return [
+            ChunkDraft(document.markdown[start:end], i, start, end)
+            for i, (start, end) in enumerate(spans)
+        ]
+
+    with pytest.raises(ValueError):
+        ChunkingService(PipelineConfig(), hooks).split(
+            "stub", NormalizedDocument("AAABBBCCC")
+        )
+
+
+def test_service_retains_the_known_spanless_hook_limit() -> None:
+    hooks = HookRegistry(HooksState({}, {}))
+
+    @hooks.document_chunker("stub")
+    def split(document: NormalizedDocument, config: PipelineConfig) -> list[ChunkDraft]:
+        return [ChunkDraft("legacy transformed text", 0)]
+
+    result = ChunkingService(PipelineConfig(), hooks).split(
+        "stub", NormalizedDocument("original")
+    )
+    assert result == [ChunkDraft("legacy transformed text", 0)]

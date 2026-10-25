@@ -800,3 +800,25 @@ async def test_ingest_into_unknown_kb_fails_fast(svc: TaskService) -> None:
     assert done.attempts == 1
     assert done.error is not None
     assert done.error.retriable is False
+
+
+async def test_positioned_chunk_omission_fails_before_embedding_or_vector_writes(
+    svc: TaskService, model: FakeEmbeddingModel, store: AsyncInMemoryVectorStore
+) -> None:
+    @AsyncPipelineHooks.document_chunker(STUB_TYPE)
+    def drop_middle(
+        document: NormalizedDocument, config: PipelineConfig
+    ) -> list[ChunkDraft]:
+        return [
+            ChunkDraft(document.markdown[:4], 0, 0, 4),
+            ChunkDraft(document.markdown[8:], 1, 8, 12),
+        ]
+
+    task = await svc.submit(INGEST_KIND, request(), max_attempts=1)
+    done = await wait_for_terminal(svc.store, task.task_id)
+    assert done.status is TaskStatus.FAILED
+    assert any(
+        r.stage == "chunking" and r.status == "failed" for r in done.stage_history
+    )
+    assert model.calls == 0
+    assert await store.count(KB) == 0

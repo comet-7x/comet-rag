@@ -110,3 +110,22 @@ def test_hierarchy_rejects_invalid_relations(defect: str) -> None:
 def test_parent_span_requires_exact_body_length() -> None:
     with pytest.raises(DocumentStructureError):
         HierarchyParent(0, "正文", 0, 9, {})
+
+
+@pytest.mark.parametrize("lane", ["parent", "child"])
+@pytest.mark.parametrize("spans", [[], [(3, 9)], [(0, 3), (6, 9)], [(0, 6)]])
+def test_hierarchy_cannot_silently_drop_source_content(lane, spans) -> None:
+    class FaultyChunker:
+        def split(self, text: str, /) -> list[ChunkDraft]:
+            return [
+                ChunkDraft(text[start:end], i, start, end)
+                for i, (start, end) in enumerate(spans)
+            ]
+
+    good = FixedSizeChunker(9)
+    builder = HierarchyBuilder(
+        FaultyChunker() if lane == "parent" else good,
+        FaultyChunker() if lane == "child" else good,
+    )
+    with pytest.raises(DocumentStructureError):
+        builder.split(NormalizedDocument("AAABBBCCC"))

@@ -9,7 +9,10 @@ from comet_rag.engines.chunkers.strategies import (
     MarkdownSectionStrategy,
     PageChunkingStrategy,
 )
-from comet_rag.engines.chunkers.strategies._blocks import _validate_local_draft
+from comet_rag.engines.chunkers.strategies._blocks import (
+    _validate_coverage,
+    _validate_local_draft,
+)
 from comet_rag.engines.chunkers.strategies.errors import DocumentStructureError
 from comet_rag.ports.document import NormalizedDocument
 
@@ -118,10 +121,12 @@ class HierarchyBuilder:
         children: list[HierarchyChild] = []
         if not isinstance(drafts, list):
             raise DocumentStructureError("parent Chunker 必须返回 list[ChunkDraft]")
+        parent_spans: list[tuple[int, int]] = []
         for expected, draft in enumerate(drafts):
             start, end = _validate_local_draft(
                 draft, expected=expected, source=document.markdown
             )
+            parent_spans.append((start, end))
             # 纯空白硬切片没有可回填正文，仍须先验证其 span，不能借此隐藏错误。
             if not draft.text.strip():
                 continue
@@ -132,10 +137,12 @@ class HierarchyBuilder:
             local_children = self._child.split(parent.text)
             if not isinstance(local_children, list):
                 raise DocumentStructureError("child Chunker 必须返回 list[ChunkDraft]")
+            child_spans: list[tuple[int, int]] = []
             for local_ordinal, child in enumerate(local_children):
                 local_start, local_end = _validate_local_draft(
                     child, expected=local_ordinal, source=parent.text
                 )
+                child_spans.append((local_start, local_end))
                 children.append(
                     HierarchyChild(
                         ordinal=len(children),
@@ -146,4 +153,6 @@ class HierarchyBuilder:
                         metadata={**child.metadata, **parent.metadata},
                     )
                 )
+            _validate_coverage(parent.text, child_spans)
+        _validate_coverage(document.markdown, parent_spans)
         return ChunkHierarchy(tuple(parents), tuple(children))

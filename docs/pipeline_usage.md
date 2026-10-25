@@ -597,3 +597,12 @@ print(result.chunks[0].text)
 
 MinerU 部署、配置、错误语义与真实集成测试见
 [MinerU 集成](mineru_integration.md)。
+
+## 10. 有区间分块的覆盖契约
+
+结构策略与 HierarchyBuilder 除逐项检查正文/span外，还拒绝遗漏非空原文、倒序区间，
+包括父块或子块只返回头尾的情况；允许合法 overlap 和纯空白间隔。服务文档 Hook 的
+全部结果有span时也按同一规则校验，在 embedding 与向量写入前失败。
+
+旧字符串 Hook 或混合有/无span结果无法证明完整覆盖，保留兼容但不补造位置。新
+文档 Hook 应返回可靠区间。覆盖不表示一个块包含整张长表，单元完整性须另外核验。

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
+from comet_rag.engines.chunkers._coverage import validate_coverage
 from comet_rag.engines.chunkers.protocol import Chunker
 from comet_rag.engines.chunkers.strategies.errors import DocumentStructureError
 from comet_rag.engines.chunkers.types import ChunkDraft
@@ -19,17 +20,21 @@ def split_blocks(
     """逐结构块调用原子 Chunker，并把局部 span 映射回整篇文档。"""
 
     result: list[ChunkDraft] = []
+    document_spans: list[tuple[int, int]] = []
     for block in blocks:
         source = document.markdown[block.start_char : block.end_char]
         drafts = chunker.split(source)
         if not isinstance(drafts, list):
             raise DocumentStructureError("Chunker 必须返回 list[ChunkDraft]")
+        local_spans: list[tuple[int, int]] = []
         for expected, draft in enumerate(drafts):
             local_start, local_end = _validate_local_draft(
                 draft, expected=expected, source=source
             )
+            local_spans.append((local_start, local_end))
             start = block.start_char + local_start
             end = block.start_char + local_end
+            document_spans.append((start, end))
             metadata = {
                 **block.metadata,
                 **draft.metadata,
@@ -44,6 +49,8 @@ def split_blocks(
                     metadata=metadata,
                 )
             )
+        _validate_coverage(source, local_spans)
+    _validate_coverage(document.markdown, document_spans)
     return result
 
 
@@ -54,9 +61,7 @@ def _validate_local_draft(
     source: str,
 ) -> tuple[int, int]:
     if not isinstance(draft, ChunkDraft):
-        raise DocumentStructureError(
-            f"Chunker 第 {expected} 项必须是 ChunkDraft"
-        )
+        raise DocumentStructureError(f"Chunker 第 {expected} 项必须是 ChunkDraft")
     if draft.ordinal != expected:
         raise DocumentStructureError("Chunker ordinal 必须从 0 严格连续")
     if draft.start_char is None or draft.end_char is None:
@@ -66,6 +71,13 @@ def _validate_local_draft(
     if source[draft.start_char : draft.end_char] != draft.text:
         raise DocumentStructureError("Chunker text 与字符 span 不一致")
     return draft.start_char, draft.end_char
+
+
+def _validate_coverage(source: str, spans: Iterable[tuple[int, int]]) -> None:
+    try:
+        validate_coverage(source, spans)
+    except ValueError as exc:
+        raise DocumentStructureError(str(exc)) from exc
 
 
 __all__ = []
