@@ -49,6 +49,11 @@ def main() -> None:
     real.add_argument("--out", type=Path, required=True)
     real.add_argument("--data", type=Path, default=DATA)
     real.add_argument(
+        "--title-context",
+        action="store_true",
+        help="冻结候选池，对照三种重排标题视图；不改变索引或生产配置",
+    )
+    real.add_argument(
         "--model-revision",
         required=True,
         help="已部署权重/版本标识；不能确认时显式填 unknown",
@@ -73,6 +78,7 @@ def main() -> None:
                 args.out,
                 model_revision=args.model_revision,
                 data=args.data,
+                title_context=args.title_context,
             )
         )
     else:

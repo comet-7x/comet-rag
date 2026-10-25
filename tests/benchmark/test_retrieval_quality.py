@@ -65,8 +65,9 @@ async def test_fixed_corpus_regression(dataset, mode, strategy, level) -> None:
 
 
 @pytest.mark.parametrize("failure", [False, True])
+@pytest.mark.parametrize("title_context", [False, True])
 async def test_real_collector_owns_clients_and_never_builds_persistent_stores(
-    tmp_path, monkeypatch, failure
+    tmp_path, monkeypatch, failure, title_context
 ) -> None:
     from comet_rag.composition import bootstrap
     from comet_rag.infrastructure.models.reranker.base import AsyncBaseReranker
@@ -121,12 +122,28 @@ infrastructure_config:
     output = tmp_path / "result"
     if failure:
         with pytest.raises(ConnectionError, match="injected model failure"):
-            await real.evaluate_models(config, output, model_revision="test")
+            await real.evaluate_models(
+                config, output, model_revision="test", title_context=title_context
+            )
         assert not (output / "summary.json").exists()
     else:
-        await real.evaluate_models(config, output, model_revision="test")
+        await real.evaluate_models(
+            config, output, model_revision="test", title_context=title_context
+        )
         summaries = json.loads((output / "summary.json").read_text())
-        assert len(summaries) == 6
-        assert {v["settings"]["rerank"] for v in summaries.values()} == {False, True}
+        assert len(summaries) == (12 if title_context else 6)
+        assert {v["settings"]["rerank"] for v in summaries.values()} == (
+            {True} if title_context else {False, True}
+        )
+        if title_context:
+            for mode in SearchMode:
+                paired = [
+                    v
+                    for k, v in summaries.items()
+                    if k.startswith(f"hierarchy-child-{mode.value}-")
+                    and "pool_sha256" in v["settings"]
+                ]
+                assert len(paired) == 3
+                assert len({v["settings"]["pool_sha256"] for v in paired}) == 1
         assert all(v["settings"]["model"] == "test-model" for v in summaries.values())
     assert closed == ["reranker", "embedding"]
