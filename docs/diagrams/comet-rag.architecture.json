@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "07c8c9edb110e3e964a79513d45cf94469db42ce",
+      "revision": "debd891e7468f375cc2a36121ae496433ed8188f",
       "link_mode": "local-only"
     }
   },
@@ -101,7 +101,7 @@
       "id": "mineru",
       "type": "external",
       "label": "MinerU HTTP",
-      "sublabel": "可选外部 PDF 服务",
+      "sublabel": "protocol v2 文档 API",
       "pos": [
         860,
         40
@@ -113,8 +113,13 @@
       "sources": [
         {
           "path": "comet_rag/infrastructure/extractors/mineru.py",
+          "line": 239,
+          "end_line": 260
+        },
+        {
+          "path": "comet_rag/infrastructure/extractors/mineru.py",
           "line": 596,
-          "end_line": 609
+          "end_line": 615
         },
         {
           "path": "comet_rag/composition/bootstrap.py",
@@ -485,6 +490,33 @@
           "end_line": 166
         }
       ]
+    },
+    {
+      "id": "pdf-parse-audit",
+      "type": "backend",
+      "label": "PDF 原生核验",
+      "sublabel": "显式调用文档 API",
+      "tag": "独立运行 · 不写索引",
+      "pos": [
+        1120,
+        40
+      ],
+      "size": [
+        160,
+        70
+      ],
+      "sources": [
+        {
+          "path": "evals/pdf/parse.py",
+          "line": 17,
+          "end_line": 59
+        },
+        {
+          "path": "evals/pdf/parse.py",
+          "line": 71,
+          "end_line": 138
+        }
+      ]
     }
   ],
   "connections": [
@@ -620,6 +652,13 @@
       "to": "documents",
       "label": "准备 / 发布 / GC",
       "variant": "default"
+    },
+    {
+      "id": "native-pdf-audit-request",
+      "from": "pdf-parse-audit",
+      "to": "mineru",
+      "label": "显式 HTTP",
+      "variant": "default"
     }
   ],
   "cards": [
@@ -726,7 +765,18 @@
         "用户选择先制作公开 PDF 盲审包：只有原文件、问题、来源/页文本和 unreviewed 填写表，无作者相关度、no-answer 分类或模型排名。独立人工复核仍 pending，不能靠填写姓名自动认定。",
         "最终 8 组真实模型/192 次 search；另按原生独立正文编码投影 512/1024 预算，不跳过超额块，不改引用，投影清除查询时延。它不等于联合提示词、另一模型上下文或相同推理成本。",
         "父块+重排 top5 证据@5=1.0，但 512 正文预算降为 0.90。错误首位占预算、三个完整 quote 被当前 child 切断，都有具体反例；未据小样本高分更改生产默认策略。",
-        "当前 MinerU 地址 health=404 且不符合其 TLS 契约；参考提取未接成服务 fallback。模型权重/tokenizer revision 未返回，探针稳定不等于工件锁定。生产解析、人工裁决、固定部署及 M4-T10/H/I 仍待验收。"
+        "第二十七批时 MinerU 配置尚未核实，参考提取未接成服务 fallback。第二十八批补原生解析，完整复杂 PDF 页事实仍不可用；人工裁决、固定部署及 M4-T10/H/I 继续待验收。"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "第二十八批：原生解析与页事实分开验收",
+      "items": [
+        "原配置实际是 MinerU VLM 模型后端，不是提供 /tasks 的文档服务。临时官方 MinerU 3.4.5 API 经原生 vlm-http-client 使用既有模型；项目仍只连接文档 API，不启动 SDK 或模型。 图中该节点表示文档 API 角色，核验使用独立地址，不表示生产已改配。",
+        "独立 PDF 核验工具先检查来源字节，再顺序上传；页范围、全文重建、规范化和分块硬边界同时验证。无页事实写 section 回退，失败重跑不复用旧成功报告；不连接生产 Store。",
+        "完整 7/80 页公开 PDF 均解析成功，但图片、表格和列表阻止当前投影，均回退 section。真实正文三页派生文件保留 page；新页 1/2/3 明确对应原物理页 5/6/7，不代表整份已通过。",
+        "原生结果仍有字词错误且上游 Markdown 不含部分脚注；页片段一致不等于原 PDF 全保真。人工盲审未返回，权重/tokenizer 工件仍未知，不复用 pypdf 旧字符 span 给新正文评分。",
+        "297 项真实集成通过，MinIO 1 项跳过不算验收；普通 unit 两轮 10.47s/11.08s 仍超 10 秒。临时服务和隔离中间件已关停清理；正式文档 API 部署及完整质量门禁尚未关闭。"
       ]
     }
   ]

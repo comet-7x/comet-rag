@@ -133,3 +133,13 @@ MinIO未配置的1项skip不算通过；MinerU本轮没有skip。隔离测试PG�
 
 格式检查补充：全仓 `ruff format --check` 报18个既有文件需格式化，已逐一确认相对
 本批基线无改动。本批7个Python文件的格式检查通过；没有把历史格式问题记为已修复。
+
+图文收尾：224个本地文档链接、README/默认/revision配置冒烟及8张Mermaid通过；
+交互图固定到 `debd891e7468f375cc2a36121ae496433ed8188f`，来源、布局、离线产物、
+严格provenance及回执字节/SHA均通过。新增独立解析核验HTTP路径，文档API节点是
+接口角色，不表示核验地址等同生产部署。受既有file://浏览器策略限制，未做本轮
+browser-check或感知验收，不沿用旧截图/回执。
+
+外部服务关停记录补充：原生API已打印application shutdown complete，PID消失，
+执行器返回143符合本轮SIGTERM；上游Python resource_tracker同时报告1个未主动
+归还的semaphore并尝试清理。保留该警告，不将监听关闭解释为上游无资源泄漏证明。

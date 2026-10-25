@@ -28,13 +28,17 @@
 第二十七批补真实PDF的独立参考页、盲审包和正文token预算对照。生产MinerU、人工
 独立复核与固定权重仍待验收；正文预算投影不等于联合提示词或推理成本，未默认启用
 父块或改分块。见 [PDF报告](../evaluations/pdf_page_20261025.md)。
+第二十八批增加独立 PDF 原生解析核验节点及其显式 HTTP 调用。MinerU 节点表示文档
+API 角色，核验使用独立地址，不证明生产部署已改配；模型后端不能替代文档服务。
+完整 7/80 页文件均解析但回退 section，真实三页子集保留显式原页映射；独立人工、
+固定工件和完整复杂页仍待验收。见 [原生解析报告](../evaluations/mineru_pdf_20261025.md)。
 历史载荷处置、新命名空间重建和生产切换门禁见 [迁移边界](../revision_migration.md)。
 详细恢复流程仍见 [架构](../architecture.md) 和 [对账设计](../../tasks/v2_reconciliation_design.md)。
 
 ## 源数据与证据
 
 - [comet-rag.architecture.json](comet-rag.architecture.json) 是可编辑的图源；HTML 是生成产物，不手改。
-- 本图源码证据固定到 `07c8c9edb110e3e964a79513d45cf94469db42ce`，各节点列出相对路径与行号。
+- 本图源码证据固定到 `debd891e7468f375cc2a36121ae496433ed8188f`，各节点列出相对路径与行号。
   固定的是被说明的代码提交，不要求等于包含生成图的提交，避免自引用。
 - 当前为 `local-only` 源码模式：保留路径、行号和版本，不假设尚未推送的提交可在 GitHub 打开。
 - 使用 [Archify 3.2.0](https://github.com/tt-a1i/archify/tree/25cf37080fc8b1dbe758a4efc3935b55f3327083)，
