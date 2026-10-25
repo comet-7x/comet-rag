@@ -202,9 +202,9 @@ def test_cli_preflight_has_no_resource_construction_or_environment_changes(
     assert dict(os.environ) == before
 
 
-@pytest.mark.parametrize("invalid", ["missing", "yaml", "schema"])
+@pytest.mark.parametrize("invalid", ["missing", "yaml", "schema", "empty"])
 def test_cli_config_failure_is_nonzero_and_never_echoes_secrets(
-    tmp_path, capsys, invalid
+    tmp_path, capsys, invalid, monkeypatch
 ):
     arguments = write_configs(tmp_path)
     path = tmp_path / "embedder.yaml"
@@ -212,6 +212,9 @@ def test_cli_config_failure_is_nonzero_and_never_echoes_secrets(
         path.unlink()
     elif invalid == "yaml":
         path.write_text("private-preflight-password: [", encoding="utf-8")
+    elif invalid == "empty":
+        monkeypatch.setenv("COMET_RAG_CONFIG", str(path))
+        arguments[-1] = ""
     else:
         path.write_text(
             "infrastructure_config: private-preflight-password", encoding="utf-8"

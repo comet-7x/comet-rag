@@ -154,7 +154,8 @@ uv run comet-rag revision-preflight \
   --embedder-config /path/to/new-io.yaml
 ```
 
-四个路径必须显式提供；不修改 `COMET_RAG_CONFIG`，不启动 Context、不连接中间件、
+四个路径必须显式提供且非空；空字符串不得回退读取环境变量或 cwd 下的配置。
+不修改 `COMET_RAG_CONFIG`，不启动 Context、不连接中间件、
 不建 KB/collection、不修改配置或切流。JSON 的 `scope` 为 `configuration-only`；
 退出码 0 仅表示配置约束通过，2 表示校验/读取失败。输出检查名和不含凭据的绑定，
 配置错误只标角色，不输出原始异常或配置。报告的 `unverified` 仍须逐项验收。

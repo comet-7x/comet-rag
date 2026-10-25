@@ -145,9 +145,11 @@ def cmd_revision_preflight(args: argparse.Namespace) -> int:
     configurations = {}
     for role in ("previous", "api", "preprocessor", "embedder"):
         try:
-            configurations[role] = YamlConfigLoader.get_config(
-                getattr(args, f"{role}_config")
-            )
+            path = getattr(args, f"{role}_config")
+            # 空参数不能沿用普通启动命令的环境变量/cwd 回退，冒充显式目标。
+            if not path.strip():
+                raise ValueError("预检必须显式指定配置路径")
+            configurations[role] = YamlConfigLoader.get_config(path)
         except (OSError, ValueError, TypeError, yaml.YAMLError):
             print(  # noqa: T201 —— 不打印可能含凭据的配置/异常正文
                 json.dumps(
