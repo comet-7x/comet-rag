@@ -165,3 +165,26 @@ Milvus 2.6.22 做原生 BM25 对照，并精确清理随机前缀集合；没有
 模型基线应另行归档，不能覆盖离线快照。后续需补：独立标签复核、更大困难样本、真实
 资料与长文、原生/扫描/混合 PDF、多栏/公式、真实页边界的 page 比较、相同 token 预算、
 ANN/精确召回对照、稳定延迟与内存/存储增量、目标部署验收。M4-T10 与 H/I 保持未完成。
+
+## 标题上下文的配对实验
+
+第二十六批在既有原文区间和 section/page 硬边界之外构造临时模型视图；只测试重排
+输入，不改 embedding、索引、返回正文或生产配置。完整路径与仅祖先路径的真实对照
+均出现首位证据回退，未进入生产。方法、逐查询结果和采纳门见
+[标题上下文报告](evaluations/title_context_20261025.md) 与
+[冻结设计](../tasks/v2_title_context_design.md)。
+
+```bash
+uv run python -m evals.retrieval real --config /path/to/models.yaml \
+  --model-revision unknown --title-context --data evals/retrieval/challenge \
+  --out /tmp/comet-eval-titles
+```
+
+--title-context 必须配置 reranker，每种召回模式只采集一次实际候选池，再按轮换顺序
+调用 plain/headings/ancestors 三种视图。输出各自 run/report、原始 capture 和 pools；
+池指纹和源码指纹用于防止比较时混入不同召回结果。CLI 仍只用独立 InMemory，不接
+持久化后端。低层录制/重放接口可供受控测试调用，外部模型/存储归调用方关闭。
+
+配对 run 的 elapsed_ms 仅覆盖重排调用，settings.timing_scope 明确区分完整 search。
+评分器仍只认原文：标题前缀含答案、返回正文不含答案时证据得分为零；不会将定位文字
+复制到引用结果。新增字符数只用于审查输入成本，不等于 token 数、SLO 或存储增量。

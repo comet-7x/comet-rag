@@ -139,6 +139,10 @@ ARQ/Redis 与 PyMilvus 均如此。`AsyncMilvusStore` 只持有 `AsyncMilvusClie
 副本。Gate 刻意维持双模式：同步与异步实例必须竞争同一进程级预算，不能分成两份限额。
 详见 [V2 异步能力复核](../tasks/v2_async_reassessment.md)。
 
+标题上下文实验在仓库 `evals/` 内：录制生产重排输入后冻结候选，再构造临时模型视图，
+结果按原索引映射回正文；不改变区间、硬边界、向量或服务默认行为。完整与祖先路径均
+出现回退，未进入运行时。方法见[标题上下文报告](evaluations/title_context_20261025.md)。
+
 ## 核心抽象
 
 每一个都配有一套**与实现无关的契约测试**（`tests/contracts/`）。

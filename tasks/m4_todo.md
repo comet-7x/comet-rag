@@ -232,6 +232,9 @@ recursive/markdown/hierarchy 的 12 组确定性回归。规则与限制见
 标题合并因不同模式回退而未默认采用，修正跳级标题路径；详见
 [挑战评测](../docs/evaluations/retrieval_challenge_20261025.md)。真实 page/PDF、独立标签、
 真实分布和部署出口仍未完成，不将此部分对照勾成 T10 全完成。
+第二十六批冻结候选池，对照仅重排的完整/祖先标题输入，原文区间与 page/section 边界
+不变；因首位证据回退未接入生产。方法和反例见
+[标题上下文报告](../docs/evaluations/title_context_20261025.md)，仍不关闭 T10/H/I。
 
 ## 提交与 PR 边界
 
