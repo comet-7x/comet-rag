@@ -16,14 +16,16 @@
 默认启用，没有在这张聚焦入库与 revision 的组件图中另画节点。
 第二十四批增加独立检索评测 CLI：固定语料/标签、纯评分器和复用链路的采集器。其内存
 索引独立于右侧生产 Store，不画伪共享 IO；真实模型入口只在给定配置后访问模型服务。
-当前无真实模型实测，作者标签待独立复核，12 组替身回归不代表生产质量已通过。
+本次补验已从现有 .env 选取模型项，在内存索引完成六组真实模型对照，校正标签为 15 条
+证据并记录实际重排。作者标签待独立复核，权重 unknown、候选池极小，不代表生产质量
+已通过；标题孤块/实体混淆和逐查询结果见 [实测报告](../evaluations/model_retrieval_20261025.md)。
 历史载荷处置、新命名空间重建和生产切换门禁见 [迁移边界](../revision_migration.md)。
 详细恢复流程仍见 [架构](../architecture.md) 和 [对账设计](../../tasks/v2_reconciliation_design.md)。
 
 ## 源数据与证据
 
 - [comet-rag.architecture.json](comet-rag.architecture.json) 是可编辑的图源；HTML 是生成产物，不手改。
-- 本图源码证据固定到 `a1d025af9365c33a12f5e099db6e0e0ccc19eb8a`，各节点列出相对路径与行号。
+- 本图源码证据固定到 `22784d3816924bcb6caa8eef41e6a0f682337b55`，各节点列出相对路径与行号。
   固定的是被说明的代码提交，不要求等于包含生成图的提交，避免自引用。
 - 当前为 `local-only` 源码模式：保留路径、行号和版本，不假设尚未推送的提交可在 GitHub 打开。
 - 使用 [Archify 3.2.0](https://github.com/tt-a1i/archify/tree/25cf37080fc8b1dbe758a4efc3935b55f3327083)，

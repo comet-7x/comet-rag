@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "a1d025af9365c33a12f5e099db6e0e0ccc19eb8a",
+      "revision": "22784d3816924bcb6caa8eef41e6a0f682337b55",
       "link_mode": "local-only"
     }
   },
@@ -452,7 +452,7 @@
     {
       "id": "retrieval-evaluation",
       "type": "backend",
-      "label": "检索评测 CLI",
+      "label": "检索评测工具",
       "sublabel": "固定语料 · 独立内存",
       "tag": "不连接生产索引",
       "pos": [
@@ -471,13 +471,13 @@
         },
         {
           "path": "evals/retrieval/baseline.py",
-          "line": 84,
-          "end_line": 142
+          "line": 67,
+          "end_line": 183
         },
         {
           "path": "evals/retrieval/real.py",
-          "line": 18,
-          "end_line": 58
+          "line": 27,
+          "end_line": 71
         }
       ]
     }
@@ -685,10 +685,10 @@
       "title": "第二十四批：固定语料与检索评测",
       "items": [
         "仓库级评测工具不随库安装，不在 HTTP/worker 主链路；生成 DOCX/Markdown，再复用真实解析、分块、revision 激活/判活与检索。",
-        "7 份版本文档、2 KB、18 查询、14 原文证据；旧版本和跨 KB 同名文档保留。标签独立于模型/切块编写，尚待独立人工复核。",
-        "Recall/MRR/nDCG 按原始返回位置，重复文档不重复获益；完整证据覆盖单列。缺查询、坏正文/span、跨 KB、inactive 或降级使评分失败。",
-        "12 组替身回归的 top-5 已饱和，无答案查询仍全部返回结果；不据此改变生产策略、制定任意阈值或关闭 M4 质量出口。",
-        "真实模型入口只访问明确提供的模型服务、使用独立内存索引，未画向生产 Store 的 IO。当前尚无配置路径，真实模型/PDF/page/ANN/目标部署仍待验收。"
+        "7 份版本文档、2 KB、18 查询、15 原文证据；模型实验前自审修正平等相关度并补表头，仍待独立标签复核。旧版本和跨 KB 同名文档保留。",
+        "Recall/MRR/nDCG 与完整证据分开；记录实际 reranked/fetched 和已覆盖证据 ID。缺查询、坏正文/span、跨 KB、inactive、降级或未完成请求的重排使评分失败。",
+        "12 组替身 top-5、6 组真实模型 top-3 证据饱和；逐查询仍暴露标题孤块和关键词实体混淆。所有无答案查询仍返回内容，不能据此关闭 M4 出口。",
+        "本次从现有 .env 选取模型项，在独立内存索引实测 Qwen3-VL 服务；4096 维可用，权重版本 unknown。候选仅 17/3 条，未画向生产 Store 的 IO；真实资料/PDF/page/ANN/目标部署待验。"
       ]
     }
   ]
