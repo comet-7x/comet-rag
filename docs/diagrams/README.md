@@ -10,13 +10,17 @@
 第二十批标出 API 准入可暂停及缺载荷保留；暂停不停止已受理任务，也不证明远端排干。
 第二十二批增加独立 revision-preflight CLI 节点：只读四方配置，不向 Store 画 IO 箭头；
 卡片区说明隔离重建与切读/增量回退演练，不表示项目含自动流量控制器或生产已切换。
+第二十三批补原生 30 秒信号排干、超时取消与独立进程 SIGKILL 恢复旁注；维护调度仍
+独立、默认关闭。单机进程信号不代表跨主机、断电或用户生产发布已验收。
+图中的 IO worker cron 节点只表示可选 revision 对账；通用租约回收在 ARQ worker
+默认启用，没有在这张聚焦入库与 revision 的组件图中另画节点。
 历史载荷处置、新命名空间重建和生产切换门禁见 [迁移边界](../revision_migration.md)。
 详细恢复流程仍见 [架构](../architecture.md) 和 [对账设计](../../tasks/v2_reconciliation_design.md)。
 
 ## 源数据与证据
 
 - [comet-rag.architecture.json](comet-rag.architecture.json) 是可编辑的图源；HTML 是生成产物，不手改。
-- 本图源码证据固定到 `f76f7b450b65c4cbeef219b62038d7347cb4d4a6`，各节点列出相对路径与行号。
+- 本图源码证据固定到 `27bb42bea33ce2d3159b595738ce78e42025f251`，各节点列出相对路径与行号。
   固定的是被说明的代码提交，不要求等于包含生成图的提交，避免自引用。
 - 当前为 `local-only` 源码模式：保留路径、行号和版本，不假设尚未推送的提交可在 GitHub 打开。
 - 使用 [Archify 3.2.0](https://github.com/tt-a1i/archify/tree/25cf37080fc8b1dbe758a4efc3935b55f3327083)，

@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "f76f7b450b65c4cbeef219b62038d7347cb4d4a6",
+      "revision": "27bb42bea33ce2d3159b595738ce78e42025f251",
       "link_mode": "local-only"
     }
   },
@@ -29,7 +29,7 @@
       "sources": [
         {
           "path": "README.md",
-          "line": 37,
+          "line": 39,
           "end_line": 47
         }
       ]
@@ -307,8 +307,8 @@
       "sources": [
         {
           "path": "comet_rag/workers/base.py",
-          "line": 90,
-          "end_line": 111
+          "line": 18,
+          "end_line": 141
         },
         {
           "path": "comet_rag/workers/maintenance.py",
@@ -635,6 +635,17 @@
         "重建复用右侧现有 API 与五阶段 runner；独立测试命名空间覆盖发布前失败、激活响应丢失及六种查询组合。",
         "调用方切读后，无新写可核验旧端回退；有更新时必须先暂停新端、保存并重建差异，再核验旧端正文和尾块。",
         "没有新增自动流量控制器、迁移任务框架或默认开关。真实模型、用户资料、全副本/跨主机及生产切换仍待验收。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "第二十三批：独立进程关停与恢复",
+      "items": [
+        "两道 ARQ worker 默认通过原生 job_completion_wait=30 先停止拉取、允许在途工作收尾；这不是进程退出硬上界，连接与线程排干还需余量。",
+        "窗口耗尽沿用 CANCELLED，不撤销已提交 active；取消任务不可 retry，核验可信来源后可新提交。SIGKILL 依靠既有租约与持久化阶段恢复。",
+        "独立 CPU/IO 解释器实际验证 SIGTERM、激活前后 SIGKILL 和超时取消。新 IO 在原文件已移除、没有 CPU worker 时复用同一版本，不重新 embedding。",
+        "测试确认进程已死后才注入过期 heartbeat，并显式触发同一维护函数；没有等待真实 90 秒，也不宣称验证跨主机、断电或完整 cron 时序。",
+        "单测按认领结果、排队状态及回调协调，保留缺陷反向验证。时间分段、当前样本与实际生产剩余门禁见 V2 计划。"
       ]
     }
   ]
