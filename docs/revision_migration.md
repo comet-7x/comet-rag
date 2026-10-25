@@ -222,3 +222,27 @@ Context 模拟部署完成后的值；不证明全副本已重启或远端写已
 
 生产 H/I、实际资料迁移、部署切换/回退和完整旧端退出仍未完成；本文件给出实施范围与
 验收条件，不声称本批已经迁移用户数据或完成 M4。
+
+## 独立进程关停与恢复证据
+
+第二十三批在 `test_revision_worker_processes.py` 中补齐四个 POSIX 演练：CPU、旧 IO、
+新 IO 均由 subprocess 启动新的 Python 解释器，以 PID 和 worker_id 核验不同进程。
+子进程调用生产 build_settings / 原生 ARQ create_worker，使用同一配置与持久化存储；
+入口是测试模块，模型仍为确定性替身，不声称已验真实模型或真实 CLI 二进制部署。
+
+| 边界 | 实际故障与断言 |
+|---|---|
+| SIGTERM 窗口内排干 | IO 激活前阻塞，收到真实信号后观察上游停拉取；随后新投任务保持 PENDING，在途版本成功，新进程继续消费 |
+| SIGKILL 在激活前 | 进程被真实杀死，Task 仍 RUNNING；移除原文件且不再启动 CPU，由新 IO 重投激活同一 ready 版本 |
+| SIGKILL 在激活提交后 | PostgreSQL 已提交而 Task 只有 activating 意图；新 IO 复验同一 revision/generation，不调用 embedding |
+| 排干窗口耗尽 | 测试将原生窗口显式设为 1 秒；取消终态仍保留 active，retry 返回 400，新提交可建立新版本并回收前任 |
+
+SIGKILL 后先确认进程已经退出，再将测试 heartbeat 推到 180 秒前，使用既有 90 秒
+判死规则；新进程通过同一 sweep_stale_tasks 触发维护，不实际等待 90 秒或宣称验证
+了 cron 的完整时间分布。恢复后六种查询组合均核验新版本，旧/新 IO 模型调用分别为
+4/0，generation 不重复推进。正常子进程以 SIGTERM 排干关停，超时清理会失败并强杀
+回收，不能把强杀当作优雅退出。资源仅限固定测试库和随机 Milvus prefix。
+
+这些是单台主机上的真实进程信号，不是跨主机、机器断电或存储断电。SQL/Redis/Milvus
+在 worker 退出期间继续运行；本地专用 PG 测试关闭 fsync 以加速，不能据此宣称验证
+了电源故障持久性。目标部署仍需其实际进程管理器、权限、网络、备份和存储策略验收。

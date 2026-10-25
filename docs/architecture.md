@@ -195,6 +195,28 @@ DocumentExtraction 为两条链路共享取源阶段，StagePipeline 管 CPU→I
 取源/embedding；无效载荷失败保留，不能由重新提取掩盖。任务失败不等于激活未提交。
 writer、恢复和对账共享配置预算，提取/身份写入也受整份 context CAS 限制。
 
+### worker 信号与资源生命周期
+
+WorkerProfile 默认将原生 ARQ job_completion_wait 设为 30 秒。worker 自己的轮询和
+传输确认由上游管理；Context 在业务/传输排干后才关闭资源，不再实现另一套信号调度。
+排干窗口超时仍是取消，SIGKILL 则依赖持久化阶段及原租约回收；二者不共享一个“重试”
+状态，已提交 active 的存在也不能由 Task 终态反推。
+
+```mermaid
+flowchart TD
+    T["SIGTERM / SIGINT"] --> S["上游停止拉取，等待在途工作"]
+    S -->|"窗口内结束"| C["按业务结果落库，排干传输，再关连接"]
+    S -->|"30 秒窗口耗尽"| X["取消本次尝试并排干；保留已提交 active"]
+    X --> C
+    K["SIGKILL：无清理"] --> R["仍为 RUNNING 的尝试等待租约回收"]
+    R --> P["既有维护按持久化阶段重投"]
+    P --> W["新进程恢复；已发布版本不重算"]
+```
+
+当前实例仍有所有权时取消才落 CANCELLED；已被接管的尝试受围栏保护。超时取消不是
+可自动重试的失败，人工 retry 也只接受 FAILED。容器终止窗口需另留排干余量，详见
+[部署说明](deployment.md#worker-关停与恢复)。独立进程演练不改变这些 Store 原语。
+
 ### revision 任务恢复协议
 
 第十九批在 reserve/写父块之前先保存 `revision_prepare`（version + RevisionDraft），

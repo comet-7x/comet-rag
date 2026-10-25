@@ -28,6 +28,13 @@ class WorkerProfile:
     #: 是否挂租约回收定时器。默认挂 —— arq 的 cron 是 unique 的，多副本下
     #: 每个时刻只有一个真的执行，不必为它单开一个进程。见 maintenance.py。
     sweep: bool = True
+    #: SIGTERM/INT 先停拉取并给已受理任务收尾机会；超时后仍沿用取消语义。
+    #: 这是排干窗口，不是最长任务耗时或容器终止的硬上界。
+    job_completion_wait: int = 30
+
+    def __post_init__(self) -> None:
+        if type(self.job_completion_wait) is not int or self.job_completion_wait < 0:
+            raise ValueError("job_completion_wait 必须是非负整数秒")
 
     @property
     def queue(self) -> str:
@@ -113,6 +120,7 @@ def build_settings(
         redis_settings = RedisSettings.from_dsn(settings.url)
         max_jobs = profile.max_jobs
         job_timeout = profile.job_timeout
+        job_completion_wait = profile.job_completion_wait
         #: 重试归 TaskStore 管（attempts / max_attempts / 退避）。
         #: 让 arq 也插一脚会变成"库里记 2 次、实际跑了 6 次"，两套计数谁也不对。
         retry_jobs = False

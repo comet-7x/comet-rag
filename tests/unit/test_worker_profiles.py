@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from comet_rag.config.schemas import (
@@ -30,6 +32,26 @@ PROFILES = (PREPROCESSOR, EMBEDDER)
 def test_the_two_profiles_serve_different_lanes() -> None:
     assert PREPROCESSOR.lane == LANE_CPU
     assert EMBEDDER.lane == LANE_IO
+
+
+@pytest.mark.parametrize("profile", PROFILES, ids=lambda p: p.name)
+def test_worker_uses_native_signal_drain_before_cancelling_jobs(profile) -> None:
+    settings = build_settings(profile, config=_dummy_config())
+    assert getattr(settings, "job_completion_wait", 0) == 30
+
+
+@pytest.mark.parametrize("seconds", [0, 2])
+def test_native_signal_drain_can_be_explicitly_overridden(seconds):
+    settings = build_settings(
+        replace(EMBEDDER, job_completion_wait=seconds), config=_dummy_config()
+    )
+    assert settings.job_completion_wait == seconds
+
+
+@pytest.mark.parametrize("seconds", [-1, True, 1.5, "30"])
+def test_signal_drain_rejects_invalid_profile_values(seconds):
+    with pytest.raises(ValueError, match="job_completion_wait"):
+        replace(EMBEDDER, job_completion_wait=seconds)
 
 
 def test_each_lane_gets_its_own_queue() -> None:

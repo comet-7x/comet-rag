@@ -137,6 +137,29 @@ comet-rag config --config /etc/comet-rag/prod.yaml   # 打印生效配置（密�
 
 ---
 
+## Worker 关停与恢复
+
+两道 worker 默认通过 ARQ 原生 `job_completion_wait=30` 处理 SIGTERM/SIGINT：先停止
+拉取新任务，最多给在途工作 30 秒收尾，再取消仍未完成的尝试，排干后关连接。
+参数核对见 [ARQ 文档](https://arq-docs.helpmanual.io/#arq.worker.Worker)；本批运行
+ARQ 0.28.0，也核对了依赖下界 [v0.26.0 源码](https://github.com/python-arq/arq/blob/v0.26.0/arq/worker.py)。
+这是 WorkerProfile 的进程画像参数，不是新增 YAML 配置；程序化部署可显式覆盖非负
+整数（0 表示立即取消）。它与 1800 秒任务工作超时不同，不限制整个进程的退出耗时。
+
+容器/进程管理器应在该窗口之外继续留出取消排干、线程结束和连接关闭的时间；不能
+把外部强制终止时间同样设为 30 秒就宣称优雅关停。同步解析线程不能强杀，取消排干
+可能超过这个窗口。先暂停全部生产入口、排干既有工作，再逐批停止 worker；单个
+worker 停拉取不会暂停 API 或其他 worker。API 暂停方式见下节。
+
+超时取消沿用 Task 契约：仍归该执行者的尝试进入 CANCELLED，不能自动或通过 retry
+重开；已提交的 active 不撤销。需要继续入库时，先核验可见版本和可信来源，再提交
+新的任务。只有 FAILED 可手动 retry，不应修改 Task JSON 把取消伪装成失败。
+
+SIGKILL 不执行清理。仍卡在 RUNNING 的任务按既有 90 秒心跳租约，由维护回收并按
+持久化阶段投回对应道次；恢复还取决于下一次调度、Redis/数据库可用性和重试次数，
+不是“90 秒必然完成”。revision 激活提交但响应丢失时，新 IO worker 复验同一版本，
+不会重新取源/向量化。单机进程演练的边界见[迁移验证](revision_migration.md#独立进程关停与恢复证据)。
+
 ## 暂停入库准入
 
 新命名空间启用前，在服务依赖环境运行 `comet-rag revision-preflight` 对照旧端与新
