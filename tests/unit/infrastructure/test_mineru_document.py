@@ -1086,3 +1086,138 @@ async def test_model_health_is_rejected_before_upload_with_service_hint(
                 )
 
     assert requests == ["GET"]
+
+
+def native_page_server() -> ScriptedMinerU:
+    return ScriptedMinerU(
+        statuses=("completed",),
+        health={
+            "status": "healthy",
+            "version": "3.4.5",
+            "protocol_version": 2,
+            "extensions": {"comet_page_markdown": 1},
+        },
+        result={
+            "results": {
+                "sample": {
+                    "md_content": "![](images/a.jpg)\n\n<table><tr><td>A</td></tr></table>\n\n- B",
+                    "comet_page_markdown": {
+                        "version": 1,
+                        "boundary_mode": "physical",
+                        "page_count": 3,
+                        "pages": [
+                            {"page_idx": 0, "markdown": "![](images/a.jpg)"},
+                            {"page_idx": 1, "markdown": ""},
+                            {
+                                "page_idx": 2,
+                                "markdown": "<table><tr><td>A</td></tr></table>\n\n- B",
+                            },
+                        ],
+                    },
+                }
+            }
+        },
+    )
+
+
+@pytest.mark.parametrize("missing", [False, True])
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_negotiated_native_markdown_preserves_complex_pages_and_empty_gaps(
+    document_path: Path, asynchronous: bool, missing: bool
+) -> None:
+    server = native_page_server()
+    if missing:
+        server.missing_task_ids = {"task-1"}
+    extractor = _extractor(server, asynchronous=asynchronous, backend="vlm-http-client")
+    if isinstance(extractor, AsyncMinerUDocumentExtractor):
+        result = await extractor.extract(
+            document_path, filename="sample.pdf", media_type="application/pdf"
+        )
+    else:
+        result = extractor.extract(
+            document_path, filename="sample.pdf", media_type="application/pdf"
+        )
+    assert result.pages == (
+        ExtractedPage(1, "![](images/a.jpg)"),
+        ExtractedPage(3, "<table><tr><td>A</td></tr></table>\n\n- B"),
+    )
+    assert len(server.submission_bodies) == (2 if missing else 1)
+    assert all(
+        b'name="return_content_list"\r\n\r\nfalse\r\n' in body
+        for body in server.submission_bodies
+    )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing",
+        "version",
+        "bool_version",
+        "boundary",
+        "bool_count",
+        "count",
+        "gap",
+        "bool_index",
+        "text",
+        "mismatch",
+    ],
+)
+def test_advertised_native_pages_must_not_silently_fall_back(
+    document_path: Path, fault: str
+) -> None:
+    server = native_page_server()
+    result = server.result["results"]["sample"]
+    pages = result["comet_page_markdown"]
+    if fault == "missing":
+        del result["comet_page_markdown"]
+    elif fault == "version":
+        pages["version"] = 2
+    elif fault == "bool_version":
+        pages["version"] = True
+    elif fault == "boundary":
+        pages["boundary_mode"] = "merged"
+    elif fault == "bool_count":
+        pages["page_count"] = True
+        pages["pages"] = pages["pages"][:1]
+        result["md_content"] = "![](images/a.jpg)"
+    elif fault == "count":
+        pages["page_count"] = 2
+    elif fault == "gap":
+        pages["pages"][1]["page_idx"] = 2
+    elif fault == "bool_index":
+        pages["pages"][0]["page_idx"] = False
+    elif fault == "text":
+        pages["pages"][0]["markdown"] = ["wrong"]
+    else:
+        pages["pages"][0]["markdown"] = "wrong"
+    extractor = _extractor(server, backend="vlm-http-client")
+    with pytest.raises(DocumentProtocolError, match="逐页"):
+        extractor.extract(
+            document_path, filename="sample.pdf", media_type="application/pdf"
+        )
+
+
+@pytest.mark.parametrize("extension", [True, 1.0, 2, "1", None])
+def test_invalid_native_capability_fails_before_upload(
+    document_path: Path, extension: object
+) -> None:
+    server = native_page_server()
+    server.health["extensions"]["comet_page_markdown"] = extension
+    with pytest.raises(DocumentProtocolError, match="逐页"):
+        _extractor(server, backend="vlm-http-client").extract(
+            document_path, filename="sample.pdf", media_type="application/pdf"
+        )
+    assert server.submissions == 0
+
+
+def test_unadvertised_native_output_does_not_replace_legacy_contract(
+    document_path: Path,
+) -> None:
+    server = native_page_server()
+    del server.health["extensions"]
+    result = _extractor(server, backend="vlm-http-client").extract(
+        document_path, filename="sample.pdf", media_type="application/pdf"
+    )
+    assert result.pages == ()
+    assert result.markdown.startswith("![](images/a.jpg)")

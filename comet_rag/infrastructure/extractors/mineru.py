@@ -21,7 +21,7 @@ from comet_rag.ports import (
 )
 from comet_rag.ports.gate import GatedResource
 
-from ._mineru_pages import extract_mineru_pages
+from ._mineru_pages import extract_mineru_pages, extract_native_pages
 
 MINERU_API_PROTOCOL_VERSION = 2
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 10.0
@@ -51,6 +51,7 @@ Clock = Callable[[], float]
 @dataclass(frozen=True, slots=True)
 class _ServerInfo:
     version: str
+    page_markdown: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,7 +258,16 @@ class _MinerUProtocol:
         version = payload.get("version")
         if not isinstance(version, str) or not version:
             raise DocumentProtocolError("MinerU health 响应缺少非空 version")
-        return _ServerInfo(version=version)
+        extensions = payload.get("extensions", {})
+        if not isinstance(extensions, dict):
+            raise DocumentProtocolError("MinerU 逐页能力声明必须是 object")
+        native_pages = "comet_page_markdown" in extensions
+        if native_pages and (
+            type(extensions["comet_page_markdown"]) is not int
+            or extensions["comet_page_markdown"] != 1
+        ):
+            raise DocumentProtocolError("MinerU 逐页扩展能力版本不兼容")
+        return _ServerInfo(version=version, page_markdown=native_pages)
 
     @classmethod
     def _submitted_task(cls, response: _BufferedResponse) -> _SubmittedTask:
@@ -289,7 +299,10 @@ class _MinerUProtocol:
             raise DocumentProtocolError(f"MinerU 返回未知任务状态：{status!r}")
         return status
 
-    def _form_data(self) -> dict[str, str]:
+    def _use_native_pages(self, server_info: _ServerInfo) -> bool:
+        return server_info.page_markdown and self._backend == "vlm-http-client"
+
+    def _form_data(self, server_info: _ServerInfo) -> dict[str, str]:
         return {
             "lang_list": self._language,
             "backend": self._backend,
@@ -297,6 +310,7 @@ class _MinerUProtocol:
             "formula_enable": str(self._formula).lower(),
             "table_enable": str(self._table).lower(),
             **_OUTPUT_FLAGS,
+            "return_content_list": str(not self._use_native_pages(server_info)).lower(),
         }
 
     def _document(
@@ -321,12 +335,15 @@ class _MinerUProtocol:
                 "MinerU Markdown 超过限制："
                 f"{markdown_size} > {self._max_markdown_bytes} bytes"
             )
-        pages = extract_mineru_pages(result.get("content_list"))
-        if (
-            pages is not None
-            and "\n\n".join(page.markdown for page in pages) != markdown
-        ):
-            pages = None
+        if self._use_native_pages(server_info):
+            pages = extract_native_pages(result.get("comet_page_markdown"), markdown)
+        else:
+            pages = extract_mineru_pages(result.get("content_list"))
+            if (
+                pages is not None
+                and "\n\n".join(page.markdown for page in pages) != markdown
+            ):
+                pages = None
         return ExtractedDocument(
             markdown=markdown,
             metadata={
@@ -428,6 +445,7 @@ class MinerUDocumentExtractor(_MinerUProtocol, GatedResource):
         filename: str,
         media_type: str,
         deadline: float,
+        server_info: _ServerInfo,
     ) -> _SubmittedTask:
         with path.open("rb") as stream:
             upload = _DeadlineReader(stream, lambda: self._remaining(deadline))
@@ -437,7 +455,7 @@ class MinerUDocumentExtractor(_MinerUProtocol, GatedResource):
                 operation="task submission",
                 deadline=deadline,
                 upload=True,
-                data=self._form_data(),
+                data=self._form_data(server_info),
                 files={"files": (filename, upload, media_type)},
             )
         return self._submitted_task(response)
@@ -476,7 +494,11 @@ class MinerUDocumentExtractor(_MinerUProtocol, GatedResource):
         health = self._request("GET", "/health", operation="health", deadline=deadline)
         server_info = self._server_info(health)
         task = self._submit(
-            path, filename=filename, media_type=media_type, deadline=deadline
+            path,
+            filename=filename,
+            media_type=media_type,
+            deadline=deadline,
+            server_info=server_info,
         )
         for attempt in range(2):
             try:
@@ -493,6 +515,7 @@ class MinerUDocumentExtractor(_MinerUProtocol, GatedResource):
                     filename=filename,
                     media_type=media_type,
                     deadline=deadline,
+                    server_info=server_info,
                 )
         raise AssertionError("unreachable")
 
@@ -600,6 +623,7 @@ class AsyncMinerUDocumentExtractor(_MinerUProtocol, GatedResource):
         filename: str,
         media_type: str,
         deadline: float,
+        server_info: _ServerInfo,
     ) -> _SubmittedTask:
         with path.open("rb") as stream:
             upload = _DeadlineReader(stream, lambda: self._remaining(deadline))
@@ -609,7 +633,7 @@ class AsyncMinerUDocumentExtractor(_MinerUProtocol, GatedResource):
                 operation="task submission",
                 deadline=deadline,
                 upload=True,
-                data=self._form_data(),
+                data=self._form_data(server_info),
                 files={"files": (filename, upload, media_type)},
             )
         return self._submitted_task(response)
@@ -656,7 +680,11 @@ class AsyncMinerUDocumentExtractor(_MinerUProtocol, GatedResource):
                 )
                 server_info = self._server_info(health)
                 task = await self._submit(
-                    path, filename=filename, media_type=media_type, deadline=deadline
+                    path,
+                    filename=filename,
+                    media_type=media_type,
+                    deadline=deadline,
+                    server_info=server_info,
                 )
                 for attempt in range(2):
                     try:
@@ -673,6 +701,7 @@ class AsyncMinerUDocumentExtractor(_MinerUProtocol, GatedResource):
                             filename=filename,
                             media_type=media_type,
                             deadline=deadline,
+                            server_info=server_info,
                         )
         except TimeoutError as exc:
             raise RetryableDocumentUpstreamError(

@@ -103,3 +103,35 @@ def _is_int(value: object) -> TypeGuard[int]:
 
 
 __all__ = ["extract_mineru_pages"]
+
+
+def extract_native_pages(payload: object, markdown: str) -> tuple[ExtractedPage, ...]:
+    """部署扩展已协商时严格验约；不能把损坏的逐页输出降为旧投影成功。"""
+    from comet_rag.ports import DocumentProtocolError
+
+    if not isinstance(payload, dict):
+        raise DocumentProtocolError("MinerU 逐页扩展缺少 object 结果")
+    if type(payload.get("version")) is not int or payload["version"] != 1:
+        raise DocumentProtocolError("MinerU 逐页扩展版本不兼容")
+    if payload.get("boundary_mode") != "physical":
+        raise DocumentProtocolError("MinerU 逐页扩展没有声明物理页边界")
+    count, items = payload.get("page_count"), payload.get("pages")
+    if (
+        not _is_int(count)
+        or count <= 0
+        or not isinstance(items, list)
+        or len(items) != count
+    ):
+        raise DocumentProtocolError("MinerU 逐页扩展的页数不完整")
+    pages = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise DocumentProtocolError("MinerU 逐页扩展的页记录必须是 object")
+        number, fragment = item.get("page_idx"), item.get("markdown")
+        if not _is_int(number) or number != index or not isinstance(fragment, str):
+            raise DocumentProtocolError("MinerU 逐页扩展的页号或正文类型不合法")
+        if fragment:
+            pages.append(ExtractedPage(number + 1, fragment))
+    if "\n\n".join(page.markdown for page in pages) != markdown:
+        raise DocumentProtocolError("MinerU 逐页扩展未精确重建原生 Markdown")
+    return tuple(pages)
