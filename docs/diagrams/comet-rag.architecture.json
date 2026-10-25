@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "c406c9b37e8eab19d694724f003b386f6a8200a3",
+      "revision": "71f474f511aca89c30f578c2951d00dadfcffa84",
       "link_mode": "local-only"
     }
   },
@@ -86,9 +86,9 @@
           "end_line": 234
         },
         {
-          "path": "comet_rag/engines/pipelines/hooks.py",
-          "line": 248,
-          "end_line": 283
+          "path": "comet_rag/engines/chunkers/strategies/_blocks.py",
+          "line": 14,
+          "end_line": 54
         },
         {
           "path": "comet_rag/engines/documents/markdown/structure.py",
@@ -495,8 +495,8 @@
     {
       "id": "pdf-parse-audit",
       "type": "backend",
-      "label": "PDF 原生核验",
-      "sublabel": "显式调用文档 API",
+      "label": "PDF 核验与审计",
+      "sublabel": "显式解析 · 离线证据",
       "tag": "独立运行 · 不写索引",
       "pos": [
         1120,
@@ -509,13 +509,18 @@
       "sources": [
         {
           "path": "evals/pdf/parse.py",
-          "line": 17,
-          "end_line": 59
-        },
-        {
-          "path": "evals/pdf/parse.py",
           "line": 71,
           "end_line": 143
+        },
+        {
+          "path": "evals/pdf/inspect.py",
+          "line": 66,
+          "end_line": 115
+        },
+        {
+          "path": "evals/pdf/inspect.py",
+          "line": 202,
+          "end_line": 225
         }
       ]
     }
@@ -658,7 +663,7 @@
       "id": "native-pdf-audit-request",
       "from": "pdf-parse-audit",
       "to": "mineru",
-      "label": "显式 HTTP",
+      "label": "解析时 HTTP",
       "variant": "default"
     }
   ],
@@ -789,6 +794,17 @@
         "完整原始 7/80 页两轮获得 1–7/1–80 页，逐页重建、规范化和分块硬边界通过；图片页2、勘误表页4、PaaS页6→7和表2物理页52均核对。不是拆页后的派生页或参考提取，也不连接生产索引。",
         "已协商却返回缺失或错误的页字段明确失败；未声明扩展保留旧路径。按次保存协商值，重提沿用，关闭冗余 content list；空页保留编号，禁止移动内容和渲染污染。真实上游全局 merge 反例被守卫拒绝。",
         "298 项集成通过、MinIO 1 项跳过；普通 unit 本次9.98s仅一次观测。原生正文仍可能错字、缺脚注，Router/正式部署、独立金标与固定权重仍待验收；按新命名空间重建核验后切换，不在线热改旧索引。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "第三十批：覆盖不等于完整证据单元",
+      "items": [
+        "纯覆盖守卫拒绝有区间分块遗漏非空正文或倒序，结构策略、层级和服务Hook复用；允许合法重叠与空白。旧spanless或混合Hook仍不能证明覆盖。",
+        "PDF工具的解析入口显式调用文档API；新增审计入口只读已有Markdown/page文件，检查来源锁、canonical及单块表格/行，不发HTTP、不写生产索引。图中HTTP箭头仅属于解析。",
+        "冻结7/80页产物中旧21条quote都不逐字匹配，不沿用pypdf span。唯一且同物理页也只是待人工裁决候选，不是独立批准或新的模型分数。",
+        "六张长表都超过1600字符；所有显式行不超过800仍存在边界切行。全文覆盖、同一结果含整行、同一结果含整表分开计；不能把多个碎片拼成一个证据。",
+        "默认800/80/1600及正文/区间/metadata指纹不变。下一步先冻结原生证据单元、问题页域及独立裁决，固定工件和正式部署门禁仍开放；不凭完整页数或旧高分改生产策略。"
       ]
     }
   ]
