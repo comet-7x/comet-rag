@@ -244,3 +244,8 @@ recursive/markdown/hierarchy 的 12 组确定性回归。规则与限制见
 T1～T5 每项至少一个 Conventional Commit，聚焦 Chunking；T6 只提交设计。通过决策门
 后，从最新 develop 创建 `feature/m4-hierarchical-indexing` 实现 T7～T10，避免算法
 重构与数据库迁移出现在同一个不可回滚 PR。
+
+第二十八批已补原生 MinerU 3.4.5 协议与解析链，完整 7/80 页公开文件均完成解析但
+保守回退 section；真实正文三页派生子集保留页事实，并显式记录新旧物理页映射。
+[解析报告](../docs/evaluations/mineru_pdf_20261025.md)区分协议、页事实、字词和质量验收；
+复杂整份 page、独立标签、固定模型工件与目标部署仍未完成，不关闭 T10/H/I。

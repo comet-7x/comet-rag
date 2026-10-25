@@ -79,3 +79,22 @@ relevance是document_id到0/1/2等级的映射：2为主要答案来源、1为�
 evidence每项填写document_id、page_number（物理页）与逐字quote；跨页答案分列，不能
 将两个片段合成一条不存在的原文。无答案题也需notes说明检查范围和缺失依据。
 填写reviewer与复核日期/角色说明；提交后先裁决分歧再冻结版本，不直接覆盖作者金标。
+
+## 原生 MinerU 解析核验
+
+```bash
+uv run python -m evals.pdf.parse --pdf-dir /path/to/source-pdfs \
+  --mineru-url http://127.0.0.1:8989 --backend vlm-http-client \
+  --out /tmp/comet-native-pdf-new-run
+```
+
+这是显式访问外部文档服务的独立工具，不需要 pypdf，不接入生产索引。URL 遵循现有
+MinerU TLS/回环规则。先核验全部原 PDF 字节与来源锁，再按单任务顺序上传；解析后
+复核来源字节，保存实际 Markdown、原生页片段和报告，不保存端点或凭据。输出目录
+必须是新目录，避免失败重跑旁边保留旧成功报告。
+
+`page_status=verified` 只表示页号在该 PDF 内、原生正文精确重建、规范化及分块硬边界
+通过；没有页事实写 `unavailable_section_fallback`，不会声称页验收成功。工具不证明
+OCR 字词正确、所有物理页均被识别、人工标签有效或模型权重固定，也不跨 canonical
+正文复用旧字符 span 评分。来源锁、正文子集映射与整份回退观测见
+[第二十八批报告](../../docs/evaluations/mineru_pdf_20261025.md)。

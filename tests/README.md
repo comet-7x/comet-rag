@@ -196,14 +196,14 @@ COMET_TEST_MINERU_URL=http://127.0.0.1:8989 \
   --mineru-report mineru-report.json
 ```
 
-若已有 OpenAI 兼容的 MinerU 2.5 vLLM，先在 Comet-RAG 之外启动 MinerU 3.x
-网关。当前 MinerU 使用环境变量配置远端模型；网关只监听本机时不需要开放
+若已有 OpenAI 兼容的 MinerU 2.5 vLLM，先在 Comet-RAG 之外启动固定版本
+MinerU 3.4.5 / protocol v2 文档 API。该服务用环境变量配置远端模型，只监听本机时不需要开放
 `server_url` 请求参数：
 
 ```bash
 MINERU_VL_SERVER=http://<vlm-host>:<vlm-port> \
 MINERU_VL_MODEL_NAME=opendatalab/MinerU2.5-2509-1.2B \
-mineru-api --host 127.0.0.1 --port 8989
+mineru-api --host 127.0.0.1 --port 8989 --max-concurrency 2
 
 COMET_TEST_MINERU_URL=http://127.0.0.1:8989 \
 COMET_TEST_MINERU_BACKEND=vlm-http-client \
@@ -221,6 +221,10 @@ uv run pytest -m integration tests/integration/test_mineru_e2e.py \
 并发提交一个带文本层的 PDF 和一个纯图片扫描 PDF，通过 TaskStore 等待终态，并
 记录耗时、Markdown 字节、Comet-RAG 进程的 Python 堆峰值及 CPU lane 预计持有
 时间。报告不包含外部 MinerU 进程的 CPU、显存或 RSS，不能用来宣称服务总资源。
+
+真实 PDF 页边界还包括两页重复正文的原生解析、规范化与 page 分块区间验证。公开完整
+PDF 的解析核验复现命令见 [PDF 工具说明](../evals/pdf/README.md)；缺失页事实必须记为
+section 回退，不计为 page 成功。真实服务结果不写入 unit，也不把小样本当吞吐基准。
 
 ### 跑 arq 的用例时，Redis 键怎么隔离
 

@@ -34,8 +34,9 @@ Comet-RAG Loader → DocumentExtractorPort → Normalizer → 分块 → 向量�
 
 `md_content` 始终是正文真相。M4 起适配器显式请求 content list，仅用它验证并生成真实
 页边界：可支持项按页重建后必须与 Markdown 完全一致，否则不产生页事实并回退标题
-section。适配器仍关闭 ZIP、图片、中间 JSON、模型输出与原文件回传，不依赖 MinerU
-默认值。`POST /file_parse` 是同步兼容接口，不是 Comet-RAG 的生产路径。
+section。这是整份文档的保守判定；即使正文均为文本，封面的图片或勘误表也可能使
+整份文档没有 page blocks。不能从页内文本搜索、页码样式或 PDF 总页数猜测区间。
+适配器仍关闭 ZIP、图片、中间 JSON、模型输出与原文件回传，不依赖 MinerU 默认值。`POST /file_parse` 是同步兼容接口，不是 Comet-RAG 的生产路径。
 
 先确认你拿到的是 MinerU 文档服务，而不是底层 vLLM：
 
@@ -45,9 +46,25 @@ curl http://127.0.0.1:8989/health
 
 健康响应中必须包含 `protocol_version: 2`。仅有 `/v1/models` 和
 `/v1/chat/completions` 的地址是 OpenAI 兼容模型后端，不能直接填入
-`infrastructure_config.mineru.base_url`。
+`infrastructure_config.mineru.base_url`。HTTP 200 本身不证明协议正确：vLLM 的
+`/health` 可以返回空正文；文档服务必须返回上面的 JSON 字段。既有地址若带 `/v1`，
+也不要自动删除前缀重试上传——可能是反向代理路径，先核对服务角色与路由。
 
 ## 部署 mineru-api
+
+本协议已实测的上游版本是 **MinerU 3.4.5 / protocol v2**。在 Comet-RAG 之外的
+专用环境固定 `mineru==3.4.5`；不要在应用虚拟环境安装，也不要用不带版本的安装命令
+自动跟进上游主分支。上游 4.x 已调整目录和入口，需要另行核对协议，不能从同名 CLI
+推断兼容。见[官方旧版本兼容说明](https://opendatalab.github.io/MinerU/usage/compatibility/)。
+
+```bash
+uv venv /path/to/mineru-api-env --python 3.12
+uv pip install --python /path/to/mineru-api-env/bin/python 'mineru==3.4.5'
+```
+
+以下命令在该独立环境运行；`vlm-http-client` 使用远端模型时，本轮基础安装不含
+Torch/vLLM/transformers。`pipeline` 或进程内 GPU 模型需要上游对应 extras，不能
+把只装基础包的 HTTP 模式验收当成这些 backend 已可用。
 
 单实例或开发环境直接运行 `mineru-api`。如果模型由该进程自行管理：
 
@@ -60,11 +77,14 @@ mineru-api --host 127.0.0.1 --port 8989
 ```bash
 MINERU_VL_SERVER=http://<vlm-host>:<vlm-port> \
 MINERU_VL_MODEL_NAME=opendatalab/MinerU2.5-2509-1.2B \
-mineru-api --host 127.0.0.1 --port 8989
+mineru-api --host 127.0.0.1 --port 8989 --max-concurrency 2
 ```
 
 对应的 Comet-RAG backend 是 `vlm-http-client`。当前 MinerU 用上述环境变量配置
-模型地址；不要把 `server_url` 开放成每个入库请求都能修改的参数。
+模型地址；不要把 `server_url` 开放成每个入库请求都能修改的参数。上例将单个远端
+VLM 客户端并发限为 2；API 任务并发和处理窗口是不同预算，可在外部服务分别设置
+`MINERU_API_MAX_CONCURRENT_REQUESTS=1`、`MINERU_PROCESSING_WINDOW_SIZE=2`。
+它们不替代 Comet-RAG 的进程级闸门。
 
 MinerU 在绑定 `0.0.0.0` 或 `::` 时默认禁用 `*-http-client` 和请求级
 `server_url`。确需远程访问时，`--allow-public-http-client` 是风险确认开关，
@@ -184,6 +204,11 @@ Comet-RAG 测试进程 Python 堆峰值约 1.45 MB。
 测出外部 MinerU 的 CPU、显存或 RSS。因此保留 900s 总超时、16 MiB 响应和
 8 MiB Markdown 的保守默认值，生产部署应使用自己的文档集重新采样。
 
+2026-10-25 的[第二十八批实测](evaluations/mineru_pdf_20261025.md)补充了完整 7/80 页
+公开 PDF、真实正文三页子集和重复句两页样本。两份完整 PDF 均成功解析，但均安全
+回退 section；正文子集的原生页号 1–3 有效，另附到原文件物理页 5–7 的派生映射。
+它不证明完整原文件已通过 page 验收。独立人工标签、固定模型工件和生产部署仍待验收。
+
 ## 不支持的集成方式
 
 - 在 Comet-RAG 中 import `mineru` 或 `mineru_vl_utils`；
@@ -197,7 +222,7 @@ Comet-RAG 测试进程 Python 堆峰值约 1.45 MB。
 
 ## 官方依据
 
-- [MinerU 快速使用](https://github.com/opendatalab/MinerU/blob/master/docs/zh/usage/quick_usage.md)
-- [MinerU FastAPI 实现](https://github.com/opendatalab/MinerU/blob/master/mineru/cli/fast_api.py)
-- [MinerU 请求参数](https://github.com/opendatalab/MinerU/blob/master/mineru/cli/api_request.py)
-- [MinerU API 客户端](https://github.com/opendatalab/MinerU/blob/master/mineru/cli/api_client.py)
+- [MinerU 快速使用](https://github.com/opendatalab/MinerU/blob/mineru-3.4.5-released/docs/zh/usage/quick_usage.md)
+- [MinerU FastAPI 实现](https://github.com/opendatalab/MinerU/blob/mineru-3.4.5-released/mineru/cli/fast_api.py)
+- [MinerU 请求参数](https://github.com/opendatalab/MinerU/blob/mineru-3.4.5-released/mineru/cli/api_request.py)
+- [MinerU API 客户端](https://github.com/opendatalab/MinerU/blob/mineru-3.4.5-released/mineru/cli/api_client.py)

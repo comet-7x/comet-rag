@@ -47,3 +47,8 @@ chat template的不可变版本/摘要，以及服务端版本和影响截断的
 既有MINERU_BASE_URL的 /health 返回404，且不符合MinerU非回环TLS校验；不绕过
 既有安全契约上传PDF，不把Poppler/pypdf参考提取接成服务的隐式fallback。生产解析、
 真实MinerU页事实和目标部署验收仍待正确protocol v2配置。H/I、M4-T10均不因此关闭。
+
+第二十八批补验见[原生解析报告](../docs/evaluations/mineru_pdf_20261025.md)：配置中的
+地址实际为模型后端，已用独立官方 API 验证协议。复杂完整 PDF 回退 section；三页
+正文派生样本有显式物理页映射。新原生正文不能直接套用本批 pypdf 字符 span，
+独立裁决与固定工件仍是后续质量比较的前置。

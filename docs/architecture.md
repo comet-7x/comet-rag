@@ -145,7 +145,10 @@ ARQ/Redis 与 PyMilvus 均如此。`AsyncMilvusStore` 只持有 `AsyncMilvusClie
 
 真实PDF评测也在仓库evals内：读取已核验的物理页快照，复用现有入库/检索，再按原生
 正文token计数投影完整排名前缀。独立参考提取不接入生产MinerU，盲审未完成时不批准
-生产质量。职责与边界见[PDF/page报告](evaluations/pdf_page_20261025.md)。
+生产质量。职责与边界见[PDF/page报告](evaluations/pdf_page_20261025.md)。独立原生解析
+核验工具显式调用外部 MinerU 文档 API，逐页守卫与 section 回退分列报告，不访问
+生产索引；模型后端与文档服务角色、完整 PDF 和派生页边界见
+[原生解析报告](evaluations/mineru_pdf_20261025.md)。
 
 ## 核心抽象
 
