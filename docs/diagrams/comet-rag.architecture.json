@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "22784d3816924bcb6caa8eef41e6a0f682337b55",
+      "revision": "c4f17a3c8abaccc5325823846bf39249943e6c92",
       "link_mode": "local-only"
     }
   },
@@ -89,6 +89,11 @@
           "path": "comet_rag/engines/pipelines/hooks.py",
           "line": 248,
           "end_line": 283
+        },
+        {
+          "path": "comet_rag/engines/documents/markdown/structure.py",
+          "line": 21,
+          "end_line": 65
         }
       ]
     },
@@ -471,13 +476,13 @@
         },
         {
           "path": "evals/retrieval/baseline.py",
-          "line": 67,
-          "end_line": 183
+          "line": 68,
+          "end_line": 190
         },
         {
           "path": "evals/retrieval/real.py",
-          "line": 27,
-          "end_line": 71
+          "line": 19,
+          "end_line": 73
         }
       ]
     }
@@ -689,6 +694,17 @@
         "Recall/MRR/nDCG 与完整证据分开；记录实际 reranked/fetched 和已覆盖证据 ID。缺查询、坏正文/span、跨 KB、inactive、降级或未完成请求的重排使评分失败。",
         "12 组替身 top-5、6 组真实模型 top-3 证据饱和；逐查询仍暴露标题孤块和关键词实体混淆。所有无答案查询仍返回内容，不能据此关闭 M4 出口。",
         "本次从现有 .env 选取模型项，在独立内存索引实测 Qwen3-VL 服务；4096 维可用，权重版本 unknown。候选仅 17/3 条，未画向生产 Store 的 IO；真实资料/PDF/page/ANN/目标部署待验。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "第二十五批：困难样本与审慎决策",
+      "items": [
+        "原始集保留；另增 11 文档、31 查询、26 证据的独立挑战集，最长 12505 字符，315 个 child 超过 fetch_k=50。模板化合成长文仍不等于真实分布。",
+        "先冻结标签，再做标题合并原型和原生后端对照。合并改善 dense 却使关键词证据回退，未默认采用；标题本身含事实，不统一删除。",
+        "生产只修复跳级标题祖先路径：按真实 level 出栈，不把栈深当级别。原文/区间与 section/page 硬边界不变；旧索引需新 revision 重建，不原地回填。",
+        "评测可显式注入已有测试 Store，必须声明后端身份且归调用方清理。Milvus 原生 Chinese 对照使用随机测试前缀并恢复集合基线，未向右侧生产 Store 绘制共享 IO。",
+        "21 组主要对照/复核、573 次检索均重评分核对。标题孤块、实体混淆及无答案边界仍在；权重 unknown、标签待独立复核，M4-T10/H/I 不关闭。"
       ]
     }
   ]
