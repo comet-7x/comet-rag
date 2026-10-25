@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "c4f17a3c8abaccc5325823846bf39249943e6c92",
+      "revision": "04bfda1fccfd9c6edac762df0d6dcca1a817c899",
       "link_mode": "local-only"
     }
   },
@@ -470,19 +470,19 @@
       ],
       "sources": [
         {
-          "path": "evals/retrieval/data.py",
-          "line": 218,
-          "end_line": 258
-        },
-        {
           "path": "evals/retrieval/baseline.py",
           "line": 68,
           "end_line": 190
         },
         {
           "path": "evals/retrieval/real.py",
-          "line": 19,
-          "end_line": 73
+          "line": 35,
+          "end_line": 113
+        },
+        {
+          "path": "evals/retrieval/title_replay.py",
+          "line": 143,
+          "end_line": 212
         }
       ]
     }
@@ -705,6 +705,17 @@
         "生产只修复跳级标题祖先路径：按真实 level 出栈，不把栈深当级别。原文/区间与 section/page 硬边界不变；旧索引需新 revision 重建，不原地回填。",
         "评测可显式注入已有测试 Store，必须声明后端身份且归调用方清理。Milvus 原生 Chinese 对照使用随机测试前缀并恢复集合基线，未向右侧生产 Store 绘制共享 IO。",
         "21 组主要对照/复核、573 次检索均重评分核对。标题孤块、实体混淆及无答案边界仍在；权重 unknown、标签待独立复核，M4-T10/H/I 不关闭。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "第二十六批：标题定位不等于原文证据",
+      "items": [
+        "先冻结窄方案：只改变实验中的重排模型视图。完整路径/仅祖先路径有界；page 不借 section 标题，不读邻块或父块。原文、区间、分块与向量保持不变。",
+        "12 个冻结候选池，原始/挑战集 × 内存/原生测试后端 × 三种模式。两轮 72 个配对组、1764 条重放，另 294 次生产链路候选采集；定位前缀不计正文证据。",
+        "电话 6118 的正确标题块被不含号码的适用范围块挤掉：两轮、两种上下文和六组召回均复现首位证据回退。部分前三收益不能抵消关键回退，两个方案都未进入生产。",
+        "采集/原文重放有 28 条前五排序变化，证据指标不变；完整标题的部分收益在第二轮波动。分别保留轮次，不凭未知权重的小样本宣布达标。",
+        "工具只在仓库 evals，借用模型、由外层关闭；排序按原索引回映正文，深复制 metadata。真实模型可用性、32 项回归和六项反向缺陷已验证；独立标签、真实 page/PDF、token/ANN 与 M4-T10/H/I 仍待验收。"
       ]
     }
   ]

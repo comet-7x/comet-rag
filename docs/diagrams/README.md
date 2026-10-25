@@ -22,13 +22,16 @@
 第二十五批增加独立长文/困难负例集及原生测试后端对照，未采用有回退的标题合并。
 生产仅修正跳级祖先路径，保留原文与硬边界；评测可注入既有测试 Store，由调用方精确
 清理，不代表图右侧生产 Store 被评测使用。见 [挑战报告](../evaluations/retrieval_challenge_20261025.md)。
+第二十六批补同池重排标题视图实验：page/section 与原文区间不变，但电话事实的首位
+正文证据在两轮均回退，完整/祖先路径都未接入生产。录制/重放属于图左侧仓库工具，
+不代表运行时会增加标题或修改右侧索引。见 [标题上下文报告](../evaluations/title_context_20261025.md)。
 历史载荷处置、新命名空间重建和生产切换门禁见 [迁移边界](../revision_migration.md)。
 详细恢复流程仍见 [架构](../architecture.md) 和 [对账设计](../../tasks/v2_reconciliation_design.md)。
 
 ## 源数据与证据
 
 - [comet-rag.architecture.json](comet-rag.architecture.json) 是可编辑的图源；HTML 是生成产物，不手改。
-- 本图源码证据固定到 `c4f17a3c8abaccc5325823846bf39249943e6c92`，各节点列出相对路径与行号。
+- 本图源码证据固定到 `04bfda1fccfd9c6edac762df0d6dcca1a817c899`，各节点列出相对路径与行号。
   固定的是被说明的代码提交，不要求等于包含生成图的提交，避免自引用。
 - 当前为 `local-only` 源码模式：保留路径、行号和版本，不假设尚未推送的提交可在 GitHub 打开。
 - 使用 [Archify 3.2.0](https://github.com/tt-a1i/archify/tree/25cf37080fc8b1dbe758a4efc3935b55f3327083)，
