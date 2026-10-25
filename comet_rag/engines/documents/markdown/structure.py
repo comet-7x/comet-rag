@@ -5,9 +5,7 @@ from dataclasses import dataclass
 
 from comet_rag.ports.document import DocumentBlock
 
-_ATX_HEADING = re.compile(
-    r"^ {0,3}(?P<marks>#{1,6})(?:[ \t]+(?P<title>.*)|[ \t]*)$"
-)
+_ATX_HEADING = re.compile(r"^ {0,3}(?P<marks>#{1,6})(?:[ \t]+(?P<title>.*)|[ \t]*)$")
 _ATX_CLOSING = re.compile(r"[ \t]+#+[ \t]*$")
 _FENCE = re.compile(r"^ {0,3}(?P<marker>`{3,}|~{3,})(?P<rest>.*)$")
 _SETEXT_UNDERLINE = re.compile(r"^ {0,3}(?P<marker>=+|-+)[ \t]*$")
@@ -37,16 +35,18 @@ class MarkdownStructureAnalyzer:
         if headings[0].start > 0:
             ranges.append((0, headings[0].start, ()))
 
-        path: list[str] = []
+        path: list[_Heading] = []
         for index, heading in enumerate(headings):
-            del path[max(heading.level - 1, 0) :]
-            path.append(heading.title)
+            # 标题级别可跳跃，栈深不是 Markdown level；先退出同级及更深的祖先。
+            while path and path[-1].level >= heading.level:
+                path.pop()
+            path.append(heading)
             end = (
                 headings[index + 1].start
                 if index + 1 < len(headings)
                 else len(markdown)
             )
-            ranges.append((heading.start, end, tuple(path)))
+            ranges.append((heading.start, end, tuple(item.title for item in path)))
 
         return tuple(
             DocumentBlock(
@@ -95,16 +95,12 @@ class MarkdownStructureAnalyzer:
             atx = _ATX_HEADING.match(line)
             if atx is not None:
                 title = _ATX_CLOSING.sub("", atx.group("title") or "").strip()
-                headings.append(
-                    _Heading(starts[index], len(atx.group("marks")), title)
-                )
+                headings.append(_Heading(starts[index], len(atx.group("marks")), title))
                 continue
 
             if index + 1 >= len(lines) or not line.strip():
                 continue
-            underline = _SETEXT_UNDERLINE.match(
-                lines[index + 1].removesuffix("\n")
-            )
+            underline = _SETEXT_UNDERLINE.match(lines[index + 1].removesuffix("\n"))
             if underline is not None:
                 headings.append(
                     _Heading(

@@ -18,6 +18,7 @@ from comet_rag.infrastructure.persistence.knowledge_base import (
     InMemoryKnowledgeBaseRepository,
 )
 from comet_rag.infrastructure.persistence.vector_store import AsyncInMemoryVectorStore
+from comet_rag.ports import AsyncKeywordSearchPort, AsyncVectorStore
 from comet_rag.ports.document_store import RevisionKey
 from comet_rag.ports.embedding import AsyncEmbeddingPort
 from comet_rag.ports.reranker import AsyncRerankerPort
@@ -76,18 +77,27 @@ async def collect(
     reranker: AsyncRerankerPort | None = None,
     rerank: bool = False,
     model_revision: str = "fixed algorithm v1",
+    vector_store: AsyncVectorStore | None = None,
+    backend_name: str | None = None,
 ) -> Run:
     if level is ReturnLevel.PARENT and strategy != "hierarchy":
         raise ValueError("只有 hierarchy 基线比较真实父块回填")
     if rerank and reranker is None:
         raise ValueError("rerank 评测必须提供真实 reranker")
+    if vector_store is not None and not backend_name:
+        raise ValueError("外部评测存储必须声明后端身份")
     async with AsyncExitStack() as stack:
-        vectors = AsyncInMemoryVectorStore()
+        vectors = (
+            vector_store if vector_store is not None else AsyncInMemoryVectorStore()
+        )
+        if not isinstance(vectors, AsyncKeywordSearchPort):
+            raise ValueError("评测存储必须提供关键词召回")
         documents = InMemoryDocumentStore()
         model = embedding_model or AsyncHashEmbedding()
         if embedding_model is None:
             stack.push_async_callback(model.close)
-        stack.push_async_callback(vectors.close)
+        if vector_store is None:
+            stack.push_async_callback(vectors.close)
         stack.push_async_callback(documents.close)
         kb = KnowledgeBaseService(
             repository=InMemoryKnowledgeBaseRepository(),
@@ -190,7 +200,7 @@ async def collect(
                 "model": model_name,
                 "model_revision": model_revision,
                 "dim": embedding_dim,
-                "backend": "InMemory",
+                "backend": backend_name or "InMemory",
                 "rerank": rerank,
                 "strategy": strategy,
                 "mode": mode.value,
@@ -207,7 +217,9 @@ async def collect(
                 "parent_text_chars": parent_chars,
                 "scope": "offline regression only"
                 if embedding_model is None
-                else "synthetic corpus, real model, exact InMemory recall",
+                else "synthetic corpus, real model, exact InMemory recall"
+                if vector_store is None
+                else f"synthetic corpus, real model, native {backend_name} recall",
                 "implementation_sha256": implementation_fingerprint(),
                 "python": sys.version.split()[0],
                 "python_docx": version("python-docx"),

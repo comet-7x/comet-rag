@@ -32,6 +32,11 @@ CI 在 unit 后单独跑这组确定性回归，不将其计入默认单测预�
 的证据 ID。真实服务实测记录另见 [报告](../docs/evaluations/model_retrieval_20261025.md)，
 真实服务不进入 unit/常规 CI。
 
+第二十五批增加 `benchmark/test_retrieval_challenge.py`：独立长文集、CLI 数据选择、
+三种离线召回及外部评测存储身份/归属。CI 同时跑原集与挑战集，不访问模型或真实
+中间件。跳级标题祖先与纯标题事实守卫在 `unit/engines/test_markdown_structure.py`
+和 `test_structured_chunking.py`，原 DOCX 快照不变。
+
 ## 查询 deadline 回归
 
 共享预算、排队、超时降级和取消排干用例位于

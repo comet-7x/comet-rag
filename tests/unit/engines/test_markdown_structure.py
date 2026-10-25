@@ -90,3 +90,37 @@ def test_repeated_headings_keep_source_coordinates_without_searching_text() -> N
 def test_analyzer_rejects_non_string_input() -> None:
     with pytest.raises(TypeError, match="markdown"):
         MarkdownStructureAnalyzer().analyze(123)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "markdown,expected",
+    [
+        (
+            "# Root\n#### Deep\n### Middle\n## Shallow",
+            [("Root",), ("Root", "Deep"), ("Root", "Middle"), ("Root", "Shallow")],
+        ),
+        (
+            "## Root\n###### Deep\n#### Middle\n### Shallow",
+            [("Root",), ("Root", "Deep"), ("Root", "Middle"), ("Root", "Shallow")],
+        ),
+        (
+            "# Root\n### Parent\n###### Leaf\n#### Middle",
+            [
+                ("Root",),
+                ("Root", "Parent"),
+                ("Root", "Parent", "Leaf"),
+                ("Root", "Parent", "Middle"),
+            ],
+        ),
+        (
+            "Root\n====\n#### Deep\nMiddle\n------",
+            [("Root",), ("Root", "Deep"), ("Root", "Middle")],
+        ),
+    ],
+)
+def test_skipped_levels_do_not_turn_a_shallower_heading_into_a_child(
+    markdown, expected
+) -> None:
+    blocks = MarkdownStructureAnalyzer().analyze(markdown)
+    assert [block.heading_path for block in blocks] == expected
+    assert "".join(markdown[b.start_char : b.end_char] for b in blocks) == markdown

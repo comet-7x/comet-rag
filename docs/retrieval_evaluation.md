@@ -9,6 +9,11 @@ faithfulness。框架延迟基线仍见 [benchmark](benchmark.md)，两者分别
 
 ## 固定语料与标签
 
+第二十五批另增独立 [长文/困难负例集](../evals/retrieval/challenge/corpus.json)：11 份版本
+文档、31 条查询、26 条证据，最长 12505 字符。它不替换下面的原始回归集；指纹、
+对照方法、被否决的标题合并原型和原生 Milvus 结果见
+[挑战评测](evaluations/retrieval_challenge_20261025.md)。
+
 [corpus.json](../evals/retrieval/corpus.json) 描述虚构的星桥、港湾运维手册，共 7 份版本
 文档：3 份 DOCX、4 份 Markdown，属于 ops/lab 两个知识库，其中一份是保留在索引中的
 旧 revision。生成器从标题、段落和表格生成原文件，DOCX 再经过真实 extractor；两种
@@ -76,6 +81,10 @@ uv run python -m evals.retrieval score \
 uv run pytest -m benchmark tests/benchmark/test_retrieval_quality.py
 ```
 
+generate/baseline/score/real 均可用 `--data evals/retrieval/challenge` 选择挑战集。
+重评分必须选择与 run 相同的数据目录；不同指纹不能混评。两个数据集均纳入独立 CI，
+不将困难样本强行标为全命中，也不把原始小集饱和当作足够证据。
+
 CI 在普通单测之后单独运行这组确定性回归；它不计入默认 unit 的 10 秒预算，也不访问
 真实模型。其余计时 benchmark 仍显式运行，不因计时波动让 CI 失败。
 
@@ -123,6 +132,10 @@ hierarchy 为 22 child/21 parent（均含旧版本）。hierarchy parent/hybrid 
 
 ## 真实模型与剩余门禁
 
+第二十五批真实对照显示，标题合并可能改善 dense 却降低关键词证据覆盖，因此未
+改变生产策略。仅修正跳级标题的祖先路径值；新任务使用正确 heading_path，旧索引
+不原地回填，需要时用新 revision 重建。正文/区间、section/page 硬边界和字段不变。
+
 提供明确的模型配置路径后，可复用组合根的模型工厂：
 
 ```bash
@@ -142,6 +155,11 @@ YAML 入口不自动读取 .env。已有运行期配置可传给 evaluate_config
 在内存构造配置，并为这两个模型地址设置子进程 NO_PROXY；未创建或修改 config.yaml。
 六组实测中 dense/hybrid 的全部可见候选仅 17/3 条，不存在 ANN 漏召回；具体结果、
 标题孤块、实体混淆与无答案边界见 [实测记录](evaluations/model_retrieval_20261025.md)。
+
+低层 collect 支持注入既有 AsyncVectorStore，必须声明 backend_name 并提供关键词能力。
+外部存储由调用方关闭/清理，不按默认值误标为 InMemory。本轮只在既定测试命名空间用
+Milvus 2.6.22 做原生 BM25 对照，并精确清理随机前缀集合；没有新增生产写入 CLI 或
+第三种实现。InMemory 的单字参考排序不能视为 Milvus Chinese 排序契约。
 
 这个入口能测模型在本语料上的效果，不能验收 Milvus ANN 召回率或线上吞吐。实际
 模型基线应另行归档，不能覆盖离线快照。后续需补：独立标签复核、更大困难样本、真实

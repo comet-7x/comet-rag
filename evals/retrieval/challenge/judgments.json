@@ -1,0 +1,489 @@
+{
+  "version": 1,
+  "evidence": [
+    {
+      "id": "star_long_rto",
+      "document_id": "star_long",
+      "quote": "星桥生产的恢复时限为 30 分钟。"
+    },
+    {
+      "id": "star_long_steps",
+      "document_id": "star_long",
+      "quote": "星桥生产的恢复顺序是只读快照、账目校验、开放写入。"
+    },
+    {
+      "id": "star_long_backup",
+      "document_id": "star_long",
+      "quote": "星桥生产每天 03:10 执行备份，备份保留 14 天。"
+    },
+    {
+      "id": "star_long_checksum",
+      "document_id": "star_long",
+      "quote": "星桥生产遇到备份校验和不一致时，保留上一份已核验备份，并提交 SH-31 复核单。"
+    },
+    {
+      "id": "harbor_long_rto",
+      "document_id": "harbor_long",
+      "quote": "港湾生产的恢复时限为 90 分钟。"
+    },
+    {
+      "id": "harbor_long_steps",
+      "document_id": "harbor_long",
+      "quote": "港湾生产的恢复顺序是只读快照、账目校验、开放写入。"
+    },
+    {
+      "id": "harbor_long_backup",
+      "document_id": "harbor_long",
+      "quote": "港湾生产每天 01:20 执行备份，备份保留 21 天。"
+    },
+    {
+      "id": "harbor_long_checksum",
+      "document_id": "harbor_long",
+      "quote": "港湾生产遇到备份校验和不一致时，保留上一份已核验备份，并提交 HB-91 复核单。"
+    },
+    {
+      "id": "starcloud_rto",
+      "document_id": "starcloud",
+      "quote": "星桥云生产的恢复时限为 75 分钟。"
+    },
+    {
+      "id": "starcloud_steps",
+      "document_id": "starcloud",
+      "quote": "星桥云生产的恢复顺序是只读快照、账目校验、开放写入。"
+    },
+    {
+      "id": "starcloud_backup",
+      "document_id": "starcloud",
+      "quote": "星桥云生产每天 04:40 执行备份，备份保留 28 天。"
+    },
+    {
+      "id": "starcloud_checksum",
+      "document_id": "starcloud",
+      "quote": "星桥云生产遇到备份校验和不一致时，保留上一份已核验备份，并提交 SC-75 复核单。"
+    },
+    {
+      "id": "star_archive_rto",
+      "document_id": "star_archive",
+      "quote": "星桥归档作业的恢复时限为 240 分钟。"
+    },
+    {
+      "id": "star_archive_steps",
+      "document_id": "star_archive",
+      "quote": "星桥归档作业的恢复顺序是只读快照、账目校验、开放写入。"
+    },
+    {
+      "id": "star_archive_backup",
+      "document_id": "star_archive",
+      "quote": "星桥归档作业每天 06:30 执行备份，备份保留 400 天。"
+    },
+    {
+      "id": "star_archive_checksum",
+      "document_id": "star_archive",
+      "quote": "星桥归档作业遇到备份校验和不一致时，保留上一份已核验备份，并提交 SA-24 复核单。"
+    },
+    {
+      "id": "lab_long_rto",
+      "document_id": "lab_long",
+      "quote": "星桥实验环境的恢复时限为 120 分钟。"
+    },
+    {
+      "id": "lab_long_steps",
+      "document_id": "lab_long",
+      "quote": "星桥实验环境的恢复顺序是只读快照、账目校验、开放写入。"
+    },
+    {
+      "id": "lab_long_backup",
+      "document_id": "lab_long",
+      "quote": "星桥实验环境每天 05:00 执行备份，备份保留 30 天。"
+    },
+    {
+      "id": "lab_long_checksum",
+      "document_id": "lab_long",
+      "quote": "星桥实验环境遇到备份校验和不一致时，保留上一份已核验备份，并提交 SL-12 复核单。"
+    },
+    {
+      "id": "phone",
+      "document_id": "heading_fact",
+      "quote": "紧急维护电话为 6118"
+    },
+    {
+      "id": "auth_code",
+      "document_id": "leaf_fact",
+      "quote": "紧急授权码为 5931"
+    },
+    {
+      "id": "dbq71",
+      "document_id": "heading_only",
+      "quote": "DBQ-71 表示归档校验失败"
+    },
+    {
+      "id": "dbq72",
+      "document_id": "heading_only",
+      "quote": "DBQ-72 表示快照校验失败"
+    },
+    {
+      "id": "middle",
+      "document_id": "paths",
+      "quote": "中层处理的核验工单是 LV-32。"
+    },
+    {
+      "id": "sibling",
+      "document_id": "paths",
+      "quote": "同级正文的核验工单是 LV-22。"
+    }
+  ],
+  "queries": [
+    {
+      "id": "star_long_rto",
+      "kb_id": "ops",
+      "text": "星桥生产的恢复时限是多少分钟？",
+      "category": "fact",
+      "relevance": {
+        "star_long": 2
+      },
+      "evidence": [
+        "star_long_rto"
+      ]
+    },
+    {
+      "id": "star_long_backup",
+      "kb_id": "ops",
+      "text": "星桥生产每天几点备份，保留多久？",
+      "category": "fact",
+      "relevance": {
+        "star_long": 2
+      },
+      "evidence": [
+        "star_long_backup"
+      ]
+    },
+    {
+      "id": "star_long_checksum",
+      "kb_id": "ops",
+      "text": "星桥生产备份校验和不一致应保留什么，并提交哪张复核单？",
+      "category": "fact",
+      "relevance": {
+        "star_long": 2
+      },
+      "evidence": [
+        "star_long_checksum"
+      ]
+    },
+    {
+      "id": "harbor_long_rto",
+      "kb_id": "ops",
+      "text": "港湾生产的恢复时限是多少分钟？",
+      "category": "fact",
+      "relevance": {
+        "harbor_long": 2
+      },
+      "evidence": [
+        "harbor_long_rto"
+      ]
+    },
+    {
+      "id": "harbor_long_backup",
+      "kb_id": "ops",
+      "text": "港湾生产每天几点备份，保留多久？",
+      "category": "fact",
+      "relevance": {
+        "harbor_long": 2
+      },
+      "evidence": [
+        "harbor_long_backup"
+      ]
+    },
+    {
+      "id": "harbor_long_checksum",
+      "kb_id": "ops",
+      "text": "港湾生产备份校验和不一致应保留什么，并提交哪张复核单？",
+      "category": "fact",
+      "relevance": {
+        "harbor_long": 2
+      },
+      "evidence": [
+        "harbor_long_checksum"
+      ]
+    },
+    {
+      "id": "starcloud_rto",
+      "kb_id": "ops",
+      "text": "星桥云生产的恢复时限是多少分钟？",
+      "category": "fact",
+      "relevance": {
+        "starcloud": 2
+      },
+      "evidence": [
+        "starcloud_rto"
+      ]
+    },
+    {
+      "id": "starcloud_backup",
+      "kb_id": "ops",
+      "text": "星桥云生产每天几点备份，保留多久？",
+      "category": "fact",
+      "relevance": {
+        "starcloud": 2
+      },
+      "evidence": [
+        "starcloud_backup"
+      ]
+    },
+    {
+      "id": "starcloud_checksum",
+      "kb_id": "ops",
+      "text": "星桥云生产备份校验和不一致应保留什么，并提交哪张复核单？",
+      "category": "fact",
+      "relevance": {
+        "starcloud": 2
+      },
+      "evidence": [
+        "starcloud_checksum"
+      ]
+    },
+    {
+      "id": "star_archive_rto",
+      "kb_id": "ops",
+      "text": "星桥归档作业的恢复时限是多少分钟？",
+      "category": "fact",
+      "relevance": {
+        "star_archive": 2
+      },
+      "evidence": [
+        "star_archive_rto"
+      ]
+    },
+    {
+      "id": "star_archive_backup",
+      "kb_id": "ops",
+      "text": "星桥归档作业每天几点备份，保留多久？",
+      "category": "fact",
+      "relevance": {
+        "star_archive": 2
+      },
+      "evidence": [
+        "star_archive_backup"
+      ]
+    },
+    {
+      "id": "star_archive_checksum",
+      "kb_id": "ops",
+      "text": "星桥归档作业备份校验和不一致应保留什么，并提交哪张复核单？",
+      "category": "fact",
+      "relevance": {
+        "star_archive": 2
+      },
+      "evidence": [
+        "star_archive_checksum"
+      ]
+    },
+    {
+      "id": "lab_long_rto",
+      "kb_id": "lab",
+      "text": "星桥实验环境的恢复时限是多少分钟？",
+      "category": "fact",
+      "relevance": {
+        "lab_long": 2
+      },
+      "evidence": [
+        "lab_long_rto"
+      ]
+    },
+    {
+      "id": "lab_long_backup",
+      "kb_id": "lab",
+      "text": "星桥实验环境每天几点备份，保留多久？",
+      "category": "fact",
+      "relevance": {
+        "lab_long": 2
+      },
+      "evidence": [
+        "lab_long_backup"
+      ]
+    },
+    {
+      "id": "lab_long_checksum",
+      "kb_id": "lab",
+      "text": "星桥实验环境备份校验和不一致应保留什么，并提交哪张复核单？",
+      "category": "fact",
+      "relevance": {
+        "lab_long": 2
+      },
+      "evidence": [
+        "lab_long_checksum"
+      ]
+    },
+    {
+      "id": "phone",
+      "kb_id": "ops",
+      "text": "夜间紧急维护电话是多少？",
+      "category": "fact",
+      "relevance": {
+        "heading_fact": 2
+      },
+      "evidence": [
+        "phone"
+      ]
+    },
+    {
+      "id": "auth_code",
+      "kb_id": "ops",
+      "text": "值班速查中的紧急授权码是多少？",
+      "category": "fact",
+      "relevance": {
+        "leaf_fact": 2
+      },
+      "evidence": [
+        "auth_code"
+      ]
+    },
+    {
+      "id": "dbq71",
+      "kb_id": "ops",
+      "text": "DBQ-71 表示什么故障？",
+      "category": "fact",
+      "relevance": {
+        "heading_only": 2
+      },
+      "evidence": [
+        "dbq71"
+      ]
+    },
+    {
+      "id": "dbq72",
+      "kb_id": "ops",
+      "text": "DBQ-72 表示什么故障？",
+      "category": "fact",
+      "relevance": {
+        "heading_only": 2
+      },
+      "evidence": [
+        "dbq72"
+      ]
+    },
+    {
+      "id": "middle",
+      "kb_id": "ops",
+      "text": "中层处理用哪张核验工单？",
+      "category": "fact",
+      "relevance": {
+        "paths": 2
+      },
+      "evidence": [
+        "middle"
+      ]
+    },
+    {
+      "id": "sibling",
+      "kb_id": "ops",
+      "text": "同级正文用哪张核验工单？",
+      "category": "fact",
+      "relevance": {
+        "paths": 2
+      },
+      "evidence": [
+        "sibling"
+      ]
+    },
+    {
+      "id": "star_steps",
+      "kb_id": "ops",
+      "text": "星桥生产恢复到可写状态的完整顺序是什么？",
+      "category": "paraphrase",
+      "relevance": {
+        "star_long": 2
+      },
+      "evidence": [
+        "star_long_steps"
+      ]
+    },
+    {
+      "id": "rto_pair",
+      "kb_id": "ops",
+      "text": "星桥生产和港湾生产的恢复时限各是多少？",
+      "category": "multi",
+      "relevance": {
+        "star_long": 2,
+        "harbor_long": 2
+      },
+      "evidence": [
+        "star_long_rto",
+        "harbor_long_rto"
+      ]
+    },
+    {
+      "id": "cloud_pair",
+      "kb_id": "ops",
+      "text": "星桥生产和星桥云生产各多久恢复？",
+      "category": "multi",
+      "relevance": {
+        "star_long": 2,
+        "starcloud": 2
+      },
+      "evidence": [
+        "star_long_rto",
+        "starcloud_rto"
+      ]
+    },
+    {
+      "id": "rto_not_lab",
+      "kb_id": "ops",
+      "text": "星桥生产的恢复时限是 120 分钟吗？",
+      "category": "fact",
+      "relevance": {
+        "star_long": 2
+      },
+      "evidence": [
+        "star_long_rto"
+      ]
+    },
+    {
+      "id": "no_price",
+      "kb_id": "ops",
+      "text": "星桥生产年度订阅价格是多少？",
+      "category": "no_answer",
+      "relevance": {},
+      "evidence": []
+    },
+    {
+      "id": "no_rpo",
+      "kb_id": "ops",
+      "text": "星桥生产的跨地域 RPO 约定为几分钟？",
+      "category": "no_answer",
+      "relevance": {},
+      "evidence": []
+    },
+    {
+      "id": "no_zone",
+      "kb_id": "lab",
+      "text": "星桥实验环境部署在哪个可用区？",
+      "category": "no_answer",
+      "relevance": {},
+      "evidence": []
+    },
+    {
+      "id": "no_code",
+      "kb_id": "ops",
+      "text": "DBQ-73 表示什么故障？",
+      "category": "no_answer",
+      "relevance": {},
+      "evidence": []
+    },
+    {
+      "id": "no_entity",
+      "kb_id": "ops",
+      "text": "星桥北生产的恢复时限是多少？",
+      "category": "no_answer",
+      "relevance": {},
+      "evidence": []
+    },
+    {
+      "id": "no_phone",
+      "kb_id": "ops",
+      "text": "夜间紧急维护备用电话是多少？",
+      "category": "no_answer",
+      "relevance": {},
+      "evidence": []
+    }
+  ]
+}

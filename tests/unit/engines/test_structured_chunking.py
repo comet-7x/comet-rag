@@ -60,6 +60,18 @@ def test_markdown_strategy_keeps_section_boundaries_and_heading_paths() -> None:
         assert len(containing) == 1
 
 
+def test_heading_facts_are_not_dropped_as_empty_structure() -> None:
+    markdown = (
+        "# 紧急维护电话为 6118\n\n## 适用范围\n\n夜间值班。\n\n## 紧急授权码为 5931"
+    )
+    document = MarkdownDocumentNormalizer().normalize(ExtractedDocument(markdown))
+    drafts = MarkdownSectionStrategy(FixedSizeChunker(1000)).split(document)
+    _assert_exact_spans(document, drafts)
+    assert "".join(d.text for d in drafts) == markdown
+    assert any("紧急维护电话为 6118" in d.text for d in drafts)
+    assert any("紧急授权码为 5931" in d.text for d in drafts)
+
+
 def test_docx_fixture_preserves_heading_boundaries_and_document_metadata(
     tmp_path: Path,
 ) -> None:
@@ -74,8 +86,7 @@ def test_docx_fixture_preserves_heading_boundaries_and_document_metadata(
         path,
         filename=path.name,
         media_type=(
-            "application/vnd.openxmlformats-officedocument."
-            "wordprocessingml.document"
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ),
     )
     document = MarkdownDocumentNormalizer().normalize(extracted)

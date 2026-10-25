@@ -7,12 +7,12 @@ from pathlib import Path
 
 from comet_rag.services.retrieval import ReturnLevel, SearchMode
 from evals.retrieval.baseline import collect
-from evals.retrieval.data import generate, read_json, write_json
+from evals.retrieval.data import DATA, generate, read_json, write_json
 from evals.retrieval.metrics import Run, score
 
 
-async def baseline(output: Path) -> None:
-    dataset = generate(output)
+async def baseline(output: Path, *, data: Path = DATA) -> None:
+    dataset = generate(output, data=data)
     summary: dict[str, object] = {}
     for strategy in ("recursive", "markdown", "hierarchy"):
         levels = (
@@ -40,11 +40,14 @@ def main() -> None:
     for command in ("generate", "baseline"):
         child = sub.add_parser(command)
         child.add_argument("--out", type=Path, required=True, help="不存在的新目录")
+        child.add_argument("--data", type=Path, default=DATA)
     scoring = sub.add_parser("score")
     scoring.add_argument("--run", type=Path, required=True)
+    scoring.add_argument("--data", type=Path, default=DATA)
     real = sub.add_parser("real", help="仅访问配置中的模型服务，使用独立内存索引")
     real.add_argument("--config", type=Path, required=True)
     real.add_argument("--out", type=Path, required=True)
+    real.add_argument("--data", type=Path, default=DATA)
     real.add_argument(
         "--model-revision",
         required=True,
@@ -53,22 +56,27 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "score":
         with tempfile.TemporaryDirectory() as tmp:
-            dataset = generate(Path(tmp) / "corpus")
+            dataset = generate(Path(tmp) / "corpus", data=args.data)
             report = score(dataset, read_json(args.run, Run))
             import json
 
             print(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False))
     elif args.command == "generate":
-        dataset = generate(args.out)
+        dataset = generate(args.out, data=args.data)
         print(f"dataset_sha256={dataset.fingerprint}")
     elif args.command == "real":
         from evals.retrieval.real import evaluate_models
 
         asyncio.run(
-            evaluate_models(args.config, args.out, model_revision=args.model_revision)
+            evaluate_models(
+                args.config,
+                args.out,
+                model_revision=args.model_revision,
+                data=args.data,
+            )
         )
     else:
-        asyncio.run(baseline(args.out))
+        asyncio.run(baseline(args.out, data=args.data))
 
 
 if __name__ == "__main__":

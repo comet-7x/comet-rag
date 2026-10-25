@@ -66,6 +66,9 @@ pydantic/httpx/lxml 一类的纯计算包；服务那一半在它之上加了任
 `engines/documents/markdown/` 识别标题 section，结构事实用 `DocumentBlock` 的字符
 span 表示；`MarkdownSectionStrategy` 或 `PageChunkingStrategy` 再在每个硬边界内调用
 原子 `Chunker`，不会重新猜标题或页面。
+祖先栈按真实 Markdown 级别出栈，不能把栈深当作级别；跳级后返回较浅标题时正确结束
+更深祖先。标题本身可能含事实，不作为空结构统一删除。第二十五批标题合并原型在
+困难样本上有回退，未进入默认策略，见 [挑战评测](evaluations/retrieval_challenge_20261025.md)。
 `AsyncMinerUDocumentExtractor` 是 `infrastructure/extractors/`
 中的外部适配器，只有 `composition/` 能把它注册成 PDF Pipeline Hook。
 

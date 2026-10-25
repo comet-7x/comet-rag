@@ -1,0 +1,53 @@
+{
+  "dense": {
+    "dataset_sha256": "76d06b536676b174e892ce162bce33713638c4b75d1cb5979d563de68dbf9557",
+    "macro": {
+      "recall@1": 0.84,
+      "rr@1": 0.88,
+      "ndcg@1": 0.88,
+      "evidence@1": 0.64,
+      "recall@3": 0.84,
+      "rr@3": 0.88,
+      "ndcg@3": 0.8490517754212367,
+      "evidence@3": 0.72,
+      "recall@5": 0.96,
+      "rr@5": 0.906,
+      "ndcg@5": 0.8972270623229357,
+      "evidence@5": 0.8
+    }
+  },
+  "keyword": {
+    "dataset_sha256": "76d06b536676b174e892ce162bce33713638c4b75d1cb5979d563de68dbf9557",
+    "macro": {
+      "recall@1": 0.84,
+      "rr@1": 0.88,
+      "ndcg@1": 0.88,
+      "evidence@1": 0.64,
+      "recall@3": 0.88,
+      "rr@3": 0.9,
+      "ndcg@3": 0.874288965564095,
+      "evidence@3": 0.8,
+      "recall@5": 0.96,
+      "rr@5": 0.92,
+      "ndcg@5": 0.9087430902099665,
+      "evidence@5": 0.96
+    }
+  },
+  "hybrid": {
+    "dataset_sha256": "76d06b536676b174e892ce162bce33713638c4b75d1cb5979d563de68dbf9557",
+    "macro": {
+      "recall@1": 0.8,
+      "rr@1": 0.84,
+      "ndcg@1": 0.84,
+      "evidence@1": 0.6,
+      "recall@3": 0.84,
+      "rr@3": 0.86,
+      "ndcg@3": 0.8342889655640949,
+      "evidence@3": 0.76,
+      "recall@5": 0.96,
+      "rr@5": 0.89,
+      "ndcg@5": 0.8859701525329021,
+      "evidence@5": 0.94
+    }
+  }
+}

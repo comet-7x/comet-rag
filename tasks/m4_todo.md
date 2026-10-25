@@ -228,6 +228,11 @@ recursive/markdown/hierarchy 的 12 组确定性回归。规则与限制见
 标签复核、更大真实分布下模型效果和目标部署质量验收；不将小样本 top-3 饱和或普通
 单测一轮通过当成 T10 已完成。
 
+第二十五批另增 11 文档/31 查询挑战集与真实模型/原生 Milvus 对照，候选已超过 fetch_k。
+标题合并因不同模式回退而未默认采用，修正跳级标题路径；详见
+[挑战评测](../docs/evaluations/retrieval_challenge_20261025.md)。真实 page/PDF、独立标签、
+真实分布和部署出口仍未完成，不将此部分对照勾成 T10 全完成。
+
 ## 提交与 PR 边界
 
 T1～T5 每项至少一个 Conventional Commit，聚焦 Chunking；T6 只提交设计。通过决策门
