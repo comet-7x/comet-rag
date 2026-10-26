@@ -40,13 +40,16 @@ API 角色，核验使用独立地址，不证明生产部署已改配；模型�
 引擎节点补覆盖校验调用证据，没有新增服务、Store或模型路径。原生引用与整表/行
 诊断不评分、不批准标签；默认分块指纹不变，见
 [原生证据报告](../evaluations/native_evidence_20261025.md)。
+第三十一批在PDF工具节点补冻结/读取/盲审生成的实际文件IO来源，仍不增加生产Store
+或模型连接。两轮原生产物与完整物理页守卫已验；独立裁决、工件与预算门禁分开保留，
+见[原生基线报告](../evaluations/native_freeze_20261026.md)。
 历史载荷处置、新命名空间重建和生产切换门禁见 [迁移边界](../revision_migration.md)。
 详细恢复流程仍见 [架构](../architecture.md) 和 [对账设计](../../tasks/v2_reconciliation_design.md)。
 
 ## 源数据与证据
 
 - [comet-rag.architecture.json](comet-rag.architecture.json) 是可编辑的图源；HTML 是生成产物，不手改。
-- 本图源码证据固定到 `71f474f511aca89c30f578c2951d00dadfcffa84`，各节点列出相对路径与行号。
+- 本图源码证据固定到 `e30721220948e1d218e01aeb02c982cd4a5a0b5c`，各节点列出相对路径与行号。
   固定的是被说明的代码提交，不要求等于包含生成图的提交，避免自引用。
 - 当前为 `local-only` 源码模式：保留路径、行号和版本，不假设尚未推送的提交可在 GitHub 打开。
 - 使用 [Archify 3.2.0](https://github.com/tt-a1i/archify/tree/25cf37080fc8b1dbe758a4efc3935b55f3327083)，
