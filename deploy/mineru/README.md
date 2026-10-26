@@ -80,8 +80,8 @@ Comet-RAG 继续配置 `base_url` 为该文档 API，backend 为 `vlm-http-clien
 ```
 
 `page_count` 是原生完整 PDF 页记录数，`page_idx` 必须为 0 到 count−1 的连续整数，
-bool/float 不作整数接收。空页也必须列出；消费端只生成有正文的页对象，保留原物理页
-号，例如上例为 1、3。所有非空片段用两个换行拼接必须逐字等于原生全文，不能用
+bool/float 不作整数接收。空页也必须列出；消费端保留全部页对象，例如上例为1、2、3，
+规范化只为非空正文生成内容块，页号仍为1、3。所有非空片段用两个换行拼接必须逐字等于原生全文，不能用
 strip、文本搜索、占位符或补偿页号修正不一致。页码是 PDF 物理页，不是印刷页码。
 
 声明了扩展却返回缺失字段、错误版本/页数/页号/正文或无法重建全文时，提取明确失败，
@@ -110,3 +110,9 @@ uv run python -m evals.pdf.parse --pdf-dir /path/to/locked-public-pdfs \
 页片段与上游 Markdown 一致不证明 OCR 字词正确、脚注完整、模型工件固定或人工标签
 独立。它也不保证每份长 HTML 表格都能在一个 chunk 内；页硬边界与完整证据预算分别
 验收。真实结果和仍未关闭门禁见[第二十九批报告](../../docs/evaluations/mineru_pages_20261025.md)。
+
+2026-10-26已补验 `opendatalab/MinerU2.5-Pro-2605-1.2B`：沿用该独立环境，仅替换
+`MINERU_VL_SERVER` 的上游端口为9919和 `MINERU_VL_MODEL_NAME` 即可完成真实解析。
+Comet-RAG的 `mineru.base_url` 仍指向文档API，不直接指向VLM端口。上游默认开启
+`image_analysis`，Pro模型会产生新的图像解读；原生CLI可用 `--image-analysis false`
+作单独诊断。没有改应用默认配置，结果与引用边界见[补验报告](../../docs/evaluations/mineru_pro2605_20261026.md)。

@@ -1,0 +1,204 @@
+{
+  "date": "2026-10-26",
+  "scope": "single user-provided PDF, author-reference probes; not independent OCR accuracy or retrieval acceptance",
+  "model": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+  "port": 9919,
+  "immutable_model_artifacts": "unknown",
+  "source_sha256": "e42f3b70cee6344ca8e0cb06ccc4028e56a05266cbd331c9e008fe05e62a2ffe",
+  "parser": "existing isolated mineru3.4.5 plus page-markdown v1",
+  "main_upstream_changes": [
+    "URL port only",
+    "model name only"
+  ],
+  "other_main_parameters": "unchanged",
+  "records": [
+    {
+      "name": "old-first",
+      "elapsed_seconds": 131.63539441721514,
+      "physical_page_count": 60,
+      "empty_page_numbers": [
+        59,
+        60
+      ],
+      "normalized_sha256": "1c105304da23557d22db456519997a22459de313e9c1d639aa55428723f45a81",
+      "normalized_characters": 167580,
+      "content_blocks": 58,
+      "fact_probes_passed": 13,
+      "fact_probes_total": 13,
+      "table_header_pass": true,
+      "table_numeric_cells_passed": 24,
+      "table_numeric_cells_total": 24,
+      "back_cover_fields_present": [
+        false,
+        false,
+        false
+      ],
+      "analysis_blocks": 0,
+      "analysis_characters": 0,
+      "diagnostic": false
+    },
+    {
+      "name": "old-second",
+      "elapsed_seconds": 110.45197533303872,
+      "physical_page_count": 60,
+      "empty_page_numbers": [
+        59
+      ],
+      "normalized_sha256": "5c24dc723730ee7473dcf4e3e5db8d36dd5070e6417717ea171cdc443e48c6aa",
+      "normalized_characters": 168090,
+      "content_blocks": 59,
+      "fact_probes_passed": 13,
+      "fact_probes_total": 13,
+      "table_header_pass": true,
+      "table_numeric_cells_passed": 24,
+      "table_numeric_cells_total": 24,
+      "back_cover_fields_present": [
+        true,
+        true,
+        true
+      ],
+      "analysis_blocks": 0,
+      "analysis_characters": 0,
+      "diagnostic": false
+    },
+    {
+      "name": "old-relay",
+      "elapsed_seconds": null,
+      "physical_page_count": 60,
+      "empty_page_numbers": [
+        59,
+        60
+      ],
+      "normalized_sha256": "09aca1f1e30f82d9592a5d1c82f7dde6976fbc544d11e8f785726a909932019a",
+      "normalized_characters": 167573,
+      "content_blocks": 58,
+      "fact_probes_passed": 13,
+      "fact_probes_total": 13,
+      "table_header_pass": true,
+      "table_numeric_cells_passed": 24,
+      "table_numeric_cells_total": 24,
+      "back_cover_fields_present": [
+        false,
+        false,
+        false
+      ],
+      "analysis_blocks": 0,
+      "analysis_characters": 0,
+      "diagnostic": false
+    },
+    {
+      "name": "pro2605-1",
+      "elapsed_seconds": 150.61954191606492,
+      "physical_page_count": 60,
+      "empty_page_numbers": [
+        59,
+        60
+      ],
+      "normalized_sha256": "b909009af989a2cc2462c9cf6595472e4a49ef49d8e8a63f75e2f82dfb035029",
+      "normalized_characters": 187130,
+      "content_blocks": 58,
+      "fact_probes_passed": 13,
+      "fact_probes_total": 13,
+      "table_header_pass": true,
+      "table_numeric_cells_passed": 24,
+      "table_numeric_cells_total": 24,
+      "back_cover_fields_present": [
+        false,
+        false,
+        false
+      ],
+      "analysis_blocks": 43,
+      "analysis_characters": 18746,
+      "diagnostic": false
+    },
+    {
+      "name": "pro2605-2",
+      "elapsed_seconds": 136.11648908397183,
+      "physical_page_count": 60,
+      "empty_page_numbers": [
+        59,
+        60
+      ],
+      "normalized_sha256": "461e0527caeb2b653ce0392b1dc9e5a242b307a5dac2367a0a8fff39d030cb34",
+      "normalized_characters": 194728,
+      "content_blocks": 58,
+      "fact_probes_passed": 13,
+      "fact_probes_total": 13,
+      "table_header_pass": true,
+      "table_numeric_cells_passed": 24,
+      "table_numeric_cells_total": 24,
+      "back_cover_fields_present": [
+        false,
+        false,
+        false
+      ],
+      "analysis_blocks": 43,
+      "analysis_characters": 26344,
+      "diagnostic": false
+    },
+    {
+      "name": "pro2605-image-analysis-off",
+      "elapsed_seconds": null,
+      "physical_page_count": 60,
+      "empty_page_numbers": [
+        59,
+        60
+      ],
+      "normalized_sha256": "4a93ac37b1c989d147fbc0e22ed48e8b9f83825b535490f90803ddd99872ae16",
+      "normalized_characters": 168274,
+      "content_blocks": 58,
+      "fact_probes_passed": 13,
+      "fact_probes_total": 13,
+      "table_header_pass": true,
+      "table_numeric_cells_passed": 24,
+      "table_numeric_cells_total": 24,
+      "back_cover_fields_present": [
+        false,
+        false,
+        false
+      ],
+      "analysis_blocks": 0,
+      "analysis_characters": 0,
+      "diagnostic": true
+    }
+  ],
+  "diagnostic_notes": {
+    "image_analysis": false,
+    "client": "upstream native mineru CLI",
+    "elapsed_not_measured": true,
+    "language": "CLI ch default; unused by VLM backend branch"
+  },
+  "tests": {
+    "targeted_unit_passed": 134
+  },
+  "production_defaults_changed": false,
+  "configuration_unchanged": true,
+  "owned_api_cleanup": {
+    "queued_tasks": 0,
+    "processing_tasks": 0,
+    "completed_tasks": 3,
+    "failed_tasks": 0,
+    "listener_closed": true
+  },
+  "page60_diagnostic": {
+    "scope": "image_analysis=false diagnostic middle JSON only",
+    "physical_page": 60,
+    "paragraph_blocks": 0,
+    "discarded_block_count": 8,
+    "discarded_types": [
+      "footer",
+      "footer",
+      "footer",
+      "footer",
+      "footer",
+      "footer",
+      "footer",
+      "footer"
+    ],
+    "source_probe_tokens_in_discarded": [
+      true,
+      true,
+      true
+    ]
+  }
+}
