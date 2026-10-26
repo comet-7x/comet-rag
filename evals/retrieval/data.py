@@ -87,10 +87,12 @@ def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
+def parse_json[M: BaseModel](raw: str | bytes, model: type[M]) -> M:
+    return model.model_validate(json.loads(raw, object_pairs_hook=_unique_pairs))
+
+
 def read_json[M: BaseModel](path: Path, model: type[M]) -> M:
-    return model.model_validate(
-        json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_pairs)
-    )
+    return parse_json(path.read_text(encoding="utf-8"), model)
 
 
 def write_json(path: Path, value: object) -> None:

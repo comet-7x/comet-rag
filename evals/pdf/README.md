@@ -140,3 +140,20 @@ uv run python -m evals.pdf.artifacts review --out /new/blind-review-dir
 freeze与review都拒绝覆盖已有输出。默认盲审采用b30原生正文、原问题的12个物理页；
 以完整原文偏移标注passage/table_header/table_row。联合证据分列，禁止拼造连续quote。
 完整原生页验收现在要求1..总页数，页有序、范围合法和报告自洽仍不足以证明没有漏页。
+
+## 回收复核表的结构校验
+
+```bash
+uv run python -m evals.pdf.review --packet /path/to/blind-packet \
+  --response /path/to/submitted-review.json --out /new/validation-dir
+```
+
+复核人填写status=submitted、reviewer、YYYY-MM-DD日期与独立性说明，并逐题填写
+answerable/unanswerable/uncertain。工具重新生成冻结输入，检查问题/来源未被替换，
+严格匹配canonical与问题页域、完整问题集合、KB相关度、页内原文区间与逐字quote。
+重复片段、bool页号/等级、拼造引用和没有说明的联合片段被拒绝；无答案需说明范围，
+不确定不会升级成可进入裁决的完整结果。输出摘要对应同一份已验证响应字节。
+
+校验通过只表示结构与字面事实有效：independent_review仍为unverified，
+quality_acceptance仍为pending。ready_for_adjudication不是独立审阅认证、分歧裁决
+或金标冻结；角色字符串不能证明人的独立性，模型名称也不能证明固定权重。
