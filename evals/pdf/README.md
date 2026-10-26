@@ -1,5 +1,17 @@
 # 真实 PDF 参考评测
 
+第三十三批的原生表格局部对照入口为
+`uv run python -m evals.pdf.table_experiment --config /path/to/models.yaml --out /tmp/comet-table-new-run`。
+只比较冻结b30原生12页域中的两条作者暂定表格题，非原24题重标。默认与显式
+`</tr>`分隔符配置使用相同字符参数/返回正文token预算；候选池因分块不同而不同。
+长于子块上限的行仍可能切开，联合片段指标不是答案准确率，生产默认不变。
+
+自定义来源调用 `artifacts.freeze(..., data=custom_data, attribution=...)`，必须显式
+提供非空归属，不能继承NIST许可。逐页空记录保留物理页；内容块只覆盖规范化非空页。
+原生报告用 `normalized_empty_page_numbers` 声明空页，旧NIST报告默认空列表仍兼容。
+用户资料及派生正文留在Git忽略目录。两轮解析波动与质量边界见
+[本轮报告](../../docs/evaluations/native_quality_20261026.md)。
+
 这里保存公开 PDF 的原生文本页快照和**作者拟定标签**，不保存 PDF 二进制，也不接入
 生产提取器。方法与限制见 [第二十七批设计](../../tasks/v2_pdf_evaluation_design.md)。
 
