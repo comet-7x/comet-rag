@@ -518,3 +518,10 @@ bool/整数类型、重复/联合片段、无答案/不确定区分及不自动�
 文件的故障注入确认输出摘要必须属于被校验字节；仅空白不能作证据。数据全是小型
 fixture，不模拟真实人类裁决。反向验证与外部输入缺口见
 [第三十二批报告](../docs/evaluations/native_review_20261026.md)。
+
+第三十四批的真实MinIO测试可显式配置 `COMET_TEST_MINIO_ENDPOINT`、
+`COMET_TEST_MINIO_ACCESS_KEY` 与 `COMET_TEST_MINIO_SECRET_KEY`；凭据必须成对非空，
+两项均未配置才使用本地默认。不要把服务器凭据写进命令历史或仓库。
+`COMET_TEST_REQUIRE_SERVICES=1` 用于必需服务验收。夹具只创建UUID桶，PUT前登记
+精确key清理；同步/异步各跑一次，并用HEAD404确认本次桶已删除。测试不列举其他桶。
+预算分解、故障与最终全量结果见[验证报告](../docs/evaluations/validation_20261026.md)。
