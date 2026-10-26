@@ -130,8 +130,8 @@ def extract_native_pages(payload: object, markdown: str) -> tuple[ExtractedPage,
         number, fragment = item.get("page_idx"), item.get("markdown")
         if not _is_int(number) or number != index or not isinstance(fragment, str):
             raise DocumentProtocolError("MinerU 逐页扩展的页号或正文类型不合法")
-        if fragment:
-            pages.append(ExtractedPage(number + 1, fragment))
-    if "\n\n".join(page.markdown for page in pages) != markdown:
+        # 空正文仍是上游明确返回的物理页；不得把它当作缺失页丢掉。
+        pages.append(ExtractedPage(number + 1, fragment))
+    if "\n\n".join(page.markdown for page in pages if page.markdown) != markdown:
         raise DocumentProtocolError("MinerU 逐页扩展未精确重建原生 Markdown")
     return tuple(pages)

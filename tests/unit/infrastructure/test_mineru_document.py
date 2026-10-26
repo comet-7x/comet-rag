@@ -1139,6 +1139,7 @@ async def test_negotiated_native_markdown_preserves_complex_pages_and_empty_gaps
         )
     assert result.pages == (
         ExtractedPage(1, "![](images/a.jpg)"),
+        ExtractedPage(2, ""),
         ExtractedPage(3, "<table><tr><td>A</td></tr></table>\n\n- B"),
     )
     assert len(server.submission_bodies) == (2 if missing else 1)
