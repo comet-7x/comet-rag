@@ -11,96 +11,7 @@ from evals.pdf.data import load as load_reference
 from evals.pdf.inspect import evidence_alignment, inspect, load_native, table_integrity
 from evals.pdf.tables import tables
 from evals.retrieval.data import quote_locations
-
-
-def artifact(tmp_path: Path) -> tuple[Path, Path]:
-    data, native = tmp_path / "data", tmp_path / "native"
-    data.mkdir()
-    native.mkdir()
-    samples, parsed = [], []
-    for name, text, digest in (("nist145", "A", "a" * 64), ("nist144", "B", "b" * 64)):
-        samples.append(
-            {
-                "source": {
-                    "id": name,
-                    "kb_id": "kb",
-                    "source_id": name,
-                    "revision": f"{name}-r1",
-                    "active": True,
-                    "format": "pdf",
-                    "title": name,
-                    "sections": [],
-                },
-                "url": "https://example.test/sample.pdf",
-                "pdf_sha256": digest,
-                "pdf_bytes": 1,
-                "total_pages": 1,
-                "pages": [{"page_number": 1, "text": text}],
-            }
-        )
-        parsed.append(
-            {
-                "source_id": name,
-                "source_sha256": digest,
-                "elapsed_seconds": 0.1,
-                "provider": {
-                    "provider": "mineru",
-                    "backend": "vlm-http-client",
-                    "version": "3.4.5",
-                    "protocol_version": 2,
-                },
-                "page_status": "verified",
-                "page_numbers": [1],
-                "normalized_sha256": sha256(text.encode()).hexdigest(),
-                "normalized_characters": 1,
-                "block_count": 1,
-            }
-        )
-        (native / f"{name}.json").write_text(
-            json.dumps(
-                {"markdown": text, "pages": [{"page_number": 1, "markdown": text}]}
-            )
-        )
-    (data / "pages.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "extractor": "pypdf 6.10.0 fixture",
-                "label_author": "provisional",
-                "samples": samples,
-            }
-        )
-    )
-    (data / "judgments.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "evidence": [{"id": "e1", "document_id": "nist145", "quote": "A"}],
-                "queries": [
-                    {
-                        "id": "q1",
-                        "kb_id": "kb",
-                        "text": "question",
-                        "category": "fact",
-                        "relevance": {"nist145": 2},
-                        "evidence": ["e1"],
-                    }
-                ],
-            }
-        )
-    )
-    (native / "report.json").write_text(
-        json.dumps(
-            {
-                "scope": "native parse fixture",
-                "snapshot_sha256": sha256(
-                    (data / "pages.json").read_bytes()
-                ).hexdigest(),
-                "samples": parsed,
-            }
-        )
-    )
-    return data, native
+from tests.fixtures.native_pdf import artifact
 
 
 def test_native_artifact_identity_ignores_latency_but_keeps_canonical_and_page_checks(
@@ -293,3 +204,37 @@ def test_inspection_is_diagnostic_and_preserves_new_output_directory_guard(
     assert "not quality acceptance" in report["scope"]
     with pytest.raises(FileExistsError):
         inspect(native, out, data=data)
+
+
+def test_native_artifact_requires_all_physical_pages_even_if_report_is_consistent(
+    tmp_path: Path,
+) -> None:
+    from comet_rag.ports import ExtractedDocument, ExtractedPage
+    from evals.pdf.parse import page_summary
+
+    data, native = artifact(tmp_path)
+    path = data / "pages.json"
+    snapshot = json.loads(path.read_text())
+    snapshot["samples"][0]["total_pages"] = 3
+    path.write_text(json.dumps(snapshot))
+    output = {
+        "markdown": "A\n\nC",
+        "pages": [
+            {"page_number": 1, "markdown": "A"},
+            {"page_number": 3, "markdown": "C"},
+        ],
+    }
+    (native / "nist145.json").write_text(json.dumps(output))
+    report = json.loads((native / "report.json").read_text())
+    report["snapshot_sha256"] = sha256(path.read_bytes()).hexdigest()
+    report["samples"][0].update(
+        page_summary(
+            ExtractedDocument(
+                "A\n\nC", pages=(ExtractedPage(1, "A"), ExtractedPage(3, "C"))
+            ),
+            3,
+        )
+    )
+    (native / "report.json").write_text(json.dumps(report))
+    with pytest.raises(ValueError, match="完整"):
+        load_native(native, data=data)

@@ -186,3 +186,24 @@ async def test_required_native_pages_cannot_pass_with_section_fallback(
             require_pages=True,
         )
     assert not (tmp_path / "out/report.json").exists()
+
+
+async def test_required_native_pages_reject_partial_but_consistent_output(
+    tmp_path: Path,
+) -> None:
+    data = locked_sources(tmp_path)
+
+    class Partial(RecordingExtractor):
+        async def extract(
+            self, path: Path, /, *, filename: str, media_type: str
+        ) -> ExtractedDocument:
+            return ExtractedDocument(
+                "first\n\nlast",
+                pages=(ExtractedPage(1, "first"), ExtractedPage(7, "last")),
+            )
+
+    with pytest.raises(ValueError, match="完整"):
+        await audit(
+            Partial(), tmp_path, tmp_path / "out", data=data, require_pages=True
+        )
+    assert not (tmp_path / "out/report.json").exists()

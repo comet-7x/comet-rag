@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "canonical_sha256": "a5ef5b260b3472d8a8e0dc5541c8de24053bbd42cc70f0f06e0e643f02f7a1d8",
+  "files": {
+    "report.json": "315c082fe2c704057487b482d6923802cf7c770a5e476a07fd4e3d304a5e9915",
+    "nist145.json": "63a010ff86e4669e67230aaa1a484d31f85b05a5ff6d054d58b463c71519eb70",
+    "nist144.json": "74d56c03c8028ff61a6ea1d35ebaabf0a646236e28ee054426d85e33e506b914"
+  },
+  "attribution": "Republished courtesy of the National Institute of Standards and Technology."
+}

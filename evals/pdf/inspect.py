@@ -90,6 +90,8 @@ def load_native(
             pages=tuple(ExtractedPage(p.page_number, p.markdown) for p in output.pages),
         )
         summary = page_summary(document, source.total_pages)
+        if summary["page_numbers"] != list(range(1, source.total_pages + 1)):
+            raise ValueError("原生产物要求完整物理页，不能遗漏任意一页")
         for key in (
             "page_status",
             "page_numbers",

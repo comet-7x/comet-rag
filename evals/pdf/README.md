@@ -124,3 +124,19 @@ HTML table/tr，忽略代码围栏，坏表格明确失败；不覆盖所有Mark
 
 冻结产物结果、覆盖守卫与下一步边界见
 [第三十批报告](../../docs/evaluations/native_evidence_20261025.md)。
+
+## 冻结原生产物与新盲审包
+
+[原生产物](native/README.md)按轮次提交原始JSON及manifest；不再依赖临时目录作为
+基线。`load_frozen`先校验精确文件清单、字节摘要，再复用完整页和canonical检查。
+部分写入没有最终manifest，不能成为有效快照。正式复核应固定仓库提交及轮次，
+自洽的可编辑manifest不是签名或模型工件证明。
+
+```bash
+uv run python -m evals.pdf.artifacts freeze --native-dir /path/to/parse-output --out /new/frozen-dir
+uv run python -m evals.pdf.artifacts review --out /new/blind-review-dir
+```
+
+freeze与review都拒绝覆盖已有输出。默认盲审采用b30原生正文、原问题的12个物理页；
+以完整原文偏移标注passage/table_header/table_row。联合证据分列，禁止拼造连续quote。
+完整原生页验收现在要求1..总页数，页有序、范围合法和报告自洽仍不足以证明没有漏页。

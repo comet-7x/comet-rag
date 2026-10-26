@@ -97,6 +97,10 @@ async def audit(
         summary = page_summary(document, sample.total_pages)
         if require_pages and summary["page_status"] != "verified":
             raise ValueError("本次验收要求原生页事实，不能以 section 回退通过")
+        if require_pages and summary["page_numbers"] != list(
+            range(1, sample.total_pages + 1)
+        ):
+            raise ValueError("本次验收要求完整物理页，不能遗漏任意一页")
         samples.append(
             {
                 "source_id": path.stem,
