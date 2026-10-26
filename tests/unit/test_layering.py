@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import re
 import sys
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,16 @@ ENGINES_MAY_IMPORT = ("comet_rag.engines", "comet_rag.ports")
 
 # Port 是所有上层共同依赖的契约；引入第三方包或上层模块会让抽象反向依赖实现。
 PORTS_MAY_IMPORT = ("comet_rag.ports",)
+
+
+@cache
+def _parsed_source(source: str, filename: str) -> ast.Module:
+    # 守卫只读AST；以实际内容作键，故同路径文件被改写仍会重新解析。
+    return ast.parse(source, filename=filename)
+
+
+def _module_ast(module: Path) -> ast.Module:
+    return _parsed_source(module.read_text(encoding="utf-8"), str(module))
 
 
 def _iter_engine_modules() -> list[Path]:
@@ -130,7 +141,7 @@ def _imported_full(tree: ast.AST, module: Path | None = None) -> set[str]:
 
 @pytest.mark.parametrize("module", _iter_engine_modules(), ids=lambda p: p.name)
 def test_engines_do_not_import_infrastructure(module: Path) -> None:
-    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    tree = _module_ast(module)
     violations = _imported_roots(tree) & FORBIDDEN_IN_ENGINES
     assert not violations, (
         f"{module.relative_to(PROJECT_ROOT)} 违反 spec A1，导入了基础设施包：{sorted(violations)}。"
@@ -154,7 +165,7 @@ def test_engines_only_depend_on_engines_and_ports(module: Path) -> None:
     "库那一半"能被单独拿去用的前提：装一个 docx 解析器不该顺带拖进
     FastAPI、Milvus，或者任何一层用例编排。
     """
-    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    tree = _module_ast(module)
     violations = _engine_internal_violations(tree, module)
     assert not violations, (
         f"{module.relative_to(PROJECT_ROOT)} 依赖了 engines/ports 之外的本项目包："
@@ -208,7 +219,7 @@ def _port_dependency_violations(tree: ast.AST, module: Path | None = None) -> se
 )
 def test_ports_only_depend_on_standard_library(module: Path) -> None:
     """Port 必须比使用者和适配器更低，不能反向携带实现依赖。"""
-    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    tree = _module_ast(module)
     violations = _port_dependency_violations(tree, module)
     assert not violations, (
         f"{module.relative_to(PROJECT_ROOT)} 依赖了标准库/ports 之外的模块："
@@ -249,7 +260,7 @@ def _model_port_consumers() -> list[Path]:
 @pytest.mark.parametrize("module", _model_port_consumers(), ids=lambda p: p.name)
 def test_business_code_depends_on_model_ports(module: Path) -> None:
     """供应商模型只能在组合根选择，不能泄漏到业务和纯计算模块。"""
-    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    tree = _module_ast(module)
     hits = {
         name
         for name in _imported_full(tree, module)
@@ -272,7 +283,7 @@ def test_business_code_depends_on_model_ports(module: Path) -> None:
 )
 def test_services_do_not_import_infrastructure(module: Path) -> None:
     """Service 只编排 Port/Strategy；具体适配器必须由组合根注入。"""
-    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    tree = _module_ast(module)
     hits = {
         name
         for name in _imported_full(tree, module)
@@ -310,7 +321,7 @@ def _service_modules() -> list[Path]:
 @pytest.mark.parametrize("module", _service_modules(), ids=lambda p: p.name)
 def test_services_depend_on_vectorstore_ports(module: Path) -> None:
     """Service 只描述业务能力，具体向量后端必须由组合根注入。"""
-    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    tree = _module_ast(module)
     violations = _service_vectorstore_violations(tree, module)
     assert not violations, (
         f"{module.relative_to(PROJECT_ROOT)} 直接依赖了向量存储适配器："
@@ -374,7 +385,7 @@ def test_single_process_paths_never_pull_in_lease_reclaim(module: Path) -> None:
     本用例把这条结构性保证钉住 —— 哪天有人图省事在 `composition/bootstrap.py` 里
     import 它，这里立刻变红。
     """
-    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    tree = _module_ast(module)
     hits = {
         name for name in _imported_full(tree, module) if name.startswith(MAINTENANCE)
     }
@@ -406,7 +417,7 @@ MAY_CONSTRUCT_MODELS = ("composition/bootstrap.py",)
 
 def _model_construction_sites(module: Path) -> set[str]:
     """找出模块里直接实例化具体模型类的地方。"""
-    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    tree = _module_ast(module)
     hits: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -479,7 +490,7 @@ def test_core_is_a_zero_dependency_kernel(module: Path) -> None:
     依赖图上 `core` 的箭头就自相矛盾：既指向 services，又被 services 指向。
     组合根已迁至 `composition/`，这条守卫才成立。
     """
-    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    tree = _module_ast(module)
     violations = {
         name
         for name in _imported_full(tree, module)
@@ -521,7 +532,7 @@ def _package_edges() -> dict[str, set[str]]:
             continue
         relative = path.relative_to(root)
         source = relative.parts[0] if len(relative.parts) > 1 else "(top)"
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = _module_ast(path)
         for name in _imported_full(tree, path):
             if not name.startswith("comet_rag."):
                 continue
@@ -703,7 +714,7 @@ def test_engines_do_not_invent_concurrency_defaults(module: Path) -> None:
     if relative == CONCURRENCY_DEFAULTS_MODULE:
         return
 
-    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    tree = _module_ast(module)
     offenders = {
         target.id
         for node in tree.body  # 只看模块级
@@ -737,3 +748,11 @@ def test_concurrency_guard_actually_detects_violations() -> None:
 
     assert offenders(forwarding) == set()
     assert offenders(hardcoded) == {"DEFAULT_MAX_CONCURRENCY"}
+
+
+def test_cached_guard_still_reads_changes_to_the_same_file(tmp_path: Path) -> None:
+    module = tmp_path / "engine.py"
+    module.write_text("import pathlib\n")
+    assert not (_imported_roots(_module_ast(module)) & FORBIDDEN_IN_ENGINES)
+    module.write_text("import redis\n")
+    assert _imported_roots(_module_ast(module)) & FORBIDDEN_IN_ENGINES == {"redis"}

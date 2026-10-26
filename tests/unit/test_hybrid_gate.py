@@ -215,7 +215,7 @@ async def test_waiting_seats_are_still_bounded() -> None:
     assert gate.stats.rejected >= 1
 
 
-def test_sync_waiting_seats_share_the_same_queue() -> None:
+async def test_sync_waiting_seats_share_the_same_queue() -> None:
     """同步等待者也占席位 —— 两个队列各算各的，`max_waiting` 就是假的。"""
     gate = Gate(limit=1, max_waiting=1, acquire_timeout=0.5)
     entered = threading.Event()
@@ -233,15 +233,15 @@ def test_sync_waiting_seats_share_the_same_queue() -> None:
     threads = [threading.Thread(target=holder), threading.Thread(target=queued)]
     for thread in threads:
         thread.start()
-    entered.wait(1.0)
-    time.sleep(0.05)  # 让第二个线程排进队列
-
-    with pytest.raises(Overloaded, match="等待席位已满"), gate:  # 第三个：席位已满
-        pass
-
-    release.set()
-    for thread in threads:
-        thread.join()
+    try:
+        await _wait_for_waiters(gate, 1)
+        with pytest.raises(Overloaded, match="等待席位已满"), gate:
+            pass
+    finally:
+        release.set()
+        for thread in threads:
+            thread.join(timeout=1)
+    assert not any(thread.is_alive() for thread in threads)
     assert _available(gate) == 1
 
 
@@ -289,7 +289,7 @@ async def test_a_newcomer_cannot_jump_the_queue() -> None:
 
     await gate.acquire()
     early = asyncio.create_task(contender("排队者"))
-    await asyncio.sleep(0.02)
+    await _wait_for_waiters(gate, 1)
 
     gate.release()
     late = asyncio.create_task(contender("新来的"))
@@ -374,8 +374,14 @@ async def test_mixed_load_never_leaks_a_permit() -> None:
     await asyncio.gather(*tasks, return_exceptions=True)
     for thread in threads:
         thread.join(timeout=5)
-    await asyncio.sleep(0.05)
+    assert not any(thread.is_alive() for thread in threads)
 
+    async def drained() -> bool:
+        stats = gate.stats
+        return stats.in_flight == 0 and stats.waiting == 0
+
+    # 跨线程释放可能继续投递异步回调；按状态有界排干，不猜一个固定等待时长。
+    await wait_until(drained, timeout=1, message="闸门在生产者结束后仍未归还名额")
     stats = gate.stats
     assert stats.peak_in_flight <= 4, f"峰值 {stats.peak_in_flight} 超过上限 4"
     assert stats.admitted > 100, f"只准入了 {stats.admitted} 次，压力不够说明不了问题"
