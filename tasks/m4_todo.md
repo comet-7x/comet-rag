@@ -1,6 +1,6 @@
 # TODO: Comet-RAG M4（Chunking 与层级索引）
 
-> 状态：可选生产接线、离线预检与隔离切换/回退演练已验收；实际迁移/部署与完整出口未完成（2026-10-25 校准）
+> 状态：可选生产接线、隔离切换/回退及真实服务器中转链路已验收；实际迁移/部署与完整出口未完成（2026-10-26 校准）
 > 规格：`tasks/m4_spec.md` v1.10
 > 计划：`tasks/m4_plan.md`、`tasks/m4_t6_design.md`；下一批见 [V2 后续计划](v2_next_steps.md)
 > GitHub Issue：[#57](https://github.com/comet-7x/comet-rag/issues/57)
@@ -217,7 +217,7 @@ standalone 脚本，在隔离端口用内嵌 etcd/本地存储成功验收。真
 
 - [ ] 固定样本比较 recursive/markdown/page/hierarchy
 - [ ] 记录块长分布、边界完整性、hit@k、延迟、索引条数与存储增量
-- [ ] Pipeline、配置、架构、目录、部署与迁移文档更新
+- [x] Pipeline、配置、架构、目录、部署与迁移文档更新（明确未完成的发布门禁）
 - [ ] unit < 10s，core-only、integration、e2e、benchmark、Ruff、Pyright 全绿
 - [ ] 创建面向 `develop` 的 PR，并完成 AI Bot 增量评审
 
@@ -259,3 +259,10 @@ T1～T5 每项至少一个 Conventional Commit，聚焦 Chunking；T6 只提交�
 表格单元审计。21条旧引用均不能直接迁移；六张长表的整表与整行缺口分别记录，默认
 分块未改。[原生证据报告](../docs/evaluations/native_evidence_20261025.md)保留原生金标、
 独立人工、固定模型工件及正式部署门禁，不关闭T10/H/I。
+
+31–35批完成原生输入冻结、复核结构检查、作者质量探索、真实MinIO和服务器模型链路。
+用户明确独立人工与不可变工件延期，正式部署/迁移暂缓；本轮执行收口不等于完整
+T10/H/I通过。最新全量unit3632、integration300无skip、E2E50、benchmark39；合并
+93.05%、tasks96.29%。本机pytest三轮低于10s，进程总墙钟仍超10s；独立标签/工件、
+正式部署、日志关停警告、CI/PR与浏览器验收保持边界，见
+[收口报告](../docs/evaluations/closeout_20261026.md)。

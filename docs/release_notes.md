@@ -2,6 +2,11 @@
 
 ## Unreleased — V2 执行模式与职责重构
 
+第三十一至三十五批完成原生PDF冻结/复核工具、作者暂定标签的真实模型对照、真实
+MinIO双模式和隔离服务器链路。原生逐页协议明确返回的空页现在保留在 `pages` 中，
+不为它制造空内容块；没有修改正文或向量schema。独立人工、固定模型工件及正式
+部署门禁仍保留，默认策略不改。验证与限制见[本轮收口](evaluations/closeout_20261026.md)。
+
 新增仓库级 [检索评测工具](retrieval_evaluation.md)：固定生成语料/标签、严格评分、12 组
 离线回归，以及只访问模型服务的实测入口。工具不进入 wheel，不改变服务 API/Store
 契约或默认检索策略；小型合成语料分数不作为生产质量门槛。
@@ -62,7 +67,8 @@ IngestRunner 的正规化与分块改用已有 run_sync，取消后等待同步�
 调用方重试同一 manifest；提交后响应丢失返回 already_active，旧任务返回 superseded，
 不覆盖较新的 active。准备、激活与 GC 各有独立重试边界，激活阶段不重新 embedding。
 返回值是本次尝试的快照，不保证返回后仍为当前版本。未新增 schema、Port 或生产开关；
-生产 IngestRunner 接线仍待完成。
+默认 legacy IngestRunner 不执行这些阶段；opt-in RevisionIngestRunner 已接线，启用
+条件见下文，正式部署验收仍保留。
 
 ### 实验性 revision GC
 

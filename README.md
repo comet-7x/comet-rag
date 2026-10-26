@@ -8,17 +8,11 @@
 两者共用同一份解析代码。这个双重定位由 `pyproject.toml` 的依赖分组
 **在安装期强制**，并由 AST 层级守卫在 CI 里盯着（`tests/unit/test_layering.py`）。
 
-> 当前进度（2026-10-25）：V2 第二十三批补齐独立进程 worker 信号关停/恢复与单测预算复核。
-> M4 已有结构感知分块、DocumentStore、激活/GC、revision-aware 读取及 opt-in 生产接线；
-> 默认仍为 legacy，实际资料迁移、部署切换/回退及完整 H/I 尚未完成。见 [下一步计划](tasks/v2_next_steps.md)。
-> 第十七/十八批补齐独立发布/清理恢复、迟到写补偿、游标续页与应用删除保护。
-> 第十九批在外部写入前持久化准备意图，并交付默认关闭的 IO worker 定时对账及告警信号；
-> 不自动切换生产入库或开启 revision 检索。生产接线范围及门禁见
-> [对账设计](tasks/v2_reconciliation_design.md)，当前入库路径保持不变。
-> 第二十批单列历史缺载荷诊断，新增 API 入库准入暂停；已选择新命名空间重建后核验切换，
-> 第二十一批复用五阶段协议并验证跨道、发布与 GC 重试；第二十二批提供 `revision-preflight`，
-> 第二十三批用真实 SIGTERM/SIGKILL 验证 revision 续跑，worker 默认先给在途工作 30 秒排干机会；
-> [迁移配置与验收](docs/revision_migration.md)说明启用条件，不表示已迁移用户数据或切换生产。
+> 当前进度（2026-10-26）：V2 第三十一至三十五批已完成本轮探索与隔离验证。
+> M4 具备结构感知分块、DocumentStore、激活/GC、revision-aware 读取及 opt-in 生产接线；
+> 已验证真实服务器模型/MinIO与独立worker恢复，默认策略保持不变。独立人工复核、
+> 模型不可变工件和正式迁移/部署仍是发布门禁，完整 H/I 尚未关闭。
+> 结果与限制见[收口报告](docs/evaluations/closeout_20261026.md)，执行状态见[后续计划](tasks/v2_next_steps.md)。
 
 | 你要做什么 | 从这里开始 |
 |---|---|

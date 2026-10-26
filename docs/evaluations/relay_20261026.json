@@ -1,0 +1,295 @@
+{
+  "scope": "isolated relay through real S3/MinerU/model/Milvus services; no production cutover",
+  "source_sha256": "e42f3b70cee6344ca8e0cb06ccc4028e56a05266cbd331c9e008fe05e62a2ffe",
+  "source_bytes": 9024767,
+  "formal_release": "pending",
+  "model_artifacts": "unknown",
+  "independent_labels": "pending",
+  "steps": [
+    {
+      "step": "s3-source-uploaded",
+      "bytes": 9024767
+    },
+    {
+      "step": "api-ready",
+      "pid": 49688
+    },
+    {
+      "step": "cpu-handoff-persisted",
+      "task_id": "05f8d18bb409",
+      "child_count": 129,
+      "parent_count": 67,
+      "cpu_pid": 49701,
+      "indexed_physical_pages": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58
+      ]
+    },
+    {
+      "step": "cpu-stopped-before-io",
+      "exit_code": 0
+    },
+    {
+      "step": "io-resumed-and-activated",
+      "generation": 1,
+      "phase": "active",
+      "io_pid": 50225
+    },
+    {
+      "step": "query-verified",
+      "mode": "dense",
+      "level": "child",
+      "count": 5,
+      "reranked": true
+    },
+    {
+      "step": "query-verified",
+      "mode": "dense",
+      "level": "parent",
+      "count": 5,
+      "reranked": true
+    },
+    {
+      "step": "query-verified",
+      "mode": "keyword",
+      "level": "child",
+      "count": 5,
+      "reranked": true
+    },
+    {
+      "step": "query-verified",
+      "mode": "keyword",
+      "level": "parent",
+      "count": 5,
+      "reranked": true
+    },
+    {
+      "step": "query-verified",
+      "mode": "hybrid",
+      "level": "child",
+      "count": 5,
+      "reranked": true
+    },
+    {
+      "step": "query-verified",
+      "mode": "hybrid",
+      "level": "parent",
+      "count": 5,
+      "reranked": true
+    },
+    {
+      "step": "active-gc-refused"
+    },
+    {
+      "step": "api-and-io-drained"
+    },
+    {
+      "step": "query-verified",
+      "mode": "dense",
+      "level": "child",
+      "count": 5,
+      "reranked": true
+    },
+    {
+      "step": "query-verified",
+      "mode": "dense",
+      "level": "parent",
+      "count": 5,
+      "reranked": true
+    },
+    {
+      "step": "query-verified",
+      "mode": "keyword",
+      "level": "child",
+      "count": 5,
+      "reranked": true
+    },
+    {
+      "step": "query-verified",
+      "mode": "keyword",
+      "level": "parent",
+      "count": 5,
+      "reranked": true
+    },
+    {
+      "step": "query-verified",
+      "mode": "hybrid",
+      "level": "child",
+      "count": 5,
+      "reranked": true
+    },
+    {
+      "step": "query-verified",
+      "mode": "hybrid",
+      "level": "parent",
+      "count": 5,
+      "reranked": true
+    },
+    {
+      "step": "new-processes-retain-active-and-idempotency",
+      "api_pid": 50239,
+      "io_pid": 50240
+    },
+    {
+      "step": "cleanup-verified",
+      "s3_bucket_removed": true,
+      "milvus_baseline_restored": true,
+      "owned_children_exited": true,
+      "secret_config_removed": true
+    }
+  ],
+  "status": "passed",
+  "native_summary": {
+    "page_status": "verified",
+    "page_numbers": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60
+    ],
+    "normalized_empty_page_numbers": [
+      59,
+      60
+    ],
+    "normalized_sha256": "09aca1f1e30f82d9592a5d1c82f7dde6976fbc544d11e8f785726a909932019a",
+    "normalized_characters": 167573,
+    "block_count": 58
+  },
+  "cleanup_audit": {
+    "scope": "all three owned rehearsal attempts",
+    "owned_sql_databases_remaining": 0,
+    "relay_redis_db12_keys": 0,
+    "milvus_total_collections": 1,
+    "relay_collections_remaining": 0,
+    "recorded_child_processes": 12,
+    "owned_children_remaining": 0,
+    "secret_config_files_remaining": 0
+  },
+  "warning_observations": {
+    "uvicorn_graceful_api_exits": "SIGTERM after Application shutdown complete; process exit -15",
+    "api_resource_tracker_40_semaphore_warnings": 2,
+    "warning_root_cause": "not independently established; keep as follow-up, no zero-warning claim",
+    "models": "immutable artifacts unknown",
+    "formal_production_acceptance": "pending"
+  },
+  "source_wheel_identity": {
+    "final_implementation_sha256": "74ac74a9710355477db38bd39d0cbb69d76768ac6be3c1add3ff35d0f9950624",
+    "table_experiment_matches": true,
+    "user_experiment_matches": true,
+    "wheel_sha256": "65cc6c98f1273c4258c13dd827f4beb4005a77f8b6a4dccdca013f79a489decf",
+    "wheel_python_files_match": 177,
+    "evaluation_and_private_data_excluded": true
+  }
+}
