@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 import pytest
 
-from comet_rag.infrastructure.sources.s3 import AsyncS3Loader
+from comet_rag.engines.offload import run_sync
+from comet_rag.infrastructure.sources.s3 import AsyncS3Loader, S3Loader
+from tests.fixtures.minio import MinioCredentials, isolated_object
 from tests.integration import conftest as integration_fixtures
 
 pytestmark = pytest.mark.integration
@@ -51,37 +51,47 @@ def test_minio_endpoint_address_rejects_port_zero() -> None:
         integration_fixtures._endpoint_address("http://minio.example.test:0")
 
 
-async def test_s3_loader_round_trip_against_minio(minio_endpoint: str) -> None:
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_s3_loader_round_trip_against_minio(
+    minio_endpoint: str, minio_credentials: MinioCredentials, asynchronous: bool
+) -> None:
     aioboto3 = pytest.importorskip("aioboto3", reason="需要 server extra")
-    bucket = f"comet-rag-test-{uuid4().hex[:12]}"
-    key = "documents/integration.txt"
+    from botocore.exceptions import ClientError
+
     payload = b"integration object from minio"
     client_kwargs = {
         "endpoint_url": minio_endpoint,
-        "aws_access_key_id": "minioadmin",
-        "aws_secret_access_key": "minioadmin",
+        "aws_access_key_id": minio_credentials.access_key,
+        "aws_secret_access_key": minio_credentials.secret_key,
         "region_name": "us-east-1",
     }
 
     async with aioboto3.Session().client("s3", **client_kwargs) as client:
-        await client.create_bucket(Bucket=bucket)
-        await client.put_object(Bucket=bucket, Key=key, Body=payload)
+        async with isolated_object(client, payload) as (bucket, key):
+            loader = (AsyncS3Loader if asynchronous else S3Loader)(
+                endpoint_url=minio_endpoint,
+                access_key_id=minio_credentials.access_key,
+                secret_access_key=minio_credentials.secret_key,
+            )
+            try:
+                source = f"s3://{bucket}/{key}"
+                content = (
+                    await loader.load(source)
+                    if isinstance(loader, AsyncS3Loader)
+                    else await run_sync(loader.load, source)
+                )
+                assert content.path.read_bytes() == payload
+                assert content.metadata["bucket"] == bucket
+                assert content.metadata["object_key"] == key
+                assert content.metadata["file_type"] == "txt"
+            finally:
+                if isinstance(loader, AsyncS3Loader):
+                    await loader.cleanup()
+                else:
+                    await run_sync(loader.cleanup)
+            assert not content.path.exists()
+            assert loader._client is None
 
-        loader = AsyncS3Loader(
-            endpoint_url=minio_endpoint,
-            access_key_id="minioadmin",
-            secret_access_key="minioadmin",  # noqa: S106 - local test credential
-        )
-        try:
-            content = await loader.load(f"s3://{bucket}/{key}")
-            assert content.path.read_bytes() == payload
-            assert content.metadata["bucket"] == bucket
-            assert content.metadata["object_key"] == key
-            assert content.metadata["file_type"] == "txt"
-        finally:
-            await loader.cleanup()
-            await client.delete_object(Bucket=bucket, Key=key)
-            await client.delete_bucket(Bucket=bucket)
-
-        assert not content.path.exists()
-        assert loader._client is None
+        with pytest.raises(ClientError) as missing:
+            await client.head_bucket(Bucket=bucket)
+        assert missing.value.response["ResponseMetadata"]["HTTPStatusCode"] == 404

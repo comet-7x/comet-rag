@@ -20,6 +20,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
+from tests.fixtures.minio import MinioCredentials, credentials
+
 pytestmark = pytest.mark.integration
 
 #: 与 docker-compose.yml 一致。可用环境变量覆盖，方便对着别的实例跑。
@@ -181,6 +183,11 @@ def minio_endpoint() -> str:
     except ValueError as exc:
         pytest.fail(f"COMET_TEST_MINIO_ENDPOINT 配置无效：{exc}", pytrace=False)
     return MINIO_ENDPOINT
+
+
+@pytest.fixture(scope="session")
+def minio_credentials() -> MinioCredentials:
+    return credentials(os.environ)
 
 
 #: `TRUNCATE` 要 ACCESS EXCLUSIVE 锁。有别的连接还开着事务时，
