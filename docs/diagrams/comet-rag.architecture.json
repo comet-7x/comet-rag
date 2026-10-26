@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "e30721220948e1d218e01aeb02c982cd4a5a0b5c",
+      "revision": "a25cee2e634c2947087949624350e61b2fa56f6b",
       "link_mode": "local-only"
     }
   },
@@ -513,14 +513,14 @@
           "end_line": 130
         },
         {
-          "path": "evals/pdf/inspect.py",
-          "line": 204,
-          "end_line": 227
-        },
-        {
           "path": "evals/pdf/artifacts.py",
           "line": 46,
           "end_line": 169
+        },
+        {
+          "path": "evals/pdf/review.py",
+          "line": 64,
+          "end_line": 152
         }
       ]
     }
@@ -816,6 +816,17 @@
         "新盲审采用b30正文、原问题12个选定物理页和24题；其余75页不扩充可回答范围。表头、数据行与跨页证据分列真实片段，禁止拼造连续引用。",
         "冻结、读取和盲审生成均属现有PDF工具的离线职责，不连接生产索引或模型；图中HTTP箭头仍只属于显式解析入口。校验和、姓名或模型名不能认证签名、人的独立性或远端权重。",
         "全量集成298通过、MinIO1跳过；最终插桩unit3564通过。首次普通unit11.20s未达10秒，留第三十四批治理；独立裁决、固定工件及目标生产部署仍待证据。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "第三十二批：结构核验不等于独立裁决",
+      "items": [
+        "复核工具重新生成冻结输入，绑定canonical、问题页域与完整问题集合；核验KB相关度、严格整数页号/等级、页内区间及逐字quote，拒绝空白或重复证据。",
+        "无答案须说明范围，不确定保留待裁决；联合片段须说明需求。响应只读取一次，解析和摘要共享同一字节快照，避免文件后改导致审计身份指向未校验内容。",
+        "输出始终独立复核unverified、质量pending；ready_for_adjudication不是认证身份、裁决分歧或冻结金标。真实pending模板被拒绝，fixture提交不冒充独立人类。",
+        "现有两模型可调用，embedding返回4096维有限向量；models只提供名称/长度等元数据，没有明确权重或tokenizer revision。可用性不补齐不可变工件，仍需部署方证据与实际实例绑定。",
+        "17项源码变异检出；本批3598项插桩unit通过，预算仍待34批。生产包与中间件测试源码未改，复用31批的同字节真实中间件证据；正式人类/工件和目标部署验收未关闭。"
       ]
     }
   ]
