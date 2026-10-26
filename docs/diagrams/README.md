@@ -52,7 +52,7 @@ API 角色，核验使用独立地址，不证明生产部署已改配；模型�
 ## 源数据与证据
 
 - [comet-rag.architecture.json](comet-rag.architecture.json) 是可编辑的图源；HTML 是生成产物，不手改。
-- 本图源码证据固定到 `a25cee2e634c2947087949624350e61b2fa56f6b`，各节点列出相对路径与行号。
+- 本图源码证据固定到 `ffe9fe73a86d2a794769b9052be8e9681db96c64`，各节点列出相对路径与行号。
   固定的是被说明的代码提交，不要求等于包含生成图的提交，避免自引用。
 - 当前为 `local-only` 源码模式：保留路径、行号和版本，不假设尚未推送的提交可在 GitHub 打开。
 - 使用 [Archify 3.2.0](https://github.com/tt-a1i/archify/tree/25cf37080fc8b1dbe758a4efc3935b55f3327083)，
@@ -87,3 +87,6 @@ provenance 检查通过；此前工具的 URL 安全策略阻止 file:// 预览�
 
 HTML 标记为生成文件，保留上游输出字节以匹配产物校验；仅该文件豁免空白检查。
 JSON 与 Markdown 继续接受正常检查，不为清理模板里的空行而手改已验证的 HTML。
+
+第三十三批补充空物理页解码和原生表格对照的已提交源码证据；用户PDF只保留数字结论，
+见[探索报告](../evaluations/native_quality_20261026.md)。离线验约不冒充浏览器/视觉验收。

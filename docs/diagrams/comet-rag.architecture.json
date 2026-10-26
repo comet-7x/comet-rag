@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "a25cee2e634c2947087949624350e61b2fa56f6b",
+      "revision": "ffe9fe73a86d2a794769b9052be8e9681db96c64",
       "link_mode": "local-only"
     }
   },
@@ -122,9 +122,9 @@
           "end_line": 68
         },
         {
-          "path": "deploy/mineru/mineru-3.4.5-page-markdown.patch",
-          "line": 1,
-          "end_line": 30
+          "path": "comet_rag/infrastructure/extractors/_mineru_pages.py",
+          "line": 108,
+          "end_line": 137
         }
       ],
       "tag": "逐页仅 vlm-http-client"
@@ -477,18 +477,18 @@
       "sources": [
         {
           "path": "evals/retrieval/baseline.py",
-          "line": 71,
-          "end_line": 199
+          "line": 75,
+          "end_line": 205
         },
         {
-          "path": "evals/pdf/data.py",
-          "line": 52,
-          "end_line": 131
+          "path": "evals/pdf/table_data.py",
+          "line": 35,
+          "end_line": 187
         },
         {
-          "path": "evals/pdf/real.py",
-          "line": 23,
-          "end_line": 166
+          "path": "evals/pdf/table_experiment.py",
+          "line": 36,
+          "end_line": 176
         }
       ]
     },
@@ -509,13 +509,13 @@
       "sources": [
         {
           "path": "evals/pdf/parse.py",
-          "line": 71,
-          "end_line": 130
+          "line": 18,
+          "end_line": 138
         },
         {
           "path": "evals/pdf/artifacts.py",
           "line": 46,
-          "end_line": 169
+          "end_line": 185
         },
         {
           "path": "evals/pdf/review.py",
@@ -827,6 +827,17 @@
         "输出始终独立复核unverified、质量pending；ready_for_adjudication不是认证身份、裁决分歧或冻结金标。真实pending模板被拒绝，fixture提交不冒充独立人类。",
         "现有两模型可调用，embedding返回4096维有限向量；models只提供名称/长度等元数据，没有明确权重或tokenizer revision。可用性不补齐不可变工件，仍需部署方证据与实际实例绑定。",
         "17项源码变异检出；本批3598项插桩unit通过，预算仍待34批。生产包与中间件测试源码未改，复用31批的同字节真实中间件证据；正式人类/工件和目标部署验收未关闭。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "第三十三批：空页事实与有边界质量探索",
+      "items": [
+        "原生协议60页完整返回，客户端丢弃空片段导致58页；修复保留显式空记录，内容块仍只覆盖非空正文。完整页号验收不等于OCR全保真，真实两轮背封文字有波动。",
+        "公开两题表格14组、用户长PDF18题8组真实模型对照，作者标签在模型调用前冻结。表格显式分隔符只作实验；同字符参数与正文token预算，候选池因分块不同而不同。",
+        "用户样本重排改善有限标签覆盖，父块在512预算仍有法规证据遗漏；3条困难无答案题均返回非空。解析遗漏和视觉问题另列，单文档高分不代表生产检索达标。",
+        "空页/来源归属/选页revision等22项反向变异检出；unit3622、E2E50、benchmark39通过。用户PDF与衍生原文Git忽略，只发布数字记录和边界。",
+        "用户确认先探索、自审和盲审材料，独立人工与固定工件为后续发布门禁；正式部署迁移暂缓。默认策略不改，下一步单测预算和MinIO；图仅离线验约，无新增浏览器验收。"
       ]
     }
   ]
