@@ -13,10 +13,10 @@ from comet_rag.composition.bootstrap import (
 )
 from comet_rag.config.schemas import APPConfig
 from comet_rag.services.retrieval import ReturnLevel, SearchMode
-from evals.pdf.data import DATA, load
+from evals.pdf.data import DATA, PDFSnapshot, load
 from evals.pdf.tokens import BodyTokens, body_budget
 from evals.retrieval.baseline import Strategy, collect
-from evals.retrieval.data import write_json
+from evals.retrieval.data import read_json, write_json
 from evals.retrieval.metrics import Run, score
 
 
@@ -69,6 +69,7 @@ async def evaluate(
     if not model_revision.strip():
         raise ValueError("必须显式声明权重版本；无法核实则填 unknown")
     dataset = load(data)
+    snapshot = read_json(data / "pages.json", PDFSnapshot)
     settings = config.infrastructure_config.reranker
     if settings is None:
         raise ValueError("PDF 对照需要真实 reranker 和原生 tokenize 端点")
@@ -122,7 +123,7 @@ async def evaluate(
                 )
                 run.settings.update(
                     label_status="author provisional; independent human review pending",
-                    extraction_scope="pypdf native text reference; not production MinerU",
+                    extraction_scope=snapshot.extractor,
                     reranker=settings.model_name if use_reranker else "disabled",
                     token_probe_sha256=before["sha256"],
                 )

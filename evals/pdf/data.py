@@ -53,6 +53,11 @@ def load(data: Path = DATA) -> Dataset:
     """快照来自真实 PDF 的独立参考提取；不冒充 MinerU 的生产解析结果。"""
     snapshot = read_json(data / "pages.json", PDFSnapshot)
     labels = read_json(data / "judgments.json", Judgments)
+    return from_snapshot(snapshot, labels)
+
+
+def from_snapshot(snapshot: PDFSnapshot, labels: Judgments) -> Dataset:
+    """复用同一物理页/标签校验；生产解析或来源身份由上游冻结工件证明。"""
     corpus = Corpus(version=1, documents=[s.source for s in snapshot.samples])
     validate_sources(corpus)
     documents = {}

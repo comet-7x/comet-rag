@@ -31,20 +31,13 @@ def test_missing_pages_are_not_reported_as_page_acceptance() -> None:
     assert result["page_numbers"] == []
 
 
-@pytest.mark.parametrize(
-    "fault", ["overflow", "mismatch", "raw_mismatch", "normalization", "empty"]
-)
+@pytest.mark.parametrize("fault", ["overflow", "mismatch", "raw_mismatch", "empty"])
 def test_native_page_audit_rejects_false_facts(fault: str) -> None:
     document = ExtractedDocument("Same", pages=(ExtractedPage(3, "Same"),))
     if fault == "mismatch":
         document = ExtractedDocument("Other", pages=(ExtractedPage(1, "Same"),))
     elif fault == "raw_mismatch":
         document = ExtractedDocument("Same  ", pages=(ExtractedPage(1, "Same"),))
-    elif fault == "normalization":
-        # 空白页被规范化丢弃时不能仍声明所有原生页事实完整。
-        document = ExtractedDocument(
-            "Same\n\n ", pages=(ExtractedPage(1, "Same"), ExtractedPage(2, " "))
-        )
     elif fault == "empty":
         document = ExtractedDocument(" \n")
     with pytest.raises(ValueError):
@@ -207,3 +200,42 @@ async def test_required_native_pages_reject_partial_but_consistent_output(
             Partial(), tmp_path, tmp_path / "out", data=data, require_pages=True
         )
     assert not (tmp_path / "out/report.json").exists()
+
+
+@pytest.mark.parametrize("blank", ["", " "])
+def test_native_physical_empty_pages_have_no_fabricated_content_block(
+    blank: str,
+) -> None:
+    fragments = ("First", blank, "Last", "")
+    result = page_summary(
+        ExtractedDocument(
+            "\n\n".join(p for p in fragments if p),
+            pages=tuple(ExtractedPage(i + 1, p) for i, p in enumerate(fragments)),
+        ),
+        4,
+    )
+    assert result["page_numbers"] == [1, 2, 3, 4]
+    assert result["normalized_empty_page_numbers"] == [2, 4]
+    assert result["block_count"] == 2
+
+
+def test_normalizer_losing_nonempty_page_still_fails_audit(monkeypatch) -> None:
+    from dataclasses import replace
+
+    from comet_rag.engines.documents.normalization import MarkdownDocumentNormalizer
+
+    original = MarkdownDocumentNormalizer.normalize
+
+    def lose(self, document):
+        result = original(self, document)
+        return replace(result, blocks=result.blocks[:1]) if document.pages else result
+
+    monkeypatch.setattr(MarkdownDocumentNormalizer, "normalize", lose)
+    with pytest.raises(ValueError, match="规范化丢失"):
+        page_summary(
+            ExtractedDocument(
+                "First\n\nLast",
+                pages=(ExtractedPage(1, "First"), ExtractedPage(2, "Last")),
+            ),
+            2,
+        )

@@ -14,7 +14,12 @@ def test_freeze_is_byte_preserving_and_blind_packet_has_no_answer_leak(
 ) -> None:
     data, native = artifact(tmp_path)
     frozen = tmp_path / "frozen"
-    freeze(native, frozen, data=data)
+    freeze(
+        native,
+        frozen,
+        data=data,
+        attribution="Synthetic fixture; local evaluation only",
+    )
     documents, digest = load_frozen(frozen, data=data)
     assert documents["nist145"].markdown == "A"
     assert (frozen / "nist145.json").read_bytes() == (
@@ -40,6 +45,8 @@ def test_freeze_is_byte_preserving_and_blind_packet_has_no_answer_leak(
         }
     ]
     sources = json.loads((out / "sources.json").read_text())
+    assert sources["attribution"] == "Synthetic fixture; local evaluation only"
+    assert "Synthetic fixture; local evaluation only" in (out / "README.md").read_text()
     assert set(sources) == {"attribution", "full_canonical_sha256", "sources"}
     assert sources["sources"][0]["pages"] == [
         {"page_number": 1, "start_char": 0, "end_char": 1, "markdown": "A"}
@@ -51,7 +58,12 @@ def test_freeze_is_byte_preserving_and_blind_packet_has_no_answer_leak(
         "review.json",
     }
     with pytest.raises(FileExistsError):
-        freeze(native, frozen, data=data)
+        freeze(
+            native,
+            frozen,
+            data=data,
+            attribution="Synthetic fixture; local evaluation only",
+        )
     with pytest.raises(FileExistsError):
         blind_packet(frozen, out, data=data)
 
@@ -64,7 +76,12 @@ def test_frozen_corpus_rejects_changes_before_exporting_review(
 ) -> None:
     data, native = artifact(tmp_path)
     frozen = tmp_path / "frozen"
-    freeze(native, frozen, data=data)
+    freeze(
+        native,
+        frozen,
+        data=data,
+        attribution="Synthetic fixture; local evaluation only",
+    )
     path = frozen / "manifest.json"
     manifest = json.loads(path.read_text())
     if fault == "bytes":
@@ -96,7 +113,12 @@ def test_failed_freeze_has_no_valid_manifest(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setattr(Path, "write_bytes", fail)
     frozen = tmp_path / "frozen"
     with pytest.raises(OSError, match="injected"):
-        freeze(native, frozen, data=data)
+        freeze(
+            native,
+            frozen,
+            data=data,
+            attribution="Synthetic fixture; local evaluation only",
+        )
     assert not (frozen / "manifest.json").exists()
     with pytest.raises(FileNotFoundError):
         load_frozen(frozen, data=data)
@@ -140,7 +162,12 @@ def test_blind_packet_refuses_ambiguous_question_scope(
 ) -> None:
     data, native = artifact(tmp_path)
     frozen = tmp_path / "frozen"
-    freeze(native, frozen, data=data)
+    freeze(
+        native,
+        frozen,
+        data=data,
+        attribution="Synthetic fixture; local evaluation only",
+    )
     path = data / "judgments.json"
     labels = json.loads(path.read_text())
     if fault == "duplicate":
@@ -177,5 +204,30 @@ def test_freeze_rejects_consistent_source_change_between_validation_and_copy(
     monkeypatch.setattr(Path, "read_bytes", race)
     frozen = tmp_path / "frozen"
     with pytest.raises(ValueError, match="canonical 发生变化"):
-        freeze(native, frozen, data=data)
+        freeze(
+            native,
+            frozen,
+            data=data,
+            attribution="Synthetic fixture; local evaluation only",
+        )
     assert changed and not (frozen / "manifest.json").exists()
+
+
+def test_custom_source_must_declare_attribution_instead_of_inheriting_nist(
+    tmp_path: Path,
+) -> None:
+    data, native = artifact(tmp_path)
+    with pytest.raises(ValueError, match="归属"):
+        freeze(native, tmp_path / "wrong-attribution", data=data)
+    assert not (tmp_path / "wrong-attribution").exists()
+
+
+def test_declared_empty_pages_must_match_normalized_content(tmp_path: Path) -> None:
+    from evals.pdf.inspect import load_native
+
+    data, native = artifact(tmp_path)
+    report = json.loads((native / "report.json").read_text())
+    report["samples"][0]["normalized_empty_page_numbers"] = [1]
+    (native / "report.json").write_text(json.dumps(report))
+    with pytest.raises(ValueError, match="normalized_empty_page_numbers"):
+        load_native(native, data=data)

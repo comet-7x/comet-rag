@@ -42,6 +42,7 @@ class NativeSample(StrictModel):
     provider: NativeProvider
     page_status: Literal["verified"]
     page_numbers: Annotated[list[PositiveInt], Field(min_length=1)]
+    normalized_empty_page_numbers: list[PositiveInt] = Field(default_factory=list)
     normalized_sha256: Digest
     normalized_characters: PositiveInt
     block_count: PositiveInt
@@ -95,6 +96,7 @@ def load_native(
         for key in (
             "page_status",
             "page_numbers",
+            "normalized_empty_page_numbers",
             "normalized_sha256",
             "normalized_characters",
             "block_count",
@@ -159,11 +161,16 @@ def _covered(spans: list[tuple[int, int]], start: int, end: int) -> bool:
     return any(a <= start < end <= b for a, b in spans)
 
 
-def table_integrity(document: NormalizedDocument) -> list[dict[str, object]]:
+def table_integrity(
+    document: NormalizedDocument, *, separators: tuple[str, ...] | None = None
+) -> list[dict[str, object]]:
     """只描述实际返回单元的覆盖，不把被分开返回的碎片拼成完整证据。"""
-    drafts = PageChunkingStrategy(RecursiveChunker(800, 80)).split(document)
+    drafts = PageChunkingStrategy(
+        RecursiveChunker(800, 80, separators=separators)
+    ).split(document)
     hierarchy = HierarchyBuilder(
-        RecursiveChunker(1600), RecursiveChunker(800, 80)
+        RecursiveChunker(1600, separators=separators),
+        RecursiveChunker(800, 80, separators=separators),
     ).split(document)
     result = []
     for page in document.blocks:

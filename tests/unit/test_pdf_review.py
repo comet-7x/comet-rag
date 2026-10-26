@@ -13,7 +13,12 @@ from tests.fixtures.native_pdf import artifact
 def submission(tmp_path: Path):
     data, native = artifact(tmp_path)
     frozen, packet = tmp_path / "frozen", tmp_path / "packet"
-    freeze(native, frozen, data=data)
+    freeze(
+        native,
+        frozen,
+        data=data,
+        attribution="Synthetic fixture; local evaluation only",
+    )
     blind_packet(frozen, packet, data=data)
     review = json.loads((packet / "review.json").read_text())
     review.update(
@@ -239,7 +244,12 @@ def test_evidence_cannot_cross_the_query_knowledge_base(tmp_path: Path) -> None:
     report["snapshot_sha256"] = sha256((data / "pages.json").read_bytes()).hexdigest()
     (native / "report.json").write_text(json.dumps(report))
     frozen, packet = tmp_path / "frozen", tmp_path / "packet"
-    freeze(native, frozen, data=data)
+    freeze(
+        native,
+        frozen,
+        data=data,
+        attribution="Synthetic fixture; local evaluation only",
+    )
     blind_packet(frozen, packet, data=data)
     raw = json.loads((packet / "review.json").read_text())
     raw.update(

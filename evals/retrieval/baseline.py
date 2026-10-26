@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sys
 from contextlib import AsyncExitStack
@@ -85,6 +86,7 @@ async def collect(
     child_size: int = CHILD_SIZE,
     child_overlap: int = OVERLAP,
     parent_size: int = PARENT_SIZE,
+    separators: tuple[str, ...] | None = None,
 ) -> Run:
     if level is ReturnLevel.PARENT and strategy != "hierarchy":
         raise ValueError("只有 hierarchy 基线比较真实父块回填")
@@ -127,11 +129,11 @@ async def collect(
         # 旧版本先激活，随后被新版本替换；故意不 GC，验证可见性而不是物理删除。
         for source in sorted(dataset.corpus.documents, key=lambda s: s.active):
             doc = dataset.documents[source.id]
-            child = RecursiveChunker(child_size, child_overlap)
+            child = RecursiveChunker(child_size, child_overlap, separators=separators)
             if strategy == "hierarchy":
-                chunks = HierarchyBuilder(RecursiveChunker(parent_size), child).split(
-                    doc
-                )
+                chunks = HierarchyBuilder(
+                    RecursiveChunker(parent_size, separators=separators), child
+                ).split(doc)
             elif strategy == "markdown":
                 chunks = MarkdownSectionStrategy(child).split(doc)
             elif strategy == "page":
@@ -222,6 +224,11 @@ async def collect(
                 "child_overlap": child_overlap,
                 "parent_size": parent_size,
                 "fetch_k": 50,
+                **(
+                    {"separator_profile": json.dumps(separators)}
+                    if separators is not None
+                    else {}
+                ),
                 "indexed_children": child_count,
                 "stored_parents": parent_count,
                 "indexed_text_chars": child_chars,

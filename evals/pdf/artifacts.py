@@ -4,7 +4,7 @@ import argparse
 import json
 from hashlib import sha256
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import Field
 
@@ -30,9 +30,7 @@ class Manifest(StrictModel):
     version: Annotated[int, Field(ge=1, le=1)]
     canonical_sha256: Digest
     files: dict[str, Digest]
-    attribution: Literal[
-        "Republished courtesy of the National Institute of Standards and Technology."
-    ]
+    attribution: Annotated[str, Field(pattern=r"\S")]
 
 
 def _names(data: Path) -> list[str]:
@@ -43,8 +41,16 @@ def _names(data: Path) -> list[str]:
     return ["report.json", *(f"{s.source.id}.json" for s in snapshot.samples)]
 
 
-def freeze(directory: Path, output: Path, *, data: Path = DATA) -> None:
+def freeze(
+    directory: Path, output: Path, *, data: Path = DATA, attribution: str | None = None
+) -> None:
     """校验后保存原始产物字节；manifest 最后落盘，部分写入不能成为有效快照。"""
+    if attribution is None:
+        if data.resolve() != DATA.resolve():
+            raise ValueError("自定义 PDF 来源必须明确声明归属，不能沿用 NIST 署名")
+        attribution = ATTRIBUTION
+    if not attribution.strip():
+        raise ValueError("PDF 归属声明不能为空")
     _, fingerprint = load_native(directory, data=data)
     files = {name: (directory / name).read_bytes() for name in _names(data)}
     # 先固定输入字节，再验证它们；防止边读边变导致保存的内容不是刚验证的内容。
@@ -58,14 +64,14 @@ def freeze(directory: Path, output: Path, *, data: Path = DATA) -> None:
         version=1,
         canonical_sha256=stored,
         files={name: sha256(raw).hexdigest() for name, raw in files.items()},
-        attribution=ATTRIBUTION,
+        attribution=attribution,
     )
     write_json(output / "manifest.json", manifest.model_dump())
 
 
-def load_frozen(
-    directory: Path = FROZEN, *, data: Path = DATA
-) -> tuple[dict[str, NormalizedDocument], str]:
+def _read_frozen(
+    directory: Path, *, data: Path
+) -> tuple[dict[str, NormalizedDocument], Manifest]:
     """检查已提交快照的字节与语义身份；本地校验和不代替签名、权重或人的独立性。"""
     manifest = read_json(directory / "manifest.json", Manifest)
     if set(manifest.files) != set(_names(data)):
@@ -76,12 +82,20 @@ def load_frozen(
     documents, fingerprint = load_native(directory, data=data)
     if fingerprint != manifest.canonical_sha256:
         raise ValueError("冻结产物 canonical 身份不一致")
-    return documents, fingerprint
+    return documents, manifest
+
+
+def load_frozen(
+    directory: Path = FROZEN, *, data: Path = DATA
+) -> tuple[dict[str, NormalizedDocument], str]:
+    documents, manifest = _read_frozen(directory, data=data)
+    return documents, manifest.canonical_sha256
 
 
 def blind_packet(directory: Path, output: Path, *, data: Path = DATA) -> None:
     """只导出原问题的选定页；不读取旧 quote 定位、相关度或模型排名来生成答案。"""
-    documents, fingerprint = load_frozen(directory, data=data)
+    documents, manifest = _read_frozen(directory, data=data)
+    fingerprint = manifest.canonical_sha256
     snapshot = read_json(data / "pages.json", PDFSnapshot)
     labels = read_json(data / "judgments.json", Judgments)
     questions = [
@@ -128,7 +142,7 @@ def blind_packet(directory: Path, output: Path, *, data: Path = DATA) -> None:
     write_json(
         output / "sources.json",
         {
-            "attribution": ATTRIBUTION,
+            "attribution": manifest.attribution,
             "full_canonical_sha256": fingerprint,
             "sources": sources,
         },
@@ -155,7 +169,7 @@ def blind_packet(directory: Path, output: Path, *, data: Path = DATA) -> None:
         },
     )
     (output / "README.md").write_text(
-        "# 原生 PDF 盲审包\n\n" + ATTRIBUTION + "\n\n"
+        "# 原生 PDF 盲审包\n\n" + manifest.attribution + "\n\n"
         "仅依据 sources.json 的选定物理页作答；完整原 PDF 其他页不在问题范围。\n"
         "正文是冻结的 MinerU 结果，不保证 OCR 全保真；请对照原 PDF，记录解析遗漏和争议。\n"
         "逐题 decision=answerable/unanswerable/uncertain，空 relevance 不等于无答案。\n"

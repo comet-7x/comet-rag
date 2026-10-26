@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "label_status": "author_provisional",
+  "full_canonical_sha256": "a5ef5b260b3472d8a8e0dc5541c8de24053bbd42cc70f0f06e0e643f02f7a1d8",
+  "cases": [
+    {
+      "query_id": "q017",
+      "question": "SP 800-144 表2中，介质清理指南是哪一份出版物？",
+      "header": {"document_id": "nist144", "page_number": 52, "start_char": 150431, "end_char": 150478, "quote": "<tr><td>Publication No.</td><td>Title</td></tr>", "role": "table_header"},
+      "row": {"document_id": "nist144", "page_number": 52, "start_char": 151620, "end_char": 151689, "quote": "<tr><td>SP 800-88</td><td>Guidelines for Media Sanitization</td></tr>", "role": "table_row"}
+    },
+    {
+      "query_id": "q018",
+      "question": "SP 800-144 表2列出的个人可识别信息保密指南编号及完整题名是什么？",
+      "header": {"document_id": "nist144", "page_number": 52, "start_char": 150431, "end_char": 150478, "quote": "<tr><td>Publication No.</td><td>Title</td></tr>", "role": "table_header"},
+      "row": {"document_id": "nist144", "page_number": 52, "start_char": 151788, "end_char": 151909, "quote": "<tr><td>SP 800-122</td><td>Guide to Protecting the Confidentiality of Personally Identifiable Information (PII)</td></tr>", "role": "table_row"}
+    }
+  ]
+}

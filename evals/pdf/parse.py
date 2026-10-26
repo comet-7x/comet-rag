@@ -19,19 +19,30 @@ from evals.retrieval.data import read_json, write_json
 
 def page_summary(document: ExtractedDocument, total_pages: int) -> dict[str, object]:
     """页事实与正文必须同时成立；无事实是明确的 section 回退，不算页验收成功。"""
-    normalized = MarkdownDocumentNormalizer().normalize(document)
+    normalizer = MarkdownDocumentNormalizer()
+    normalized = normalizer.normalize(document)
     if not normalized.markdown:
         raise ValueError("真实 PDF 解析返回空正文")
     numbers = [page.page_number for page in document.pages]
+    empty_pages = [
+        p.page_number
+        for p in document.pages
+        if not normalizer.normalize(ExtractedDocument(p.markdown)).markdown
+    ]
     if numbers:
         if (
             numbers != sorted(set(numbers))
             or not 1 <= numbers[0] <= numbers[-1] <= total_pages
         ):
             raise ValueError("解析页号必须严格递增且位于原 PDF 内")
-        if "\n\n".join(p.markdown for p in document.pages) != document.markdown:
+        if (
+            "\n\n".join(p.markdown for p in document.pages if p.markdown)
+            != document.markdown
+        ):
             raise ValueError("页片段未精确重建原生 Markdown")
-        if [b.page_number for b in normalized.blocks] != numbers:
+        if [b.page_number for b in normalized.blocks] != [
+            n for n in numbers if n not in empty_pages
+        ]:
             raise ValueError("规范化丢失了原生页事实")
         drafts = PageChunkingStrategy(RecursiveChunker(800, 80)).split(normalized)
         if not drafts:
@@ -53,6 +64,7 @@ def page_summary(document: ExtractedDocument, total_pages: int) -> dict[str, obj
     return {
         "page_status": "verified" if numbers else "unavailable_section_fallback",
         "page_numbers": numbers,
+        "normalized_empty_page_numbers": empty_pages,
         "normalized_sha256": sha256(normalized.markdown.encode()).hexdigest(),
         "normalized_characters": len(normalized.markdown),
         "block_count": len(normalized.blocks),
