@@ -512,3 +512,9 @@ revision_process_worker.py：真实 SIGTERM 排干/停止拉取、SIGKILL 激活
 与冻结竞态，以及盲审不泄漏答案和选定页域；小型共享fixture在fixtures/native_pdf.py。
 另两项漏页回归先失败，严格模式才要求完整1..总页数。11项源码变异均被断言检出。
 原生数据与人类裁决不能混为一谈，详见[第三十一批报告](../docs/evaluations/native_freeze_20261026.md)。
+
+第三十二批test_pdf_review.py覆盖复核身份、精确问题集合、KB隔离、页内逐字区间、
+bool/整数类型、重复/联合片段、无答案/不确定区分及不自动认证人类独立性。修改响应
+文件的故障注入确认输出摘要必须属于被校验字节；仅空白不能作证据。数据全是小型
+fixture，不模拟真实人类裁决。反向验证与外部输入缺口见
+[第三十二批报告](../docs/evaluations/native_review_20261026.md)。

@@ -194,3 +194,14 @@ NaN、正负无穷、布尔值、非数字及无法表示为有限浮点数的�
 Embedding 与 Reranker 绑定同一进程级 Gate。模型只在组合根构造，业务层依赖
 `AsyncEmbeddingPort` / `AsyncRerankerPort`。`await context.close()` 统一逆序关闭
 上下文拥有的资源；库调用方自行关闭模型，Pipeline 不接管注入模型的所有权。
+
+## 质量验收的工件身份
+
+模型服务可用与权重固定分别验收。完整证据应包含embedding/reranker权重分片或
+不可变仓库提交、tokenizer/chat template摘要、服务镜像digest/框架版本、截断和
+提示词/维度配置，并绑定实际运行实例。`/models`只列模型名或提供模型长度时，身份
+继续unknown；调用方model_revision字符串也不等于远端工件核验。
+
+第三十二批探针确认现有两服务可调用，但没有返回上述不可变字段，详见
+[工件与复核报告](evaluations/native_review_20261026.md)。证据尚缺时可以记录探索结果，
+不能据此宣布固定工件或生产质量达标。
