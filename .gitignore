@@ -193,3 +193,9 @@ mineru-report.json
 .claude/
 .opencode/
 AGENTS.md
+
+# 本地验证的用户原文件与衍生正文，不纳入版本库。
+/.artifacts/
+
+# macOS Finder元数据。
+.DS_Store
