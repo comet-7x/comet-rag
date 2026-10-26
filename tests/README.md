@@ -506,3 +506,9 @@ revision_process_worker.py：真实 SIGTERM 排干/停止拉取、SIGKILL 激活
 重叠引用和错误页、fenced示例、坏HTML表格及实际单块完整性；不依赖PDF或网络。
 17种临时源码变异已被目标断言检出，见
 [第三十批报告](../docs/evaluations/native_evidence_20261025.md)。
+
+
+第三十一批的test_pdf_artifacts.py校验两轮已提交产物、字节/语义身份、新目录、半写入
+与冻结竞态，以及盲审不泄漏答案和选定页域；小型共享fixture在fixtures/native_pdf.py。
+另两项漏页回归先失败，严格模式才要求完整1..总页数。11项源码变异均被断言检出。
+原生数据与人类裁决不能混为一谈，详见[第三十一批报告](../docs/evaluations/native_freeze_20261026.md)。
