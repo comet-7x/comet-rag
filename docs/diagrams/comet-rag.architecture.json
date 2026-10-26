@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "ffe9fe73a86d2a794769b9052be8e9681db96c64",
+      "revision": "e64ddc78d8efca4053a45a89dacfcd8c562a93ac",
       "link_mode": "local-only"
     }
   },
@@ -838,6 +838,17 @@
         "用户样本重排改善有限标签覆盖，父块在512预算仍有法规证据遗漏；3条困难无答案题均返回非空。解析遗漏和视觉问题另列，单文档高分不代表生产检索达标。",
         "空页/来源归属/选页revision等22项反向变异检出；unit3622、E2E50、benchmark39通过。用户PDF与衍生原文Git忽略，只发布数字记录和边界。",
         "用户确认先探索、自审和盲审材料，独立人工与固定工件为后续发布门禁；正式部署迁移暂缓。默认策略不改，下一步单测预算和MinIO；图仅离线验约，无新增浏览器验收。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "第三十四批：真实中间件与预算口径",
+      "items": [
+        "完整integration300条通过、无skip，真实PostgreSQL/Redis/Milvus/MinIO/MinerU；Milvus测试集合1→1，MinIO自建桶HEAD404。端点与凭据不入图。",
+        "MinIO夹具接受成对非空凭据；PUT前登记精确key删除，退出栈继续尝试桶清理。同步与原生异步下载均通过，8项反向变异检出。",
+        "分层守卫按实际源码内容缓存只读AST；排队和跨线程回调使用有界状态等待。普通pytest9.89/9.40/9.44s，进程总墙钟10.73/10.17/10.19s，严格预算和CI余量仍待确认。",
+        "插桩unit3632、E2E50、benchmark39通过；合并93.05%，tasks908/943=96.29%。全新核心wheel在仓库外完成DOCX和CLI冒烟，中间件extras未安装。",
+        "生产代码和默认开关未变；独立人工、模型不可变工件及正式部署门禁保留。图只做离线源码和产物验约，没有新增浏览器验收。"
       ]
     }
   ]
