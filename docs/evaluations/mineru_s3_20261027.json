@@ -1,0 +1,234 @@
+{
+  "date": "2026-10-27",
+  "head": "c8d9a3727227ad78b8a4bb73b84f6e90ed902176",
+  "scope": "independent native S3 adapter; no production integration, configuration switch or target upgrade",
+  "configured_target": {
+    "conditional_publication_accepted": false,
+    "exact_server_version": "unverified",
+    "native_matrix": {
+      "server_header": "MinIO",
+      "rows": [
+        {
+          "case": "plain",
+          "status": 200
+        },
+        {
+          "case": "checksum",
+          "status": 200
+        },
+        {
+          "case": "conditional",
+          "status": 404,
+          "code": "NoSuchKey"
+        },
+        {
+          "case": "both",
+          "status": 404,
+          "code": "NoSuchKey"
+        },
+        {
+          "case": "bad-checksum",
+          "status": 400,
+          "code": "XAmzContentChecksumMismatch"
+        },
+        {
+          "case": "conditional_existing",
+          "status": 200
+        },
+        {
+          "case": "existing_preserved",
+          "same_bytes": false,
+          "checksum_returned": false
+        }
+      ],
+      "cleanup_keys": 5,
+      "bucket_removed": true
+    },
+    "integration_passed": 7,
+    "conditional_acceptance_skipped_by_default": 4,
+    "read_and_gate_seconds": 1.6,
+    "explicit_required_acceptance_failed": 1,
+    "explicit_required_seconds": 0.32,
+    "private_pdf_uploaded": false
+  },
+  "loopback_reference": {
+    "binary": {
+      "url": "https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.darwin-arm64.RELEASE.2025-09-07T16-13-09Z",
+      "bytes": 108218434,
+      "sha256": "7c3b3039b76e55a1b80935848ed83998d5e8d317374f87851f46a019ff5c0aa4"
+    },
+    "integration_passed": 11,
+    "integration_skipped": 0,
+    "integration_seconds": 1.06,
+    "replay": {
+      "scope": "local loopback reference only, no upload of these PDF artifacts to target server",
+      "records": [
+        {
+          "sample": "public7",
+          "pages": 7,
+          "native_bytes": 95828,
+          "ledger_bytes": 44213,
+          "manifest_sha256": "07bd02fcd0244cfbf7fa1b5b7dec994d8e398de715eb31369e56a171e49bb0b2",
+          "canonical_sha256": "1422341bda141df58384067d55b26b5fb2d240c6665d56baafdd076c8e8fa085",
+          "physical_put_successes": 3,
+          "duplicate_publish_matches": true,
+          "bounded_read_matches": true,
+          "local_seconds": 0.027389499824494123
+        },
+        {
+          "sample": "squid60",
+          "pages": 60,
+          "native_bytes": 19560609,
+          "ledger_bytes": 556905,
+          "manifest_sha256": "f3339360be0aa96639d9ed23354a031f38b20ec97c005fe8f9b7a89a49b4758c",
+          "canonical_sha256": "9e1f637d75ce220b370db08b3cd080ebcadd5508dd9c695f8e078cf173dc13d3",
+          "physical_put_successes": 3,
+          "duplicate_publish_matches": true,
+          "bounded_read_matches": true,
+          "local_seconds": 0.43400945886969566
+        }
+      ],
+      "cleanup_keys": 7,
+      "bucket_removed": true
+    },
+    "cleanup": {
+      "reference_version": "minio-reference-complete version RELEASE.2025-09-07T16-13-09Z (commit-id=07c3a429bfed433e49018cb0f78a52145d4bedeb)",
+      "reference_buckets_remaining": 0,
+      "owned_pid_exited": true,
+      "listener_closed": true,
+      "owned_data_directory_removed": true,
+      "target_buckets": "each test fixture confirms own bucket HEAD404; no production bucket listing"
+    },
+    "production_upgrade_recommendation": false,
+    "distributed_quorum_fault_tested": false
+  },
+  "validation": {
+    "new_unit_cases": 35,
+    "targeted_summary": "189 passed in 0.93s",
+    "unit_summary": "========= 3824 passed, 16 skipped, 402 deselected, 1 xfailed in 10.71s =========",
+    "strict_under_10_seconds_closed": false,
+    "s3_reverse_cases": [
+      {
+        "fault": "native_condition",
+        "test": "test_duplicate_and_concurrent_publication_never_rewrite_objects",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "native_checksum",
+        "test": "test_duplicate_and_concurrent_publication_never_rewrite_objects",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "capability_gate",
+        "test": "test_unsafe_target_is_rejected_before_evidence_writes",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "probe_overwrite",
+        "test": "test_target_that_silently_overwrites_existing_probe_is_rejected",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "read_after_put",
+        "test": "test_existing_conflicting_object_is_not_repaired_or_overwritten",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "manifest_first",
+        "test": "test_existing_conflicting_object_is_not_repaired_or_overwritten",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "metadata",
+        "test": "test_abnormal_objects_fail_and_bodies_close[gzip]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "actual_limit",
+        "test": "test_abnormal_objects_fail_and_bodies_close[overflow]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "object_digest",
+        "test": "test_existing_conflicting_object_is_not_repaired_or_overwritten",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "cumulative",
+        "test": "test_cumulative_receive_budget_is_shared_across_bundle_objects",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "ignore_close",
+        "test": "test_body_close_failure_cannot_publish_success_or_mask_digest_error[False]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "mask_primary",
+        "test": "test_body_close_failure_cannot_publish_success_or_mask_digest_error[True]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "no_close",
+        "test": "test_read_cancel_closes_body_and_releases_gate",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "no_close_note",
+        "test": "test_body_close_failure_cannot_publish_success_or_mask_digest_error[True]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "deadline_reset",
+        "test": "test_manifest_and_payload_reads_share_one_deadline_without_reset",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "request_reset",
+        "test": "test_request_timeout_is_not_automatically_retried",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "sdk_retry",
+        "test": "test_sdk_automatic_retries_are_rejected[2]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "put_retry",
+        "test": "test_lost_manifest_reply_is_uncertain_and_explicit_retry_only_reads_matches",
+        "expected_test_failed": true
+      }
+    ],
+    "prior_protocol_reverse_cases": 19,
+    "close_error_before_fix_failed_cases": 2,
+    "request_timeout_before_fix_failed_cases": 1,
+    "ruff": "passed",
+    "pyright": "0 errors"
+  },
+  "source_sha256": {
+    "evals/pdf/s3_evidence.py": "b5260564ac52fc44c3544ced07761c4b96f1f53ee3d632c6b098d7a3f7d9881e",
+    "evals/pdf/evidence_bundle.py": "27a1a4995bbcf97056356f9bdd23622d287555c04e313c3459d221757749e663",
+    "tests/unit/test_pdf_s3_evidence.py": "0240d1153bfafd749cd2d20cd9fa62f33d309cf132367006b1054e294549f19b",
+    "tests/integration/test_s3_evidence_minio.py": "92937852f673c85e5cefc280cbb7ec33c0998b90540ece3da8ef7a5a3ece0758"
+  },
+  "production_environment_unchanged": true,
+  "limits": {
+    "total_seconds": 120,
+    "request_seconds": 30,
+    "object_payload_received_bytes": 134217728,
+    "chunk_bytes": 65536,
+    "native_json_bytes": 33554432,
+    "ledger_bytes": 16777216,
+    "manifest_bytes": 65536,
+    "sdk_error_xml_and_headers_bounded_by_application_counter": false
+  },
+  "pending": [
+    "target server build and proxy verification",
+    "qualified maintained deployment with correct native conditional create and conflict semantics",
+    "distributed quorum and persistence fault acceptance",
+    "production parent-reference protection and evidence reading",
+    "evidence retention/GC and delayed-write reconciliation",
+    "strict unit budget below 10 seconds",
+    "independent labels and immutable model artifacts"
+  ]
+}

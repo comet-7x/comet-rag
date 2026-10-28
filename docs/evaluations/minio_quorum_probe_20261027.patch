@@ -1,0 +1,115 @@
+--- /dev/null
++++ b/cmd/comet_quorum_probe_test.go
+@@ -0,0 +1,112 @@
++// SPDX-License-Identifier: AGPL-3.0-or-later
++// Independent acceptance probe using upstream MinIO test/storage primitives.
++package cmd
++
++import (
++	"bytes"
++	"context"
++	"io"
++	"testing"
++
++	xhttp "github.com/minio/minio/internal/http"
++)
++
++type cometMetadataReadFailure struct {
++	StorageAPI
++	bucket, object string
++}
++
++func (disk cometMetadataReadFailure) ReadVersion(ctx context.Context, origvolume, volume, path, versionID string, opts ReadOptions) (FileInfo, error) {
++	if volume == disk.bucket && path == disk.object {
++		return FileInfo{}, errFaultyDisk
++	}
++	return disk.StorageAPI.ReadVersion(ctx, origvolume, volume, path, versionID, opts)
++}
++
++func (disk cometMetadataReadFailure) ReadXL(ctx context.Context, volume, path string, readData bool) (RawFileInfo, error) {
++	if volume == disk.bucket && path == disk.object {
++		return RawFileInfo{}, errFaultyDisk
++	}
++	return disk.StorageAPI.ReadXL(ctx, volume, path, readData)
++}
++
++func TestCometConditionalQuorumRecoveryPreservesBytes(t *testing.T) {
++	ctx := context.Background()
++	obj, roots, err := prepareErasure16(ctx)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer removeRoots(roots)
++	defer obj.Shutdown(context.Background())
++	pool := obj.(*erasureServerPools)
++	erasure := pool.serverPools[0].sets[0]
++	bucket, object := "comet-quorum-probe", "immutable-object"
++	if err := obj.MakeBucket(ctx, bucket, MakeBucketOptions{}); err != nil {
++		t.Fatal(err)
++	}
++	initial := []byte("original immutable evidence")
++	for _, condition := range []string{"if-none-match", "if-match", "if-match-wrong"} {
++		t.Run(condition, func(t *testing.T) {
++			if _, err := obj.PutObject(ctx, bucket, object, mustGetPutObjReader(t, bytes.NewReader(initial), int64(len(initial)), "", ""), ObjectOptions{}); err != nil {
++				t.Fatal(err)
++			}
++			before, err := obj.GetObjectInfo(ctx, bucket, object, ObjectOptions{})
++			if err != nil {
++				t.Fatal(err)
++			}
++			header, etag := xhttp.IfNoneMatch, "*"
++			if condition != "if-none-match" {
++				header, etag = xhttp.IfMatch, before.ETag
++			}
++			if condition == "if-match-wrong" {
++				etag = "wrong-etag"
++			}
++			opts := ObjectOptions{UserDefined: map[string]string{header: etag}, HasIfMatch: condition != "if-none-match"}
++			opts.CheckPrecondFn = func(info ObjectInfo) bool {
++				if condition == "if-none-match" {
++					return info.ETag != ""
++				}
++				return info.ETag != etag
++			}
++			originalGet := erasure.getDisks
++			healthy := append([]StorageAPI(nil), originalGet()...)
++			pool.serverPools[0].erasureDisksMu.Lock()
++			erasure.getDisks = func() []StorageAPI {
++				offline := append([]StorageAPI(nil), healthy...)
++				for i := 0; i < 9; i++ {
++					offline[i] = cometMetadataReadFailure{StorageAPI: healthy[i], bucket: bucket, object: object}
++				}
++				return offline
++			}
++			pool.serverPools[0].erasureDisksMu.Unlock()
++			restore := func() {
++				pool.serverPools[0].erasureDisksMu.Lock()
++				erasure.getDisks = originalGet
++				pool.serverPools[0].erasureDisksMu.Unlock()
++			}
++			defer restore()
++			if _, readErr := obj.GetObjectInfo(ctx, bucket, object, ObjectOptions{}); !isErrReadQuorum(readErr) {
++				restore()
++				t.Fatalf("fault did not reach read quorum path: %v", readErr)
++			}
++			replacement := []byte("must never replace original")
++			_, err = obj.PutObject(ctx, bucket, object, mustGetPutObjReader(t, bytes.NewReader(replacement), int64(len(replacement)), "", ""), opts)
++			restore()
++			if !isErrReadQuorum(err) {
++				t.Errorf("expected read quorum refusal, got %v", err)
++			}
++			reader, readErr := obj.GetObjectNInfo(ctx, bucket, object, nil, nil, ObjectOptions{})
++			if readErr != nil {
++				t.Fatal(readErr)
++			}
++			data, readErr := io.ReadAll(io.LimitReader(reader, 1024))
++			reader.Close()
++			if readErr != nil {
++				t.Fatal(readErr)
++			}
++			if !bytes.Equal(data, initial) {
++				t.Fatalf("recovery changed original bytes: %q", data)
++			}
++		})
++	}
++}

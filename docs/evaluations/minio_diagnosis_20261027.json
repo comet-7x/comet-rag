@@ -1,0 +1,293 @@
+{
+  "date": "2026-10-27",
+  "status": "target incompatible; isolated upstream candidate passed bounded validation",
+  "production_changed": false,
+  "production_configuration_fingerprint_unchanged": true,
+  "target": {
+    "runtime_builds": [
+      {
+        "version": "2023-03-20T20:16:18Z",
+        "commit": "05444a0f6af8389b9bb85280fc31337c556d4300"
+      }
+    ],
+    "tag_matches_runtime_commit": true,
+    "remote_binary_attestation": false,
+    "sources": [
+      {
+        "path": "cmd/object-handlers.go",
+        "sha256": "9045ab73540463cc684669c38c2e245f59697c2253e5545965291a72d1e16007",
+        "url": "https://raw.githubusercontent.com/minio/minio/05444a0f6af8389b9bb85280fc31337c556d4300/cmd/object-handlers.go"
+      },
+      {
+        "path": "cmd/object-handlers-common.go",
+        "sha256": "1caad990144720d1ac99960c6343d307b5ba221301744debc1c93e67227aad3f",
+        "url": "https://raw.githubusercontent.com/minio/minio/05444a0f6af8389b9bb85280fc31337c556d4300/cmd/object-handlers-common.go"
+      },
+      {
+        "path": "cmd/erasure-object.go",
+        "sha256": "1c389f00d9852637524fa01527ea6a5649fd5dc84f4253acc5d47c5431d62df1",
+        "url": "https://raw.githubusercontent.com/minio/minio/05444a0f6af8389b9bb85280fc31337c556d4300/cmd/erasure-object.go"
+      },
+      {
+        "path": "cmd/object-api-options.go",
+        "sha256": "8c37311566291632916176df780ba8987c52d5cf15f8924f4c6e91af8e5cfaaf",
+        "url": "https://raw.githubusercontent.com/minio/minio/05444a0f6af8389b9bb85280fc31337c556d4300/cmd/object-api-options.go"
+      }
+    ],
+    "signed_header_probe": {
+      "wire_summary": [
+        {
+          "mode": "observe",
+          "condition_is_star": true,
+          "condition_is_signed": true
+        },
+        {
+          "mode": "strip",
+          "condition_is_star": true,
+          "condition_is_signed": true
+        },
+        {
+          "mode": "alter",
+          "condition_is_star": true,
+          "condition_is_signed": true
+        }
+      ],
+      "responses": [
+        {
+          "mode": "observe",
+          "status": 404,
+          "code": "NoSuchKey"
+        },
+        {
+          "mode": "strip",
+          "status": 400,
+          "code": "AccessDenied"
+        },
+        {
+          "mode": "alter",
+          "status": 403,
+          "code": "SignatureDoesNotMatch"
+        }
+      ],
+      "bucket_removed": true,
+      "sdk_environment_proxies_disabled": true
+    },
+    "proxy_conclusion": "simple loss or rewrite of the signed header is not supported by these requests; no proof of proxy absence or no re-signing"
+  },
+  "native_mc": {
+    "url": "https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.darwin-arm64.RELEASE.2025-08-13T08-35-41Z",
+    "sha256": "a877fd0c183409da9f20f9d6e1811987298bbbca1aa03428eebdffba79fb9445",
+    "bytes": 29692306
+  },
+  "go_toolchain": {
+    "filename": "go1.24.8.darwin-arm64.tar.gz",
+    "os": "darwin",
+    "arch": "arm64",
+    "version": "go1.24.8",
+    "sha256": "0db27ff8c3e35fd93ccf9d31dd88a0f9c6454e8d9b30c28bd88a70b930cc4240",
+    "size": 76429684,
+    "kind": "archive"
+  },
+  "candidate": {
+    "build": {
+      "source_commit": "18f97e70b19db6b2940ae8a1b14c4665d2eeca36",
+      "binary_sha256": "02cdfda9049ca533c4efa5ceef13eead21ccae98255b53a8a2cc3e9373b6caae",
+      "source_lock_files": {
+        "go.mod": "673f06144e90bc045f0a20050d2874c52e551be5bfbd70dff6e76b66da0db702",
+        "go.sum": "86e062349c7abdce0465561bb409d410a95b00b0969ba05d5fb5f2e3550a5cd4"
+      },
+      "toolchain": "go1.24.8 darwin/arm64",
+      "release_tag": "DEVELOPMENT.2025-10-24T04-05-31Z",
+      "version_embedded_from_merge_time": "2025-10-24T04:05:31Z",
+      "build_seconds": 40.619645666796714,
+      "module_proxy": "goproxy.cn with go.sum and GOSUMDB enabled",
+      "command_readonly": true
+    },
+    "source": {
+      "commit": "18f97e70b19db6b2940ae8a1b14c4665d2eeca36",
+      "archive_sha256": "87ab3f0152ee5f94a5d9bbad8819ee24c5e3cc9de34c8d3f0149da5a310f1b35",
+      "bytes": 24231559,
+      "url": "https://api.github.com/repos/minio/minio/tarball/18f97e70b19db6b2940ae8a1b14c4665d2eeca36"
+    },
+    "runtime_builds": [
+      {
+        "version": "2025-10-24T04:05:31Z",
+        "commit": "18f97e70b19db6b2940ae8a1b14c4665d2eeca36"
+      }
+    ],
+    "quorum_fix": "https://github.com/minio/minio/pull/21653",
+    "official_release": false,
+    "production_upgrade_recommendation": false,
+    "upstream_maintenance_notice": "https://github.com/minio/minio/blob/7aac2a2c5b7c882e68c1ce017d8256be2feea27f/README.md",
+    "source_guard_restored_to_archive": true
+  },
+  "validation": {
+    "unit": {
+      "passed": 3850,
+      "skipped": 16,
+      "deselected": 403,
+      "xfailed": 1,
+      "seconds": 11.12,
+      "under_10s": false
+    },
+    "targeted": {
+      "passed": 215,
+      "seconds": 0.94
+    },
+    "target_integration": {
+      "passed": 8,
+      "skipped_conditional_publication": 4,
+      "seconds": 1.81
+    },
+    "candidate_integration": {
+      "passed": 12,
+      "skipped": 0,
+      "seconds": 1.27
+    },
+    "native_quorum": {
+      "exit": 0,
+      "elapsed_seconds": 10.836729832924902,
+      "pattern": "^(TestPutObjectConditionalWithReadQuorumFailure|TestCometConditionalQuorumRecoveryPreservesBytes)$",
+      "probe_sha256": "5f15df7b468b1af92085d4ad0e147ca62d9991bce01bf13d143b668c09f3d97d",
+      "top_level_tests": 2,
+      "subcases": 6
+    },
+    "native_reverse": {
+      "fault": "remove native conditional metadata read-error guard",
+      "exit": 1,
+      "original_bytes_changed_observed": true,
+      "failed_subcases": 3,
+      "native_source_sha256": "fa70e3d9e49e25c0f22eb8b4c6292902e527d41a2de614284a73f7afe3dd3f26",
+      "restored_original_passed": true
+    },
+    "diagnostic_reverse": {
+      "source_sha256": "c0fd7e5f8cf2cde85bf71d47cdc614b1cb726efccdbb412cb8f5a5da4deb432c",
+      "cases": [
+        {
+          "fault": "budget",
+          "test": "test_admin_diagnostics_reject_invalid_or_unbounded_records[oversized]",
+          "expected_test_failed": true
+        },
+        {
+          "fault": "status",
+          "test": "test_admin_diagnostics_reject_invalid_or_unbounded_records[failed]",
+          "expected_test_failed": true
+        },
+        {
+          "fault": "nodes",
+          "test": "test_admin_diagnostics_reject_invalid_or_unbounded_records[too_many]",
+          "expected_test_failed": true
+        },
+        {
+          "fault": "commit",
+          "test": "test_admin_diagnostics_reject_invalid_or_unbounded_records[commit_shape]",
+          "expected_test_failed": true
+        },
+        {
+          "fault": "collapse_builds",
+          "test": "test_native_admin_projection_retains_only_builds_and_preserves_mixed_deployment",
+          "expected_test_failed": true
+        },
+        {
+          "fault": "headers_duplicate",
+          "test": "test_ambiguous_signature_diagnostic_is_rejected_without_secret_echo[duplicate_case]",
+          "expected_test_failed": true
+        },
+        {
+          "fault": "signed_duplicate",
+          "test": "test_ambiguous_signature_diagnostic_is_rejected_without_secret_echo[duplicate]",
+          "expected_test_failed": true
+        },
+        {
+          "fault": "unsigned",
+          "test": "test_incomplete_evidence_cannot_exclude_header_loss[unsigned]",
+          "expected_test_failed": true
+        },
+        {
+          "fault": "star",
+          "test": "test_incomplete_evidence_cannot_exclude_header_loss[changed_header]",
+          "expected_test_failed": true
+        },
+        {
+          "fault": "baseline",
+          "test": "test_incomplete_evidence_cannot_exclude_header_loss[backend_error]",
+          "expected_test_failed": true
+        },
+        {
+          "fault": "stripped",
+          "test": "test_incomplete_evidence_cannot_exclude_header_loss[tamper_accepted]",
+          "expected_test_failed": true
+        },
+        {
+          "fault": "altered",
+          "test": "test_incomplete_evidence_cannot_exclude_header_loss[tamper_generic_denial]",
+          "expected_test_failed": true
+        }
+      ]
+    },
+    "sigkill_recovery": {
+      "caller_cancellation_preserved": true,
+      "gate_released": true,
+      "canonical_preserved": true,
+      "successful_evidence_puts_after_restart": 0,
+      "all_objects_preexisting": true,
+      "bucket_removed": true,
+      "scope": "SIGKILL after server PUT commit observed by harness, before application response; not host power loss"
+    },
+    "artifact_replay": {
+      "records": [
+        {
+          "sample": "public7",
+          "pages": 7,
+          "native_bytes": 95828,
+          "ledger_bytes": 44213,
+          "canonical_sha256": "1422341bda141df58384067d55b26b5fb2d240c6665d56baafdd076c8e8fa085",
+          "successful_puts": 3,
+          "duplicate_and_read_match": true,
+          "elapsed_seconds": 0.02780012506991625
+        },
+        {
+          "sample": "squid60",
+          "pages": 60,
+          "native_bytes": 19560609,
+          "ledger_bytes": 556905,
+          "canonical_sha256": "9e1f637d75ce220b370db08b3cd080ebcadd5508dd9c695f8e078cf173dc13d3",
+          "successful_puts": 3,
+          "duplicate_and_read_match": true,
+          "elapsed_seconds": 0.4531330829486251
+        }
+      ],
+      "cleanup_keys": 7,
+      "bucket_removed": true,
+      "scope": "local fixed candidate only; no PDF upload to target or new model call"
+    },
+    "final_checks": {
+      "ruff": "passed",
+      "pyright": "0 errors, 0 warnings",
+      "new_python_format": "3 files formatted",
+      "documentation_local_links_checked": 130,
+      "public_report_private_value_scan": "passed",
+      "production_source_and_dependency_diff": "empty",
+      "source_archive_sha_verified": true
+    }
+  },
+  "reproduction_probe": {
+    "path": "minio_quorum_probe_20261027.patch",
+    "patch_sha256": "80d05decd1a91a0b75acd44be633336e8a995c9dc1a42f14c5ffa5eb7bc248cb",
+    "go_test_sha256": "5f15df7b468b1af92085d4ad0e147ca62d9991bce01bf13d143b668c09f3d97d"
+  },
+  "cleanup": {
+    "owned_candidate_buckets_remaining": 0,
+    "server_stopped": true,
+    "api_and_console_ports_closed": true,
+    "temporary_data_and_credentials_removed": true,
+    "target_service_untouched": true
+  },
+  "limitations": [
+    "native object-layer fault injection is not a live multi-host quorum test",
+    "SIGKILL after observed PUT commit is not host power-loss or disk-fsync certification",
+    "no target binary hash, physical proxy inventory or all-route attestation",
+    "no production upgrade, migration, IAM/TLS or rollback acceptance",
+    "strict unit 10-second budget remains open"
+  ]
+}
