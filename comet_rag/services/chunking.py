@@ -41,6 +41,7 @@ _SYSTEM_CHUNK_METADATA_KEYS = frozenset(
         "source",
         "source_id",
         "total_chunks",
+        "evidence_reference",
     }
 )
 

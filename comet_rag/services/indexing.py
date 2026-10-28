@@ -26,6 +26,11 @@ from comet_rag.services.chunking import (
     dump_chunk_drafts,
     materialize_chunk_drafts,
 )
+from comet_rag.services.evidence import (
+    PARENT_EVIDENCE_KEY,
+    ParentEvidenceReference,
+    VerifiedEvidence,
+)
 
 # 限制单次 PostgreSQL 父块事务的正文量；服务装配时可按文档预算覆盖。
 DEFAULT_PARENT_BATCH_SIZE = 128
@@ -194,6 +199,7 @@ class IndexPlanner:
         file_type: str,
         document_metadata: Mapping[str, object] | None = None,
         request_metadata: Mapping[str, object] | None = None,
+        evidence: VerifiedEvidence | None = None,
     ) -> IndexPlan:
         hierarchy = chunks if isinstance(chunks, ChunkHierarchy) else None
         if isinstance(chunks, ChunkHierarchy):
@@ -220,6 +226,9 @@ class IndexPlanner:
             request_metadata=request_metadata,
         )
         pure_parents = hierarchy.parents if hierarchy is not None else ()
+        evidence_metadata = (
+            evidence.parent_metadata(key, pure_parents) if evidence is not None else {}
+        )
         parent_ids = [revision_chunk_id(key, "parent", p.ordinal) for p in pure_parents]
         child_ids = [revision_chunk_id(key, "child", d.ordinal) for d in drafts]
         parents: list[PlannedParent] = []
@@ -238,6 +247,7 @@ class IndexPlanner:
                         document=document_metadata,
                         request=request_metadata,
                         chunk=parent.metadata,
+                        system=evidence_metadata,
                     ),
                 )
             )
@@ -270,7 +280,7 @@ class IndexPlanner:
                 )
             )
 
-        # 关系使用 ordinal 而非 revision ID；换 revision 不改内容指纹，换内容必须改。
+        # 关系使用ordinal，普通正文计划不因revision ID改变；证据引用等metadata变化必须改指纹。
         metadata = _merge_chunk_metadata(
             document=document_metadata, request=request_metadata
         )
@@ -297,6 +307,27 @@ def _snapshot_plan(plan: IndexPlan) -> IndexPlan:
         parents=tuple(replace(p) for p in plan.parents),
         vector_children=tuple(replace(c) for c in plan.vector_children),
     )
+    if PARENT_EVIDENCE_KEY in snapshot.metadata or any(
+        PARENT_EVIDENCE_KEY in c.metadata for c in snapshot.vector_children
+    ):
+        raise RevisionConflict(plan.key, "证据引用只能保存在父块")
+    references: list[ParentEvidenceReference] = []
+    for parent in snapshot.parents:
+        if PARENT_EVIDENCE_KEY in parent.metadata:
+            try:
+                reference = ParentEvidenceReference.from_payload(
+                    parent.metadata[PARENT_EVIDENCE_KEY]
+                )
+            except (TypeError, ValueError):
+                raise RevisionConflict(plan.key, "父块证据引用损坏") from None
+            if reference.bundle.key != plan.key:
+                raise RevisionConflict(plan.key, "父块证据revision不一致")
+            references.append(reference)
+    if references and (
+        len(references) != len(snapshot.parents)
+        or any(r != references[0] for r in references)
+    ):
+        raise RevisionConflict(plan.key, "父块证据引用缺失或混用")
     for kind, chunks in (
         ("parent", snapshot.parents),
         ("child", snapshot.vector_children),
