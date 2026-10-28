@@ -1,0 +1,141 @@
+from __future__ import annotations
+
+from typing import Literal
+
+from comet_rag.chunkers import DocumentChunker
+from comet_rag.content import ImagePart, TextPart
+from comet_rag.documents.schemas import InlineFormula, ParsedDocument
+from comet_rag.embedder.types import EmbeddingSpace
+from comet_rag.identity import stable_id
+
+from ..types import BuildResult, IndexUnit, Representation
+
+
+class FlatIndexBuilder:
+    def __init__(
+        self,
+        chunker: DocumentChunker,
+        *,
+        representation: Literal["text", "media", "joint", "separate"] = "text",
+    ) -> None:
+        if representation not in ("text", "media", "joint", "separate"):
+            raise ValueError("unsupported representation selection")
+        self.chunker = chunker
+        self.representation = representation
+
+    def profile_id(self, space: EmbeddingSpace) -> str:
+        return stable_id(
+            "profile",
+            {
+                "builder": "flat_v1",
+                "chunker": self.chunker.config,
+                "representations": self.representation,
+                "space": space.space_id,
+            },
+        )
+
+    def build(
+        self, document: ParsedDocument, *, index_scope: str, index_profile_id: str
+    ) -> BuildResult:
+        by_id = {block.block_id: block for block in document.blocks}
+        asset_by_id = {asset.asset_id: asset for asset in document.assets}
+        units = []
+        representations = []
+        for chunk in self.chunker.chunk(document):
+            if not chunk.source_refs:
+                continue
+            selected = {ref.block_id for ref in chunk.source_refs}
+            pending = list(selected)
+            while pending:
+                block = by_id[pending.pop()]
+                if block.table is not None and block.table.cells is not None:
+                    for cell in block.table.cells:
+                        for child in cell.block_ids:
+                            if child not in selected:
+                                selected.add(child)
+                                pending.append(child)
+            blocks = tuple(
+                block for block in document.blocks if block.block_id in selected
+            )
+            asset_ids: list[str] = []
+            for block in blocks:
+                values = [
+                    block.asset_id,
+                    block.formula.asset_id if block.formula else None,
+                    block.table.asset_id if block.table else None,
+                ]
+                if block.rich_text is not None:
+                    values.extend(
+                        inline.formula.asset_id
+                        for inline in block.rich_text.inlines
+                        if isinstance(inline, InlineFormula)
+                    )
+                for asset_id in values:
+                    if asset_id is not None and asset_id not in asset_ids:
+                        asset_ids.append(asset_id)
+            media_ids = tuple(asset_ids)
+            # 派生资源的来源也随单元保存，但不把来源图片当作额外检索表示。
+            for asset_id in asset_ids:
+                for source_asset in asset_by_id[asset_id].source_asset_ids:
+                    if source_asset not in asset_ids:
+                        asset_ids.append(source_asset)
+            assets = tuple(asset_by_id[asset_id] for asset_id in asset_ids)
+            parts: list[TextPart | ImagePart] = (
+                [TextPart(chunk.text)] if chunk.text else []
+            )
+            parts.extend(
+                ImagePart(asset_by_id[asset_id].media) for asset_id in media_ids
+            )
+            if not parts:
+                raise ValueError("selected content has no materializable text or media")
+            unit = IndexUnit(
+                index_scope,
+                index_profile_id,
+                document.source.source_id,
+                document.document_id,
+                tuple(parts),
+                chunk.source_refs,
+                ordinal=chunk.ordinal,
+                assets=assets,
+                locations=tuple(
+                    location for block in blocks for location in block.locations
+                ),
+                blocks=blocks,
+                metadata=document.metadata,
+            )
+            units.append(unit)
+            variants: list[tuple[str, tuple[TextPart | ImagePart, ...]]] = []
+            text = tuple(part for part in parts if isinstance(part, TextPart))
+            media = tuple(part for part in parts if isinstance(part, ImagePart))
+            if self.representation == "text":
+                if not text:
+                    raise ValueError(
+                        "text representation cannot index content without a text view"
+                    )
+                variants.append(("original_text", text))
+            elif self.representation == "media":
+                if not media:
+                    raise ValueError("media representation requires an actual image")
+                variants.extend((f"image_{i}", (part,)) for i, part in enumerate(media))
+            elif self.representation == "joint":
+                variants.append(("original_joint", tuple(parts)))
+            else:
+                if text:
+                    variants.append(("original_text", text))
+                variants.extend((f"image_{i}", (part,)) for i, part in enumerate(media))
+            for purpose, content in variants:
+                representations.append(
+                    Representation(
+                        unit.unit_id,
+                        index_scope,
+                        index_profile_id,
+                        unit.source_id,
+                        unit.document_id,
+                        content,
+                        purpose=purpose,
+                        source_refs=chunk.source_refs,
+                        context_refs=chunk.context_refs,
+                        assets=assets,
+                    )
+                )
+        return BuildResult(tuple(units), tuple(representations))
