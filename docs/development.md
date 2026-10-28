@@ -12,7 +12,7 @@ Python >=3.12；开发依赖通过 `uv sync --locked` 安装到当前 checkout �
 | Milvus | 29530 | `COMET_V2_MILVUS_PORT` |
 | Milvus 健康检查 | 29091 | `COMET_V2_MILVUS_HEALTH_PORT` |
 
-MinIO 与 etcd 只供 Milvus 内部使用，不发布宿主端口。镜像沿用已选 PostgreSQL 17、Milvus 2.6.23、etcd 3.5.16 和 MinIO 2024-05-28；真实服务与 SDK 兼容性仍在后续集成验收中验证。
+etcd 只供 Milvus 内部使用，不发布宿主端口。镜像为 PostgreSQL 17、Milvus 2.6.23 和 etcd 3.5.16。Milvus 使用其官方 Standalone 支持的本地存储和 Woodpecker 本地 WAL，均写入独立命名卷，不依赖 MinIO 镜像。该配置适合单机开发，不提供跨节点存储保证。配置依据为 [v2.6.23 官方启动脚本](https://github.com/milvus-io/milvus/blob/v2.6.23/scripts/standalone_embed.sh)和 [Woodpecker 2.6 配置](https://milvus.io/docs/v2.6.x/use-woodpecker.md)。
 
 ```bash
 docker compose config --quiet
@@ -20,7 +20,7 @@ make db-up
 make db-down
 ```
 
-启动由开发者显式执行。PostgreSQL 开启默认持久化，默认开发账号为 `comet_v2`，数据库为 `comet_rag_v2`，默认密码为 `comet_v2_dev`，可通过 `COMET_V2_POSTGRES_PASSWORD` 修改。MinIO 开发账号可通过 `COMET_V2_MINIO_USER` / `COMET_V2_MINIO_PASSWORD` 配置。这些是本地开发配置。
+启动由开发者显式执行。PostgreSQL 开启默认持久化，默认开发账号为 `comet_v2`，数据库为 `comet_rag_v2`，默认密码为 `comet_v2_dev`，可通过 `COMET_V2_POSTGRES_PASSWORD` 修改。这些是本地开发配置。
 
 阶段 0 只检查 Compose 结构，不创建容器、不初始化业务表、不运行数据库迁移。新版 DocStore 后续显式创建自己的 schema，Milvus 后续按 scope 创建独立集合；源码清理不操作已有数据。
 

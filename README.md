@@ -1,8 +1,8 @@
 # Comet-RAG
 
-Comet-RAG V2 正在整体重写为可独立组合的文档入库与检索组件库。当前完成阶段 0：清除旧体系并建立可安装、可测试的开发骨架。
+Comet-RAG V2 正在整体重写为可独立组合的文档入库与检索组件库。阶段 0 与 A 已完成：干净的开发骨架、内容/身份/文档快照与投影契约，以及隔离后端环境。
 
-当前可用的是 ZIP/XML 资源预算检查和单元排名 RRF。文档解析、来源获取、模型、持久存储、`AsyncIngestionPipeline` 与 `AsyncSearchPipeline` 尚未实现，当前版本不能完成 RAG 入库或搜索。
+当前可用的是有序文本/图片输入、确定性身份、文档结构与 JSON 编解码、来源映射的文本投影、ZIP/XML 资源预算检查和单元排名 RRF。文档解析、来源获取、模型、持久存储、`AsyncIngestionPipeline` 与 `AsyncSearchPipeline` 正按后续阶段实现，当前版本尚不能完成 RAG 入库或搜索。
 
 旧接口、服务和使用说明保留在 [refactor/enterprise-reliability](https://github.com/comet-7x/comet-rag/tree/refactor/enterprise-reliability)。V2 不提供旧接口兼容。
 
@@ -47,11 +47,11 @@ make db-down
 | 阶段 | 交付 |
 |---|---|
 | 0（已完成） | 清场、独立包、开发工具与基础行为验证 |
-| A | 身份/编码/投影契约、保护行为归属、真实样例与后端配置 |
+| A（已完成） | 身份/编码/投影契约、保护行为归属、真实样例与后端配置 |
 | B | 本地文本与基础 DOCX，PostgreSQL/Milvus 持久入库，dense/keyword/hybrid |
 | C | HTTP/S3、DOCX 保真、外部 MinerU PDF 与持久资源 |
 | D | 独立图片与文档图片，真实文本/图片四种检索组合 |
 | E | 可选父子上下文、重排和表示策略比较 |
 | F | 完整组件导出、实际运行示例与集成交付 |
 
-阶段 0 的实际改动与核验见 [验收记录](docs/phase0.md)。目标职责与约束见 [架构](docs/architecture.md)，验证范围见 [测试说明](tests/README.md)，代码注释约定见 [注释标准](docs/comment_style.md)。本次本地详细设计入口为 `tmp/refactoring/overview.md`（v1.3），该目录保持忽略，不随包分发。
+阶段 0 的实际改动见 [清场验收](docs/phase0.md)，契约与环境检查见 [阶段 A 验收](docs/phase-a.md)。目标职责与约束见 [架构](docs/architecture.md)，验证范围见 [测试说明](tests/README.md)，代码注释约定见 [注释标准](docs/comment_style.md)。本次本地详细设计入口为 `tmp/refactoring/overview.md`（v1.3），该目录保持忽略，不随包分发。

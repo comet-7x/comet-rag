@@ -1,6 +1,6 @@
 # V2 组件架构
 
-V2 以独立组件、入库/检索两条异步 Pipeline 和实际运行示例为交付。阶段 0 已建立骨架，目前只有 `documents.parsers.archive` 的资源检查和 `retrieval.fusion` 的排名融合；以下其余模块是后续职责，尚无实现。
+V2 以独立组件、入库/检索两条异步 Pipeline 和实际运行示例为交付。阶段 0 与 A 已完成：`content`、`identity`、`documents.schemas`、`documents.projection`、`documents.codec`、ZIP/XML 资源检查和基础 RRF 已实现。其他模块按下表职责继续建设；[阶段 A 核验](phase-a.md)记录契约与环境的实际边界。
 
 | 模块 | 后续职责 |
 |---|---|
