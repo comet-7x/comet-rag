@@ -8,6 +8,14 @@ dependencies = [
     "lxml>=6.1.0",
 ]
 
+[project.optional-dependencies]
+postgres = ["sqlalchemy[asyncio]>=2.0.40", "asyncpg>=0.30.0"]
+milvus = ["pymilvus>=2.6.0,<2.7"]
+models = ["httpx>=0.28.1"]
+sources = ["httpx>=0.28.1", "boto3>=1.38.0"]
+images = ["pillow>=11.2.1"]
+local-models = ["torch>=2.6.0", "transformers>=4.51.0,<5", "pillow>=11.2.1"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -16,10 +24,16 @@ build-backend = "hatchling.build"
 packages = ["comet_rag"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/comet_rag", "/tests", "/docs", "/AGENTS.md", "/Makefile", "/docker-compose.yml", "/uv.lock", "/.pre-commit-config.yaml", "/.python-version"]
+include = ["/comet_rag", "/tests", "/docs", "/examples", "/evals", "/scripts", "/AGENTS.md", "/Makefile", "/docker-compose.yml", "/uv.lock", "/.pre-commit-config.yaml", "/.python-version"]
 
 [dependency-groups]
 dev = [
+    "asyncpg>=0.30.0",
+    "boto3>=1.38.0",
+    "pillow>=11.2.1",
+    "httpx>=0.28.1",
+    "sqlalchemy[asyncio]>=2.0.40",
+    "pymilvus>=2.6.0,<2.7",
     "commitizen>=4.8.2",
     "lxml-stubs>=0.5.1",
     "pre-commit>=4.2.0",
@@ -33,7 +47,8 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 pythonpath = ["."]
-addopts = "--strict-markers --strict-config"
+addopts = "--strict-markers --strict-config --import-mode=importlib"
+markers = ["integration: explicitly selected real backend and service checks"]
 
 [tool.coverage.run]
 source = ["comet_rag"]
@@ -54,7 +69,9 @@ ignore = ["E501"]
 skips = ["tests/*", "*/tests/*"]
 
 [tool.pyright]
-include = ["comet_rag", "tests"]
+venvPath = "."
+venv = ".venv"
+include = ["comet_rag", "tests", "examples", "evals", "scripts"]
 exclude = ["**/__pycache__", "tmp", "temp", "draft", "poc", "logs", ".venv"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"

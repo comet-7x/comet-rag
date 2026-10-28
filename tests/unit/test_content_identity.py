@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import subprocess  # nosec B404 - fixed Python commands for process-restart verification
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
@@ -82,6 +82,7 @@ def test_hash_is_of_delivered_bytes_and_survives_process_restart(
     path.write_bytes(b"actual source bytes\x00")
     assert file_hash(path) == hashlib.sha256(b"actual source bytes\x00").hexdigest()
     code = "from comet_rag.identity import stable_id; print(stable_id('scope', {'items':['a','b']}))"
-    first = subprocess.check_output([sys.executable, "-c", code], text=True)  # noqa: S603  # nosec B603 - fixed interpreter and source
-    second = subprocess.check_output([sys.executable, "-c", code], text=True)  # noqa: S603  # nosec B603 - fixed interpreter and source
+    # 两个全新进程仅执行当前解释器与固定身份脚本。
+    first = subprocess.check_output([sys.executable, "-c", code], text=True)  # noqa: S603  # nosec B603
+    second = subprocess.check_output([sys.executable, "-c", code], text=True)  # noqa: S603  # nosec B603
     assert first == second == stable_id("scope", {"items": ["a", "b"]}) + "\n"
