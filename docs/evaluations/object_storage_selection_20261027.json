@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-27",
+  "scope": "selection and deployment design only; no new middleware installation or production configuration changes",
+  "confirmed_user_preference": "self-hosted open source preferred; no production switch authorized by this preference confirmation",
+  "recommended_validation_candidate": {
+    "repository": "seaweedfs/seaweedfs",
+    "tag": "4.51",
+    "commit": "153ab668c99731a6d29492bf6c61d0b4fa701101",
+    "published": "2026-10-25T19:39:12Z",
+    "prerelease": false,
+    "url": "https://github.com/seaweedfs/seaweedfs/releases/tag/4.51"
+  },
+  "alternative_validation_candidate": {
+    "repository": "rustfs/rustfs",
+    "tag": "1.0.4",
+    "commit": "46337942d55f3a8e6a97b147ca98d9ea8115555d",
+    "published": "2026-10-25T16:26:17Z",
+    "prerelease": false,
+    "url": "https://github.com/rustfs/rustfs/releases/tag/1.0.4"
+  },
+  "not_accepted_as_production": [
+    "SeaweedFS 4.51 not runtime tested by Comet-RAG",
+    "RustFS 1.0.4 not runtime tested by Comet-RAG"
+  ],
+  "excluded": {
+    "minio_ce": "official repository no longer maintained; prior pinned source validation is not ongoing maintenance",
+    "garage": "official known-issues says safe concurrent conditional writes structurally unsupported"
+  },
+  "commercial": "AIStor Free single compute resource no support included; distributed/commercial support requires separately verified license",
+  "managed": "AWS S3 documents native conditional writes; region/network/credentials and project acceptance untested",
+  "sources": [
+    {
+      "url": "https://github.com/minio/minio/blob/master/README.md"
+    },
+    {
+      "url": "https://github.com/seaweedfs/seaweedfs/releases/tag/4.51"
+    },
+    {
+      "url": "https://github.com/rustfs/rustfs/releases/tag/1.0.4"
+    },
+    {
+      "url": "https://docs.min.io/aistor/installation/macos/install/"
+    },
+    {
+      "url": "https://docs.ceph.com/en/latest/releases/"
+    },
+    {
+      "url": "https://github.com/deuxfleurs-org/garage/blob/586726edb0170bb46f604e84fba09e5659610649/doc/book/reference-manual/known-issues.md"
+    }
+  ]
+}

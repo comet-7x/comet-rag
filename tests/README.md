@@ -525,3 +525,16 @@ fixture，不模拟真实人类裁决。反向验证与外部输入缺口见
 `COMET_TEST_REQUIRE_SERVICES=1` 用于必需服务验收。夹具只创建UUID桶，PUT前登记
 精确key清理；同步/异步各跑一次，并用HEAD404确认本次桶已删除。测试不列举其他桶。
 预算分解、故障与最终全量结果见[验证报告](../docs/evaluations/validation_20261026.md)。
+
+独立证据S3验收见`tests/integration/test_s3_evidence_minio.py`。复用同一组MinIO测试
+环境变量，只操作UUID新桶。默认验证有界读取、异常、取消和能力拒绝，四项条件写
+验收明确skip；设置`COMET_TEST_S3_CONDITIONAL=1`才要求写能力，不兼容必须fail。
+设置`COMET_TEST_REQUIRE_SERVICES=1`防止服务不可用变成skip。当前配置目标未通过
+条件写，不能用读取通过或本机参考端通过掩盖；完整[S3协议](../docs/mineru_s3_evidence.md)。
+
+`test_s3_diagnostics_minio.py`复用同一UUID桶夹具，在原生SDK完成SigV4后观察条件头并
+注入删头／改头，要求认证拒绝；不将它当成代理拓扑或条件写能力认证。
+`test_s3_diagnostics.py`是零网络的管理构建投影／签名诊断回归，包含预算、混部、重复
+字段和不充分证据反例。固定上游源码的quorum故障探针、实际源码反向验证和本机
+SIGKILL边界见[诊断报告](../docs/evaluations/minio_diagnosis_20261027.md)，不在项目unit
+中安装Go或运行真实服务。目标8通过／4项写验收skip，候选12通过，分别记录。

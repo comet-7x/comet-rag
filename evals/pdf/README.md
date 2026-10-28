@@ -1,5 +1,11 @@
 # 真实 PDF 参考评测
 
+MinerU4原生structured_content的独立映射与引用账本评估：
+`uv run python -m evals.pdf.structured_audit --input /path/to/structured_content.json --source-lock /path/to/inputs.json --sample squid --out /tmp/comet-structured-new-run`。
+只读取已有产物和源文件，不访问模型，不写生产索引。映射、页内标题限制及V1最小
+范围见[契约设计](../../docs/mineru_v1_design.md)，实际回放与反向验证见
+[评估报告](../../docs/evaluations/mineru_structured_20261027.md)。不能沿用旧canonical标签。
+
 第三十三批的原生表格局部对照入口为
 `uv run python -m evals.pdf.table_experiment --config /path/to/models.yaml --out /tmp/comet-table-new-run`。
 只比较冻结b30原生12页域中的两条作者暂定表格题，非原24题重标。默认与显式
@@ -169,3 +175,49 @@ answerable/unanswerable/uncertain。工具重新生成冻结输入，检查问�
 校验通过只表示结构与字面事实有效：independent_review仍为unverified，
 quality_acceptance仍为pending。ready_for_adjudication不是独立审阅认证、分歧裁决
 或金标冻结；角色字符串不能证明人的独立性，模型名称也不能证明固定权重。
+
+## MinerU4 V1 独立采集与结构审计
+
+```bash
+uv run python -m evals.pdf.capture --url http://127.0.0.1:28995 \
+  --source-lock /path/to/inputs.json --sample nist145 --out /tmp/new-v1-capture
+uv run python -m evals.pdf.structured_audit \
+  --input /tmp/new-v1-capture/structured_content.json \
+  --source-lock /tmp/new-v1-capture/source_lock.json --sample nist145 \
+  --out /tmp/new-v1-audit
+```
+
+仅适配已验证的自部署MinerU4.0.12，advanced／auto／all，只请求原生structured_content。
+显式来源锁含samples数组，每项为id、绝对path、sha256、bytes、物理pages；文件名由
+`sample + ".pdf"`生成，sample须为安全ASCII标识。采集器核验私有PDF快照、远端源文件
+摘要及输出文件摘要，再复用离线映射。文档API与9919上的模型服务地址不同。
+CLI不读取生产配置或.env；可选`--api-key-env NAME`，只传已有凭据环境变量名。
+
+输出只建新目录，包含receipt.json、source_lock.json及成功时的structured_content.json；
+失败不保留成功产物。回执保存已观察任务ID和不确定性，任务回包丢失不自动重提。
+900秒总预算覆盖本地排队、上传、远端排队、接收、核验和发布，其中预留5秒取消；
+实际流量按单控制响应256KiB、产物32MiB、累计36MiB限制，拒绝压缩与重定向。
+收到取消回执不证明远端排干；本地不可中断I/O的排干可能晚于deadline。
+
+raw JSON可能包含内嵌图片，来源锁含本地路径，按原资料敏感度保管。进程强杀后的
+残留不能作为成功，消费前核对completed回执和产物摘要。没有自动续传或孤儿任务发现。
+后续structured_audit仅生成新的逐页正文、标题／表格账本及独立图像解读，不把解读当
+原文证据，不沿用旧canonical的span，也不接入生产索引。
+完整[协议与预算](../../docs/mineru_v1_design.md)、[真实及故障验证](../../docs/evaluations/mineru_v1_capture_20261027.md)。
+
+证据包和恢复协议原型见[持久化设计](../../docs/mineru_evidence_lifecycle.md)：
+`evidence_bundle`构建／发布／严格回读原生JSON与账本，`page_sections`验证同页标题硬
+边界，`capture_journal`使用既有TaskStore的CAS、围栏和条件删除演练小恢复意图。
+这些是独立函数／值对象，不是新的生产Extractor、对象Store或自动任务续传器。
+已按原采集字节回放7／60页，并通过真实独立PostgreSQL验证；没有新调用模型、上传
+用户资料到S3或删除远端产物。实现及限界见[本轮记录](../../docs/evaluations/mineru_evidence_20261027.md)。
+
+后续`evals.pdf.s3_evidence.AsyncS3EvidenceStore`已复用原生条件PUT、checksum与有界
+StreamingBody读取，并与本地文件共用严格账本校验。当前目标MinIO未通过条件写
+门禁，publish会拒绝；本机参考端通过不代表目标达标。独立测试方法、写验收开关与
+资源边界见[S3协议](../../docs/mineru_s3_evidence.md)及[结果](../../docs/evaluations/mineru_s3_20261027.md)。
+
+`s3_diagnostics`只投影官方mc构建字段和原生SDK签名事实，不创建网络客户端、运行
+管理命令或保存凭据。后续[MinIO诊断](../../docs/evaluations/minio_diagnosis_20261027.md)
+定位了目标2023实现的条件写缺口；固定上游修正源码候选通过隔离故障与7／60页回放。
+它不是官方生产发布，上游已停止维护；没有升级服务、切配置或解除目标发布门禁。

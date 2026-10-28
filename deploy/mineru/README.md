@@ -116,3 +116,32 @@ uv run python -m evals.pdf.parse --pdf-dir /path/to/locked-public-pdfs \
 Comet-RAG的 `mineru.base_url` 仍指向文档API，不直接指向VLM端口。上游默认开启
 `image_analysis`，Pro模型会产生新的图像解读；原生CLI可用 `--image-analysis false`
 作单独诊断。没有改应用默认配置，结果与引用边界见[补验报告](../../docs/evaluations/mineru_pro2605_20261026.md)。
+
+2026-10-27已在干净的4.0.12环境固定同一Pro模型，完成60/7/80页整本对照及60页关闭
+图像分析诊断。原生FULL能保留背封并精确重建逐页结果，但V1 HTTP尚无等价逐页
+Markdown导出；图片内嵌与ZIP体积也超过现有响应预算，不能直接移除本补丁或仅改
+应用服务地址。实验、协议边界和采用前置见[4.x独立验证](../../docs/evaluations/mineru4_pro2605_20261027.md)。
+本安装器仍只接受3.4.5，不把旧补丁安装到4.x；生产默认未切换。
+
+原生structured_content已有[离线映射与证据契约](../../docs/mineru_v1_design.md)：
+页、标题与表体可保留，图像解读独立；现有生产接口仍会丢部分结构。
+独立`python -m evals.pdf.capture`现已完成V1采集及32MiB产物／36MiB累计接收／900秒
+统一deadline验证，详见[采集器结果](../../docs/evaluations/mineru_v1_capture_20261027.md)。
+它不读取生产配置，不加载MinerU SDK，不接线ExtractorPort。暖缓存真实实验发现原始
+字节提交带可选SHA参数会提前返回并可能丢回包，因此完整上传后核对原生文件元数据
+SHA，不自动重提。不把V1网络验证视作本补丁或生产证据持久化已经迁移。
+
+后续[证据持久化与恢复协议](../../docs/mineru_evidence_lifecycle.md)采用既有MinIO独立
+前缀作为生产目标位置，已完成本地不可变包、页内标题视图及真实PostgreSQL协议演练。
+本轮不提供生产S3写入或对象GC。固定4.0.12的DELETE file只移除文件视图，原生终态
+保留及共享引用决定底层回收；实际部署须另核查保留参数，不能把取消、404或默认TTL
+当作物理排干证明。没有修改本安装器、上游9919服务或现有生产配置。
+
+证据的[S3独立适配](../../docs/mineru_s3_evidence.md)已补原生条件写与有界回读，但当前
+目标MinIO条件创建／拒绝覆盖语义实测未通过。保持发布门禁；本机参考端成功不能
+代替目标验收，也不表示应直接升级为参考旧版。没有切换文档API或生产存储配置。
+
+后续[MinIO诊断](../../docs/evaluations/minio_diagnosis_20261027.md)已核实目标2023构建与
+原生条件写原因；固定上游修正源码的隔离候选通过协议及故障验证，但不是官方发布，
+上游仓库也已声明停止维护。先确定可持续维护的部署候选及迁移／回退验收，再考虑
+生产接线；本安装器、目标存储、MinerU服务和生产配置均未修改。
