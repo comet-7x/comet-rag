@@ -1,0 +1,451 @@
+{
+  "date": "2026-10-28",
+  "scope": "fixed MinerU closeout; review only, no merge/directory change/production switch",
+  "code_revision": "d5474b3331ebaee7948b89e3e390c24a686819d0",
+  "branch": "refactor/enterprise-reliability",
+  "unit": {
+    "passed": 4076,
+    "skipped": 16,
+    "xfailed": 1,
+    "seconds": 12.58,
+    "ten_second_budget_passed": false,
+    "skip_reasons": {
+      "optional_real_docx": 1,
+      "non_executable_document_examples": 15
+    }
+  },
+  "integration": {
+    "passed": 321,
+    "skipped": 3,
+    "warnings": 60,
+    "seconds": 521.55,
+    "skips": "legacy MinerU HTTP tests without configured legacy API; new native PG/S3 cases executed"
+  },
+  "e2e": {
+    "passed": 50,
+    "seconds": 2.87
+  },
+  "benchmark": {
+    "passed": 39,
+    "seconds": 7.45,
+    "source_identities": "distinct logical documents; same generated fixture bytes"
+  },
+  "coverage": {
+    "unit_percent": 90.7656,
+    "merged_percent": 93.5565,
+    "tasks_percent": 96.3197,
+    "layers": [
+      "unit",
+      "integration",
+      "e2e"
+    ]
+  },
+  "reverse": {
+    "cases": [
+      {
+        "fault": "flat_concurrency",
+        "source": "comet_rag/services/flat_write.py",
+        "test": "tests/unit/services/test_ingestion.py::test_concurrent_reingest_cannot_delete_another_writers_new_chunks",
+        "detected": true,
+        "source_sha256": "24efc3ee3720508f486fb35e917cd9119afc3e6e8233b594fdfb266567a8b579"
+      },
+      {
+        "fault": "flat_unknown_rpc",
+        "source": "comet_rag/services/flat_write.py",
+        "test": "tests/unit/services/test_flat_write.py::test_unknown_rpc_keeps_source_fence_even_after_owner_stops",
+        "detected": true,
+        "source_sha256": "24efc3ee3720508f486fb35e917cd9119afc3e6e8233b594fdfb266567a8b579"
+      },
+      {
+        "fault": "flat_not_queued",
+        "source": "comet_rag/services/flat_write.py",
+        "test": "tests/unit/services/test_flat_write.py::test_independent_contexts_cannot_write_one_source_concurrently",
+        "detected": true,
+        "source_sha256": "24efc3ee3720508f486fb35e917cd9119afc3e6e8233b594fdfb266567a8b579"
+      },
+      {
+        "fault": "empty_extraction",
+        "source": "comet_rag/services/ingestion.py",
+        "test": "tests/unit/services/test_ingestion.py::test_empty_reingest_never_replaces_previous_content[empty_extraction]",
+        "detected": true,
+        "source_sha256": "b7dc3575bb2bdb9ef8852cc389953c84c6d90331cc94bc9ebf2de44b01bf3581"
+      },
+      {
+        "fault": "empty_resume",
+        "source": "comet_rag/services/ingestion.py",
+        "test": "tests/unit/services/test_ingestion.py::test_empty_persisted_drafts_are_rejected_before_stale_tail_deletion",
+        "detected": true,
+        "source_sha256": "b7dc3575bb2bdb9ef8852cc389953c84c6d90331cc94bc9ebf2de44b01bf3581"
+      },
+      {
+        "fault": "empty_revision",
+        "source": "comet_rag/services/revision_ingestion.py",
+        "test": "tests/unit/services/test_revision_ingestion.py::test_empty_reingest_never_activates_over_the_previous_revision[empty_hierarchy]",
+        "detected": true,
+        "source_sha256": "4d32dacb2ab24912e5664d2b22c1ace59420b58af49c4a7cb8377ff6bd13a16c"
+      },
+      {
+        "fault": "metadata_budget",
+        "source": "comet_rag/services/ingestion.py",
+        "test": "tests/unit/test_config_schemas.py::test_ingest_metadata_budget_applies_to_api_and_service",
+        "detected": true,
+        "source_sha256": "b7dc3575bb2bdb9ef8852cc389953c84c6d90331cc94bc9ebf2de44b01bf3581"
+      },
+      {
+        "fault": "threshold_positive",
+        "source": "comet_rag/config/schemas.py",
+        "test": "tests/unit/test_config_schemas.py::test_degradation_thresholds_fail_config_preflight",
+        "detected": true,
+        "source_sha256": "72a63e0fed92b58b643836cff7c6e0fde4062a0688f2513ed04812b189483e1d"
+      },
+      {
+        "fault": "one_slow_lease",
+        "source": "comet_rag/tasks/executor.py",
+        "test": "tests/unit/tasks/test_executor_lease.py::test_one_slow_renewal_does_not_fail_a_healthy_runner",
+        "detected": true,
+        "source_sha256": "c3a29fd3c9b3c4baac6d93c78ece9cbe02e91f338206a20273d31a8a41765ec0"
+      },
+      {
+        "fault": "repeated_slow_lease",
+        "source": "comet_rag/tasks/executor.py",
+        "test": "tests/unit/tasks/test_executor_lease.py::test_repeated_renewal_timeouts_cannot_be_ignored_forever",
+        "detected": true,
+        "source_sha256": "c3a29fd3c9b3c4baac6d93c78ece9cbe02e91f338206a20273d31a8a41765ec0"
+      },
+      {
+        "fault": "docx_namespace",
+        "source": "comet_rag/engines/documents/docx/parser.py",
+        "test": "tests/unit/engines/test_docx_valid_input_edges.py::test_default_word_namespace_does_not_require_a_w_prefix",
+        "detected": true,
+        "source_sha256": "4fc97907eab3927eb2608a57120e344ac43361664775633dde359765563f074a"
+      },
+      {
+        "fault": "docx_unclosed_field",
+        "source": "comet_rag/engines/documents/docx/parser.py",
+        "test": "tests/unit/engines/test_docx_valid_input_edges.py::test_unclosed_field_preserves_visible_result_and_later_text_without_instruction",
+        "detected": true,
+        "source_sha256": "4fc97907eab3927eb2608a57120e344ac43361664775633dde359765563f074a"
+      },
+      {
+        "fault": "docx_caption",
+        "source": "comet_rag/engines/documents/docx/parser.py",
+        "test": "tests/unit/engines/test_docx_valid_input_edges.py::test_caption_requires_a_seq_instruction_token",
+        "detected": true,
+        "source_sha256": "4fc97907eab3927eb2608a57120e344ac43361664775633dde359765563f074a"
+      },
+      {
+        "fault": "health_admission",
+        "source": "comet_rag/infrastructure/extractors/_mineru_v1_protocol.py",
+        "test": "tests/unit/test_mineru_protocol_admission.py::test_health_rejects_malformed_or_incompatible_server",
+        "detected": true,
+        "source_sha256": "d20e0e5a9fac8b7ba970ad0f11a1741ab97bcbd74f9bc0f6ecef4f1376a004e1"
+      },
+      {
+        "fault": "tiers_admission",
+        "source": "comet_rag/infrastructure/extractors/_mineru_v1_protocol.py",
+        "test": "tests/unit/test_mineru_protocol_admission.py::test_tiers_rejects_malformed_or_missing_advanced_tier",
+        "detected": true,
+        "source_sha256": "d20e0e5a9fac8b7ba970ad0f11a1741ab97bcbd74f9bc0f6ecef4f1376a004e1"
+      },
+      {
+        "fault": "source_approval",
+        "source": "comet_rag/services/mineru_capture.py",
+        "test": "tests/unit/services/test_mineru_capture.py::test_capture_rejects_before_post_or_publish[unapproved]",
+        "detected": true,
+        "source_sha256": "e3fd5d797d3aeffc8f18f375028efb2af45f1fb8d996a2ddcfd9a0d1bde58eb0"
+      },
+      {
+        "fault": "runtime_binding",
+        "source": "comet_rag/services/mineru_capture.py",
+        "test": "tests/unit/services/test_mineru_capture.py::test_live_binding_mutation_cannot_reuse_committed_evidence",
+        "detected": true,
+        "source_sha256": "e3fd5d797d3aeffc8f18f375028efb2af45f1fb8d996a2ddcfd9a0d1bde58eb0"
+      },
+      {
+        "fault": "unknown_post",
+        "source": "comet_rag/services/mineru_capture.py",
+        "test": "tests/unit/services/test_mineru_capture.py::test_post_response_loss_retains_unknown_submission_and_never_reposts",
+        "detected": true,
+        "source_sha256": "e3fd5d797d3aeffc8f18f375028efb2af45f1fb8d996a2ddcfd9a0d1bde58eb0"
+      },
+      {
+        "fault": "capture_budget",
+        "source": "comet_rag/services/mineru_capture.py",
+        "test": "tests/unit/services/test_mineru_capture.py::test_persisted_context_budget_rejects_before_post",
+        "detected": true,
+        "source_sha256": "e3fd5d797d3aeffc8f18f375028efb2af45f1fb8d996a2ddcfd9a0d1bde58eb0"
+      },
+      {
+        "fault": "publish_intent_before_rpc",
+        "source": "comet_rag/services/mineru_capture.py",
+        "test": "tests/unit/services/test_mineru_capture.py::test_checkpoint_committed_but_response_lost_recovers_without_double_post[mineru_capture_publish]",
+        "detected": true,
+        "source_sha256": "e3fd5d797d3aeffc8f18f375028efb2af45f1fb8d996a2ddcfd9a0d1bde58eb0"
+      },
+      {
+        "fault": "commit_only_after_read",
+        "source": "comet_rag/services/mineru_capture.py",
+        "test": "tests/unit/services/test_mineru_capture.py::test_publication_cancellation_preserves_exact_intent_and_releases_gates",
+        "detected": true,
+        "source_sha256": "e3fd5d797d3aeffc8f18f375028efb2af45f1fb8d996a2ddcfd9a0d1bde58eb0"
+      },
+      {
+        "fault": "authorize_before_io",
+        "source": "comet_rag/services/evidence_access.py",
+        "test": "tests/unit/services/test_evidence_access.py::test_authorization_precedes_all_document_and_object_io",
+        "detected": true,
+        "source_sha256": "5c295c866c6a8ca276223b3d18c643b244d5fb455b30df24a246d1d9ee25e14f"
+      },
+      {
+        "fault": "parent_text",
+        "source": "comet_rag/services/evidence_access.py",
+        "test": "tests/unit/services/test_evidence_access.py::test_evidence_read_never_falls_back_to_unverified_parent_text[changed_text]",
+        "detected": true,
+        "source_sha256": "5c295c866c6a8ca276223b3d18c643b244d5fb455b30df24a246d1d9ee25e14f"
+      },
+      {
+        "fault": "recheck_active",
+        "source": "comet_rag/services/evidence_access.py",
+        "test": "tests/unit/services/test_evidence_access.py::test_retired_parent_is_not_served_and_pointer_change_during_read_is_rechecked",
+        "detected": true,
+        "source_sha256": "5c295c866c6a8ca276223b3d18c643b244d5fb455b30df24a246d1d9ee25e14f"
+      },
+      {
+        "fault": "permission_before_native",
+        "source": "comet_rag/services/evidence_publication.py",
+        "test": "tests/unit/services/test_evidence_publication.py::test_permission_is_durable_before_native_put_and_retained",
+        "detected": true,
+        "source_sha256": "f88fb99c70429fa7012c76b5263ba91afa6436b20e7b689151455a6b7b20b14e"
+      },
+      {
+        "fault": "permission_retention",
+        "source": "comet_rag/services/evidence_publication.py",
+        "test": "tests/unit/services/test_evidence_publication.py::test_permission_is_durable_before_native_put_and_retained",
+        "detected": true,
+        "source_sha256": "f88fb99c70429fa7012c76b5263ba91afa6436b20e7b689151455a6b7b20b14e"
+      },
+      {
+        "fault": "permission_live_sdk",
+        "source": "comet_rag/services/evidence_publication.py",
+        "test": "tests/unit/services/test_evidence_publication.py::test_permission_is_durable_before_native_put_and_retained",
+        "detected": true,
+        "source_sha256": "f88fb99c70429fa7012c76b5263ba91afa6436b20e7b689151455a6b7b20b14e"
+      },
+      {
+        "fault": "factory_rollback",
+        "source": "comet_rag/composition/bootstrap.py",
+        "test": "tests/unit/test_mineru_workflow_wiring.py::test_factory_failure_rolls_back_every_registered_resource_and_preserves_error[factory]",
+        "detected": true,
+        "source_sha256": "0aada8c23391fc98e0ddac77b59f1a0df87851d114ff5793a775e401f4a82883"
+      },
+      {
+        "fault": "factory_rollback_error",
+        "source": "comet_rag/composition/bootstrap.py",
+        "test": "tests/unit/test_mineru_workflow_wiring.py::test_factory_failure_rolls_back_every_registered_resource_and_preserves_error[factory]",
+        "detected": true,
+        "source_sha256": "0aada8c23391fc98e0ddac77b59f1a0df87851d114ff5793a775e401f4a82883"
+      },
+      {
+        "fault": "factory_context_owns",
+        "source": "comet_rag/composition/mineru.py",
+        "test": "tests/unit/test_mineru_workflow_wiring.py::test_factory_success_is_owned_until_executor_drains_then_closes_in_reverse",
+        "detected": true,
+        "source_sha256": "1a264fbd6e9dd8716acc14d0fbf096b118c6267733665dd951ffce8e9871520c"
+      },
+      {
+        "fault": "backpressure_admission",
+        "source": "comet_rag/tasks/service.py",
+        "test": "tests/e2e/test_backpressure.py",
+        "detected": true,
+        "source_sha256": "4ef2c5014198f5e1b01aea95eb762e94e05795955af236d5321aa2c54b26b1e2"
+      }
+    ],
+    "sources_restored": true
+  },
+  "core_only": {
+    "docx_and_chunking": true,
+    "installed_wheel_outside_checkout": true,
+    "server_and_gpu_packages_absent": {
+      "mineru": true,
+      "torch": true,
+      "aioboto3": true,
+      "pymilvus": true,
+      "sqlalchemy": true,
+      "redis": true
+    },
+    "native_structured_projection": true,
+    "v1_collector_import_without_server_extras": true,
+    "wheel_contains_formal_adapters": true,
+    "wheel_excludes_evaluations": true,
+    "wheel_modules_identical_to_code_revision": 199,
+    "wheel_sha256": "bdc0e529e76f9eddfcb950aebeda3b10a6a26deacaec1fe54ef2964464bf5081"
+  },
+  "native_public7": {
+    "sample": "public7",
+    "expected_pages": 7,
+    "production_configuration_changed": false,
+    "model": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+    "model_port": 9919,
+    "model_artifacts_immutable": false,
+    "independent_label_review": false,
+    "status": "passed",
+    "elapsed_seconds": 11.682215542066842,
+    "canonical_sha256": "b929253c6c8c6c507407393445393fabca0f39aa9eb1ff017b506179378cbe2b",
+    "source_sha256": "7b0c1a9fdfc67218b8ba2098f448c100c27070db91736b3c87fed63bfa21d418",
+    "parent_count": 7,
+    "child_count": 11,
+    "stages": [
+      "extracting",
+      "preparing",
+      "indexing",
+      "activating",
+      "cleanup"
+    ],
+    "successful_evidence_puts": 3,
+    "unauthorized_read_status": 401,
+    "authorized_read_status": 200,
+    "returned_pages": [
+      1
+    ],
+    "native_middleware": [
+      "PostgreSQL",
+      "Redis ARQ",
+      "Milvus 2.6.23 embedded/local",
+      "SeaweedFS 4.51"
+    ],
+    "worker_scope": "separate native ARQ worker instances in one Python process; MinerU API is a separate process",
+    "embedding": "deterministic test double; no quality claim",
+    "owned_bucket_and_collection_removed": true
+  },
+  "canonical_comparison": {
+    "no_new_post": true,
+    "source_sha256": "7b0c1a9fdfc67218b8ba2098f448c100c27070db91736b3c87fed63bfa21d418",
+    "current_canonical_sha256": "b929253c6c8c6c507407393445393fabca0f39aa9eb1ff017b506179378cbe2b",
+    "previous_canonical_sha256": "1422341bda141df58384067d55b26b5fb2d240c6665d56baafdd076c8e8fa085",
+    "canonical_changed": true,
+    "quality_acceptance": false
+  },
+  "cleanup": {
+    "production_configuration_changed": false,
+    "model_9919_stopped": false,
+    "mineru_terminal_jobs": 1,
+    "owned_s3_buckets_remaining": 0,
+    "owned_native_processes_stopped": true,
+    "owned_native_ports_closed": true,
+    "mineru_shutdown_semaphore_warnings": 1,
+    "native_data_and_credentials_removed": true
+  },
+  "production_configuration_matches_frozen_input": true,
+  "unchanged_tracked_deployment_files": [
+    "config.yaml",
+    "config.example.yaml",
+    "docker-compose.yml",
+    "pyproject.toml",
+    "uv.lock"
+  ],
+  "source_sha256": {
+    "comet_rag/api/main.py": "fb882dfa33b6fb4ea45f5b39613fc974845632eb35b64de5573603e3d86a9824",
+    "comet_rag/api/routes/evidence.py": "0c9d68516f9e81265e0c40cbac52d81c77440ff00e963df57c6999331b2bc8d7",
+    "comet_rag/api/routes/ingest.py": "2409b6eab629186859d5ee2af0eaf7c3570470b30c11718420ee31f451afe079",
+    "comet_rag/api/schemas/evidence.py": "8f6fe7b3f20320c3b762459d3653af93fbe58a16f8a6754dd71993a1b60daa19",
+    "comet_rag/api/schemas/ingest.py": "aa16193d3e87753d925f6876ec4ac5759a221feb9f4b3a583c753199833d251c",
+    "comet_rag/composition/bootstrap.py": "0aada8c23391fc98e0ddac77b59f1a0df87851d114ff5793a775e401f4a82883",
+    "comet_rag/composition/context.py": "4cbca97ff8a7cd353936dfbbc0e16a05bfdf54acc1f359ed6da1e394b4db9df4",
+    "comet_rag/composition/mineru.py": "1a264fbd6e9dd8716acc14d0fbf096b118c6267733665dd951ffce8e9871520c",
+    "comet_rag/config/schemas.py": "72a63e0fed92b58b643836cff7c6e0fde4062a0688f2513ed04812b189483e1d",
+    "comet_rag/engines/documents/docx/parser.py": "4fc97907eab3927eb2608a57120e344ac43361664775633dde359765563f074a",
+    "comet_rag/infrastructure/evidence/s3.py": "62a274ae1d3f9be3dfe69d7b83a513b9293e1f90b5aeb1cfd327a7233ccab669",
+    "comet_rag/infrastructure/evidence/source_locks.py": "d5d1322977e05f31cf8fe8e77c5767cdf54aeac08ed91270bfa8410a5b5a4735",
+    "comet_rag/infrastructure/extractors/mineru_capture.py": "baf4800ceb5ab97d31387104f537d6db1d44709b00eadf2895d69e2691b27e2f",
+    "comet_rag/infrastructure/extractors/mineru_v1.py": "f0b904057fcd97c6e6b1934b315968f2a391215130eeffd80af664f2f136444b",
+    "comet_rag/ports/capture.py": "0efe5061f10037d55787f15f99796dd489b4ffddf27a259d9bb4e22d2b4307ab",
+    "comet_rag/ports/evidence.py": "429b02790c83adaf984e2f4df3b8202430c98adf8ca1275fbfe1c6e93212cec3",
+    "comet_rag/services/evidence_access.py": "5c295c866c6a8ca276223b3d18c643b244d5fb455b30df24a246d1d9ee25e14f",
+    "comet_rag/services/evidence_publication.py": "f88fb99c70429fa7012c76b5263ba91afa6436b20e7b689151455a6b7b20b14e",
+    "comet_rag/services/flat_write.py": "24efc3ee3720508f486fb35e917cd9119afc3e6e8233b594fdfb266567a8b579",
+    "comet_rag/services/ingestion.py": "b7dc3575bb2bdb9ef8852cc389953c84c6d90331cc94bc9ebf2de44b01bf3581",
+    "comet_rag/services/mineru_capture.py": "e3fd5d797d3aeffc8f18f375028efb2af45f1fb8d996a2ddcfd9a0d1bde58eb0",
+    "comet_rag/services/revision_ingestion.py": "4d32dacb2ab24912e5664d2b22c1ace59420b58af49c4a7cb8377ff6bd13a16c",
+    "comet_rag/services/task_retention.py": "28ec7cbdc6abd969a9234e1ae61e424bea161a2b9763769c8606018436ec4c14",
+    "comet_rag/tasks/executor.py": "c3a29fd3c9b3c4baac6d93c78ece9cbe02e91f338206a20273d31a8a41765ec0",
+    "comet_rag/workers/maintenance.py": "96f8334fdb52fbfb1bdf056ef04b0bb44258836158e70b339733eeccb5ff1efa",
+    "tests/benchmark/test_ingest_bench.py": "2a6b41a828fdcda74a5ccd8f76d90134f9426b829ab12199dc37ba8787b5455a",
+    "tests/e2e/test_backpressure.py": "a1c4d2d1060fff3f971ac32179ed2f81e8cfd48c615b2f4c37898a152c938730",
+    "tests/integration/test_evidence_publication_postgres.py": "0d65f660a41a01e34ba793be0018766f434f0ed04097e4885c56b97b7ca064bc",
+    "tests/integration/test_flat_write_postgres.py": "dc643dbecff7efb2e392b33b8a404f85c553da159a82884e1855bfb0183ebcb0",
+    "tests/integration/test_mineru_workflow_recovery.py": "ae75d31ff1ec0eabaf8b709637b8166b9df190a257223874aaee7bad2655a44d",
+    "tests/unit/engines/test_docx_valid_input_edges.py": "b11db1477e980e9e1650f6206c6c09037ce04131dd88dc0aee79a86bac8f23f9",
+    "tests/unit/services/test_evidence_access.py": "d6d1ee0e20977f1bf72e7bcb1e024a16a600961234f357a941fd9724d70cfc6b",
+    "tests/unit/services/test_evidence_publication.py": "584dcb511a6403ca525199017f13e3dfea97596208d82f71a0dbfae2861a18be",
+    "tests/unit/services/test_flat_write.py": "24fc5ea5689e5e03d78e0bd2f7b3ace21dfb0a143a9d3ce953128aa8a9b8e88b",
+    "tests/unit/services/test_ingestion.py": "ff47429d5528e0c3625f38da8ccf24fc3a4a36a9ae24132c65d404f2c467fba1",
+    "tests/unit/services/test_mineru_capture.py": "39d4e9e1d2ec002d83a7df4ec5d5c280ca9cc66a81f23d4da9f4ac05944bd534",
+    "tests/unit/services/test_revision_ingestion.py": "8ea7f028ab177ae464dd4d8e2eaae02b1acc4971314447fd16f06fe882ed7c27",
+    "tests/unit/tasks/test_executor_lease.py": "9add51dbe4ed40c9f773ce3c22839b637319eaec18a83bfd120974e0e0fd8a15",
+    "tests/unit/test_config_schemas.py": "96b7872531dec25bf3814029e4acfc302815086d09326c65ca3a5747a7cc23b0",
+    "tests/unit/test_ingest_admission_lifecycle.py": "d053651e1a17c71a265fcaa0609f54b9a7fca388202f5d3568fd5b6159a40a94",
+    "tests/unit/test_ingest_pause.py": "f24ff15fc0677760fda3ba0377458a257fc308050cd8710ed7a2e2166adbf96b",
+    "tests/unit/test_mineru_protocol_admission.py": "1430f775f6a70923db25b0b3e72a03efe851c88073ec6bd086b5a27cd42073a7",
+    "tests/unit/test_mineru_workflow_wiring.py": "82d2b0f745b3bc2749762c10f76f3e2cb4909d680c66aac2d5a92d4e5b8f388b"
+  },
+  "private_artifacts": "/tmp/comet-mineru-closeout-20261028",
+  "release_gates": [
+    "strict unit runtime <10s",
+    "independent labels and immutable model/tokenizer/runtime artifacts",
+    "target deployment topology/TLS/IAM/capacity/backup/migration/rollback",
+    "uncertain intent archival, probe retention and evidence object GC/operational limits",
+    "global reference API authentication or verified trusted gateway",
+    "upstream MinerU semaphore shutdown warning"
+  ],
+  "diagrams": {
+    "code_revision": "d5474b3331ebaee7948b89e3e390c24a686819d0",
+    "main": {
+      "gates": {
+        "validate": "pass",
+        "deliver": "pass",
+        "check": "pass",
+        "browser-check": "pass"
+      },
+      "artifact_sha256": "1445e4b4e2f3e1993cd5125a28c70f5f73f1384a74b0ecd78757cee06b45e1ba",
+      "visual_review": "not performed",
+      "resolved_crossovers": 4
+    },
+    "mineru_v1": {
+      "gates": {
+        "validate": "pass",
+        "deliver": "pass",
+        "check": "pass",
+        "browser-check": "pass"
+      },
+      "artifact_sha256": "cb794356cc3bf7eb098731a406015dc40d6f6b251277285566518e185e1f9e2b",
+      "visual_review": "not performed"
+    },
+    "update_notice_required": false
+  },
+  "implementation_commits": [
+    {
+      "revision": "680224cf2283a9efb96626a0f5995ecdaf10c2d9",
+      "subject": "fix(docx): preserve valid namespace and field result semantics"
+    },
+    {
+      "revision": "4eb88c8e470af6625725c62cedc48f46ac1b359a",
+      "subject": "fix(tasks): tolerate one transient lease renewal timeout"
+    },
+    {
+      "revision": "90dc68fd68de6aabaf90216bd1cfa0834b51f985",
+      "subject": "fix(ingest): fence source writes and reject empty replacements"
+    },
+    {
+      "revision": "3384fdbc587536b963fe050492491b1243ea1bc2",
+      "subject": "feat(evidence): persist publication permits and fenced MinerU recovery"
+    },
+    {
+      "revision": "693255fa15156c49b95ba0a0008072f0a48165c4",
+      "subject": "test(ingest): distinguish independent documents from source conflicts"
+    },
+    {
+      "revision": "d5474b3331ebaee7948b89e3e390c24a686819d0",
+      "subject": "feat(mineru): wire opt-in revision capture and authorized evidence reads"
+    }
+  ]
+}

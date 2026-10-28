@@ -112,6 +112,9 @@ metadata 快照及重排基类的有限分数边界，保留服务层降级。�
 Milvus 参数绑定、两实现的 Filter 语义统一与真实 Milvus 验收。上游能力核查与执行模型规则见
 `tasks/v2_async_reassessment.md`，实施与验证见 `tasks/v2_plan.md`。M4 剩余工作仍以上述清单为准，
 V2 重构不自动扩大生产读写范围。
+2026-10-28补充：MinerU V1 来源锁、持久化发布许可、显式工厂和授权证据读取已
+完成可选接线，默认关闭；未改上述假设、Task/向量schema或生产配置。实际部署/质量
+与10秒门禁仍保留，结果见[收口报告](../docs/evaluations/mineru_wiring_20261028.md)。
 
 ### 非目标（明确不做）
 

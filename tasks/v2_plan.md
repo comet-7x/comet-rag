@@ -2898,3 +2898,20 @@ SeaweedFS4.51固定官方制品、单filer／双gateway14项集成、7／60页�
 记录、完整故障边界见[本批报告](../docs/evaluations/seaweed_evidence_20261028.md)。
 未切换生产配置、文档API或模型服务；未注册新默认runner／HTTP证据路由，来源锁、
 发布意图／许可、已知ID恢复及真实部署验收仍为后续范围。
+
+# MinerU V1 正式接线收口（2026-10-28）
+
+本轮限定来源锁、发布许可/意图、工厂生命周期与授权读取，已完成并分批提交。
+复用既有TaskStore CAS/围栏/保留与revision阶段，不加表、Task字段、向量schema、
+核心Store方法或新依赖。默认CLI/YAML不启用新路径，生产配置不变。
+
+全量unit4076（16skip/1xfail）、integration321（旧HTTP实测3skip）、E2E50及benchmark39
+通过；31项源码反向检出并恢复，单测覆盖90.77%、合并93.56%、tasks96.32%；新wheel
+core-only仓库外验证通过。普通unit12.58秒仍超过10秒，不称全部质量门禁关闭。
+真实公开7页V1入库/证据读取通过；canonical与前轮变化，冻结新产物且不复用旧span。
+独立标签/固定工件、目标部署迁移回退、未知意图/对象保留及上游semaphore门禁保持。
+
+接线与操作见[说明](../docs/mineru_v1_integration.md)，审查结论/故障矩阵/清理及发布
+门禁见[收口报告](../docs/evaluations/mineru_wiring_20261028.md)。主图和V1细节图随提交
+更新，源码证据固定已提交代码。先由用户审查本分支，再决定合入develop，之后另做
+目录重构；本轮不自动合并、不搬目录，也不继续扩展审查报告中的延期事项。
