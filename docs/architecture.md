@@ -508,3 +508,10 @@ GPU）；加载另配一个（护本机文件描述符与对外连接）；Miner
 页域；不认证人的独立性、不裁决标签或生成金标。响应单次读取后解析和计算摘要，
 避免审计身份指向未校验的后续文件版本。真实模型探针仅证明可用，固定工件仍待资料，
 见[复核与工件报告](evaluations/native_review_20261026.md)。
+
+2026-10-28新增证据边界：`ports.evidence`只含标准库值对象和`AsyncEvidenceStore`
+Protocol；`engines/documents/mineru/structured.py`提供唯一纯映射；V1与S3传输分别
+位于`infrastructure/extractors/mineru_v1.py`和`infrastructure/evidence/`。
+`services/evidence.py`按固定存储别名读取，IndexPlanner的显式内部参数只给父块写
+可信引用并纳入指纹，过滤请求伪造与子向量泄漏。正式包不导入evals；默认组合根和
+生产runner未启用新链，详见[本批实现与验收](evaluations/seaweed_evidence_20261028.md)。

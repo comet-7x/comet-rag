@@ -1,4 +1,8 @@
-# 独立 S3 证据适配与目标 MinIO 验收
+# S3 证据适配与目标存储验收
+
+2026-10-28更新：实现迁至`comet_rag.infrastructure.evidence.s3`。SeaweedFS4.51隔离
+14项集成、双gateway及崩溃恢复通过；迟到probe仍证明“超时不等于排干”，不启用
+对象GC。详见[本批报告](evaluations/seaweed_evidence_20261028.md)。
 
 2026-10-27。**独立适配与故障验证已交付，当前目标MinIO未通过条件发布门禁。**
 生产仍不接线。协议主体见[证据生命周期](mineru_evidence_lifecycle.md)，实测与源码指纹
@@ -34,9 +38,9 @@ SDK发出前确认条件头参与SigV4，签名后删头／改头分别被400／
 
 ## 适配器职责
 
-`evals.pdf.s3_evidence.AsyncS3EvidenceStore`只用于独立实验，借用调用方创建的原生
-aioboto3客户端、固定测试桶和进程级Gate。没有新生产Port、配置、runner或对象GC，
-也没有改S3Loader。客户端必须设置`retries={"total_max_attempts": 1}`，避免SDK悄悄
+`comet_rag.infrastructure.evidence.s3.AsyncS3EvidenceStore`借用应用级原生aioboto3
+客户端、固定桶和Gate，符合`ports.evidence.AsyncEvidenceStore`协议。没有默认配置
+装配、runner或对象GC，也没有改S3Loader。客户端必须设置`retries={"total_max_attempts": 1}`，避免SDK悄悄
 重试不确定写；端点／凭据／TLS仍由调用方明确提供，不自动读取应用配置。
 
 `verify_target()`在公开的本次`probe_key`上做“缺失条件创建→回读→已有对象拒绝覆盖→

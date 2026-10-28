@@ -366,3 +366,10 @@ missing_payload 分类。第二十一批另增 opt-in 五阶段路径，默认 l
 的文件做证据/表格诊断，二者不属于生产索引。运行时覆盖守卫位于
 `engines/chunkers/_coverage.py`，由结构策略、HierarchyBuilder和服务文档Hook复用；
 不新增Store、模型或配置。见[第三十批报告](evaluations/native_evidence_20261025.md)。
+
+2026-10-28，已验证的MinerU4结构映射／V1采集／证据包与S3实现迁入正式包：
+`engines/documents/mineru/`处理纯结构，`ports/evidence.py`定义边界值和协议，
+`infrastructure/extractors/mineru_v1.py`与`infrastructure/evidence/`负责外部I/O。
+`services/evidence.py`及IndexPlanner负责可信父块引用；evals只调用正式实现，
+页内标题和journal实验仍不进入默认runner。没有把MinerU SDK或GPU运行时装进库。
+范围与故障结果见[本批报告](evaluations/seaweed_evidence_20261028.md)。

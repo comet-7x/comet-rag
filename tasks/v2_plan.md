@@ -2885,3 +2885,16 @@ SeaweedFS4.51为首个隔离验收对象、RustFS1.0.4为备选；后者已有�
 维护状态、条件写源码证据、实际拓扑门禁与待执行顺序见
 [部署方案](../docs/object_storage_deployment.md)；MinerU完整阶段表见
 [V1设计](../docs/mineru_v1_design.md#更新进度与下一批范围)。
+
+2026-10-28继续：既有实验分6791348／b0857f4／e9603ec／9e61c70四批提交；正式
+结构映射、V1采集与S3适配移入comet_rag，evals复用实现。新增标准库证据Port／值对象
+及显式父块证据参数，不改Task字段、原Store接口、SQL或向量schema。受保护字段不
+接受请求伪造、不传播到子向量；真实PG丢回包与跨连接恢复、损坏引用拒绝通过。
+
+SeaweedFS4.51固定官方制品、单filer／双gateway14项集成、7／60页回放及SIGKILL
+恢复通过；首轮3秒探测超时后收尾发现迟到probe，保留证据并按唯一自有桶／key补偿
+清理。没有把取消／删除回包当作排干，生产对象GC仍关闭。12项实际源码反向验证
+检出，core-only新wheel仓库外冒烟通过，E2E50／benchmark39通过。最终unit及静态
+记录、完整故障边界见[本批报告](../docs/evaluations/seaweed_evidence_20261028.md)。
+未切换生产配置、文档API或模型服务；未注册新默认runner／HTTP证据路由，来源锁、
+发布意图／许可、已知ID恢复及真实部署验收仍为后续范围。

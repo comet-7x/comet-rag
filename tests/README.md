@@ -538,3 +538,10 @@ fixture，不模拟真实人类裁决。反向验证与外部输入缺口见
 字段和不充分证据反例。固定上游源码的quorum故障探针、实际源码反向验证和本机
 SIGKILL边界见[诊断报告](../docs/evaluations/minio_diagnosis_20261027.md)，不在项目unit
 中安装Go或运行真实服务。目标8通过／4项写验收skip，候选12通过，分别记录。
+
+2026-10-28新增正式父块保护回归`services/test_parent_evidence.py`和真实PG测试
+`test_parent_evidence_postgres.py`；正式包不得依赖evals的守卫位于`test_layering.py`。
+`test_s3_evidence_gateways.py`要求`COMET_TEST_S3_SECOND_ENDPOINT`，未配置明确skip，
+不能用同端点两连接代替独立gateway。SeaweedFS4.51的14项必需验收、12项实际源码
+反向验证、迟到probe特征化及core-only wheel冒烟见
+[本批报告](../docs/evaluations/seaweed_evidence_20261028.md)。

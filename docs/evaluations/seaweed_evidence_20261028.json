@@ -1,0 +1,254 @@
+{
+  "date": "2026-10-28",
+  "initial_experiment_commits": [
+    "6791348",
+    "b0857f4",
+    "e9603ec",
+    "9e61c70"
+  ],
+  "candidate": {
+    "release": "4.51",
+    "commit": "153ab668c99731a6d29492bf6c61d0b4fa701101",
+    "archive_sha256": "80000b9ee9129194740d5a766851a536ab8b14c46d18895399fc4bbef2d53c8d",
+    "binary_sha256": "1466ba514fdd3f6206411dc4453d6226d4dbe3fd7947f2d8df92e02764e53ca6",
+    "archive_bytes": 44107366,
+    "url": "https://github.com/seaweedfs/seaweedfs/releases/download/4.51/darwin_arm64.tar.gz"
+  },
+  "topology": {
+    "hosts": 1,
+    "masters": 1,
+    "filers": 1,
+    "independent_s3_gateways": 2,
+    "volume_processes": 1,
+    "native_mini": true
+  },
+  "production_configuration_changed": false,
+  "dependency_lock_changed": false,
+  "default_runner_enabled": false,
+  "original_store_interfaces_changed": false,
+  "sql_or_vector_schema_changed": false,
+  "validation": {
+    "precommit_unit": {
+      "passed": 3850,
+      "seconds": 11.53
+    },
+    "unit": {
+      "passed": 3920,
+      "skipped": 16,
+      "deselected": 406,
+      "xfailed": 1,
+      "seconds": 10.12,
+      "under_10s": false
+    },
+    "earlier_unit_seconds": [
+      10.6,
+      10.04
+    ],
+    "postgres": {
+      "passed": 32,
+      "seconds": 3.65,
+      "skipped": 0
+    },
+    "s3": {
+      "passed": 14,
+      "seconds": 5.16,
+      "skipped": 0,
+      "cross_gateway": true,
+      "wrong_checksum_rejected_without_object": true
+    },
+    "e2e": {
+      "passed": 50,
+      "seconds": 2.37
+    },
+    "benchmark": {
+      "passed": 39,
+      "seconds": 8.61
+    },
+    "reverse": {
+      "cases": [
+        {
+          "fault": "metadata",
+          "test": "test_untrusted_metadata_cannot_forge_evidence_even_without_binding",
+          "failed_as_expected": true
+        },
+        {
+          "fault": "revision",
+          "test": "test_binding_rejects_wrong_revision_or_unproven_parent_text[key]",
+          "failed_as_expected": true
+        },
+        {
+          "fault": "parent_text",
+          "test": "test_binding_rejects_wrong_revision_or_unproven_parent_text[parent_text]",
+          "failed_as_expected": true
+        },
+        {
+          "fault": "projection",
+          "test": "test_read_projection_must_match_trusted_reference",
+          "failed_as_expected": true
+        },
+        {
+          "fault": "storage_alias",
+          "test": "test_storage_identity_cannot_be_a_location_or_unbounded_string",
+          "failed_as_expected": true
+        },
+        {
+          "fault": "storage_fallback",
+          "test": "test_reader_uses_exact_storage_identity_and_preserves_store_failure",
+          "failed_as_expected": true
+        },
+        {
+          "fault": "vector_leak",
+          "test": "test_persisted_plan_rejects_evidence_misplacement_or_identity_corruption[child]",
+          "failed_as_expected": true
+        },
+        {
+          "fault": "parent_revision",
+          "test": "test_persisted_plan_rejects_evidence_misplacement_or_identity_corruption[cross_revision]",
+          "failed_as_expected": true
+        },
+        {
+          "fault": "partial",
+          "test": "test_persisted_plan_rejects_evidence_misplacement_or_identity_corruption[partial]",
+          "failed_as_expected": true
+        },
+        {
+          "fault": "empty",
+          "test": "test_completed_without_extracted_text_cannot_be_published",
+          "failed_as_expected": true
+        },
+        {
+          "fault": "probe_identity",
+          "test": "test_unknown_probe_keeps_identity_when_remote_commit_arrives_later",
+          "failed_as_expected": true
+        },
+        {
+          "fault": "evaluation_import",
+          "test": "test_shipped_modules_never_import_evaluation_tools",
+          "failed_as_expected": true
+        }
+      ],
+      "sources_restored": true,
+      "sha256": {
+        "chunk": "0db35d39b2ef2c7aaf2a70cc8207771f5374cbdffd2e08ff80792ae13d220552",
+        "evidence": "0949964791db2cdf5ae125e1c1dc70cc76ce54e4025ae1580acaff025d032bd7",
+        "index": "3d332759c38b29f2d096f271648cc95cb68e5c2ff9eb494fd34e64bfa31dcf7a",
+        "collector": "95e9dd33a3f0b1ef01449599f7995d4d360e082d3329f47d758dee2429b20704",
+        "s3": "e6cc5fefdf4de65292fe423a5be9cb052e265f401abf8918abb42a4df70f88e7"
+      }
+    },
+    "crash_recovery": {
+      "caller_cancellation_preserved": true,
+      "gate_released": true,
+      "canonical_preserved": true,
+      "successful_evidence_puts_after_restart": 0,
+      "all_objects_preexisting": true,
+      "bucket_removed": true,
+      "scope": "SIGKILL after server PUT commit observed by harness, before application response; not host power loss"
+    },
+    "artifact_replay": {
+      "records": [
+        {
+          "sample": "public7",
+          "pages": 7,
+          "native_bytes": 95828,
+          "ledger_bytes": 44213,
+          "canonical_sha256": "1422341bda141df58384067d55b26b5fb2d240c6665d56baafdd076c8e8fa085",
+          "successful_puts": 3,
+          "duplicate_and_read_match": true,
+          "elapsed_seconds": 0.033905250020325184
+        },
+        {
+          "sample": "squid60",
+          "pages": 60,
+          "native_bytes": 19560609,
+          "ledger_bytes": 556905,
+          "canonical_sha256": "9e1f637d75ce220b370db08b3cd080ebcadd5508dd9c695f8e078cf173dc13d3",
+          "successful_puts": 3,
+          "duplicate_and_read_match": true,
+          "elapsed_seconds": 0.5224944581277668
+        }
+      ],
+      "cleanup_keys": 7,
+      "bucket_removed": true,
+      "scope": "local fixed candidate only; no PDF upload to target or new model call"
+    },
+    "core_only_wheel": {
+      "installed_wheel_outside_checkout": true,
+      "server_and_gpu_packages_absent": {
+        "mineru": true,
+        "torch": true,
+        "aioboto3": true,
+        "pymilvus": true,
+        "sqlalchemy": true,
+        "redis": true
+      },
+      "native_structured_projection": true,
+      "v1_collector_import_without_server_extras": true,
+      "wheel_contains_formal_adapters": true,
+      "wheel_excludes_evaluations": true
+    },
+    "ruff": "passed",
+    "pyright": "0 errors, 0 warnings",
+    "format_files": 29,
+    "documentation_local_links": 191,
+    "private_value_scan": "passed"
+  },
+  "late_probe": {
+    "initial_sdk_read_timeout_seconds": 3,
+    "result": "put_response_unknown",
+    "probe_object_observed_after_initial_cleanup_attempt": true,
+    "both_gateways_head_status": 200,
+    "object_bytes": 24,
+    "first_cleanup_head_404_attested": false,
+    "subsequent_recovery_sdk_read_timeout_seconds": 30,
+    "sdk_attempts": 1,
+    "application_total_budget_seconds": 120,
+    "conclusion": "timeout and cleanup attempt do not certify remote drain; no production object GC enabled",
+    "characterization_and_reverse_test": true
+  },
+  "cleanup": {
+    "owned_buckets_remaining": 0,
+    "both_processes_stopped": true,
+    "candidate_ports_closed": true,
+    "data_and_credentials_removed": true,
+    "listener_inventory": {
+      "gateway2": [
+        "127.0.0.1:29135",
+        "127.0.0.1:39135"
+      ],
+      "server": [
+        "127.0.0.1:22535",
+        "127.0.0.1:29133",
+        "127.0.0.1:39133",
+        "127.0.0.1:39140",
+        "127.0.0.1:29140",
+        "127.0.0.1:29188",
+        "127.0.0.1:39188",
+        "127.0.0.1:29134",
+        "127.0.0.1:39134",
+        "127.0.0.1:12535"
+      ]
+    },
+    "all_observed_tcp_listeners_loopback": true,
+    "production_configuration_untouched": true,
+    "all_observed_listener_ports_closed": true
+  },
+  "wheel": {
+    "sha256": "7fa939c2e8e60046eaf496e51c3ee612cb550085772d33134c2bcf794e21d3a3",
+    "all_188_python_files_equal_restored_checkout": true
+  },
+  "not_verified": [
+    "multi-filer owner change",
+    "multi-host failures or power loss",
+    "media corruption",
+    "production IAM/TLS and deployment",
+    "formal source-lock and runner integration",
+    "HTTP evidence authorization",
+    "independent labels and immutable model artifacts",
+    "full new merged coverage or complete Milvus/MinerU middleware rerun"
+  ],
+  "implementation_commits": {
+    "formal_adapters": "eeade92",
+    "parent_evidence_protection": "a06e229"
+  }
+}

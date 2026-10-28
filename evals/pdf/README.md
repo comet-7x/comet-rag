@@ -208,11 +208,11 @@ raw JSON可能包含内嵌图片，来源锁含本地路径，按原资料敏感
 证据包和恢复协议原型见[持久化设计](../../docs/mineru_evidence_lifecycle.md)：
 `evidence_bundle`构建／发布／严格回读原生JSON与账本，`page_sections`验证同页标题硬
 边界，`capture_journal`使用既有TaskStore的CAS、围栏和条件删除演练小恢复意图。
-这些是独立函数／值对象，不是新的生产Extractor、对象Store或自动任务续传器。
+构建与回读已迁入正式模块；journal和页内标题仍是独立实验，不是自动任务续传器。
 已按原采集字节回放7／60页，并通过真实独立PostgreSQL验证；没有新调用模型、上传
 用户资料到S3或删除远端产物。实现及限界见[本轮记录](../../docs/evaluations/mineru_evidence_20261027.md)。
 
-后续`evals.pdf.s3_evidence.AsyncS3EvidenceStore`已复用原生条件PUT、checksum与有界
+后续`comet_rag.infrastructure.evidence.s3.AsyncS3EvidenceStore`已复用原生条件PUT、checksum与有界
 StreamingBody读取，并与本地文件共用严格账本校验。当前目标MinIO未通过条件写
 门禁，publish会拒绝；本机参考端通过不代表目标达标。独立测试方法、写验收开关与
 资源边界见[S3协议](../../docs/mineru_s3_evidence.md)及[结果](../../docs/evaluations/mineru_s3_20261027.md)。
@@ -221,3 +221,10 @@ StreamingBody读取，并与本地文件共用严格账本校验。当前目标M
 管理命令或保存凭据。后续[MinIO诊断](../../docs/evaluations/minio_diagnosis_20261027.md)
 定位了目标2023实现的条件写缺口；固定上游修正源码候选通过隔离故障与7／60页回放。
 它不是官方生产发布，上游已停止维护；没有升级服务、切配置或解除目标发布门禁。
+
+2026-10-28正式模块迁移：结构映射位于`comet_rag.engines.documents.mineru.structured`；
+V1采集位于`comet_rag.infrastructure.extractors.mineru_v1`；包与S3位于
+`comet_rag.infrastructure.evidence`。CLI仍为`python -m evals.pdf.capture`及`structured_audit`，
+直接调用正式实现，不保留两套传输／映射。`capture_journal`与`page_sections`仍为实验。
+父块保护、SeaweedFS14项隔离验收及迟到写边界见
+[本批报告](../../docs/evaluations/seaweed_evidence_20261028.md)，没有启用生产runner或配置。

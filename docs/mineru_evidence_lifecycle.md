@@ -1,5 +1,9 @@
 # MinerU 证据持久化、页内标题与恢复边界
 
+2026-10-28更新：构建／映射／采集／S3实现已迁入正式包，journal与页内标题视图
+仍是eval实验。父块保护参数、固定别名与读取服务及真实PG恢复已完成；默认runner、
+HTTP证据入口与对象GC未启用。SeaweedFS和迟到写边界见[本批报告](evaluations/seaweed_evidence_20261028.md)。
+
 2026-10-27。结论：**证据包归独立S3命名空间；正文索引仍归DocumentStore，
 TaskStore只保存有界恢复意图。** 原计划复用既有MinIO，但该目标已确认不满足条件
 发布门禁，后续按[持续维护部署方案](object_storage_deployment.md)验收新候选；没有
@@ -58,7 +62,7 @@ S3适配复用已安装客户端的条件写／checksum能力，拒绝覆盖同k
 
 父块的既有metadata可容纳约几百字节的小引用；原文定位继续使用start/end及revision。
 本轮在内存和PG中以`evidence_reference`演练其快照／跨连接读取，未改生产字段或schema。
-正式接线必须只在父块的受保护写入点放引用：不能透传请求metadata伪造引用，也不能
+现已在IndexPlanner显式evidence参数保护父块写入点：不能透传请求metadata伪造引用，也不能
 直接放到document_metadata，后者会经当前IndexPlanner传播到向量子块。零父块、空文字
 页及独立解读仍在证据包中；不能仅靠“能查到父块”推断整包生命周期。
 
