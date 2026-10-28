@@ -1,0 +1,231 @@
+{
+  "date": "2026-10-27",
+  "baseline_head": "c8d9a3727227ad78b8a4bb73b84f6e90ed902176",
+  "scope": "independent persistence, page-heading and recovery protocol prototypes; no production integration or configuration switch",
+  "decisions": {
+    "production_target": "existing MinIO, isolated immutable evidence prefix; no writable S3 adapter implemented",
+    "evidence_bundle": [
+      "structured_content.json",
+      "ledger.json",
+      "manifest.json"
+    ],
+    "task_context": "fixed append-only recovery markers, at most 8 KiB in dedicated rehearsal context",
+    "document_store": "existing parent metadata can hold compact evidence reference; no production field wired",
+    "page_heading": "page facts and heading spans are separate; experimental page_section view; canonical and text unchanged",
+    "unknown_submission": "retain identity, manual reconciliation, no automatic resubmit",
+    "remote_files": "no application delete; native retention and references are separate from physical drain"
+  },
+  "real_artifact_replays": [
+    {
+      "sample": "public7",
+      "source_sha256": "7b0c1a9fdfc67218b8ba2098f448c100c27070db91736b3c87fed63bfa21d418",
+      "source_bytes_verified": true,
+      "pages": 7,
+      "empty_text_pages": [],
+      "canonical_sha256": "1422341bda141df58384067d55b26b5fb2d240c6665d56baafdd076c8e8fa085",
+      "raw_sha256": "f7fda8df940391cdc5de6ecc1ff4ee68e1b12207b3f30a28e29a6ba47c697d26",
+      "bundle_manifest_sha256": "04912929e70bb2e756e4ca5641afa41f3aa20320b80cd46ffdac2ea8448ffb31",
+      "ledger_bytes": 44213,
+      "page_sections": 23,
+      "chunks_800_chars_overlap_80": 30,
+      "chunk_boundary_and_exact_span_checks_passed": true,
+      "evidence_quote_checks": 63,
+      "interpretations_kept_separate": 1,
+      "local_roundtrip_seconds": 0.006567833013832569
+    },
+    {
+      "sample": "squid60",
+      "source_sha256": "e42f3b70cee6344ca8e0cb06ccc4028e56a05266cbd331c9e008fe05e62a2ffe",
+      "source_bytes_verified": true,
+      "pages": 60,
+      "empty_text_pages": [
+        4
+      ],
+      "canonical_sha256": "9e1f637d75ce220b370db08b3cd080ebcadd5508dd9c695f8e078cf173dc13d3",
+      "raw_sha256": "0abecf6136425aec3bd9ced2083d388aec9dd1b50cba0973143f48405e3e5a0f",
+      "bundle_manifest_sha256": "dfb560f4863a68c00632dce935948da072cf7d825d8364f8c09696300b51c5ed",
+      "ledger_bytes": 556905,
+      "page_sections": 123,
+      "chunks_800_chars_overlap_80": 323,
+      "chunk_boundary_and_exact_span_checks_passed": true,
+      "evidence_quote_checks": 450,
+      "interpretations_kept_separate": 43,
+      "local_roundtrip_seconds": 0.1590249170549214
+    }
+  ],
+  "native_retention": {
+    "scope": "isolated native FileStore only; no HTTP server, model calls or production data",
+    "mineru_version": "4.0.12",
+    "default_retention_seconds": 86400,
+    "scan_interval_seconds": 300,
+    "zero_disables_cleanup": true,
+    "checks": {
+      "delete_view_keeps_shared_blob_and_other_view": true,
+      "active_job_output_pins_survive_expiry_scan": true,
+      "terminal_retention_and_no_references_allow_blob_gc": true,
+      "zero_retention_disables_automatic_blob_gc": true
+    }
+  },
+  "native_source_sha256": {
+    "parser/api_server.py": "622e4d9c10b0044b5535fec189c77e847939550ee3d792b53d7161bd0440fe66",
+    "parser/task_api.py": "334edb52ae9b8fdcf694d1eef0513c46f05a5bc885f63bcbc15e6b1518f3548e",
+    "utils/retention.py": "4de263c3814dbd642faa62bfb57e83c736fa2c01dd852cb0b30190b2cfe7d2f8"
+  },
+  "validation": {
+    "new_unit_cases": 53,
+    "targeted_passed": 154,
+    "targeted_seconds": 0.76,
+    "postgres_contract_and_protocol_passed": 101,
+    "postgres_seconds": 7.27,
+    "postgres_skipped": 0,
+    "unit_passed": 3789,
+    "unit_skipped": 16,
+    "unit_deselected": 391,
+    "unit_xfailed": 1,
+    "unit_summary": "========= 3789 passed, 16 skipped, 391 deselected, 1 xfailed in 10.10s =========",
+    "strict_unit_under_10_seconds_gate_closed": false,
+    "reverse_cases": [
+      {
+        "fault": "manifest_digest",
+        "module": "evals.pdf.evidence_bundle",
+        "test": "tests/unit/test_pdf_evidence_bundle.py::test_mutated_bundle_cannot_be_read_as_original[manifest]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "identity",
+        "module": "evals.pdf.evidence_bundle",
+        "test": "tests/unit/test_pdf_evidence_bundle.py::test_mutated_bundle_cannot_be_read_as_original[cross_revision]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "ledger_compare",
+        "module": "evals.pdf.evidence_bundle",
+        "test": "tests/unit/test_pdf_evidence_bundle.py::test_rehashed_ledger_still_has_to_match_native_semantics[heading]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "canonical",
+        "module": "evals.pdf.evidence_bundle",
+        "test": "tests/unit/test_pdf_evidence_bundle.py::test_rehashed_ledger_still_has_to_match_native_semantics[canonical]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "bool_ledger",
+        "module": "evals.pdf.evidence_bundle",
+        "test": "tests/unit/test_pdf_evidence_bundle.py::test_rehashed_ledger_still_has_to_match_native_semantics[page_bool]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "bool_manifest",
+        "module": "evals.pdf.evidence_bundle",
+        "test": "tests/unit/test_pdf_evidence_bundle.py::test_rehashed_ledger_still_has_to_match_native_semantics[schema_bool]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "ledger_budget",
+        "module": "evals.pdf.evidence_bundle",
+        "test": "tests/unit/test_pdf_evidence_bundle.py::test_semantic_ledger_budget_is_enforced_before_publication",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "publish_order",
+        "module": "evals.pdf.evidence_bundle",
+        "test": "tests/unit/test_pdf_evidence_bundle.py::test_failed_publication_has_no_usable_commit_marker[2]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "coverage",
+        "module": "evals.pdf.page_sections",
+        "test": "tests/unit/test_pdf_evidence_bundle.py::test_internal_evidence_gap_cannot_be_hidden_by_merging_same_heading",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "page_merge",
+        "module": "evals.pdf.page_sections",
+        "test": "tests/unit/test_pdf_evidence_bundle.py::test_page_heading_view_keeps_offsets_and_duplicate_page_sections",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "repeat_title",
+        "module": "evals.pdf.page_sections",
+        "test": "tests/unit/test_pdf_evidence_bundle.py::test_same_title_occurrences_and_auxiliary_blocks_remain_boundaries",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "duplicate_begin",
+        "module": "evals.pdf.capture_journal",
+        "test": "tests/unit/test_pdf_capture_journal.py::test_concurrent_begin_grants_only_one_local_submission_intent",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "precondition",
+        "module": "evals.pdf.capture_journal",
+        "test": "tests/unit/test_pdf_capture_journal.py::test_unverified_source_cannot_register_a_bundle",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "overwrite",
+        "module": "evals.pdf.capture_journal",
+        "test": "tests/unit/test_pdf_capture_journal.py::test_journal_cannot_replace_a_previous_identity[observed_task]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "context_budget",
+        "module": "evals.pdf.capture_journal",
+        "test": "tests/unit/test_pdf_capture_journal.py::test_existing_store_fence_and_context_budget_precede_intent[budget]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "ownership",
+        "module": "evals.pdf.capture_journal",
+        "test": "tests/unit/test_pdf_capture_journal.py::test_existing_store_fence_and_context_budget_precede_intent[old_attempt]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "skip_read",
+        "module": "evals.pdf.capture_journal",
+        "test": "tests/unit/test_pdf_capture_journal.py::test_bundle_intent_precedes_publication_and_failed_read_never_confirms",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "retention",
+        "module": "evals.pdf.capture_journal",
+        "test": "tests/unit/test_pdf_capture_journal.py::test_terminal_and_force_cannot_delete_even_corrupt_recovery_marker[mineru_v1_intent]",
+        "expected_test_failed": true
+      },
+      {
+        "fault": "automatic_resubmit",
+        "module": "evals.pdf.capture_journal",
+        "test": "tests/unit/test_pdf_capture_journal.py::test_invalid_artifact_requires_manual_review_without_automatic_recapture",
+        "expected_test_failed": true
+      }
+    ],
+    "gap_fault_failed_before_fix": true,
+    "ruff": "passed",
+    "pyright": "0 errors"
+  },
+  "final_source_sha256": {
+    "evals/pdf/evidence_bundle.py": "3fcbf79d856e7e80a0d6d7246023cfa9f1ffdff17d80a0620515adf5fc4dfcde",
+    "evals/pdf/page_sections.py": "0cd17cd73cd3a058ef654416f0149e81e002f96ba534c1f06380693474f69a6a",
+    "evals/pdf/capture_journal.py": "cfd28add26645ae2ee5005f9eae1a1025b085645ef8104fd11c564a621e3929e",
+    "evals/pdf/structured.py": "0d6db1bd782f6a149e498906a9ab439102b6954c33e945a6b8877f5cfe5aba7c",
+    "evals/pdf/structured_audit.py": "e59a41e404d6c8d7a67b6462768585f74dd2bcf05342af2af3274d5f8713c7aa",
+    "tests/unit/test_pdf_evidence_bundle.py": "3d68693ce96bcb043c3141af4afda0c3e4f4cf4ca70df81db37bcdb0f5d34003",
+    "tests/unit/test_pdf_capture_journal.py": "43c857a96b71e687ea5ab2a5d13a15ba8399ae88c721d971fb2af9dc7ccb4e87",
+    "tests/integration/test_pdf_evidence_protocol.py": "2f47d632e1553ed3ca1779cdc59ba7e1e50a400948459f0940d4cfd2ed2c3b08"
+  },
+  "production_environment_unchanged": true,
+  "temporary_postgres_container_removed": true,
+  "new_mineru_or_model_requests": 0,
+  "s3_uploads": 0,
+  "remote_file_deletes": 0,
+  "pending": [
+    "S3 conditional publication and bounded read adapter with actual target MinIO compatibility",
+    "production parent reference protection and evidence read endpoint",
+    "page-section retrieval quality and table-unit budget comparison",
+    "known-ID recovery reader and manual unknown-task operations",
+    "evidence bundle retention and exact GC with delayed-write reconciliation",
+    "independent label adjudication and immutable model artifacts",
+    "native semaphore warning and strict unit performance budget"
+  ]
+}
