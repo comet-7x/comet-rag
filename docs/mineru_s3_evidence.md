@@ -1,5 +1,9 @@
 # S3 证据适配与目标存储验收
 
+2026-10-28补充：正式组合根在原生目标探测前通过TaskStore持久化许可身份；目标拒绝
+则启动失败，旧MinIO门禁未解除。探测不确定性、工厂托管与授权父块读取见
+[接线约定](mineru_v1_integration.md)。下面的独立SDK验收命令本身不承担生产编排。
+
 2026-10-28更新：实现迁至`comet_rag.infrastructure.evidence.s3`。SeaweedFS4.51隔离
 14项集成、双gateway及崩溃恢复通过；迟到probe仍证明“超时不等于排干”，不启用
 对象GC。详见[本批报告](evaluations/seaweed_evidence_20261028.md)。

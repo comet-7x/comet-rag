@@ -10,6 +10,7 @@ from comet_rag.services.chunking import ChunkingService, load_document_blocks
 from comet_rag.services.indexing import IndexPlan, IndexPlanner
 from comet_rag.services.ingestion import DocumentExtraction, IngestRequest, _classify
 from comet_rag.services.knowledge_base import KnowledgeBaseService
+from comet_rag.services.mineru_capture import MinerUWorkflow
 from comet_rag.services.revision_context import (
     DEFAULT_MAX_REVISION_CONTEXT_BYTES,
     PublicationPhase,
@@ -56,6 +57,7 @@ class RevisionIngestRunner:
         kb_ids: Sequence[str],
         hierarchy: HierarchyBuilder | None = None,
         max_context_bytes: int = DEFAULT_MAX_REVISION_CONTEXT_BYTES,
+        mineru_workflow: MinerUWorkflow | None = None,
     ) -> None:
         if not binding or not kb_ids:
             raise ValueError("revision 入库必须绑定配置及 KB 范围")
@@ -68,6 +70,9 @@ class RevisionIngestRunner:
         self._limit = max_context_bytes
         self._chunking = ChunkingService(config, hooks)
         self._planner = IndexPlanner()
+        self._mineru = mineru_workflow
+        if mineru_workflow is not None and hierarchy is None:
+            raise ValueError("MinerU证据入库必须启用父块")
         self._flow = StagePipeline()
         for name, lane, operation in (
             ("extracting", LANE_CPU, self._extract),
@@ -139,6 +144,11 @@ class RevisionIngestRunner:
             metadata=task.context.get("document_metadata", {}),
             blocks=load_document_blocks(task.context.get("document_blocks", [])),
         )
+        evidence = (
+            await self._mineru.read_committed(ctx, key)
+            if file_type == "pdf" and self._mineru is not None
+            else None
+        )
 
         def plan() -> IndexPlan:
             chunks = (
@@ -153,6 +163,7 @@ class RevisionIngestRunner:
                 file_type=file_type,
                 document_metadata=document.metadata,
                 request_metadata=request.metadata,
+                evidence=evidence,
             )
             if not prepared.vector_children:
                 raise ValueError("分块结果为空，禁止激活空版本")

@@ -560,3 +560,14 @@ curl -s http://127.0.0.1:8080/v1/embeddings \
   -d '{"model":"qwen3-vl-embedding","input":"test"}' \
   | python3 -c "import json,sys; print(len(json.load(sys.stdin)['data'][0]['embedding']))"
 ```
+
+## 当前收口的运行边界
+
+任务心跳只容忍一次续租超时，下次成功即复位；连续超时、硬Store错误或失去租约仍
+停止本次runner，并保留写终态前的所有权围栏。单次慢SQL不等于90秒租约已失效。
+PostgreSQL连接池按进程计：默认pool_size10/max_overflow20，API与各worker各有池，
+部署必须按总进程数留出数据库连接余量。不要把共享Database的各仓储重复计池。
+
+可选MinerU V1工厂和授权证据读取的接线见[独立操作约定](mineru_v1_integration.md)。
+标准CLI/YAML默认不启用；旧MinIO不满足条件写，不能用开关绕过门禁。参考API尚无
+全局身份系统，只在可信网络/受控网关后部署；新证据token仅保护对应读取路由。

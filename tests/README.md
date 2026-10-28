@@ -545,3 +545,17 @@ SIGKILL边界见[诊断报告](../docs/evaluations/minio_diagnosis_20261027.md)�
 不能用同端点两连接代替独立gateway。SeaweedFS4.51的14项必需验收、12项实际源码
 反向验证、迟到probe特征化及core-only wheel冒烟见
 [本批报告](../docs/evaluations/seaweed_evidence_20261028.md)。
+
+## MinerU V1 收口回归
+
+`unit/services/test_mineru_capture.py`验证提交/发布CAS响应丢失、未知POST不重试、
+取消、来源绑定与恢复载荷；`test_evidence_publication.py`验证原生探测前持久化许可、
+同probe排他与不确定保留；`test_evidence_access.py`验证授权先于IO及坏证据不回退。
+`unit/test_mineru_workflow_wiring.py`覆盖工厂失败回滚、关闭异常、重复取消、排干顺序
+及并发close。使用MockTransport和内存/手写原子对象替身，不访问真实服务。
+
+真实PostgreSQL/S3验证在`integration/test_evidence_publication_postgres.py`、
+`test_mineru_workflow_recovery.py`；后者还验证跨连接/道次、激活回包丢失和父块引用。
+运行须显式设置`COMET_TEST_S3_CONDITIONAL=1`并使用独立新桶；环境未具备会skip，
+不能把skip计作目标支持。flat同源写围栏的跨连接验证另见`test_flat_write_postgres.py`。
+最终全量、反向变异和覆盖率口径见[验收报告](../docs/evaluations/mineru_wiring_20261028.md)。

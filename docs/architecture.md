@@ -515,3 +515,13 @@ Protocol；`engines/documents/mineru/structured.py`提供唯一纯映射；V1与
 `services/evidence.py`按固定存储别名读取，IndexPlanner的显式内部参数只给父块写
 可信引用并纳入指纹，过滤请求伪造与子向量泄漏。正式包不导入evals；默认组合根和
 生产runner未启用新链，详见[本批实现与验收](evaluations/seaweed_evidence_20261028.md)。
+
+## 可选 MinerU V1 证据链
+
+新命名空间的显式 `mineru_factory` 在当前事件循环创建并登记资源；组合根先持久化
+条件发布探测许可、通过原生验收后才开放runner。来源锁、POST前意图、远端身份、
+来源核验及manifest发布/确认复用TaskStore CAS和执行尝试围栏，不增加持久化字段。
+正文/页/证据归不可变S3包，DocumentStore父块只保存精确引用；业务恢复复用既有
+revision阶段。新授权只读入口在任何Store IO前验证token与KB，完整验包后只返active
+父块原文，不回退未校验文字。其余参考API依赖可信网络/网关，不因该入口变成全局鉴权。
+默认仍关闭，CLI/YAML未新增启用开关。详见[接线、预算与人工处置](mineru_v1_integration.md)。

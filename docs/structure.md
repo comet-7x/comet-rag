@@ -373,3 +373,13 @@ missing_payload 分类。第二十一批另增 opt-in 五阶段路径，默认 l
 `services/evidence.py`及IndexPlanner负责可信父块引用；evals只调用正式实现，
 页内标题和journal实验仍不进入默认runner。没有把MinerU SDK或GPU运行时装进库。
 范围与故障结果见[本批报告](evaluations/seaweed_evidence_20261028.md)。
+
+## MinerU V1 可选模块
+
+`composition/mineru.py`定义当前循环内的工厂与资源栈；`ports/capture.py`只定义来源锁
+和采集/发布边界词汇。`infrastructure/extractors/mineru_capture.py`托管临时文件，
+`mineru_v1.py`负责外部HTTP协议；`services/mineru_capture.py`编排有围栏的恢复检查点。
+`services/evidence_publication.py`用现有TaskStore记录原生条件探测许可，
+`services/evidence_access.py`与`api/routes/evidence.py`承担授权父块读取，
+`services/task_retention.py`汇总应用删除守卫。没有移动已有目录或给engines引入SDK。
+实际启用条件及所有权见[接线说明](mineru_v1_integration.md)。

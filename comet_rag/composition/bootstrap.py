@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from contextlib import AsyncExitStack
+from hashlib import sha256
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from comet_rag.composition.context import Context, wire_runners
+from comet_rag.composition.mineru import MinerUFactory, MinerUResources
 from comet_rag.composition.pipeline_config import resolve_pipeline_config
 from comet_rag.composition.resources import (
     clear_registrations,
@@ -52,9 +54,11 @@ from comet_rag.ports.document_store import DocumentStore
 from comet_rag.ports.knowledge_base import (
     KnowledgeBaseRepository,
 )
+from comet_rag.services.evidence_access import EvidenceReader
 from comet_rag.services.flat_write import FLAT_WRITE_KIND
 from comet_rag.services.ingestion import INGEST_KIND
 from comet_rag.services.knowledge_base import KnowledgeBaseService
+from comet_rag.services.mineru_capture import MinerUWorkflow
 from comet_rag.services.retrieval import RetrievalService
 from comet_rag.services.revision_gc import RevisionGarbageCollector
 from comet_rag.services.revision_ingestion import REVISION_INGEST_KIND
@@ -526,6 +530,9 @@ async def build_context(
     mineru_extractor: AsyncDocumentExtractorPort | None = None,
     executor_lane: str | None = None,
     runners: RunnerRegistry | None = None,
+    mineru_workflow: MinerUWorkflow | None = None,
+    evidence_reader: EvidenceReader | None = None,
+    mineru_factory: MinerUFactory | None = None,
 ) -> Context:
     """按配置装配全套资源。
 
@@ -543,6 +550,25 @@ async def build_context(
         raise ValueError("自动对账必须由组合根创建配套持久化存储，不接受不透明存储注入")
     resolved_pipeline = resolve_pipeline_config(config.limits, pipeline_config)
     writing_binding = revision_binding(config, resolved_pipeline)
+    if mineru_factory is not None and (
+        mineru_workflow is not None or evidence_reader is not None
+    ):
+        raise ValueError("MinerU工厂与现成workflow/reader不得混用")
+    if mineru_workflow is not None or mineru_factory is not None:
+        if (
+            writing_binding is None
+            or config.revision_ingestion.parent_chunk_size is None
+        ):
+            raise ValueError("MinerU V1接线只接受显式revision写入及父块配置")
+        if (
+            config.infrastructure_config.mineru is not None
+            and config.infrastructure_config.mineru.enabled
+        ) or mineru_extractor is not None:
+            raise ValueError("MinerU新旧协议不得同时接线")
+        if mineru_workflow is not None:
+            writing_binding = sha256(
+                (writing_binding + mineru_workflow.binding_sha256).encode()
+            ).hexdigest()
     validate_vision_model(resolved_pipeline.docx.vision_model, asynchronous=True)
     if task_executor is not None:
         runners = _executor_runners(task_executor, runners)
@@ -686,6 +712,24 @@ async def build_context(
         if kb_repository is None:
             kb_repository = build_kb_repository(config, database)
 
+        mineru_resources = None
+        if mineru_factory is not None:
+            if document_store is None or writing_binding is None:
+                raise ValueError("MinerU工厂缺少revision配套存储")
+            resource_stack = AsyncExitStack()
+            mineru_resources = MinerUResources(resource_stack)
+            rollback.push_async_callback(close_resource, mineru_resources)
+            integration = await mineru_factory(
+                config, task_store, document_store, resource_stack
+            )
+            mineru_workflow, evidence_reader = integration.workflow, integration.reader
+            writing_binding = sha256(
+                (writing_binding + mineru_workflow.binding_sha256).encode()
+            ).hexdigest()
+
+        if mineru_workflow is not None:
+            await mineru_workflow.prepare_publication(task_store)
+
         embedding_settings = config.infrastructure_config.embedding_model
         knowledge_base = KnowledgeBaseService(
             repository=kb_repository,
@@ -747,6 +791,8 @@ async def build_context(
             runners=runners,
             database=database,
             document_store=document_store,
+            mineru_workflow=mineru_workflow,
+            evidence_reader=evidence_reader,
             model_gate=gate,
             degradation=degradation,
             source_policy=source_policy,
@@ -761,6 +807,7 @@ async def build_context(
             _extra_closers=[
                 ingest_loader,
                 *([mineru_extractor] if mineru_extractor is not None else []),
+                *([mineru_resources] if mineru_resources is not None else []),
             ],
             _hook_cleanups=hook_cleanups,
         )

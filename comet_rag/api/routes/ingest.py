@@ -34,6 +34,10 @@ async def submit_ingest(
     if policy is not None:
         # DNS 与本地路径解析会阻塞；取消时仍须等准入线程结束，且不能继续建任务。
         await run_sync(policy.check, payload.source)
+    if ctx.mineru_workflow is not None:
+        await run_sync(
+            ctx.mineru_workflow.approve_source, payload.kb_id, payload.source
+        )
 
     request: dict[str, object] = {
         "kb_id": payload.kb_id,

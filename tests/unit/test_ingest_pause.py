@@ -30,6 +30,7 @@ def application(*, accepting=False):
         accept_new_ingest_tasks=accepting,
         ingest_kind="ingest",
         revision_ingest_binding=None,
+        mineru_workflow=None,
         source_policy=policy,
         degradation=None,
     )

@@ -54,7 +54,9 @@ def _submit(tasks: TaskService) -> asyncio.Task[IngestAccepted]:
             tasks,
             SourcePolicy(),
             None,
-            SimpleNamespace(ingest_kind="ingest", revision_ingest_binding=None),  # type: ignore[arg-type]
+            SimpleNamespace(
+                ingest_kind="ingest", revision_ingest_binding=None, mineru_workflow=None
+            ),  # type: ignore[arg-type]
         )
     )
 

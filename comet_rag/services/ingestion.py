@@ -47,6 +47,8 @@ from comet_rag.services.chunking import (
 )
 from comet_rag.services.flat_write import FlatWritePermit, flat_source_write
 from comet_rag.services.knowledge_base import KnowledgeBaseService
+from comet_rag.services.mineru_capture import MinerUWorkflow
+from comet_rag.services.revision_context import get_revision_key
 from comet_rag.tasks import (
     LANE_CPU,
     LANE_IO,
@@ -157,11 +159,13 @@ class DocumentExtraction:
         normalizer: DocumentNormalizationStrategy | None = None,
         max_extracted_text_bytes_by_type: Mapping[str, int] | None = None,
         max_context_bytes: int = DEFAULT_MAX_CHUNK_CONTEXT_BYTES,
+        mineru_workflow: MinerUWorkflow | None = None,
     ) -> None:
         self._loader = loader
         self._config = config
         self._hooks = hooks
         self._normalizer = normalizer or MarkdownDocumentNormalizer()
+        self._mineru = mineru_workflow
         self._max_chunk_context_bytes = max_context_bytes
         self._max_extracted_text_bytes_by_type = {
             kind.lower(): limit
@@ -181,14 +185,42 @@ class DocumentExtraction:
         try:
             # 下载也属于 extracting 阶段，必须位于同一个异常分类边界内。
             # 否则连接超时会绕过 _classify，第一次失败就把任务判死。
-            loader_content = await self._loader.load(SourceContent(request.source))
-            file_type = str(loader_content.metadata.get("file_type", "")).lower()
-            extracted = await self._hooks.extract(
-                file_type, loader_content, self._config
-            )
+            verified = None
+            if self._mineru is not None:
+                lock = await run_sync(
+                    self._mineru.approve_source, request.kb_id, request.source
+                )
+                key = await get_revision_key(
+                    ctx,
+                    kb_id=request.kb_id,
+                    source_id=lock.source_id,
+                    max_bytes=self._max_chunk_context_bytes,
+                )
+                origin = SourceContent(request.source)
+                verified = await self._mineru.extract(ctx, key, self._loader, origin)
+                extracted = verified.projection.document
+                file_type, source_id, source, file_name = (
+                    "pdf",
+                    lock.source_id,
+                    origin.source,
+                    lock.filename,
+                )
+            else:
+                loader_content = await self._loader.load(SourceContent(request.source))
+                file_type = str(loader_content.metadata.get("file_type", "")).lower()
+                source_id, source = (
+                    loader_content.source.source_id,
+                    loader_content.source.source,
+                )
+                file_name = loader_content.metadata.get("file_name")
+                extracted = await self._hooks.extract(
+                    file_type, loader_content, self._config
+                )
             self._validate_extracted_text_size(extracted.markdown, file_type)
             document = await run_sync(self._normalizer.normalize, extracted)
             text = document.markdown
+            if verified is not None and text != verified.projection.document.markdown:
+                raise ValueError("规范化改变证据canonical，禁止索引")
             self._validate_extracted_text_size(text, file_type)
             if not text.strip():
                 raise ValueError("提取结果没有可索引正文，保留既有文档")
@@ -208,9 +240,9 @@ class DocumentExtraction:
                 # 观察外部提取量，而不把整份 Markdown 长期留在任务表。
                 extracted_text_bytes=extracted_text_bytes,
                 file_type=file_type,
-                source_id=loader_content.source.source_id,
-                source=loader_content.source.source,
-                file_name=loader_content.metadata.get("file_name"),
+                source_id=source_id,
+                source=source,
+                file_name=file_name,
             )
             await ctx.report(message=f"已提取 {len(text)} 字符")
         except TaskContextTooLarge as exc:

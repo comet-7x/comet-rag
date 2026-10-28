@@ -21,6 +21,7 @@ from comet_rag.infrastructure.sources import AsyncAutoLoader
 from comet_rag.ports import AsyncEmbeddingPort, AsyncRerankerPort, AsyncVectorStore
 from comet_rag.ports.document_store import DocumentStore
 from comet_rag.ports.knowledge_base import KnowledgeBaseRepository
+from comet_rag.services.evidence_access import EvidenceReader
 from comet_rag.services.indexing import RevisionStager
 from comet_rag.services.ingestion import (
     DEFAULT_MAX_CHUNK_CONTEXT_BYTES,
@@ -30,6 +31,7 @@ from comet_rag.services.ingestion import (
     register_ingest_runner,
 )
 from comet_rag.services.knowledge_base import KnowledgeBaseService
+from comet_rag.services.mineru_capture import MinerUWorkflow
 from comet_rag.services.retrieval import RetrievalService
 from comet_rag.services.revision_context import RevisionTaskStages
 from comet_rag.services.revision_gc import RevisionGarbageCollector
@@ -63,6 +65,8 @@ class Context:
     reranker: AsyncRerankerPort | None = None
     document_store: DocumentStore | None = None
     revision_maintenance: RevisionMaintenance | None = None
+    mineru_workflow: MinerUWorkflow | None = None
+    evidence_reader: EvidenceReader | None = None
     #: API 准入暂停不撤销已受理任务；执行器继续消费以便排干。
     accept_new_ingest_tasks: bool = True
     ingest_kind: str = INGEST_KIND
@@ -165,6 +169,7 @@ def wire_runners(
                 hooks=context.pipeline_hooks,
                 max_extracted_text_bytes_by_type=context.extracted_text_limits,
                 max_context_bytes=context.max_chunk_context_bytes,
+                mineru_workflow=context.mineru_workflow,
             ),
             stages=RevisionTaskStages(
                 RevisionStager(
@@ -187,6 +192,7 @@ def wire_runners(
             kb_ids=revision_config.kb_ids,
             hierarchy=hierarchy,
             max_context_bytes=context.max_chunk_context_bytes,
+            mineru_workflow=context.mineru_workflow,
         )
         context.runners.register(REVISION_INGEST_KIND)(revision_runner)
         context._hook_cleanups.append(

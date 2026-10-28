@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from comet_rag.api.deps import IngestPaused
 from comet_rag.api.lifespan import make_lifespan
 from comet_rag.api.middleware import TraceMiddleware, get_trace_id
-from comet_rag.api.routes import admin, ingest, kb, search, tasks
+from comet_rag.api.routes import admin, evidence, ingest, kb, search, tasks
 from comet_rag.config.schemas import APPConfig
 from comet_rag.config.settings import get_config
 from comet_rag.core.concurrency import Overloaded
@@ -28,6 +28,11 @@ from comet_rag.ports.knowledge_base import (
     EmbeddingModelChanged,
     KnowledgeBaseExists,
     KnowledgeBaseNotFound,
+)
+from comet_rag.services.evidence_access import (
+    EvidenceAccessDenied,
+    EvidenceNotFound,
+    EvidenceUnavailable,
 )
 from comet_rag.services.query_deadline import QueryDeadlineExceeded
 from comet_rag.services.retrieval import HybridRecallFailed, KeywordSearchUnavailable
@@ -49,6 +54,27 @@ def _problem(request: Request, code: int, message: str) -> JSONResponse:
 
 
 def _install_exception_handlers(app: FastAPI) -> None:
+    def evidence_problem(request: Request, code: int, message: str) -> JSONResponse:
+        response = _problem(request, code, message)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.exception_handler(EvidenceAccessDenied)
+    async def evidence_forbidden(
+        request: Request, exc: EvidenceAccessDenied
+    ) -> JSONResponse:
+        return evidence_problem(request, 403, "证据读取未获授权")
+
+    @app.exception_handler(EvidenceNotFound)
+    async def evidence_missing(request: Request, exc: EvidenceNotFound) -> JSONResponse:
+        return evidence_problem(request, 404, "证据不存在")
+
+    @app.exception_handler(EvidenceUnavailable)
+    async def evidence_unavailable(
+        request: Request, exc: EvidenceUnavailable
+    ) -> JSONResponse:
+        return evidence_problem(request, 503, "证据暂不可用")
+
     @app.exception_handler(IngestPaused)
     async def ingest_paused(request: Request, exc: IngestPaused) -> JSONResponse:  # noqa: RUF029
         return _problem(request, status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
@@ -170,6 +196,7 @@ def create_app(config: APPConfig | None = None, **lifespan_kwargs: Any) -> FastA
     app.include_router(search.router)
     app.include_router(kb.router)
     app.include_router(admin.router)
+    app.include_router(evidence.router)
     app.add_middleware(TraceMiddleware)
 
     _install_exception_handlers(app)
