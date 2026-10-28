@@ -10,6 +10,7 @@ from arq.cron import CronJob
 
 from comet_rag.core.logging import logger
 from comet_rag.infrastructure.task_execution.arq import ArqExecutor
+from comet_rag.services.evidence_publication import PUBLICATION_PERMISSION_KIND
 from comet_rag.services.flat_write import FLAT_WRITE_KIND
 from comet_rag.services.revision_maintenance import RECONCILIATION_KIND
 from comet_rag.tasks import TaskStore
@@ -54,7 +55,9 @@ async def sweep_stale_tasks(ctx: dict[str, Any]) -> int:
     # Redis 不可用留下的 PENDING，不会出现在 sweep_stale 的候选中。
     return requeued + await executor.reconcile_pending(
         exclude_ids=frozenset(revived),
-        exclude_kinds=frozenset({RECONCILIATION_KIND, FLAT_WRITE_KIND}),
+        exclude_kinds=frozenset(
+            {RECONCILIATION_KIND, FLAT_WRITE_KIND, PUBLICATION_PERMISSION_KIND}
+        ),
     )
 
 

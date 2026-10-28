@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import math
 import time
 from collections.abc import Callable
@@ -22,6 +23,7 @@ from comet_rag.infrastructure.evidence.bundle import (
     validate_bundle_bytes,
 )
 from comet_rag.infrastructure.sources.base import finish
+from comet_rag.ports.evidence import EvidenceMissing
 
 
 class S3EvidenceError(RuntimeError):
@@ -31,6 +33,10 @@ class S3EvidenceError(RuntimeError):
         super().__init__(code)
         self.code = code
         self.uncertain_key = uncertain_key
+
+
+class S3EvidenceMissing(S3EvidenceError, EvidenceMissing):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +105,18 @@ class AsyncS3EvidenceStore:
         return _Budget(
             self._limits, self._clock() + self._limits.total_seconds, self._clock
         )
+
+    @property
+    def identity_sha256(self) -> str:
+        return sha256(
+            json.dumps(
+                [self._client.meta.endpoint_url, self._bucket], separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+
+    def require_publish_permission(self) -> None:
+        if not self._verified:
+            raise S3EvidenceError("conditional_capability_unverified")
 
     async def _get(
         self,
@@ -279,6 +297,16 @@ class AsyncS3EvidenceStore:
             raise
         except S3EvidenceError:
             raise
+        except ClientError as exc:
+            if exc.response.get("ResponseMetadata", {}).get(
+                "HTTPStatusCode"
+            ) == 404 and exc.response.get("Error", {}).get("Code") in {
+                "404",
+                "NoSuchKey",
+                "NotFound",
+            }:
+                raise S3EvidenceMissing("bundle_object_missing") from None
+            raise S3EvidenceError("bundle_read_failed") from None
         except TimeoutError:
             raise S3EvidenceError("deadline_exceeded") from None
         except Exception:
@@ -286,8 +314,7 @@ class AsyncS3EvidenceStore:
 
     async def publish(self, bundle: EvidenceBundle) -> StructuredProjection:
         """原生条件写及完整回读后确认；响应未知时保留对象和显式重试责任。"""
-        if not self._verified:
-            raise S3EvidenceError("conditional_capability_unverified")
+        self.require_publish_permission()
         budget = self._budget()
         try:
             async with asyncio.timeout(budget.remaining()), self._gate:

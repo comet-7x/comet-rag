@@ -174,6 +174,10 @@ class EvidenceBundle:
     ledger: bytes
 
 
+class EvidenceMissing(LookupError):
+    """精确引用的对象不存在；拒绝/超时/损坏不能被包装成可重建的缺失。"""
+
+
 class AsyncEvidenceStore(Protocol):
     """已验证原生字节及账本的不可变发布／有界回读；不承诺远端任务幂等。"""
 

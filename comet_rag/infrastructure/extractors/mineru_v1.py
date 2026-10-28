@@ -16,6 +16,7 @@ from comet_rag.engines.documents.mineru.structured import (
     decode_json,
     project_structured,
 )
+from comet_rag.infrastructure.evidence.bundle import build_bundle
 from comet_rag.infrastructure.evidence.files import read_limited
 from comet_rag.infrastructure.extractors._mineru_v1_files import (
     CHUNK_BYTES,
@@ -36,6 +37,9 @@ from comet_rag.infrastructure.extractors._mineru_v1_protocol import (
     task_frame,
 )
 from comet_rag.infrastructure.sources.base import finish
+from comet_rag.ports.capture import CaptureObserver
+from comet_rag.ports.document_store import RevisionKey
+from comet_rag.ports.evidence import EvidenceBundle
 
 __all__ = [
     "AsyncMinerUV1Collector",
@@ -70,6 +74,7 @@ class _Run:
     error: str | None = None
     artifact: dict[str, object] = field(default_factory=dict)
     cleanup_errors: list[str] = field(default_factory=list)
+    bundle: EvidenceBundle | None = None
 
     def remaining(self, *, cleanup: bool = False) -> float:
         end = self.end if cleanup else self.end - self.limits.cancel_seconds
@@ -266,30 +271,40 @@ class AsyncMinerUV1Collector:
         run.remote_status = frame.status
         return frame
 
-    async def _execute(self, run: _Run) -> None:
+    async def _execute(
+        self, run: _Run, observer: CaptureObserver | None, resume_task_id: str | None
+    ) -> None:
         check_health(await self._json(run, "GET", "/v1/health"))
         check_tiers(await self._json(run, "GET", "/v1/tiers"))
-        run.outcome = "submitting"
-        run.submission = "unknown"
-        await run.save()
-        payload = await self._json(
-            run,
-            "POST",
-            "/v1/tasks",
-            status=202,
-            content=self._upload(run),
-            params={
-                "tier": "advanced",
-                "ocr_mode": "auto",
-                "page_range": "all",
-                "output_formats": FORMAT,
-                "filename": run.source.filename,
-                # 4.0.12的SHA缓存短路会提前返回并关连接，真实大文件上传曾丢回包。
-                # 完整上传仍由原生服务算SHA，随后用file metadata核验，不自动重提。
-            },
-        )
-        run.task_id = identifier(payload.get("task_id"))
+        if resume_task_id is None:
+            if observer is not None:
+                await observer.before_submit()
+            run.outcome = "submitting"
+            run.submission = "unknown"
+            await run.save()
+            payload = await self._json(
+                run,
+                "POST",
+                "/v1/tasks",
+                status=202,
+                content=self._upload(run),
+                params={
+                    "tier": "advanced",
+                    "ocr_mode": "auto",
+                    "page_range": "all",
+                    "output_formats": FORMAT,
+                    "filename": run.source.filename,
+                    # 4.0.12的SHA缓存短路会提前返回并关连接，真实大文件上传曾丢回包。
+                    # 完整上传仍由原生服务算SHA，随后用file metadata核验，不自动重提。
+                },
+            )
+            run.task_id = identifier(payload.get("task_id"))
+        else:
+            run.task_id = identifier(resume_task_id)
+            payload = await self._json(run, "GET", f"/v1/tasks/{run.task_id}")
         run.submission = "task_observed"
+        if observer is not None:
+            await observer.task_observed(run.task_id)
         await run.save()
         frame = self._frame(run, payload)
         metadata = await self._json(run, "GET", f"/v1/files/{frame.source_file_id}")
@@ -305,6 +320,8 @@ class AsyncMinerUV1Collector:
         ):
             raise CaptureError("remote_source_digest_mismatch", run.task_id)
         run.source_verified = True
+        if observer is not None:
+            await observer.source_verified(run.task_id, frame.source_file_id)
         run.submission = "source_verified"
         run.outcome = "polling"
         await run.save()
@@ -408,7 +425,46 @@ class AsyncMinerUV1Collector:
         except Exception as exc:
             run.cleanup_errors.append(type(exc).__name__)
 
-    async def collect(self, source: CaptureSource, output: Path) -> dict[str, object]:
+    @property
+    def endpoint_sha256(self) -> str:
+        return sha256(self.base_url.encode()).hexdigest()
+
+    async def collect(
+        self,
+        source: CaptureSource,
+        output: Path,
+        *,
+        observer: CaptureObserver | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, object]:
+        run = await self._collect(source, output, observer=observer, task_id=task_id)
+        return run.receipt()
+
+    async def collect_bundle(
+        self,
+        source: CaptureSource,
+        output: Path,
+        key: RevisionKey,
+        *,
+        observer: CaptureObserver,
+        task_id: str | None,
+    ) -> EvidenceBundle:
+        run = await self._collect(
+            source, output, observer=observer, task_id=task_id, key=key
+        )
+        if run.bundle is None:
+            raise RuntimeError("采集未生成证据包")
+        return run.bundle
+
+    async def _collect(
+        self,
+        source: CaptureSource,
+        output: Path,
+        *,
+        observer: CaptureObserver | None,
+        task_id: str | None,
+        key: RevisionKey | None = None,
+    ) -> _Run:
         """总预算从排队前开始；只对新目录操作，失败后不自动重新提交。"""
         run = _Run(
             source,
@@ -434,8 +490,24 @@ class AsyncMinerUV1Collector:
                     raise CaptureError("gate_overloaded") from None
                 acquired = True
                 await _blocking(run.files.copy_source, source, run.remaining)
-                await self._execute(run)
-                return run.receipt()
+                await self._execute(run, observer, task_id)
+                if key is not None:
+
+                    def bundle() -> EvidenceBundle:
+                        raw = read_limited(
+                            output / "structured_content.json",
+                            self.limits.artifact_bytes,
+                        )
+                        return build_bundle(
+                            raw,
+                            key=key,
+                            source_sha256=source.sha256,
+                            pages=source.pages,
+                        )
+
+                    run.bundle = await _blocking(bundle)
+                    run.remaining()
+                return run
         except BaseException as exc:
             error = exc
             run.outcome = "failed"
