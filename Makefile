@@ -1,67 +1,49 @@
-# 设置变量
-APP_NAME := comet_rag
-PYTHON := uv run
-PYTEST := uv run pytest
-RUFF := uvx ruff
-# pyright 走 uv run 而非 uvx：它必须在**项目自己的 venv 里**跑，否则看不到
-# 已安装的依赖与类型存根（lxml-stubs 等），会把一切第三方 import 报成未解析。
-PYRIGHT := uv run pyright
+.PHONY: help install lint typecheck format test coverage build check pre-commit db-up db-down
 
-.PHONY: help install run dev test lint typecheck format pre-commit migrate db-up db-down clean
+help:
+	@printf '%s\n' \
+	  'install     安装锁定的开发依赖' \
+	  'check       执行静态检查、单元测试与构建' \
+	  'lint        Ruff 与 Pyright 检查' \
+	  'format      格式化 Python 代码' \
+	  'test        运行单元测试' \
+	  'coverage    运行单元测试并显示覆盖率' \
+	  'build       构建 wheel 与源码包' \
+	  'pre-commit  执行全量提交检查' \
+	  'db-up       启动隔离的 V2 PostgreSQL 与 Milvus' \
+	  'db-down     停止 V2 中间件，保留数据卷'
 
+install:
+	uv sync --locked
 
-help: ## 显示此帮助信息
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+lint:
+	uv run --locked ruff check .
+	uv run --locked ruff format --check .
+	uv run --locked pyright
 
+typecheck:
+	uv run --locked pyright
 
-install: ## 安装依赖并配置 pre-commit
-	# --extra all（milvus + server）而非裸 uv sync：少了它们，pyright 会把
-	# fastapi / sqlalchemy / pymilvus 全报成"无法解析的导入"，make lint 直接红。
-	# MinerU 不属于任何项目依赖组；PDF 只通过 HTTP 连接外部服务。
-	uv sync --extra all
-	uv run pre-commit install
+format:
+	uv run --locked ruff check . --fix
+	uv run --locked ruff format .
 
-clean: ## 清理缓存文件 (__pycache__, .pytest_cache, .ruff_cache)
-	find . -type d -name "__pycache__" -exec rm -rf {} +
-	rm -rf .pytest_cache .ruff_cache
-	rm -rf build/ dist/ *.egg-info
+test:
+	uv run --locked pytest
 
+coverage:
+	uv run --locked pytest --cov=comet_rag --cov-report=term-missing
 
-# 两个 target 都走 comet-rag serve —— 它是唯一会真正读 config.yaml 里
-# host/port 的入口，理由见 comet_rag/cli.py 顶部与 docs/deployment.md。
-run: ## 生产模式启动服务
-	$(PYTHON) comet-rag serve
+build:
+	uv build
 
-dev: ## 开发模式启动服务 (热重载)
-	$(PYTHON) comet-rag serve --reload
+check: lint test build
 
+pre-commit:
+	uv run --locked pre-commit run --all-files
 
-lint: ## 执行静态检查 (ruff + pyright)
-	$(RUFF) check .
-	$(PYRIGHT)
+db-up:
+	docker compose up -d
 
-typecheck: ## 只跑类型检查 (pyright)
-	$(PYRIGHT)
-
-format: ## 格式化代码 (ruff)
-	$(RUFF) format .
-	$(RUFF) check . --fix
-
-test: ## 运行所有测试并生成覆盖率报告
-	$(PYTEST) tests/
-
-pre-commit: format lint ## 执行代码规范全量检查
-	uv run pre-commit run --all-files
-
-
-db-up: ## 启动所有基础服务 (Postgres, Milvus, Redis)
-	docker-compose -f docker/docker-compose.dev.yml up -d
-
-db-down: ## 停止所有基础服务
-	docker-compose -f docker/docker-compose.dev.yml down
-
-migrate: ## 执行数据库迁移 (Alembic)
-	$(PYTHON) alembic upgrade head
-
-migration-gen: ## 生成新的迁移文件 (使用方式: make migration-gen msg="fix_user_table")
-	$(PYTHON) alembic revision --autogenerate -m "$(msg)"
+db-down:
+	docker compose down

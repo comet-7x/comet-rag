@@ -99,9 +99,7 @@ ipython_config.py
 #   This is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
 #
-#   Comet-RAG 是「库 + 参考服务」（见 tasks/spec.md A1）。服务那一半需要可复现构建，
-#   因此提交 uv.lock。库用户不受影响：安装库时 uv.lock 不参与解析，
-#   下游只受 pyproject.toml 里的版本区间约束。
+#   提交 uv.lock 以复现 V2 开发与 CI 依赖；下游安装库时仍按 pyproject.toml 解析。
 # uv.lock
 
 # poetry
@@ -192,4 +190,3 @@ mineru-report.json
 
 .claude/
 .opencode/
-AGENTS.md

@@ -1,135 +1,57 @@
 # Comet-RAG
 
-一个通用的 RAG 框架，**既是库也是服务**。
+Comet-RAG V2 正在整体重写为可独立组合的文档入库与检索组件库。当前完成阶段 0：清除旧体系并建立可安装、可测试的开发骨架。
 
-- **当库用**：只装核心依赖，拿 `engines/` 做文档解析与切分，不碰任何中间件。
-- **当服务用**：在它之上加任务调度、持久化与 HTTP 接口，跨进程可扩容、崩溃可恢复。
+当前可用的是 ZIP/XML 资源预算检查和单元排名 RRF。文档解析、来源获取、模型、持久存储、`AsyncIngestionPipeline` 与 `AsyncSearchPipeline` 尚未实现，当前版本不能完成 RAG 入库或搜索。
 
-两者共用同一份解析代码。这个双重定位由 `pyproject.toml` 的依赖分组
-**在安装期强制**，并由 AST 层级守卫在 CI 里盯着（`tests/unit/test_layering.py`）。
+旧接口、服务和使用说明保留在 [refactor/enterprise-reliability](https://github.com/comet-7x/comet-rag/tree/refactor/enterprise-reliability)。V2 不提供旧接口兼容。
 
-> 当前进度：M1、M2（PDF / 外部 MinerU）与公共 Loader/Extractor 入口收敛已完成；
-> M3 已完成 dense、Milvus BM25 与 RRF hybrid 三种检索模式，正在做出口验收。
+## 开发与检查
 
----
-
-## 一、当库用
-
-```bash
-pip install comet-rag        # 只装 pydantic / httpx / lxml / python-docx 一类
-```
-
-```python
-from comet_rag.engines.pipelines import PipelineConfig
-from comet_rag.pipeline import Pipeline
-
-pipeline = Pipeline(config=PipelineConfig(chunk_size=2000, chunk_overlap=200))
-result = pipeline.run("报告.docx")
-
-print(f"共 {len(result.chunks)} 个 chunk")
-for chunk in result.chunks:
-    print(chunk.text[:100])
-```
-
-没有 Redis、没有 Postgres、没有 FastAPI。PDF 也能通过 Pipeline 使用，但必须显式
-连接外部 MinerU；详见 [docs/pipeline_usage.md](docs/pipeline_usage.md)。
-
----
-
-## 二、当服务用
-
-### 最快一条路（不需要任何中间件）
-
-```bash
-uv sync --extra server
-cp config.example.yaml config.yaml      # 改掉 embedding_model 的 base_url 与 dim
-uv run comet-rag serve
-```
-
-```bash
-curl -X POST localhost:8000/kb     -d '{"kb_id":"demo"}'                          -H 'Content-Type: application/json'
-curl -X POST localhost:8000/ingest -d '{"kb_id":"demo","source":"报告.docx"}'      -H 'Content-Type: application/json'
-curl      localhost:8000/tasks/<task_id>
-curl -X POST localhost:8000/search -d '{"kb_id":"demo","query":"关键结论是什么"}'  -H 'Content-Type: application/json'
-```
-
-检索默认仍是向量召回；需要精确术语或混合召回时显式选择模式：
-
-```bash
-curl -X POST localhost:8000/search \
-  -H 'Content-Type: application/json' \
-  -d '{"kb_id":"demo","query":"TraitObject 内存布局","mode":"hybrid","top_k":5}'
-```
-
-`mode` 可选 `dense`、`keyword`、`hybrid`。响应里的 `channels` 表示实际执行的
-召回通道；hybrid 单路故障时会退到仍可用的一路，并在 `degradations` 给出安全诊断。
-
-### 生产形态
-
-```bash
-docker compose up -d && uv run alembic upgrade head
-uv run comet-rag serve                  # 生产端
-uv run comet-rag worker preprocessor    # CPU 密集：解析 / 分块
-uv run comet-rag worker embedder        # IO 密集：向量化 / 写库
-```
-
-**两个 worker 都要起**，理由与其余细节见 [docs/deployment.md](docs/deployment.md)。
-
----
-
-## 设计上比较特别的几点
-
-**队列里只放 `task_id`。** 任务数据一律回库读，于是重试、崩溃恢复、断点续跑、
-跨 worker 移交全都退化成同一个动作 `submit(task_id)`。
-
-**worker 按负载特征分，不按业务名词分。** preprocessor 靠加进程扩、embedder
-靠加并发扩 —— 反过来会真的更慢，且症状是"上游变慢了"，很难联想到自己身上。
-
-**并发闸门做在适配器基类的模板方法里。** `aembed()` / `aembed_media()` /
-`aembed_batch()` 都是 `@final`，子类只能实现下面那层 `_aembed()` 等，所以
-"绕过闸门"在类型层面就没有写法。换成"包一层 wrapper"只是约定 —— 谁直接调
-底层都能绕过去且不报错，而闸门恰恰是静默失效型的保护。
-
-**核心抽象各有一套与实现无关的契约测试**。`InMemoryTaskStore` 与
-`PostgresTaskStore`、`InProcessExecutor` 与 `ArqExecutor`、`InMemoryVectorStore`
-与 `MilvusStore` 跑同一套断言；关键词召回也由两种向量库实现共享同一套契约 ——
-"换后端行为不变"这句话靠断言兑现，不靠文档。
-
-更多见 [docs/architecture.md](docs/architecture.md)；目录结构与流程图见
-[docs/structure.md](docs/structure.md)；升级中的破坏性变更见
-[docs/release_notes.md](docs/release_notes.md)。
-
----
-
-## 开发
+需要 Python >=3.12 和 uv，在当前 checkout 中运行：
 
 ```bash
 make install
-
-uv run pytest                    # 单元测试，零依赖，~10s
-uv run pytest -m e2e             # 端到端，全内存
-uv run pytest -m integration     # 需要 docker compose up -d
-uv run pytest -m benchmark       # 性能基线（见 docs/benchmark.md）
-
-make lint
-make format
+make check
+make coverage
 ```
 
-**中间件没起时集成测试会 skip，不会 fail** —— 让它们红一片只会训练出"看到红色
-就忽略"的习惯，那比没有测试更糟。
+`make check` 执行 Ruff、Pyright、单元测试和包构建。`make install` 只安装锁定的开发依赖；需要提交钩子时执行 `uv run --locked pre-commit install`。
 
-测试的组织方式、契约怎么写、快照怎么更新，见 [tests/README.md](tests/README.md)。
+核心安装仅包含当前实现所需的 lxml；python-docx 用于开发阶段生成来源夹具。PostgreSQL、Milvus、S3 和模型 SDK 的依赖组随实际适配器加入。
 
-## 文档
+```python
+from comet_rag.documents.parsers import ArchiveLimits, validate_zip_archive
+from comet_rag.retrieval import reciprocal_rank_fusion
 
-|                                                          |                                      |
-| -------------------------------------------------------- | ------------------------------------ |
-| [architecture.md](docs/architecture.md)                   | 分层、核心抽象、两种部署形态         |
-| [structure.md](docs/structure.md)                         | 目录结构、依赖图、入库/检索流程图    |
-| [model_usage.md](docs/model_usage.md)                     | Embedding、图片与 Reranker 用法      |
-| [deployment.md](docs/deployment.md)                       | 配置、扩容、运维、排查               |
-| [benchmark.md](docs/benchmark.md)                         | 性能基线与它**不能**回答的问题 |
-| [pipeline_usage.md](docs/pipeline_usage.md)               | 只当库用时看这个                     |
-| [docx_parser_internals.md](docs/docx_parser_internals.md) | docx 解析内幕                        |
-| [mineru_integration.md](docs/mineru_integration.md)       | PDF / MinerU 部署、配置与验收        |
-| [comment_style.md](docs/comment_style.md)                 | 注释与 Docstring 的编写、评审标准    |
+validate_zip_archive("sample.docx", ArchiveLimits(max_members=1_000))
+
+# 输入为各通道已经按相关性排列的 unit_id，原始分数不参与融合。
+fused = reciprocal_rank_fusion(
+    {"dense": ["unit-a", "unit-b"], "keyword": ["unit-b"]}
+)
+assert fused[0].unit_id == "unit-b"
+```
+
+容器开发配置只提供独立的 V2 PostgreSQL 和 Milvus 及其依赖：
+
+```bash
+make db-up
+make db-down
+```
+
+这些命令由开发者显式运行。配置使用独立项目、数据卷和回环端口；`db-down` 保留数据。阶段 0 不连接或迁移数据库，后端准备说明见 [开发环境](docs/development.md)。
+
+## 实施路线
+
+| 阶段 | 交付 |
+|---|---|
+| 0（已完成） | 清场、独立包、开发工具与基础行为验证 |
+| A | 身份/编码/投影契约、保护行为归属、真实样例与后端配置 |
+| B | 本地文本与基础 DOCX，PostgreSQL/Milvus 持久入库，dense/keyword/hybrid |
+| C | HTTP/S3、DOCX 保真、外部 MinerU PDF 与持久资源 |
+| D | 独立图片与文档图片，真实文本/图片四种检索组合 |
+| E | 可选父子上下文、重排和表示策略比较 |
+| F | 完整组件导出、实际运行示例与集成交付 |
+
+阶段 0 的实际改动与核验见 [验收记录](docs/phase0.md)。目标职责与约束见 [架构](docs/architecture.md)，验证范围见 [测试说明](tests/README.md)，代码注释约定见 [注释标准](docs/comment_style.md)。本次本地详细设计入口为 `tmp/refactoring/overview.md`（v1.3），该目录保持忽略，不随包分发。
