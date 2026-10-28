@@ -8,7 +8,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/comet-7x/comet-rag.git",
-      "revision": "1788c593018440bcc246f179ee9faa9e5c238f6c",
+      "revision": "d5474b3331ebaee7948b89e3e390c24a686819d0",
       "link_mode": "local-only"
     }
   },
@@ -100,7 +100,7 @@
     {
       "id": "mineru",
       "type": "external",
-      "label": "MinerU 文档 API",
+      "label": "MinerU 旧文档 API",
       "sublabel": "v2 · 逐页扩展可选",
       "pos": [
         860,
@@ -146,7 +146,7 @@
         {
           "path": "comet_rag/api/routes/ingest.py",
           "line": 15,
-          "end_line": 53
+          "end_line": 57
         }
       ]
     },
@@ -167,7 +167,7 @@
         {
           "path": "comet_rag/api/routes/ingest.py",
           "line": 15,
-          "end_line": 53
+          "end_line": 57
         },
         {
           "path": "comet_rag/api/routes/tasks.py",
@@ -197,13 +197,13 @@
       "sources": [
         {
           "path": "comet_rag/composition/context.py",
-          "line": 126,
-          "end_line": 211
+          "line": 130,
+          "end_line": 217
         },
         {
           "path": "comet_rag/services/ingestion.py",
-          "line": 260,
-          "end_line": 425
+          "line": 310,
+          "end_line": 501
         },
         {
           "path": "comet_rag/tasks/executor.py",
@@ -234,8 +234,8 @@
         },
         {
           "path": "comet_rag/composition/bootstrap.py",
-          "line": 618,
-          "end_line": 639
+          "line": 645,
+          "end_line": 666
         }
       ]
     },
@@ -255,8 +255,8 @@
       "sources": [
         {
           "path": "comet_rag/composition/bootstrap.py",
-          "line": 143,
-          "end_line": 155
+          "line": 148,
+          "end_line": 160
         },
         {
           "path": "comet_rag/tasks/service.py",
@@ -286,18 +286,18 @@
       "sources": [
         {
           "path": "comet_rag/composition/bootstrap.py",
-          "line": 82,
-          "end_line": 108
+          "line": 87,
+          "end_line": 113
         },
         {
           "path": "comet_rag/services/ingestion.py",
-          "line": 335,
-          "end_line": 425
+          "line": 385,
+          "end_line": 501
         },
         {
           "path": "comet_rag/services/indexing.py",
-          "line": 471,
-          "end_line": 501
+          "line": 502,
+          "end_line": 532
         }
       ]
     },
@@ -323,13 +323,13 @@
         },
         {
           "path": "comet_rag/workers/maintenance.py",
-          "line": 60,
-          "end_line": 77
+          "line": 64,
+          "end_line": 81
         },
         {
           "path": "comet_rag/config/schemas.py",
-          "line": 577,
-          "end_line": 682
+          "line": 591,
+          "end_line": 696
         }
       ]
     },
@@ -381,8 +381,8 @@
       "sources": [
         {
           "path": "comet_rag/services/indexing.py",
-          "line": 375,
-          "end_line": 410
+          "line": 406,
+          "end_line": 441
         },
         {
           "path": "comet_rag/infrastructure/persistence/document_store/postgres.py",
@@ -413,8 +413,8 @@
       "sources": [
         {
           "path": "comet_rag/services/revision_ingestion.py",
-          "line": 40,
-          "end_line": 190
+          "line": 41,
+          "end_line": 204
         },
         {
           "path": "comet_rag/services/revision_context.py",
@@ -423,8 +423,8 @@
         },
         {
           "path": "comet_rag/services/indexing.py",
-          "line": 375,
-          "end_line": 501
+          "line": 406,
+          "end_line": 532
         }
       ]
     },
@@ -714,7 +714,8 @@
         "MinerU节点是外部文档API，不是模型端点。指定独立部署的v1薄扩展复用上游逐页渲染，应用仍通过HTTP消费，不引入SDK/OCR运行时。",
         "逐页协议严格验证版本、连续物理页和原文拼接。明确返回的空页保留页号，规范化不为它制造空内容块，漏页仍直接失败。",
         "完整7/80页与用户60页均实测；用户背封文字在轮次间有遗漏，页齐全不等于OCR全部正确。冻结具体canonical，不能在新正文上复用旧span。",
-        "冻结、引用/整行审计和复核表检查属于仓库工具；复核结构通过始终不认证人的独立性或批准标签。用户PDF和衍生原文Git忽略。"
+        "冻结、引用/整行审计和复核表检查属于仓库工具；复核结构通过始终不认证人的独立性或批准标签。用户PDF和衍生原文Git忽略。",
+        "新V1 structured_content路径只由显式factory启用，来源锁及许可先于提交；另图展开证据包与授权读取，不与此处旧协议混画。"
       ]
     },
     {
@@ -731,10 +732,19 @@
       "dot": "amber",
       "title": "本轮验证与仍保留的发布门禁",
       "items": [
-        "全量unit3632、真实integration300无skip、E2E50、benchmark39通过；合并覆盖93.05%，tasks96.29%。全新核心wheel在仓库外完成DOCX与分块验证。",
-        "真实MinIO到独立CPU移交、新IO激活和六种检索通过；API/IO重启保留任务幂等及active，GC拒绝active。只清理自建桶、测试命名空间、进程和配置。",
-        "普通pytest三轮9.89/9.40/9.44秒，进程总墙钟仍超10秒；API关停semaphore警告保留，根因待最小复现。不能从本地结果推断CI或零告警。",
-        "本轮探索与隔离验证收口，M4-T10/H/I和正式发布未关闭。图固定已提交源码，离线质量及provenance通过；既有浏览器限制仍在，无新增浏览器或视觉验收。"
+        "最终unit4076、integration321、E2E50、benchmark39通过；3项旧MinerU HTTP集成未配服务而skip，不计作通过。",
+        "已做31项真实源码反向变异并恢复；工厂启动失败、重复取消和逆序排干有故障覆盖，core-only新wheel仓库外验证通过。",
+        "普通单测12.58秒，严格10秒预算仍未通过。独立人工、固定工件、目标存储/部署与正式迁移门禁保持。",
+        "仅准备分支供审查，未合并develop、未改目录或生产配置。新V1许可/证据读取的完整拓扑单列于MinerU V1交互图。"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "MinerU V1 的可选接线",
+      "items": [
+        "原生采集、来源预检、TaskStore许可/恢复身份、S3不可变包和授权父块读取已接线，默认关闭；详见独立V1图与接线文档。",
+        "新工厂每个事件循环创建并登记资源，成功后由Context托管；取消排干后再关连接。",
+        "新证据路由只保护对应KB读取，不意味着其他参考API已有全局鉴权；未知任务/迟到对象仍需保留身份并人工处置。"
       ]
     }
   ]

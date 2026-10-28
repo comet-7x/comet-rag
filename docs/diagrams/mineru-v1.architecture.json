@@ -1,0 +1,338 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "MinerU V1：许可、采集与授权读取",
+    "locale": "zh-CN",
+    "output": "docs/diagrams/mineru-v1.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/comet-7x/comet-rag.git",
+      "revision": "d5474b3331ebaee7948b89e3e390c24a686819d0",
+      "link_mode": "local-only"
+    }
+  },
+  "components": [
+    {
+      "id": "revision-entry",
+      "type": "backend",
+      "label": "Revision runner",
+      "sublabel": "复用准备 / 激活阶段",
+      "pos": [
+        40,
+        260
+      ],
+      "size": [
+        180,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/composition/bootstrap.py",
+          "line": 550,
+          "end_line": 576
+        },
+        {
+          "path": "comet_rag/composition/bootstrap.py",
+          "line": 715,
+          "end_line": 731
+        },
+        {
+          "path": "comet_rag/services/ingestion.py",
+          "line": 179,
+          "end_line": 246
+        }
+      ],
+      "tag": "显式启用 · 父块必需"
+    },
+    {
+      "id": "capture-workflow",
+      "type": "backend",
+      "label": "MinerU V1 编排",
+      "sublabel": "来源锁 · deadline · 恢复",
+      "pos": [
+        300,
+        260
+      ],
+      "size": [
+        180,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/services/mineru_capture.py",
+          "line": 70,
+          "end_line": 398
+        },
+        {
+          "path": "comet_rag/services/evidence_publication.py",
+          "line": 23,
+          "end_line": 109
+        },
+        {
+          "path": "comet_rag/infrastructure/extractors/mineru_v1.py",
+          "line": 274,
+          "end_line": 362
+        }
+      ],
+      "tag": "未知提交不重提"
+    },
+    {
+      "id": "capture-journal",
+      "type": "database",
+      "label": "TaskStore",
+      "sublabel": "许可 / 只增检查点",
+      "pos": [
+        300,
+        40
+      ],
+      "size": [
+        180,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/services/evidence_publication.py",
+          "line": 58,
+          "end_line": 109
+        },
+        {
+          "path": "comet_rag/services/mineru_capture.py",
+          "line": 70,
+          "end_line": 137
+        },
+        {
+          "path": "comet_rag/services/task_retention.py",
+          "line": 1,
+          "end_line": 15
+        }
+      ],
+      "tag": "复用 CAS · 不新增字段"
+    },
+    {
+      "id": "native-mineru",
+      "type": "external",
+      "label": "MinerU 文档 API",
+      "sublabel": "外部 4.0.12 HTTP",
+      "pos": [
+        560,
+        260
+      ],
+      "size": [
+        180,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/infrastructure/extractors/mineru_v1.py",
+          "line": 274,
+          "end_line": 362
+        },
+        {
+          "path": "comet_rag/infrastructure/extractors/_mineru_v1_protocol.py",
+          "line": 129,
+          "end_line": 145
+        }
+      ],
+      "tag": "应用不安装 SDK"
+    },
+    {
+      "id": "immutable-bundles",
+      "type": "database",
+      "label": "S3 兼容证据包",
+      "sublabel": "新命名空间 · 固定别名",
+      "pos": [
+        300,
+        480
+      ],
+      "size": [
+        180,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/infrastructure/evidence/s3.py",
+          "line": 186,
+          "end_line": 258
+        },
+        {
+          "path": "comet_rag/infrastructure/evidence/s3.py",
+          "line": 281,
+          "end_line": 353
+        }
+      ],
+      "tag": "条件发布 · 完整回读"
+    },
+    {
+      "id": "evidence-reader",
+      "type": "backend",
+      "label": "授权证据读取",
+      "sublabel": "只返回 active 父块原文",
+      "pos": [
+        560,
+        480
+      ],
+      "size": [
+        180,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/api/routes/evidence.py",
+          "line": 17,
+          "end_line": 38
+        },
+        {
+          "path": "comet_rag/services/evidence_access.py",
+          "line": 84,
+          "end_line": 175
+        },
+        {
+          "path": "comet_rag/services/evidence.py",
+          "line": 86,
+          "end_line": 94
+        }
+      ],
+      "tag": "未配置 reader 返回404"
+    },
+    {
+      "id": "document-parents",
+      "type": "database",
+      "label": "DocumentStore",
+      "sublabel": "父块区间 / 引用 / 判活",
+      "pos": [
+        860,
+        480
+      ],
+      "size": [
+        180,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/services/evidence_access.py",
+          "line": 106,
+          "end_line": 128
+        },
+        {
+          "path": "comet_rag/services/indexing.py",
+          "line": 375,
+          "end_line": 410
+        }
+      ],
+      "tag": "复用既有 schema"
+    },
+    {
+      "id": "evidence-client",
+      "type": "external",
+      "label": "证据调用方",
+      "sublabel": "GET /evidence/…",
+      "pos": [
+        560,
+        690
+      ],
+      "size": [
+        180,
+        70
+      ],
+      "sources": [
+        {
+          "path": "comet_rag/api/routes/evidence.py",
+          "line": 17,
+          "end_line": 38
+        },
+        {
+          "path": "docs/mineru_v1_integration.md",
+          "line": 88,
+          "end_line": 105
+        }
+      ],
+      "tag": "Bearer + KB 范围"
+    }
+  ],
+  "connections": [
+    {
+      "id": "approved-source",
+      "from": "revision-entry",
+      "to": "capture-workflow",
+      "label": "批准 PDF",
+      "variant": "emphasis"
+    },
+    {
+      "id": "capture-intents",
+      "from": "capture-workflow",
+      "to": "capture-journal",
+      "label": "许可 / 意图 CAS"
+    },
+    {
+      "id": "bounded-native",
+      "from": "capture-workflow",
+      "to": "native-mineru",
+      "label": "HTTP"
+    },
+    {
+      "id": "conditional-bundles",
+      "from": "capture-workflow",
+      "to": "immutable-bundles",
+      "label": "条件验收 / 发布",
+      "variant": "emphasis"
+    },
+    {
+      "id": "authorized-parent-read",
+      "from": "evidence-client",
+      "to": "evidence-reader",
+      "label": "Bearer / KB",
+      "variant": "security"
+    },
+    {
+      "id": "evidence-package-read",
+      "from": "evidence-reader",
+      "to": "immutable-bundles",
+      "label": "验包"
+    },
+    {
+      "id": "active-parent-read",
+      "from": "evidence-reader",
+      "to": "document-parents",
+      "label": "判活 / 原文"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "显式工厂与职责边界",
+      "items": [
+        "本图展开可选V1控制流；embedding、revision写入/GC和旧PDF协议见主架构图，不在这里重复绘制。",
+        "factory在当前循环创建并登记HTTP/S3资源；组合根先完成持久化许可验收才开放runner。失败回滚，正常先排干执行器后关连接。",
+        "默认CLI/YAML不会启用新路径；来源目录是服务端受控配置，approval_id不是数字签名或独立人工质量批准。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "先持久化身份，再允许副作用",
+      "items": [
+        "原生条件探测key和目标身份先写TaskStore，CAS领取后才验收；未知probe不自动重放，历史verified不能授权新SDK。",
+        "POST前保存提交许可；远端ID、来源核验、manifest发布意图只增不改，旧attempt不能覆盖。",
+        "提交响应丢失不猜任务；按精确引用优先回读，只有真正缺对象才恢复已知原任务，403/损坏/超时不回退重采。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "原文与授权",
+      "items": [
+        "结构映射复用原生structured_content；正文、页、账本和独立图像解读分列，父块只持久化小引用，不把内嵌图片塞进向量metadata。",
+        "授权先于所有Store IO，完整验包并核对原文区间，回读后再次判活；响应仅有选定父块及片段证据。",
+        "这里的Bearer只保护证据入口；其他参考API仍需可信网络/网关。没有跨Store线性一致性或exactly-once保证。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "预算、保留与发布门禁",
+      "items": [
+        "取源/排队/采集/发布共享最多900秒；原生JSON32MiB、累计接收36MiB，任务检查点和证据读取另有独立上限。",
+        "未知提交、许可probe和业务发布意图均保留；原生取消响应不证明排干，自有证据包不自动GC。",
+        "旧MinIO条件写不合格；SeaweedFS4.51隔离验收不替代多机/TLS/IAM/容量/备份。独立标签、固定工件和严格10秒预算仍待验收。"
+      ]
+    }
+  ]
+}
