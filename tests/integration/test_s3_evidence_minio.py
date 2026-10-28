@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 from uuid import uuid4
 
@@ -9,7 +10,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from comet_rag.core.concurrency import Gate
-from evals.pdf.s3_evidence import AsyncS3EvidenceStore, S3EvidenceError
+from comet_rag.infrastructure.evidence.s3 import AsyncS3EvidenceStore, S3EvidenceError
 from tests.fixtures.minio import MinioCredentials
 from tests.unit.test_pdf_evidence_bundle import packet
 
@@ -122,6 +123,22 @@ async def seed(client, bucket, bundle):
         )
 
 
+async def test_native_wrong_checksum_is_rejected_without_creating_object(scope) -> None:
+    client, _, bucket = scope
+    key = "diagnostic/invalid-sha256"
+    with pytest.raises(ClientError) as rejected:
+        await client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=b"owned checksum probe",
+            ChecksumSHA256=base64.b64encode(bytes(32)).decode(),
+        )
+    assert rejected.value.response["ResponseMetadata"]["HTTPStatusCode"] == 400
+    with pytest.raises(ClientError) as missing:
+        await client.client.head_object(Bucket=bucket, Key=key)
+    assert missing.value.response["ResponseMetadata"]["HTTPStatusCode"] == 404
+
+
 async def test_target_capability_gate_records_rejection_without_business_writes(
     scope, record_property
 ) -> None:
@@ -187,7 +204,7 @@ async def test_target_cancel_read_releases_single_connection_for_reuse(scope) ->
 
 
 async def test_target_read_timeout_closes_native_body(scope) -> None:
-    from evals.pdf.s3_evidence import S3EvidenceLimits
+    from comet_rag.infrastructure.evidence.s3 import S3EvidenceLimits
 
     client, adapter, bucket = scope
     bundle = packet()
@@ -272,7 +289,7 @@ async def test_required_conditional_cancel_after_remote_commit_does_not_delete(
 async def test_required_conditional_timeout_after_commit_preserves_unknown_key(
     scope,
 ) -> None:
-    from evals.pdf.s3_evidence import S3EvidenceLimits
+    from comet_rag.infrastructure.evidence.s3 import S3EvidenceLimits
 
     require_conditionals()
     client, adapter, _ = scope

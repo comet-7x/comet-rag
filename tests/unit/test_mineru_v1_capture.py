@@ -14,10 +14,14 @@ import httpx
 import pytest
 
 from comet_rag.core.concurrency import Gate
-from evals.pdf._v1_files import CaptureFiles
-from evals.pdf._v1_protocol import CaptureError, CaptureLimits, CaptureSource
+from comet_rag.infrastructure.extractors._mineru_v1_files import CaptureFiles
+from comet_rag.infrastructure.extractors._mineru_v1_protocol import (
+    CaptureError,
+    CaptureLimits,
+    CaptureSource,
+)
+from comet_rag.infrastructure.extractors.mineru_v1 import AsyncMinerUV1Collector
 from evals.pdf.capture import main_async
-from evals.pdf.mineru_v1 import AsyncMinerUV1Collector
 
 
 class Chunks(httpx.AsyncByteStream):
@@ -228,6 +232,34 @@ async def test_collects_only_native_structured_and_leaves_borrowed_client_open(
     assert (out / "structured_content.json").read_bytes() == server.data
     assert receipt(out)["artifact"]["sha256"] == sha256(server.data).hexdigest()
     assert not (out / ".structured_content.part").exists()
+    assert gate.stats.in_flight == 0
+
+
+@pytest.mark.parametrize("kind", ["empty", "interpretation_only"])
+async def test_completed_without_extracted_text_cannot_be_published(
+    source: CaptureSource, tmp_path: Path, kind: str
+) -> None:
+    server = Server(source)
+    data = json.loads(server.data)
+    data["pages"][0]["blocks"] = (
+        []
+        if kind == "empty"
+        else [
+            {"type": "image", "content": "Model interpretation", "bbox": [0, 0, 1, 1]}
+        ]
+    )
+    server.data = json.dumps(data).encode()
+    gate = Gate(limit=1, max_waiting=1)
+    out = tmp_path / "empty-source"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(server)) as client:
+        with pytest.raises(CaptureError, match="invalid_structured_artifact"):
+            await AsyncMinerUV1Collector(
+                "http://localhost", client=client, gate=gate, limits=limits()
+            ).collect(source, out)
+    assert receipt(out)["outcome"] == "failed"
+    assert receipt(out)["artifact"] == {}
+    assert not (out / "structured_content.json").exists()
+    assert server.posts == 1
     assert gate.stats.in_flight == 0
 
 

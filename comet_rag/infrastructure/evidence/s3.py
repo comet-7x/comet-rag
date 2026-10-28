@@ -13,15 +13,15 @@ from uuid import uuid4
 from botocore.exceptions import ClientError, ConnectTimeoutError, ReadTimeoutError
 
 from comet_rag.core.concurrency import Gate
-from comet_rag.infrastructure.sources.base import finish
-from evals.pdf.evidence_bundle import (
+from comet_rag.engines.documents.mineru.structured import StructuredProjection
+from comet_rag.infrastructure.evidence.bundle import (
     MANIFEST_BYTES,
     EvidenceBundle,
     EvidenceReference,
     manifest_files,
     validate_bundle_bytes,
 )
-from evals.pdf.structured import StructuredProjection
+from comet_rag.infrastructure.sources.base import finish
 
 
 class S3EvidenceError(RuntimeError):
@@ -73,7 +73,7 @@ class _Budget:
 
 
 class AsyncS3EvidenceStore:
-    """独立证据实验适配；借用原生异步SDK及进程级Gate，不接生产Store Port。"""
+    """原生S3证据适配；借用异步SDK与进程级Gate，不自行创建客户端或改配置。"""
 
     def __init__(
         self,
@@ -285,6 +285,7 @@ class AsyncS3EvidenceStore:
             raise S3EvidenceError("bundle_read_failed") from None
 
     async def publish(self, bundle: EvidenceBundle) -> StructuredProjection:
+        """原生条件写及完整回读后确认；响应未知时保留对象和显式重试责任。"""
         if not self._verified:
             raise S3EvidenceError("conditional_capability_unverified")
         budget = self._budget()

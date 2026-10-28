@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from evals.pdf.structured import DEFAULT_LIMITS
+from comet_rag.engines.documents.mineru.structured import DEFAULT_LIMITS
 
 VERSION = "4.0.12"
 FORMAT = "structured_content"

@@ -5,10 +5,20 @@ import math
 import re
 from dataclasses import asdict, dataclass
 from hashlib import sha256
-from typing import Literal, cast
+from typing import cast
 
 from comet_rag.engines.documents.normalization import MarkdownDocumentNormalizer
 from comet_rag.ports import ExtractedDocument, ExtractedPage
+from comet_rag.ports.evidence import (
+    MAX_EVIDENCE_PAGES,
+    AssetFact,
+    BBox,
+    EvidenceSpan,
+    Interpretation,
+)
+from comet_rag.ports.evidence import (
+    StructuredProjection as StructuredProjection,
+)
 
 POLICY = "mineru-4.0.12-structured-source-v1"
 _TEXT = {"text", "list", "ref_text", "page_footnote"}
@@ -27,18 +37,17 @@ _FIELDS = {
     "image_source",
     "anchor",
 }
-BBox = tuple[float, float, float, float]
 
 
 @dataclass(frozen=True, slots=True)
 class StructuredLimits:
-    """独立实验预算；不改服务配置，也不承诺 JSON 对象的峰值 RSS。"""
+    """映射的字节与结构预算；不承诺 JSON 对象的峰值 RSS。"""
 
     wire_bytes: int = 32 * 1024 * 1024
     text_bytes: int = 8 * 1024 * 1024
     interpretation_bytes: int = 2 * 1024 * 1024
     block_bytes: int = 1024 * 1024
-    pages: int = 512
+    pages: int = MAX_EVIDENCE_PAGES
     blocks: int = 20_000
     annotations_per_group: int = 128
     evidence_units: int = 50_000
@@ -51,83 +60,6 @@ class StructuredLimits:
 
 
 DEFAULT_LIMITS = StructuredLimits()
-
-
-@dataclass(frozen=True, slots=True)
-class EvidenceSpan:
-    """extraction只是提取来源，不是人工金标；bbox不定位逐字quote。"""
-
-    pointer: str
-    parent_pointer: str
-    page_number: int
-    block_type: str
-    role: str
-    category: Literal["extraction", "auxiliary"]
-    start_char: int
-    end_char: int
-    heading_path: tuple[str, ...]
-    bbox: BBox | None
-    continues_prev: bool
-
-
-@dataclass(frozen=True, slots=True)
-class Interpretation:
-    """模型读图结果独立保留，不进入可供原文引用的 canonical。"""
-
-    pointer: str
-    page_number: int
-    block_type: str
-    text: str
-    bbox: BBox
-
-
-@dataclass(frozen=True, slots=True)
-class AssetFact:
-    """只记来源存在性和摘要；不保留、解码或访问图片地址。"""
-
-    pointer: str
-    page_number: int
-    locator_sha256: str
-    locator_bytes: int
-
-
-@dataclass(frozen=True, slots=True)
-class StructuredProjection:
-    """只供离线评估的正文及证据账本，不是新的生产 Port 或持久化字段。"""
-
-    source_sha256: str
-    input_sha256: str
-    canonical_sha256: str
-    body_sha256: str
-    document: ExtractedDocument
-    evidence: tuple[EvidenceSpan, ...]
-    interpretations: tuple[Interpretation, ...]
-    assets: tuple[AssetFact, ...]
-
-    def verify_quote(
-        self,
-        *,
-        pointer: str,
-        canonical_sha256: str,
-        start_char: int,
-        end_char: int,
-        quote: str,
-        allow_auxiliary: bool = False,
-    ) -> None:
-        """核对本轮区间及来源类别；不证明PDF字词正确或人工已验收。"""
-        if canonical_sha256 != self.canonical_sha256:
-            raise ValueError("证据不属于本轮 canonical")
-        if type(allow_auxiliary) is not bool:
-            raise ValueError("辅助文本引用许可必须是 bool")
-        if type(start_char) is not int or type(end_char) is not int:
-            raise ValueError("证据区间必须是整数")
-        span = next((s for s in self.evidence if s.pointer == pointer), None)
-        if span is None or (span.category == "auxiliary" and not allow_auxiliary):
-            raise ValueError("该片段不具备请求的引用类别")
-        if not span.start_char <= start_char < end_char <= span.end_char:
-            raise ValueError("证据不得跨原生片段或页面")
-        if self.document.markdown[start_char:end_char] != quote:
-            raise ValueError("quote 不等于 canonical 区间")
 
 
 def projection_payload(result: StructuredProjection) -> dict[str, object]:

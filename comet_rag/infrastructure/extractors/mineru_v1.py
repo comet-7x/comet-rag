@@ -11,9 +11,17 @@ import httpx
 
 from comet_rag.core.concurrency import Gate, Overloaded
 from comet_rag.core.http_endpoint import validate_http_endpoint
-from comet_rag.infrastructure.sources.base import finish
-from evals.pdf._v1_files import CHUNK_BYTES, CaptureFiles
-from evals.pdf._v1_protocol import (
+from comet_rag.engines.documents.mineru.structured import (
+    DEFAULT_LIMITS,
+    decode_json,
+    project_structured,
+)
+from comet_rag.infrastructure.evidence.files import read_limited
+from comet_rag.infrastructure.extractors._mineru_v1_files import (
+    CHUNK_BYTES,
+    CaptureFiles,
+)
+from comet_rag.infrastructure.extractors._mineru_v1_protocol import (
     FORMAT,
     RUNNING,
     TERMINAL,
@@ -27,9 +35,14 @@ from evals.pdf._v1_protocol import (
     identifier,
     task_frame,
 )
-from evals.pdf.parse import page_summary
-from evals.pdf.structured import DEFAULT_LIMITS, decode_json, project_structured
-from evals.pdf.structured_audit import read_limited
+from comet_rag.infrastructure.sources.base import finish
+
+__all__ = [
+    "AsyncMinerUV1Collector",
+    "CaptureError",
+    "CaptureLimits",
+    "CaptureSource",
+]
 
 
 async def _blocking[T, **P](
@@ -95,7 +108,7 @@ class _Run:
 
 
 class AsyncMinerUV1Collector:
-    """独立单文件采集器；借用进程级客户端和有界Gate，不接生产ExtractorPort。"""
+    """原生V1单文件采集适配；借用应用级客户端和Gate，不隐式注册runner。"""
 
     def __init__(
         self,
@@ -343,7 +356,8 @@ class AsyncMinerUV1Collector:
                 expected_pages=run.source.pages,
                 limits=replace(DEFAULT_LIMITS, wire_bytes=self.limits.artifact_bytes),
             )
-            page_summary(projection.document, run.source.pages)
+            if not projection.document.markdown:
+                raise ValueError("整份产物没有可索引正文")
         except ValueError:
             raise CaptureError("invalid_structured_artifact", run.task_id) from None
         run.remaining()

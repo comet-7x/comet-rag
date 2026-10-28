@@ -4,9 +4,9 @@ from comet_rag.engines.chunkers._coverage import validate_coverage
 from comet_rag.engines.chunkers.protocol import Chunker
 from comet_rag.engines.chunkers.strategies._blocks import split_blocks
 from comet_rag.engines.chunkers.types import ChunkDraft
+from comet_rag.engines.documents.mineru.structured import StructuredProjection
 from comet_rag.engines.documents.normalization import MarkdownDocumentNormalizer
 from comet_rag.ports.document import DocumentBlock, NormalizedDocument
-from evals.pdf.structured import StructuredProjection
 
 
 def page_sections(result: StructuredProjection) -> NormalizedDocument:

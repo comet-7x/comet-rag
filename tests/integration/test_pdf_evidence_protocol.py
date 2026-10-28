@@ -6,6 +6,12 @@ from pathlib import Path
 
 import pytest
 
+from comet_rag.infrastructure.evidence.bundle import (
+    EvidenceReference,
+    build_bundle,
+    load_bundle,
+    publish_bundle,
+)
 from comet_rag.infrastructure.persistence.document_store.postgres import (
     PostgresDocumentStore,
 )
@@ -23,12 +29,6 @@ from evals.pdf.capture_journal import (
     OBSERVED,
     AsyncCaptureJournal,
     guard_capture_task_deletion,
-)
-from evals.pdf.evidence_bundle import (
-    EvidenceReference,
-    build_bundle,
-    load_bundle,
-    publish_bundle,
 )
 from tests.contracts.knowledge_base import make_kb
 from tests.integration.conftest import truncate_tables

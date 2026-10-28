@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from comet_rag.infrastructure.evidence.bundle import publish_bundle
 from comet_rag.tasks import InMemoryTaskStore, TaskBusy, TaskContext, TaskStatus
 from comet_rag.tasks.runner import TaskCancelled
 from comet_rag.tasks.store import TaskLeaseLost
@@ -20,7 +21,6 @@ from evals.pdf.capture_journal import (
     guard_capture_task_deletion,
     remote_disposition,
 )
-from evals.pdf.evidence_bundle import publish_bundle
 from tests.unit.test_pdf_evidence_bundle import KEY, SOURCE, packet
 
 ENDPOINT = "c" * 64

@@ -6,7 +6,10 @@ from typing import Any
 
 import pytest
 
-from evals.pdf.structured import StructuredLimits, project_structured
+from comet_rag.engines.documents.mineru.structured import (
+    StructuredLimits,
+    project_structured,
+)
 
 SOURCE = "a" * 64
 BBOX = [0.1, 0.1, 0.8, 0.3]
@@ -396,7 +399,7 @@ def test_limited_reader_checks_actual_bytes_when_file_grows_after_stat() -> None
     from types import SimpleNamespace
     from typing import cast
 
-    from evals.pdf.structured_audit import read_limited
+    from comet_rag.infrastructure.evidence.files import read_limited
 
     class GrowingFile(BytesIO):
         def read(self, size: int | None = -1) -> bytes:

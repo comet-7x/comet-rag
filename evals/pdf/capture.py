@@ -9,10 +9,15 @@ from pathlib import Path
 import httpx
 
 from comet_rag.core.concurrency import Gate
-from evals.pdf._v1_protocol import CaptureError, CaptureSource, digest, integer
-from evals.pdf.mineru_v1 import AsyncMinerUV1Collector
-from evals.pdf.structured import decode_json
-from evals.pdf.structured_audit import read_limited
+from comet_rag.engines.documents.mineru.structured import decode_json
+from comet_rag.infrastructure.evidence.files import read_limited
+from comet_rag.infrastructure.extractors._mineru_v1_protocol import (
+    CaptureError,
+    CaptureSource,
+    digest,
+    integer,
+)
+from comet_rag.infrastructure.extractors.mineru_v1 import AsyncMinerUV1Collector
 
 
 async def main_async(args: argparse.Namespace) -> None:

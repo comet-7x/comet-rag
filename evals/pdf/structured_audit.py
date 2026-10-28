@@ -7,26 +7,16 @@ from dataclasses import asdict
 from hashlib import sha256
 from pathlib import Path
 
-from comet_rag.engines.documents.normalization import MarkdownDocumentNormalizer
-from evals.pdf.inspect import table_integrity
-from evals.pdf.parse import page_summary
-from evals.pdf.structured import (
+from comet_rag.engines.documents.mineru.structured import (
     DEFAULT_LIMITS,
     POLICY,
     project_structured,
     projection_payload,
 )
-
-
-def read_limited(path: Path, limit: int) -> bytes:
-    """文件和将来的流式HTTP都应先限字节；不先无界读取再检查。"""
-    if path.stat().st_size > limit:
-        raise ValueError("输入文件超出 wire 字节预算")
-    with path.open("rb") as stream:
-        raw = stream.read(limit + 1)
-    if len(raw) > limit:
-        raise ValueError("输入文件超出 wire 字节预算")
-    return raw
+from comet_rag.engines.documents.normalization import MarkdownDocumentNormalizer
+from comet_rag.infrastructure.evidence.files import read_limited
+from evals.pdf.inspect import table_integrity
+from evals.pdf.parse import page_summary
 
 
 def audit(

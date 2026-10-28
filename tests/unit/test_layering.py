@@ -756,3 +756,12 @@ def test_cached_guard_still_reads_changes_to_the_same_file(tmp_path: Path) -> No
     assert not (_imported_roots(_module_ast(module)) & FORBIDDEN_IN_ENGINES)
     module.write_text("import redis\n")
     assert _imported_roots(_module_ast(module)) & FORBIDDEN_IN_ENGINES == {"redis"}
+
+
+def test_shipped_modules_never_import_evaluation_tools() -> None:
+    """正式wheel不包含evals，评测工具只能调用正式实现，不能反向依赖。"""
+    for module in (PROJECT_ROOT / "comet_rag").rglob("*.py"):
+        imports = _imported_full(_module_ast(module), module)
+        assert not any(
+            name == "evals" or name.startswith("evals.") for name in imports
+        ), module

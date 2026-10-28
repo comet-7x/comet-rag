@@ -10,7 +10,10 @@ from hashlib import sha256
 from pathlib import Path
 from typing import BinaryIO
 
-from evals.pdf._v1_protocol import CaptureError, CaptureSource
+from comet_rag.infrastructure.extractors._mineru_v1_protocol import (
+    CaptureError,
+    CaptureSource,
+)
 
 CHUNK_BYTES = 64 * 1024
 

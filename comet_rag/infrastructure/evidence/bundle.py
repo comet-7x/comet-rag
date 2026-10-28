@@ -6,9 +6,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
-from comet_rag.ports.document_store import RevisionKey
-from evals.pdf._v1_protocol import digest
-from evals.pdf.structured import (
+from comet_rag.engines.documents.mineru.structured import (
     DEFAULT_LIMITS,
     POLICY,
     StructuredProjection,
@@ -16,7 +14,17 @@ from evals.pdf.structured import (
     project_structured,
     projection_payload,
 )
-from evals.pdf.structured_audit import read_limited
+from comet_rag.infrastructure.evidence.files import read_limited
+from comet_rag.ports.document_store import RevisionKey
+from comet_rag.ports.evidence import (
+    EvidenceBundle as EvidenceBundle,
+)
+from comet_rag.ports.evidence import (
+    EvidenceReference as EvidenceReference,
+)
+from comet_rag.ports.evidence import (
+    evidence_digest as digest,
+)
 
 MANIFEST_BYTES = 64 * 1024
 LEDGER_BYTES = 16 * 1024 * 1024
@@ -30,82 +38,6 @@ def _json(value: dict[str, object]) -> bytes:
     return (
         json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True) + "\n"
     ).encode()
-
-
-@dataclass(frozen=True, slots=True)
-class EvidenceReference:
-    """可放进有界恢复意图的小引用；摘要由调用方持久化，不由待读manifest自证。"""
-
-    key: RevisionKey
-    source_sha256: str
-    pages: int
-    canonical_sha256: str
-    manifest_sha256: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.key, RevisionKey):
-            raise ValueError("证据引用需要revision身份")
-        for value in (self.source_sha256, self.canonical_sha256, self.manifest_sha256):
-            digest(value)
-        if type(self.pages) is not int or not 0 < self.pages <= DEFAULT_LIMITS.pages:
-            raise ValueError("证据引用物理页数无效")
-
-    @property
-    def prefix(self) -> str:
-        # 不把来源路径或未转义的业务标识当作对象路径。
-        parts = (self.key.kb_id, self.key.source_id, self.key.revision_id)
-        identity = "/".join(sha256(p.encode()).hexdigest() for p in parts)
-        return f"evidence/v1/{identity}/{self.manifest_sha256}"
-
-    def payload(self) -> dict[str, object]:
-        return {
-            "schema_version": 1,
-            "key": {
-                "kb_id": self.key.kb_id,
-                "source_id": self.key.source_id,
-                "revision_id": self.key.revision_id,
-            },
-            "source_sha256": self.source_sha256,
-            "pages": self.pages,
-            "canonical_sha256": self.canonical_sha256,
-            "manifest_sha256": self.manifest_sha256,
-        }
-
-    @classmethod
-    def from_payload(cls, value: object) -> EvidenceReference:
-        if not isinstance(value, dict) or set(value) != {
-            "schema_version",
-            "key",
-            "source_sha256",
-            "pages",
-            "canonical_sha256",
-            "manifest_sha256",
-        }:
-            raise ValueError("证据引用字段不匹配")
-        if type(value["schema_version"]) is not int or value["schema_version"] != 1:
-            raise ValueError("证据引用版本不匹配")
-        key = value["key"]
-        if (
-            not isinstance(key, dict)
-            or set(key) != {"kb_id", "source_id", "revision_id"}
-            or not all(isinstance(v, str) for v in key.values())
-        ):
-            raise ValueError("证据revision身份不匹配")
-        return cls(
-            RevisionKey(key["kb_id"], key["source_id"], key["revision_id"]),
-            digest(value["source_sha256"]),
-            value["pages"],
-            digest(value["canonical_sha256"]),
-            digest(value["manifest_sha256"]),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class EvidenceBundle:
-    reference: EvidenceReference
-    manifest: bytes
-    native: bytes
-    ledger: bytes
 
 
 def build_bundle(

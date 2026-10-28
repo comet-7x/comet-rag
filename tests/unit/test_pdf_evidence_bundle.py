@@ -9,17 +9,17 @@ import pytest
 
 from comet_rag.engines.chunkers import FixedSizeChunker
 from comet_rag.engines.documents.normalization import MarkdownDocumentNormalizer
-from comet_rag.infrastructure.persistence.document_store.memory import (
-    InMemoryDocumentStore,
-)
-from comet_rag.ports.document_store import RevisionDraft, RevisionKey, StoredParent
-from evals.pdf import evidence_bundle as bundles
-from evals.pdf.evidence_bundle import (
+from comet_rag.infrastructure.evidence import bundle as bundles
+from comet_rag.infrastructure.evidence.bundle import (
     EvidenceReference,
     build_bundle,
     load_bundle,
     publish_bundle,
 )
+from comet_rag.infrastructure.persistence.document_store.memory import (
+    InMemoryDocumentStore,
+)
+from comet_rag.ports.document_store import RevisionDraft, RevisionKey, StoredParent
 from evals.pdf.page_sections import page_sections, split_page_sections
 from tests.unit.test_pdf_structured import SOURCE, block, fixture
 

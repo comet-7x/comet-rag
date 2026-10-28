@@ -5,11 +5,15 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from comet_rag.infrastructure.evidence.bundle import EvidenceReference, load_bundle
+from comet_rag.infrastructure.extractors._mineru_v1_protocol import (
+    TERMINAL,
+    digest,
+    identifier,
+)
 from comet_rag.infrastructure.sources.base import finish
 from comet_rag.ports.document_store import RevisionKey
 from comet_rag.tasks import Task, TaskBusy, TaskContext
-from evals.pdf._v1_protocol import TERMINAL, digest, identifier
-from evals.pdf.evidence_bundle import EvidenceReference, load_bundle
 
 INTENT = "mineru_v1_intent"
 OBSERVED = "mineru_v1_observed"

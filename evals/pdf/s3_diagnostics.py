@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
-from evals.pdf.structured import decode_json
+from comet_rag.engines.documents.mineru.structured import decode_json
 
 
 @dataclass(frozen=True, slots=True, order=True)

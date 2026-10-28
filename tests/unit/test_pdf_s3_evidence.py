@@ -10,7 +10,7 @@ import pytest
 from botocore.exceptions import ClientError, ConnectTimeoutError, ReadTimeoutError
 
 from comet_rag.core.concurrency import Gate
-from evals.pdf.s3_evidence import (
+from comet_rag.infrastructure.evidence.s3 import (
     AsyncS3EvidenceStore,
     S3EvidenceError,
     S3EvidenceLimits,
@@ -195,6 +195,39 @@ async def test_target_that_silently_overwrites_existing_probe_is_rejected() -> N
     with pytest.raises(S3EvidenceError, match="conditional_overwrite_accepted"):
         await adapter.verify_target()
     assert not adapter._verified
+
+
+async def test_unknown_probe_keeps_identity_when_remote_commit_arrives_later() -> None:
+    client = Client()
+    original = client.put_object
+    release = asyncio.Event()
+    pending = []
+
+    async def late_put(**kwargs):
+        async def commit():
+            await release.wait()
+            return await original(**kwargs)
+
+        pending.append(asyncio.create_task(commit()))
+        raise ReadTimeoutError(endpoint_url="https://example.invalid")
+
+    client.put_object = late_put
+    adapter = store(client)
+    intent = adapter.probe_key
+    try:
+        with pytest.raises(S3EvidenceError, match="put_response_unknown") as unknown:
+            await adapter.verify_target()
+        assert unknown.value.uncertain_key == intent
+        assert client.objects == {}
+        with pytest.raises(S3EvidenceError, match="conditional_capability_unverified"):
+            await adapter.publish(packet())
+        release.set()
+        await asyncio.gather(*pending)
+        assert client.objects == {intent: b'{"capability":"initial"}'}
+        assert len(client.calls) == 1
+    finally:
+        release.set()
+        await asyncio.gather(*pending)
 
 
 @pytest.mark.parametrize("status", [400, 403, 404, 409, 500])
