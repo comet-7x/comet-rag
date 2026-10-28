@@ -23,7 +23,10 @@ python -m pytest tests/integration/test_milvus.py -q
 # 真实回环 HTTP server，不需要外部网络。
 python -m pytest tests/integration/test_remote_sources.py -k 'not real_s3' -q
 
-# 专用 S3 服务，不会猜测用户配置。
+# 公开 AWS S3 匿名只读，联网但不需要账户或凭据。
+python -m pytest tests/integration/test_public_s3.py -q
+
+# 专用兼容 S3 服务，不会猜测用户配置。
 python -m pytest tests/integration/test_remote_sources.py -k real_s3 -q
 
 # 明确部署的 MinerU 2.6.8 /file_parse。
@@ -34,12 +37,15 @@ python -m pytest tests/integration/test_mineru.py -q
 |---|---|
 | PostgreSQL | `COMET_RAG_TEST_POSTGRES_URL`，SQLAlchemy asyncpg URL |
 | Milvus | `COMET_MILVUS_URI`，默认 `http://127.0.0.1:29530` |
-| S3 | `COMET_RAG_TEST_S3_ENDPOINT`、`COMET_RAG_TEST_S3_ACCESS_KEY`、`COMET_RAG_TEST_S3_SECRET_KEY`、`COMET_RAG_TEST_S3_REGION` |
+| 公开 AWS S3 | 无环境配置；固定 NOAA 小型公开对象，禁用 AWS 配置和凭据查找，只读 |
+| 专用兼容 S3 | `COMET_RAG_TEST_S3_ENDPOINT`、`COMET_RAG_TEST_S3_ACCESS_KEY`、`COMET_RAG_TEST_S3_SECRET_KEY`、`COMET_RAG_TEST_S3_REGION` |
 | MinerU | `COMET_RAG_TEST_MINERU_URL`，完整 `/file_parse` endpoint |
 
 PostgreSQL 测试在专用 V2 schema 中使用 UUID scope，模拟最终 manifest INSERT 故障验证真实回滚，检查自包含内容/实际表示、确认、重连、冲突和删除。Milvus 测试使用独立 scope 集合，prepare 失败不 drop，测试清理只删自己明确 records，集合保留。测试不会重启容器；函数中的 restart 指重新建立客户端，服务重启证据另由实际示例记录。
 
-S3 测试创建本次 UUID bucket/object，仅清理自己的对象。MinerU 测试上传生成的 PDF，并要求实际识别 Hello PDF、返回明确 partial Markdown。缺少部署时不执行它们，记录未验收，不能用 mock 替代。
+公开 S3 用例匿名只读 NOAA GHCN 的小型版本文件，通过独立 HTTPS 字节和 ETag 对照 SDK，验证实际解析、SHA/元信息/来源身份、超限拒绝、下载清理与借用客户端；不读取本机 AWS 配置或凭据，不创建/删除远端数据。公开文件会更新，ETag 不一致时测试失败，不能冒用旧 hash。该用例不覆盖认证、VersionId 或兼容服务。
+
+专用兼容 S3 测试创建本次 UUID bucket/object，仅清理自己的对象。MinerU 测试上传生成的 PDF，并要求实际识别 Hello PDF、返回明确 partial Markdown。缺少部署时不执行它们，记录未验收，不能用 mock 替代。
 
 CI 实际启动自己 runner 的 PostgreSQL/Milvus，执行五项 PG、两项 Milvus 和两项 HTTP 用例；该 job 不包含 S3/MinerU，也不伪称 GPU 或真实模型 job。
 
