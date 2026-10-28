@@ -17,19 +17,11 @@ jobs:
         run: |
           uv venv "$RUNNER_TEMP/comet-rag-core" --python 3.12
           uv pip install --python "$RUNNER_TEMP/comet-rag-core/bin/python" dist/*.whl
-      - name: 核心模块在仓库外可用
+      - name: 核心组件在仓库外跨进程读回
         working-directory: ${{ runner.temp }}
         run: |
-          "$RUNNER_TEMP/comet-rag-core/bin/python" -I -c '
-          import sys
-          from importlib.metadata import distribution
-          from comet_rag.documents.parsers import ArchiveLimits
-          from comet_rag.retrieval import reciprocal_rank_fusion
-          assert ArchiveLimits().max_members > 0
-          assert reciprocal_rank_fusion({"dense": ["a"], "keyword": ["a"]})[0].unit_id == "a"
-          assert not distribution("comet-rag").entry_points
-          assert not {"fastapi", "redis", "arq", "pymilvus", "sqlalchemy", "openai"} & sys.modules.keys()
-          '
+          "$RUNNER_TEMP/comet-rag-core/bin/python" -I "$GITHUB_WORKSPACE/scripts/check_core_install.py" --output-dir "$RUNNER_TEMP/comet-rag-roundtrip" --phase write
+          "$RUNNER_TEMP/comet-rag-core/bin/python" -I "$GITHUB_WORKSPACE/scripts/check_core_install.py" --output-dir "$RUNNER_TEMP/comet-rag-roundtrip" --phase read
 
   typecheck:
     name: 类型检查
@@ -57,3 +49,26 @@ jobs:
           name: coverage
           path: coverage.xml
           if-no-files-found: error
+
+  integration:
+    name: PostgreSQL、Milvus 与 HTTP 实际集成
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMET_MILVUS_URI: http://127.0.0.1:29530
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: 启动本次 runner 后端并验证真实协议
+        shell: bash
+        run: |
+          export COMET_V2_POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+          export COMET_RAG_TEST_POSTGRES_URL="postgresql+asyncpg://comet_v2:${COMET_V2_POSTGRES_PASSWORD}@127.0.0.1:15432/comet_rag_v2"
+          docker compose up -d --wait --wait-timeout 240
+          uv run --locked pytest tests/integration/test_postgres.py tests/integration/test_milvus.py tests/integration/test_remote_sources.py -k 'not real_s3' -q
+      - name: 保留后端失败日志
+        if: failure()
+        run: docker compose logs --no-color

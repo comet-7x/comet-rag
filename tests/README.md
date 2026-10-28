@@ -1,15 +1,59 @@
 # V2 测试
 
-默认 `uv run --locked pytest` 只收集 `tests/unit`，不访问真实网络、GPU 或数据库。阶段 0 验证包和现有纯行为：ZIP/XML 资源限额、RRF 单元排名以及 DOCX/PDF 来源夹具。旧服务和接口的测试已随旧代码移除，旧分支保留历史；没有用 skip 隐藏这些用例。
+默认 pytest 只运行 `tests/unit`，不访问真实网络、模型、GPU 或数据库。真实 SDK/服务检查显式选择 integration；选中缺配置/后端时直接失败，没有全局 skip。测试默认使用 importlib 收集，unit/integration 同名文件可一同执行。
 
 ```bash
-make test
+make install
+make check
 make coverage
-uv run --locked pytest --collect-only -q
+make pre-commit
 ```
 
-`fixtures/docx/build.py` 保留标题/富文本/列表、表格/合并/网格缺口、图片、公式和页眉页脚样例；`fixtures/pdf.py` 保留文本层与扫描样例。测试核对生成文件的原始结构和内容。来源夹具可继续适配新版解析器，旧解析器 JSON 快照不作为 V2 契约。
+单元测试包括身份/codec 错误输入、自包含结构、ZIP/XML/图片/流式预算、来源准入与清理、线程取消排干、模型身份映射、过滤、manifest、unit 归并/RRF 和重排/父上下文。一致性守卫有对应错误输入；架构导入守卫也注入非法 import 证明会失败。DOCX/PDF 来源夹具保留可读生成代码，不用旧 parser JSON 快照作新契约。
 
-新的不变量使用独立预期值和反例，迁移保护时保留错误路径。守卫应注入对应错误证明会失败；不从实现常量自动生成期望。
+## 显式真实集成
 
-后续 `tests/contracts` 放可由多个新后端实现共用的行为断言，`tests/integration` 放真实协议、持久化、重启与范围隔离检查；有实际实现时再创建。显式选择真实集成用例，缺少后端应说明未验收，不能把跳过算作通过。阶段 0 无真实集成测试，单元覆盖率只描述当前少量实现。
+```bash
+# 提前给定专用测试 PostgreSQL URL；不要连接旧资料数据库。
+python -m pytest tests/integration/test_postgres.py -q
+
+# COMET_MILVUS_URI 可覆盖默认回环地址 29530；每次使用 UUID scope。
+python -m pytest tests/integration/test_milvus.py -q
+
+# 真实回环 HTTP server，不需要外部网络。
+python -m pytest tests/integration/test_remote_sources.py -k 'not real_s3' -q
+
+# 专用 S3 服务，不会猜测用户配置。
+python -m pytest tests/integration/test_remote_sources.py -k real_s3 -q
+
+# 明确部署的 MinerU 2.6.8 /file_parse。
+python -m pytest tests/integration/test_mineru.py -q
+```
+
+| 用例 | 显式配置 |
+|---|---|
+| PostgreSQL | `COMET_RAG_TEST_POSTGRES_URL`，SQLAlchemy asyncpg URL |
+| Milvus | `COMET_MILVUS_URI`，默认 `http://127.0.0.1:29530` |
+| S3 | `COMET_RAG_TEST_S3_ENDPOINT`、`COMET_RAG_TEST_S3_ACCESS_KEY`、`COMET_RAG_TEST_S3_SECRET_KEY`、`COMET_RAG_TEST_S3_REGION` |
+| MinerU | `COMET_RAG_TEST_MINERU_URL`，完整 `/file_parse` endpoint |
+
+PostgreSQL 测试在专用 V2 schema 中使用 UUID scope，模拟最终 manifest INSERT 故障验证真实回滚，检查自包含内容/实际表示、确认、重连、冲突和删除。Milvus 测试使用独立 scope 集合，prepare 失败不 drop，测试清理只删自己明确 records，集合保留。测试不会重启容器；函数中的 restart 指重新建立客户端，服务重启证据另由实际示例记录。
+
+S3 测试创建本次 UUID bucket/object，仅清理自己的对象。MinerU 测试上传生成的 PDF，并要求实际识别 Hello PDF、返回明确 partial Markdown。缺少部署时不执行它们，记录未验收，不能用 mock 替代。
+
+CI 实际启动自己 runner 的 PostgreSQL/Milvus，执行五项 PG、两项 Milvus 和两项 HTTP 用例；该 job 不包含 S3/MinerU，也不伪称 GPU 或真实模型 job。
+
+## 核心安装与真实模型
+
+`uv build` 后，在仓库外建立只安装 wheel 的环境（只有 comet-rag 和 lxml），用独立解释器执行：
+
+```bash
+python -I /absolute/path/to/scripts/check_core_install.py --output-dir /new/external/roundtrip --phase write
+python -I /absolute/path/to/scripts/check_core_install.py --output-dir /new/external/roundtrip --phase read
+```
+
+脚本实际解析 UTF-8/CRLF 文件、跨进程 JSON 读回、Markdown 派生、自包含索引内容和无模型 keyword 检索，核对身份与无可选 SDK 导入。手工二维向量仅用于核心存储/编排检查，不是模型验收。
+
+真实模型和持久流程在 [examples](../examples/README.md) 中执行，策略质量/成本在 [evals](../evals/README.md)。它们固定本地权重与图片指纹，保存原始证据，默认单元测试不会下载或加载模型。四种模态组合、临时文件释放、新进程重连与真正服务重启分别记录。
+
+本轮实际结果与未验收项见 [validation](../docs/validation.md)。单元覆盖率包含未在 unit 中运行的真实 PostgreSQL 适配器，百分比不代表完整系统验收。
