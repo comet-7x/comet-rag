@@ -432,6 +432,9 @@ class DocxParser:
                 _grp_fmt = fmt
                 _grp_text = text
 
+        # 损坏的Word字段可能没有end；保住已经出现的显示结果，不输出字段指令。
+        if _field_in and _field_phase == "result" and _field_text:
+            elems.append((_field_text, _field_fmt or _PLAIN, _field_url or None))
         _flush()
         return _merge_segs(elems)
 
@@ -686,19 +689,8 @@ class DocxParser:
         )
 
     def _get_numId_ilvl(self, paragraph: Paragraph) -> tuple[int | None, int | None]:
-        # 必须剔掉 `None` 键（默认命名空间）：`find()` 走的是 ElementPath，
-        # 它不支持空前缀，喂进去会直接抛 ValueError，整份文件的列表编号识别
-        # 当场崩掉。
-        #
-        # 测试样本常用带前缀命名空间，但默认命名空间在
-        # OOXML 里完全合法，只是不常见。拿"实际文件通常都带前缀"当不变式，
-        # 等于把正确性押在数据分布上。
-        nsmap = {
-            prefix: uri
-            for prefix, uri in paragraph._element.nsmap.items()
-            if prefix is not None
-        }
-        numPr = paragraph._element.find(".//w:numPr", namespaces=nsmap)
+        # XML身份由URI决定，不能依赖来源是否声明了w前缀。
+        numPr = paragraph._element.find(f".//{{{_W}}}numPr")
         if numPr is None:
             return None, None
 
@@ -711,8 +703,8 @@ class DocxParser:
                 return None
 
         return (
-            _int(numPr.find("w:numId", namespaces=nsmap)),
-            _int(numPr.find("w:ilvl", namespaces=nsmap)),
+            _int(numPr.find(f"{{{_W}}}numId")),
+            _int(numPr.find(f"{{{_W}}}ilvl")),
         )
 
     def _is_numbered_list(self, numId: int, ilvl: int) -> bool:
@@ -1016,7 +1008,7 @@ class DocxParser:
     def _is_caption(self, element: Any) -> bool:
         """Detect Word captions: they contain a SEQ field instruction."""
         for instr in element.findall(f".//{{{_W}}}instrText"):
-            if instr.text and "SEQ" in instr.text:
+            if instr.text and re.match(r"\s*SEQ\s", instr.text, re.IGNORECASE):
                 return True
         return False
 

@@ -406,3 +406,11 @@ with zipfile.ZipFile("your_file.docx") as z:
 ## 核心设计思想（一句话总结）
 
 > XML 的树形结构 = 数学公式的嵌套结构，树的递归遍历天然对应公式的递归转换。`_walk` 保证内容顺序，`oMath2Latex` 的 `tag2meth` 路由表 + `process_children` 递归保证公式结构完整转换。
+
+## 有效 XML 与不完整字段边界
+
+列表属性按Word命名空间URI读取，不要求来源声明`w`前缀；默认命名空间的普通段落
+和编号段落均可解析。段落末尾缺字段end时保留已出现的显示结果，不输出指令文字。
+题注只匹配SEQ指令token，REF/NOTEREF中包含SEQ的锚点不当作题注。生成XML回归见
+`tests/unit/engines/test_docx_valid_input_edges.py`；既有快照未重生成。该修复不扩展
+文本框、嵌套表或二进制OLE支持，也不声称完整嵌套字段状态机。
