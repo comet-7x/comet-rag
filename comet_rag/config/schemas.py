@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from enum import StrEnum
 from typing import Self
 
@@ -501,6 +502,19 @@ class LimitsConfig(BaseModel):
         description="样本不足这个数时一律判正常。"
         "服务刚起来或流量很低时，头几次失败不该被当成故障",
     )
+
+    @field_validator("degrade_failure_rate", "degrade_saturation")
+    @classmethod
+    def validate_degradation_thresholds(
+        cls, values: tuple[float, float, float], info
+    ) -> tuple[float, float, float]:
+        if any(not math.isfinite(v) or v <= 0 for v in values):
+            raise ValueError("降级阈值必须为有限正数")
+        if info.field_name == "degrade_failure_rate" and any(v > 1 for v in values):
+            raise ValueError("降级失败率不得超过1")
+        if not values[0] <= values[1] <= values[2]:
+            raise ValueError("降级阈值必须按级别递增")
+        return values
 
 
 class IngestPolicyConfig(BaseModel):

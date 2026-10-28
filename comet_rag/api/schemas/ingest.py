@@ -1,17 +1,12 @@
 from __future__ import annotations
 
 # 入库接口出入参。
-from typing import Any
-
 from pydantic import BaseModel, Field
 
+from comet_rag.services.ingestion import IngestRequest
 
-class IngestSubmit(BaseModel):
-    kb_id: str = Field(..., min_length=1, description="目标知识库")
-    source: str = Field(..., min_length=1, description="本地路径或 URL")
-    metadata: dict[str, Any] = Field(
-        default_factory=dict, description="附加到每个 chunk 的元数据"
-    )
+
+class IngestSubmit(IngestRequest):
     idempotency_key: str | None = Field(
         default=None,
         description="防重复提交。同 key 重复提交返回既有任务，不会跑两遍。",

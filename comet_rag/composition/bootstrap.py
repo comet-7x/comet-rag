@@ -52,6 +52,7 @@ from comet_rag.ports.document_store import DocumentStore
 from comet_rag.ports.knowledge_base import (
     KnowledgeBaseRepository,
 )
+from comet_rag.services.flat_write import FLAT_WRITE_KIND
 from comet_rag.services.ingestion import INGEST_KIND
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.services.retrieval import RetrievalService
@@ -60,9 +61,9 @@ from comet_rag.services.revision_ingestion import REVISION_INGEST_KIND
 from comet_rag.services.revision_maintenance import RevisionMaintenance
 from comet_rag.services.revision_reconciliation import (
     RevisionReconciler,
-    guard_revision_task_deletion,
 )
 from comet_rag.services.source_policy import SourcePolicy, build_source_policy
+from comet_rag.services.task_retention import guard_task_deletion
 from comet_rag.tasks import (
     LANE_CPU,
     InMemoryTaskStore,
@@ -667,8 +668,9 @@ async def build_context(
             rollback.push_async_callback(close_resource, vector_store)
         if task_store is None:
             task_store = build_task_store(config, database)
-        if writing_binding is not None and await task_store.list_tasks(
-            kind=INGEST_KIND, limit=1
+        if writing_binding is not None and (
+            await task_store.list_tasks(kind=INGEST_KIND, limit=1)
+            or await task_store.list_tasks(kind=FLAT_WRITE_KIND, limit=1)
         ):
             raise ValueError(
                 "revision 生产写要求独立任务命名空间，发现 legacy ingest 记录"
@@ -710,7 +712,7 @@ async def build_context(
                 task_store,
                 task_executor,
                 max_backlog=config.limits.max_backlog,
-                delete_guard=guard_revision_task_deletion,
+                delete_guard=guard_task_deletion,
                 pending_kinds=runners.kinds,
             ),
             retrieval=RetrievalService(

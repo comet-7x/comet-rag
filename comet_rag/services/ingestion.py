@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from comet_rag.core.concurrency import Overloaded
 from comet_rag.core.logging import logger
+from comet_rag.engines.chunkers import ChunkDraft
 from comet_rag.engines.documents.normalization import (
     DocumentNormalizationStrategy,
     MarkdownDocumentNormalizer,
@@ -43,6 +45,7 @@ from comet_rag.services.chunking import (
     load_document_blocks,
     materialize_chunk_drafts,
 )
+from comet_rag.services.flat_write import FlatWritePermit, flat_source_write
 from comet_rag.services.knowledge_base import KnowledgeBaseService
 from comet_rag.tasks import (
     LANE_CPU,
@@ -80,6 +83,19 @@ class IngestRequest(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="附加到每个 chunk 的额外元数据"
     )
+
+    @field_validator("metadata")
+    @classmethod
+    def bounded_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        # metadata会复制到每个块；入口限长不能代替JSON解析器/反向代理的请求体限制。
+        # Any用于兼容调用方的JSON值，非JSON对象和非有限数字在持久化前明确拒绝。
+        try:
+            raw = json.dumps(value, ensure_ascii=False, allow_nan=False).encode()
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise ValueError("入库metadata必须是有限JSON对象") from exc
+        if len(raw) > 64 * 1024:
+            raise ValueError("入库metadata超过64KiB")
+        return value
 
 
 @dataclass(slots=True)
@@ -174,6 +190,8 @@ class DocumentExtraction:
             document = await run_sync(self._normalizer.normalize, extracted)
             text = document.markdown
             self._validate_extracted_text_size(text, file_type)
+            if not text.strip():
+                raise ValueError("提取结果没有可索引正文，保留既有文档")
             extracted_text_bytes = len(text.encode("utf-8"))
 
             await ctx.put_bounded(
@@ -337,6 +355,8 @@ class IngestRunner:
         task = await ctx.snapshot()
         request = IngestRequest.model_validate(task.request)
         drafts = load_chunk_drafts(task.context["chunk_drafts"])
+        if not drafts:
+            raise ValueError("分块结果为空，禁止清理既有文档")
         source_id: str = task.context["source_id"]
         file_type: str = task.context["file_type"]
         raw_document_metadata = task.context.get("document_metadata")
@@ -353,10 +373,32 @@ class IngestRunner:
         # 这两类都是确定性错误，刻意放在 _classify 之外让它们一次判死。
         kb = await self._kb.resolve_for_ingest(request.kb_id)
 
-        try:
-            await self._vector_store.ensure_collection(
-                request.kb_id, dim=kb.embedding_dim
+        async with flat_source_write(ctx, request.kb_id, source_id) as permit:
+            return await self._write_chunks(
+                ctx,
+                request,
+                drafts,
+                source_id,
+                file_type,
+                document_metadata,
+                kb.embedding_dim,
+                permit,
             )
+
+    async def _write_chunks(
+        self,
+        ctx: TaskContext,
+        request: IngestRequest,
+        drafts: list[ChunkDraft],
+        source_id: str,
+        file_type: str,
+        document_metadata: dict[str, Any],
+        dimension: int,
+        permit: FlatWritePermit,
+    ) -> Done:
+        task = await ctx.snapshot()
+        try:
+            await self._vector_store.ensure_collection(request.kb_id, dim=dimension)
 
             # 旧版本有多少块 —— 用来算写完之后该清掉哪些尾巴。
             # **必须在写之前数**：写完之后新旧混在一起就分不出来了。
@@ -396,7 +438,7 @@ class IngestRunner:
                     )
                     for chunk, embedding in zip(batch, embeddings, strict=True)
                 ]
-                await self._vector_store.upsert(request.kb_id, records)
+                await permit.write(self._vector_store.upsert(request.kb_id, records))
                 written += len(records)
                 await ctx.report(
                     progress=0.66 + 0.34 * written / max(len(chunks), 1),
@@ -405,7 +447,9 @@ class IngestRunner:
 
             # 新版本比旧的短时，清掉多出来的尾巴。
             # 必须先完成全部写入，失败时才能保留仍可用的旧版本。
-            await self._drop_stale_tail(request.kb_id, source_id, len(chunks), previous)
+            await permit.write(
+                self._drop_stale_tail(request.kb_id, source_id, len(chunks), previous)
+            )
         except Exception as exc:
             raise _classify(exc, "indexing") from exc
 

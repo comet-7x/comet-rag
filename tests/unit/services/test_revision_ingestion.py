@@ -40,6 +40,33 @@ from tests.unit.services.test_revision_indexing import (
 )
 
 
+@pytest.mark.parametrize("fault", ["blank_source", "empty_hierarchy"])
+async def test_empty_reingest_never_activates_over_the_previous_revision(
+    environment, monkeypatch, fault
+):
+    from comet_rag.engines.indexing import ChunkHierarchy  # noqa: PLC0415
+
+    runner, _, context, _, documents, vectors, _, path = environment
+    first = await context()
+    await runner(first)
+    # 来源ID是完整URI摘要，期望从任务持久化身份取得，而非从判活实现推导。
+    source_id = (await first.snapshot()).context["source_id"]
+    before = await documents.get_active_revisions("kb", [source_id])
+    assert before[source_id] is not None
+    records = await vectors.count("kb")
+    if fault == "blank_source":
+        path.write_text(" \n\t ")
+    else:
+        monkeypatch.setattr(
+            runner._hierarchy, "split", lambda _: ChunkHierarchy((), ())
+        )
+    second = await context()
+    with pytest.raises(ValueError, match="(正文|空)"):
+        await runner(second)
+    assert await documents.get_active_revisions("kb", [source_id]) == before
+    assert await vectors.count("kb") == records
+
+
 @pytest.fixture
 async def environment(tmp_path):
     path = tmp_path / "document.stub"

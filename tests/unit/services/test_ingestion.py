@@ -648,6 +648,101 @@ async def test_reingest_replaces_old_chunks(
     assert {r["id"] for r in store.snapshot()[KB]} == ids_before
 
 
+async def test_concurrent_reingest_cannot_delete_another_writers_new_chunks(
+    svc, store, monkeypatch
+):
+    initial = await svc.submit(INGEST_KIND, request())
+    assert (
+        await wait_for_terminal(svc.store, initial.task_id)
+    ).status is TaskStatus.SUCCEEDED
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = store.upsert
+
+    async def pause(kb_id, records):
+        if any(r.text.startswith("version-A") for r in records):
+            entered.set()
+            await release.wait()
+        await original(kb_id, records)
+
+    monkeypatch.setattr(store, "upsert", pause)
+    with AsyncPipelineHooks.temporary():
+
+        @AsyncPipelineHooks.document_chunker(STUB_TYPE)
+        def five(document, config):
+            return [ChunkDraft(f"version-A-{i}", i) for i in range(5)]
+
+        first = await svc.submit(INGEST_KIND, request())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+
+            @AsyncPipelineHooks.document_chunker(STUB_TYPE)
+            def one(document, config):
+                return [ChunkDraft("version-B-0", 0)]
+
+            second = await svc.submit(INGEST_KIND, request())
+            rejected = await wait_for_terminal(svc.store, second.task_id)
+            assert rejected.status is TaskStatus.FAILED
+            assert rejected.error is not None and rejected.error.code == "TaskBusy"
+        finally:
+            release.set()
+        assert (
+            await wait_for_terminal(svc.store, first.task_id)
+        ).status is TaskStatus.SUCCEEDED
+    assert {r["text"] for r in store.snapshot()[KB]} == {
+        f"version-A-{i}" for i in range(5)
+    }
+
+
+@pytest.mark.parametrize("fault", ["empty_extraction", "empty_chunker"])
+async def test_empty_reingest_never_replaces_previous_content(svc, store, fault):
+    initial = await svc.submit(INGEST_KIND, request())
+    await wait_for_terminal(svc.store, initial.task_id)
+    before = store.snapshot()
+    with AsyncPipelineHooks.temporary():
+        if fault == "empty_extraction":
+
+            @AsyncPipelineHooks.sync_extractor(STUB_TYPE)
+            def empty(content, config):
+                return ExtractedDocument(" \n\t ")
+        else:
+
+            @AsyncPipelineHooks.document_chunker(STUB_TYPE)
+            def no_chunks(document, config):
+                return []
+
+        again = await svc.submit(INGEST_KIND, request())
+        done = await wait_for_terminal(svc.store, again.task_id)
+        assert done.status is TaskStatus.FAILED
+        assert done.resume_stage == (
+            "extracting" if fault == "empty_extraction" else "chunking"
+        )
+    assert store.snapshot() == before
+
+
+async def test_empty_persisted_drafts_are_rejected_before_stale_tail_deletion(
+    svc, store
+):
+    initial = await svc.submit(INGEST_KIND, request())
+    done = await wait_for_terminal(svc.store, initial.task_id)
+    assert done.result is not None
+    before = store.snapshot()
+    source_id = done.result["source_id"]
+    resumed = await svc.submit(
+        INGEST_KIND,
+        request(),
+        resume_stage="indexing",
+        context={
+            "chunk_drafts": [],
+            "source_id": source_id,
+            "source": request()["source"],
+            "file_type": STUB_TYPE,
+        },
+    )
+    rejected = await wait_for_terminal(svc.store, resumed.task_id)
+    assert rejected.status is TaskStatus.FAILED and rejected.resume_stage == "indexing"
+    assert store.snapshot() == before
+
+
 async def test_reingest_removes_chunks_that_no_longer_exist(
     svc: TaskService, store: AsyncInMemoryVectorStore, calls: dict[str, int]
 ) -> None:

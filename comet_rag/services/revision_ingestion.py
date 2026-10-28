@@ -146,7 +146,7 @@ class RevisionIngestRunner:
                 if self._hierarchy is not None
                 else self._chunking.split(file_type, document)
             )
-            return self._planner.plan(
+            prepared = self._planner.plan(
                 chunks,
                 key=key,
                 source=source,
@@ -154,6 +154,9 @@ class RevisionIngestRunner:
                 document_metadata=document.metadata,
                 request_metadata=request.metadata,
             )
+            if not prepared.vector_children:
+                raise ValueError("分块结果为空，禁止激活空版本")
+            return prepared
 
         prepared = await run_sync(plan)
         await self._stages.prepare(ctx, prepared)

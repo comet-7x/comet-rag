@@ -47,6 +47,40 @@ def test_revision_read_defaults_are_disabled_and_bounded() -> None:
     assert settings.max_revision_candidates == 2048
 
 
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("degrade_failure_rate", (-0.2, 0.5, 0.8)),
+        ("degrade_failure_rate", (0, 0.5, 0.8)),
+        ("degrade_failure_rate", (0.2, 0.5, 1.1)),
+        ("degrade_failure_rate", (float("nan"), 0.5, 0.8)),
+        ("degrade_saturation", (2, -5, 10)),
+        ("degrade_saturation", (2, 5, float("inf"))),
+        ("degrade_saturation", (10, 5, 2)),
+    ],
+)
+def test_degradation_thresholds_fail_config_preflight(name, value):
+    with pytest.raises(ValueError):
+        LimitsConfig(**{name: value})
+
+
+def test_ingest_metadata_budget_applies_to_api_and_service():
+    from comet_rag.api.schemas.ingest import IngestSubmit  # noqa: PLC0415
+    from comet_rag.services.ingestion import IngestRequest  # noqa: PLC0415
+
+    for model in (IngestSubmit, IngestRequest):
+        assert model(kb_id="kb", source="source", metadata={"key": "ok"}).metadata == {
+            "key": "ok"
+        }
+        for metadata in (
+            {"large": "x" * 65536},
+            {"nonfinite": float("nan")},
+            {"invalid": object()},
+        ):
+            with pytest.raises(ValueError):
+                model(kb_id="kb", source="source", metadata=metadata)
+
+
 @pytest.mark.parametrize("cap", [0, -1, 2049, True, 1.5, "64"])
 def test_revision_candidate_budget_is_a_strict_bounded_integer(cap) -> None:
     with pytest.raises(ValueError):
