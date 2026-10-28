@@ -1,0 +1,792 @@
+{
+  "date": "2026-10-27",
+  "previous_head": "c8d9a3727227ad78b8a4bb73b84f6e90ed902176",
+  "scope": "isolated upstream 4.0.12 capability and source-probe validation; not a production migration or independent quality acceptance",
+  "versions": {
+    "python": "3.12.13",
+    "mineru": "4.0.12",
+    "mineru-vl-utils": "2.0.7",
+    "docvortex": "0.6.4",
+    "small_backend": "onnx",
+    "device": "cpu",
+    "tier": "advanced"
+  },
+  "settings": {
+    "model": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+    "vlm_port": 9919,
+    "max_concurrency": 2,
+    "processing_window_size": 2,
+    "document_job_concurrency": 1,
+    "page_range": "all",
+    "ocr_mode": "auto",
+    "llm_aided_features": false
+  },
+  "model_identity": {
+    "http_status": 200,
+    "expected_model": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+    "immutable_fields": {}
+  },
+  "upstream_release_commit": "b7f3dd0c5f6e6d66a298239ffd02b328b873918e",
+  "upstream_release_source_checks": [
+    {
+      "path": "mineru/parser/base.py",
+      "sha256": "16d61cb51b93dece48306415cac256f0070e62730006e90e778cba51c0acee1b",
+      "release_bytes_match": true
+    },
+    {
+      "path": "mineru/parser/api_server.py",
+      "sha256": "622e4d9c10b0044b5535fec189c77e847939550ee3d792b53d7161bd0440fe66",
+      "release_bytes_match": true
+    },
+    {
+      "path": "mineru/backend/analysis/pdf/pipeline.py",
+      "sha256": "9c3a166a98d242190ee2137485e8f00b0c621a79c767e710184467c453402491",
+      "release_bytes_match": true
+    },
+    {
+      "path": "mineru/backend/analysis/pdf/window.py",
+      "sha256": "655e823dd4002173e7740775d6f67296e24f6520d6b9e7b8c23e795baf4ac535",
+      "release_bytes_match": true
+    },
+    {
+      "path": "mineru/model/registry.py",
+      "sha256": "fdee44ee20f759c6ce775c40a0415f17327a974bfa3cbfd821ee5b83a52374b0",
+      "release_bytes_match": true
+    }
+  ],
+  "small_models": {
+    "repository": "opendatalab/MinerU-4_models_onnx",
+    "revision": "358310b4f64b95f9fefc372ad899356e4111f376",
+    "files": [
+      {
+        "path": "Layout/PP-DocLayoutV2/inference.onnx",
+        "bytes": 213963712,
+        "sha256": "cd540dc296ff3115fe78efa65b68501e6a8dc74b198acc9834a725ffaa095aac"
+      },
+      {
+        "path": "Layout/PP-DocLayoutV2/inference.yml",
+        "bytes": 1482,
+        "sha256": "93100e0fb2cd76b9d246a853deea85e191d8333b2cfca7be76e82e4c4ebfa819"
+      },
+      {
+        "path": "MFR/pp_formulanet_plus_m/PP-FormulaNet_plus-M.onnx",
+        "bytes": 591263297,
+        "sha256": "20a32595c2b30282dcd069e6295e9fad96115697beb66acb9b681b814006d193"
+      },
+      {
+        "path": "MFR/pp_formulanet_plus_m/PP-FormulaNet_plus-M_inference.yml",
+        "bytes": 2244564,
+        "sha256": "87b5f3d7f2b2fe553627d77b37f496608ca150ebd0ef62d362591edca47b5538"
+      },
+      {
+        "path": "OCR/paddleocr/ch_PP-OCRv6_small_rec_infer.onnx",
+        "bytes": 21159378,
+        "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
+      },
+      {
+        "path": "OCR/paddleocr/ch_PP-OCRv6_small_rec_inference.yml",
+        "bytes": 150752,
+        "sha256": "c0541b06832948d7d3052e9ac6b572c6063d79ecd800493f4ec14d1b901c16d7"
+      },
+      {
+        "path": "OCR/paddleocr/ch_PP-OCRv6_tiny_det_infer.onnx",
+        "bytes": 1780590,
+        "sha256": "193bab7a04fca699a6c82e6abb5b81bdb28177f0abd4062552b04908dafb19f8"
+      },
+      {
+        "path": "OCR/paddleocr/ch_PP-OCRv6_tiny_det_inference.yml",
+        "bytes": 1068,
+        "sha256": "a1fa68ab31e29252936328e728633180908f997023d9eacb81f175e326676554"
+      },
+      {
+        "path": "OCR/paddleocr/seal_PP-OCRv4_det_infer.onnx",
+        "bytes": 4769171,
+        "sha256": "3e190df84542c2756975febe8f73603b587a23c7f7badfdd3fc8a986540d5bc0"
+      },
+      {
+        "path": "OCR/paddleocr/seal_PP-OCRv4_det_inference.yml",
+        "bytes": 711,
+        "sha256": "e5b8dd5a727602bdd526d9db152cc767bc761198c453460df7c8f7ae59d2ea3c"
+      },
+      {
+        "path": "Table/PP-LCNet_x1_0_table_cls.onnx",
+        "bytes": 6776877,
+        "sha256": "c84bf1d79c1c74d534b5b12adb14dd12151c42f7ae3e4be4f1042b830f80b949"
+      },
+      {
+        "path": "Table/slanet-plus.onnx",
+        "bytes": 7758305,
+        "sha256": "d57a942af6a2f57d6a4a0372573c696a2379bf5857c45e2ac69993f3b334514b"
+      },
+      {
+        "path": "Table/unet.onnx",
+        "bytes": 8335007,
+        "sha256": "0ea48d3a17e35ef5c2e498a5e799566073234d39b1079ca21d9f4fafe73c6d20"
+      }
+    ]
+  },
+  "runtime_snapshot_sha256": "6c639cf7ab5a9705242fc25ad26a759e032250e7295f8f2cad90b1201d245f51",
+  "sources": [
+    {
+      "id": "squid",
+      "pages": 60,
+      "bytes": 9024767,
+      "sha256": "e42f3b70cee6344ca8e0cb06ccc4028e56a05266cbd331c9e008fe05e62a2ffe"
+    },
+    {
+      "id": "nist145",
+      "pages": 7,
+      "bytes": 85781,
+      "sha256": "7b0c1a9fdfc67218b8ba2098f448c100c27070db91736b3c87fed63bfa21d418"
+    },
+    {
+      "id": "nist144",
+      "pages": 80,
+      "bytes": 1105061,
+      "sha256": "47f0fdf31f4f2b37fb2a8fa0bf77235aad0b3daa74a6397603a619a839500a42"
+    }
+  ],
+  "legacy_3_4_5_pro_public_baselines": [
+    {
+      "sample": "nist145",
+      "elapsed_seconds": 11.093414125032723,
+      "page_status": "verified",
+      "page_numbers": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "normalized_empty_page_numbers": [],
+      "normalized_sha256": "1fc913137715bc27cb5a3043df9041f7c3522a7401b469cb9aa493aa1b9d6115",
+      "normalized_characters": 10151,
+      "block_count": 7
+    },
+    {
+      "sample": "nist144",
+      "elapsed_seconds": 133.83737720781937,
+      "page_status": "verified",
+      "page_numbers": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80
+      ],
+      "normalized_empty_page_numbers": [],
+      "normalized_sha256": "fc448fc7c296f7069e61659a449a3edf24b513400eeac75a3de60387ca5b6a2c",
+      "normalized_characters": 222215,
+      "block_count": 80
+    }
+  ],
+  "runs": [
+    {
+      "name": "v4-off-squid-zip",
+      "elapsed_seconds": 90.65034225024283,
+      "page_range": "all",
+      "tier": "advanced",
+      "image_analysis": false,
+      "model": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+      "physical_pages": 60,
+      "http_bundle_default_rerender_exact": true,
+      "variants": {
+        "default": {
+          "characters": 176878,
+          "empty_pages": [
+            59,
+            60
+          ],
+          "per_page_exact_document_rebuild": false,
+          "details": 0,
+          "sha256": "d25b25060c79bd2e61b4692f4823fb90f7fbca033da3512502d6819b07603572",
+          "last_page_characters": 0
+        },
+        "full": {
+          "characters": 177813,
+          "empty_pages": [],
+          "per_page_exact_document_rebuild": true,
+          "details": 0,
+          "sha256": "f148e15a80057d184a3d0c8b95331272405e77fea3fd3528597ca75e4582ed23",
+          "last_page_characters": 288
+        }
+      },
+      "types": {
+        "paragraph_title": 44,
+        "text": 1572,
+        "image": 44,
+        "image_body": 44,
+        "footer": 11,
+        "header": 2,
+        "hyperlink": 161,
+        "list": 25,
+        "table": 8,
+        "table_body": 8,
+        "page_number": 42,
+        "image_footnote": 18,
+        "image_caption": 23,
+        "doc_title": 1,
+        "table_caption": 7,
+        "table_footnote": 7,
+        "ref_text": 204
+      },
+      "last_page_types": {
+        "footer": 8
+      },
+      "zip_compressed_bytes": 27986329,
+      "zip_expanded_bytes": 35648922,
+      "model_output_bytes": 20160497,
+      "zip_image_files": 52,
+      "http_markdown_bytes": 17455238,
+      "middle_json_bytes": 538694,
+      "quality_views": {
+        "default": {
+          "normalized_empty_page_numbers": [
+            59,
+            60
+          ],
+          "normalized_sha256": "deaa5377c615f685411e03d21ab28b326d72af4f9efa8ca00843edbf9cd2396d",
+          "normalized_characters": 176885,
+          "block_count": 58,
+          "exact_source_span_and_page_chunk_audit": "verified",
+          "fact_probes_passed": 13,
+          "fact_probes_total": 13,
+          "back_cover_probes_passed": 0,
+          "back_cover_probes_total": 3,
+          "back_cover_characters": 0,
+          "table": {
+            "name": "v4-off-squid-zip-default",
+            "matching_header_tables": 1,
+            "numeric_cells_passed": 24,
+            "numeric_cells_total": 24
+          }
+        },
+        "full": {
+          "normalized_empty_page_numbers": [],
+          "normalized_sha256": "4ca3f84f4e58c57527439621cefcf6d24e2d3dd0fc43fbb7002f2230a47b673b",
+          "normalized_characters": 177518,
+          "block_count": 60,
+          "exact_source_span_and_page_chunk_audit": "verified",
+          "fact_probes_passed": 13,
+          "fact_probes_total": 13,
+          "back_cover_probes_passed": 3,
+          "back_cover_probes_total": 3,
+          "back_cover_characters": 288,
+          "table": {
+            "name": "v4-off-squid-zip-full",
+            "matching_header_tables": 1,
+            "numeric_cells_passed": 24,
+            "numeric_cells_total": 24
+          }
+        }
+      }
+    },
+    {
+      "name": "v4-on-nist144-zip",
+      "elapsed_seconds": 112.27770258300006,
+      "page_range": "all",
+      "tier": "advanced",
+      "image_analysis": true,
+      "model": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+      "physical_pages": 80,
+      "http_bundle_default_rerender_exact": true,
+      "variants": {
+        "default": {
+          "characters": 241930,
+          "empty_pages": [],
+          "per_page_exact_document_rebuild": false,
+          "details": 2,
+          "sha256": "2148f42442e2b03f3c6bece4ede5b55794416ab26ebab7ba5e213afe18c4baa9",
+          "last_page_characters": 1911
+        },
+        "full": {
+          "characters": 242960,
+          "empty_pages": [],
+          "per_page_exact_document_rebuild": true,
+          "details": 2,
+          "sha256": "dd821b2a43c51f227594c3e39f4f3f9efc1a61411041b23e6bb6f10f0d355f7d",
+          "last_page_characters": 1915
+        }
+      },
+      "types": {
+        "header": 8,
+        "text": 1524,
+        "doc_title": 2,
+        "image": 2,
+        "image_body": 2,
+        "page_number": 79,
+        "paragraph_title": 54,
+        "list": 42,
+        "table": 7,
+        "table_body": 7,
+        "page_footnote": 27,
+        "image_caption": 1,
+        "hyperlink": 161,
+        "table_caption": 4,
+        "ref_text": 166,
+        "equation_inline": 4
+      },
+      "last_page_types": {
+        "paragraph_title": 1,
+        "text": 1,
+        "table": 1,
+        "page_number": 1
+      },
+      "zip_compressed_bytes": 5567892,
+      "zip_expanded_bytes": 9133635,
+      "model_output_bytes": 4938999,
+      "zip_image_files": 9,
+      "http_markdown_bytes": 390659,
+      "middle_json_bytes": 583764,
+      "quality_views": {
+        "default": {
+          "normalized_empty_page_numbers": [],
+          "normalized_sha256": "2c9ee664f4f37fdc53a747f2f1753e2a2bcea2b5c51d7c10d5e96b17ddd32e01",
+          "normalized_characters": 242018,
+          "block_count": 80,
+          "exact_source_span_and_page_chunk_audit": "verified",
+          "table": {
+            "name": "v4-on-nist144-zip-default",
+            "matching_header_tables": 1,
+            "source_rows_checked": [
+              true,
+              true
+            ]
+          }
+        },
+        "full": {
+          "normalized_empty_page_numbers": [],
+          "normalized_sha256": "e3d1750d9baa3b68a2d51faf01108c6529443d069cf9a546f23bc9060372891a",
+          "normalized_characters": 242565,
+          "block_count": 80,
+          "exact_source_span_and_page_chunk_audit": "verified",
+          "table": {
+            "name": "v4-on-nist144-zip-full",
+            "matching_header_tables": 1,
+            "source_rows_checked": [
+              true,
+              true
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "v4-on-nist145-zip",
+      "elapsed_seconds": 10.035310249775648,
+      "page_range": "all",
+      "tier": "advanced",
+      "image_analysis": true,
+      "model": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+      "physical_pages": 7,
+      "http_bundle_default_rerender_exact": true,
+      "variants": {
+        "default": {
+          "characters": 11249,
+          "empty_pages": [],
+          "per_page_exact_document_rebuild": false,
+          "details": 1,
+          "sha256": "275ccc8649a5cd9188562cb63f1fa16b41a6f9c8cf3a9ce4c6336c4719bde2e8",
+          "last_page_characters": 2442
+        },
+        "full": {
+          "characters": 11512,
+          "empty_pages": [],
+          "per_page_exact_document_rebuild": true,
+          "details": 1,
+          "sha256": "1829992db8f4dece2a808cfa610f1c56b022578c0cb250ab61b2a45538f2285b",
+          "last_page_characters": 2445
+        }
+      },
+      "types": {
+        "header": 8,
+        "text": 103,
+        "doc_title": 3,
+        "image": 1,
+        "image_body": 1,
+        "paragraph_title": 12,
+        "page_number": 5,
+        "table": 1,
+        "table_body": 1,
+        "list": 1,
+        "page_footnote": 3
+      },
+      "last_page_types": {
+        "text": 6,
+        "paragraph_title": 1,
+        "page_footnote": 1,
+        "page_number": 1
+      },
+      "zip_compressed_bytes": 123697,
+      "zip_expanded_bytes": 261596,
+      "model_output_bytes": 129963,
+      "zip_image_files": 2,
+      "http_markdown_bytes": 36964,
+      "middle_json_bytes": 36031,
+      "quality_views": {
+        "default": {
+          "normalized_empty_page_numbers": [],
+          "normalized_sha256": "7092b4e497d0a2fc49cbad68c66c48a7d0db06f5cac05e1f88242e1c555dda3a",
+          "normalized_characters": 11250,
+          "block_count": 7,
+          "exact_source_span_and_page_chunk_audit": "verified"
+        },
+        "full": {
+          "normalized_empty_page_numbers": [],
+          "normalized_sha256": "126ebc3cf8a4c40852fc917d7baf1ffbdb59a7b5e1b726482e838c69df2eb2a7",
+          "normalized_characters": 11482,
+          "block_count": 7,
+          "exact_source_span_and_page_chunk_audit": "verified"
+        }
+      }
+    },
+    {
+      "name": "v4-on-squid-zip",
+      "elapsed_seconds": 123.42404612479731,
+      "page_range": "all",
+      "tier": "advanced",
+      "image_analysis": true,
+      "model": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+      "physical_pages": 60,
+      "http_bundle_default_rerender_exact": true,
+      "variants": {
+        "default": {
+          "characters": 200729,
+          "empty_pages": [
+            59,
+            60
+          ],
+          "per_page_exact_document_rebuild": false,
+          "details": 43,
+          "sha256": "10c6d6eaaffdb762a0732e0b61ccdef728bdfbfc311e064459c67d7f6f70b60f",
+          "last_page_characters": 0
+        },
+        "full": {
+          "characters": 201663,
+          "empty_pages": [],
+          "per_page_exact_document_rebuild": true,
+          "details": 43,
+          "sha256": "137f0c91fd972d66f3bc83a9473914e426fcef17b5b37049ac277e12fafecd1a",
+          "last_page_characters": 288
+        }
+      },
+      "types": {
+        "paragraph_title": 44,
+        "text": 1572,
+        "image": 38,
+        "image_body": 38,
+        "footer": 11,
+        "header": 2,
+        "hyperlink": 161,
+        "list": 24,
+        "table": 8,
+        "table_body": 8,
+        "page_number": 42,
+        "image_footnote": 12,
+        "image_caption": 17,
+        "doc_title": 1,
+        "chart": 6,
+        "chart_caption": 6,
+        "chart_body": 6,
+        "chart_footnote": 6,
+        "table_caption": 7,
+        "table_footnote": 7,
+        "ref_text": 204
+      },
+      "last_page_types": {
+        "footer": 8
+      },
+      "zip_compressed_bytes": 28006697,
+      "zip_expanded_bytes": 35743466,
+      "model_output_bytes": 20183629,
+      "zip_image_files": 52,
+      "http_markdown_bytes": 17479093,
+      "middle_json_bytes": 560531,
+      "quality_views": {
+        "default": {
+          "normalized_empty_page_numbers": [
+            59,
+            60
+          ],
+          "normalized_sha256": "2beaa754310d3f9cd8f7df016d84e6b1dd72e15583775b5528c92a1f85698a4b",
+          "normalized_characters": 200735,
+          "block_count": 58,
+          "exact_source_span_and_page_chunk_audit": "verified",
+          "fact_probes_passed": 13,
+          "fact_probes_total": 13,
+          "back_cover_probes_passed": 0,
+          "back_cover_probes_total": 3,
+          "back_cover_characters": 0,
+          "table": {
+            "name": "v4-on-squid-zip-default",
+            "matching_header_tables": 1,
+            "numeric_cells_passed": 24,
+            "numeric_cells_total": 24
+          }
+        },
+        "full": {
+          "normalized_empty_page_numbers": [],
+          "normalized_sha256": "b52bf22d3bead8cfc65167631340ab61bda9c80c1a8ee93a609cca460dcb0eb5",
+          "normalized_characters": 201368,
+          "block_count": 60,
+          "exact_source_span_and_page_chunk_audit": "verified",
+          "fact_probes_passed": 13,
+          "fact_probes_total": 13,
+          "back_cover_probes_passed": 3,
+          "back_cover_probes_total": 3,
+          "back_cover_characters": 288,
+          "table": {
+            "name": "v4-on-squid-zip-full",
+            "matching_header_tables": 1,
+            "numeric_cells_passed": 24,
+            "numeric_cells_total": 24
+          }
+        }
+      }
+    }
+  ],
+  "initial_non_zip_runs": [
+    {
+      "sample": "squid",
+      "elapsed_seconds": 137.40480874991044,
+      "page_range": "all",
+      "tier": "advanced",
+      "image_analysis": true,
+      "model": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+      "http_markdown_bytes": 17483682
+    },
+    {
+      "sample": "nist145",
+      "elapsed_seconds": 10.035922000184655,
+      "page_range": "all",
+      "tier": "advanced",
+      "image_analysis": true,
+      "model": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+      "http_markdown_bytes": 36964
+    }
+  ],
+  "initial_incomplete_environment_failure": {
+    "sample": "nist144",
+    "status": "failed",
+    "error_code": "parse_failed",
+    "cause": "MFR weights absent at lazy initialization on pages 65-66; same pinned repository completed before successful all-page retry",
+    "pipeline_workaround": false
+  },
+  "schema_limitation": "is_full_document=true plus valid schema does not reject missing physical pages; independently assert source page count and exact 0-based sequence",
+  "native_structured_content": [
+    {
+      "name": "v4-off-squid-zip",
+      "native_physical_pages": 60,
+      "native_block_content_is_markdown_string": true,
+      "schema_identity_present": false,
+      "naive_block_content_join_matches_default": false,
+      "naive_block_content_join_matches_full": false,
+      "http_structured_content_bytes": 19539367,
+      "zip_structured_content_bytes": 284428,
+      "last_page_blocks": 8
+    },
+    {
+      "name": "v4-on-nist144-zip",
+      "native_physical_pages": 80,
+      "native_block_content_is_markdown_string": true,
+      "schema_identity_present": false,
+      "naive_block_content_join_matches_default": false,
+      "naive_block_content_join_matches_full": false,
+      "http_structured_content_bytes": 4314858,
+      "zip_structured_content_bytes": 347404,
+      "last_page_blocks": 4
+    },
+    {
+      "name": "v4-on-nist145-zip",
+      "native_physical_pages": 7,
+      "native_block_content_is_markdown_string": true,
+      "schema_identity_present": false,
+      "naive_block_content_join_matches_default": false,
+      "naive_block_content_join_matches_full": false,
+      "http_structured_content_bytes": 95828,
+      "zip_structured_content_bytes": 25997,
+      "last_page_blocks": 9
+    },
+    {
+      "name": "v4-on-squid-zip",
+      "native_physical_pages": 60,
+      "native_block_content_is_markdown_string": true,
+      "schema_identity_present": false,
+      "naive_block_content_join_matches_default": false,
+      "naive_block_content_join_matches_full": false,
+      "http_structured_content_bytes": 19563283,
+      "zip_structured_content_bytes": 310148,
+      "last_page_blocks": 8
+    }
+  ],
+  "validation": {
+    "native_synthetic_checks": 10,
+    "http_negative_checks": [
+      {
+        "case": "legacy-route-/health",
+        "status": 404
+      },
+      {
+        "case": "legacy-route-/tasks",
+        "status": 404
+      },
+      {
+        "case": "unsupported-page-markdown-export",
+        "status": 400,
+        "error_code": "unsupported_output_format"
+      },
+      {
+        "case": "legacy-backend-field",
+        "status": 400,
+        "error_code": "invalid_request"
+      },
+      {
+        "case": "invalid-page-range",
+        "status": 400,
+        "error_code": "page_range_invalid"
+      },
+      {
+        "case": "current-app-rejects-v1-instead-of-uploading",
+        "error_type": "DocumentUpstreamError"
+      }
+    ],
+    "reverse_checks": [
+      {
+        "fault": "full-replaced-with-default",
+        "exit_code": 1,
+        "expected_assertion_failed": true
+      },
+      {
+        "fault": "footer-removed",
+        "exit_code": 1,
+        "expected_assertion_failed": true
+      },
+      {
+        "fault": "wrong-source-cell",
+        "exit_code": 1,
+        "expected_assertion_failed": true,
+        "correct_cells_after_fault": 23
+      }
+    ],
+    "project_targeted_unit_passed": 134,
+    "project_full_unit": {
+      "passed": 3632,
+      "skipped": 15,
+      "deselected": 389,
+      "xfailed": 1,
+      "pytest_seconds": 10.47,
+      "under_10_seconds": false
+    },
+    "middleware_suites_rerun": false
+  },
+  "cleanup": [
+    {
+      "port": 28992,
+      "owned_pid_exited": true,
+      "listener_closed": true,
+      "already_stopped": true
+    },
+    {
+      "port": 28993,
+      "owned_pid_exited": true,
+      "listener_closed": true,
+      "already_stopped": true
+    },
+    {
+      "port": 28994,
+      "terminal_counts_or_idle_health": {
+        "processing_tasks": 0,
+        "queued_tasks": 0
+      },
+      "owned_pid_exited": true,
+      "listener_closed": true
+    }
+  ],
+  "native_shutdown_observation": {
+    "each_v4_api_resource_tracker_warning_count": 1,
+    "warning": "resource_tracker reports one leaked semaphore to clean up at shutdown; persistent OS leakage not proven",
+    "legacy_api_same_warning": false
+  },
+  "configuration_unchanged": true,
+  "source_python_unchanged": true,
+  "source_python_sha256": "74ac74a9710355477db38bd39d0cbb69d76768ac6be3c1add3ff35d0f9950624",
+  "production_switched": false,
+  "quality_status": "author source probes; independent review and immutable remote weights/tokenizer pending"
+}

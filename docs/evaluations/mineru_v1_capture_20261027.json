@@ -1,0 +1,217 @@
+{
+  "date": "2026-10-27",
+  "scope": "isolated MinerU V1 collector; no production integration or configuration switch",
+  "versions": {
+    "mineru": "4.0.12",
+    "mineru_vl_utils": "2.0.7",
+    "docvortex": "0.6.4",
+    "httpx": "0.28.1",
+    "vlm_model": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+    "vlm_port": 9919,
+    "immutable_model_identity": "unverified"
+  },
+  "captures": [
+    {
+      "sample": "public7",
+      "source": {
+        "filename": "nist145.pdf",
+        "sha256": "7b0c1a9fdfc67218b8ba2098f448c100c27070db91736b3c87fed63bfa21d418",
+        "bytes": 85781,
+        "pages": 7
+      },
+      "elapsed_seconds": 9.049399334006011,
+      "received_bytes": 103833,
+      "artifact": {
+        "sha256": "f7fda8df940391cdc5de6ecc1ff4ee68e1b12207b3f30a28e29a6ba47c697d26",
+        "bytes": 95828,
+        "canonical_sha256": "1422341bda141df58384067d55b26b5fb2d240c6665d56baafdd076c8e8fa085",
+        "pages": 7
+      },
+      "audit": {
+        "canonical_bytes": 10992,
+        "evidence_units": 63,
+        "interpretation_units": 1,
+        "interpretation_bytes": 47,
+        "heading_units": 15,
+        "table_body_units": 1,
+        "asset_locators": 2,
+        "legacy_page_blocks_have_heading_paths": false
+      },
+      "offline_source_quote_and_page_checks_passed": true
+    },
+    {
+      "sample": "squid60",
+      "source": {
+        "filename": "squid.pdf",
+        "sha256": "e42f3b70cee6344ca8e0cb06ccc4028e56a05266cbd331c9e008fe05e62a2ffe",
+        "bytes": 9024767,
+        "pages": 60
+      },
+      "elapsed_seconds": 118.37224620813504,
+      "received_bytes": 19640313,
+      "artifact": {
+        "sha256": "0abecf6136425aec3bd9ced2083d388aec9dd1b50cba0973143f48405e3e5a0f",
+        "bytes": 19560609,
+        "canonical_sha256": "9e1f637d75ce220b370db08b3cd080ebcadd5508dd9c695f8e078cf173dc13d3",
+        "pages": 60
+      },
+      "audit": {
+        "canonical_bytes": 177139,
+        "evidence_units": 450,
+        "interpretation_units": 43,
+        "interpretation_bytes": 22325,
+        "heading_units": 45,
+        "table_body_units": 8,
+        "asset_locators": 52,
+        "legacy_page_blocks_have_heading_paths": false
+      },
+      "offline_source_quote_and_page_checks_passed": true
+    }
+  ],
+  "submission_reply_loss": {
+    "submitted_posts": 1,
+    "server_task_created": true,
+    "collector_submission": "unknown",
+    "collector_observed_task_id": null,
+    "automatic_resubmit": false,
+    "harness_cleanup_status": "canceled"
+  },
+  "queued_timeout": {
+    "total_seconds": 2,
+    "cancel_reserve_seconds": 0.8,
+    "outcome": "timed_out",
+    "cancellation": "acknowledged",
+    "remote_drained": false
+  },
+  "warm_cache_experiment": {
+    "optional_sha_parameter": true,
+    "large_upload_lost_reply": true,
+    "server_task_created": true,
+    "automatic_resubmit": false,
+    "remediation": "omit optional sha256sum query, upload verified private snapshot fully, verify native source file metadata SHA"
+  },
+  "source_fact_probes": [
+    {
+      "name": "squid60-audit",
+      "source_token_probes_passed": 13,
+      "source_token_probes_total": 13,
+      "back_cover_probes_passed": 3,
+      "numeric_cells_passed": 24,
+      "numeric_cells_total": 24
+    }
+  ],
+  "validation": {
+    "collector_tests_passed": 55,
+    "mapping_tests_passed": 46,
+    "targeted_tests_passed": 101,
+    "targeted_seconds": 0.6,
+    "unit_passed": 3736,
+    "unit_skipped": 16,
+    "unit_deselected": 389,
+    "unit_xfailed": 1,
+    "unit_seconds": 10.0,
+    "prior_quiet_unit_seconds": 10.28,
+    "unit_under_10_seconds_gate_closed": false,
+    "ruff": "passed",
+    "pyright": "0 errors",
+    "reverse_collector": [
+      {
+        "fault": "submit_retry",
+        "test": "test_lost_or_untrusted_submit_reply_is_never_resubmitted[transport]",
+        "expected_test_failed": true,
+        "exit_code": 1
+      },
+      {
+        "fault": "source_digest",
+        "test": "test_unverified_source_never_authorizes_cancel[wrong_source_hash]",
+        "expected_test_failed": true,
+        "exit_code": 1
+      },
+      {
+        "fault": "artifact_digest",
+        "test": "test_bad_artifact_is_discarded_after_completed_remote_job[wrong_digest]",
+        "expected_test_failed": true,
+        "exit_code": 1
+      },
+      {
+        "fault": "response_cap",
+        "test": "test_actual_stream_limit_is_enforced_without_content_length_and_stream_closes",
+        "expected_test_failed": true,
+        "exit_code": 1
+      },
+      {
+        "fault": "cumulative_cap",
+        "test": "test_cumulative_budget_limits_polling_and_cancel_cannot_bypass_it",
+        "expected_test_failed": true,
+        "exit_code": 1
+      },
+      {
+        "fault": "deadline_reset",
+        "test": "test_total_deadline_never_resets_and_cancel_uses_only_remaining_reserve[False]",
+        "expected_test_failed": true,
+        "exit_code": 1
+      },
+      {
+        "fault": "cancel_extension",
+        "test": "test_total_deadline_never_resets_and_cancel_uses_only_remaining_reserve[True]",
+        "expected_test_failed": true,
+        "exit_code": 1
+      },
+      {
+        "fault": "receipt_order",
+        "test": "test_task_id_receipt_precedes_source_check_and_polling",
+        "expected_test_failed": true,
+        "exit_code": 1
+      },
+      {
+        "fault": "close_after_success",
+        "test": "test_local_close_failure_never_publishes_success_or_masks_primary_error[False]",
+        "expected_test_failed": true,
+        "exit_code": 1
+      },
+      {
+        "fault": "sha_shortcut",
+        "test": "test_raw_upload_avoids_early_sha_cache_response_but_verifies_file_hash",
+        "expected_test_failed": true,
+        "exit_code": 1
+      }
+    ],
+    "reverse_cli": {
+      "fault": "missing_lock_identity_key",
+      "expected_test_failed": true,
+      "exit_code": 1
+    },
+    "local_close_fault_before_fix": {
+      "failing_cases": 2,
+      "fixed_and_retested": true
+    }
+  },
+  "owned_api_shutdown": {
+    "terminal_task_counts": {
+      "completed": 8,
+      "canceled": 4
+    },
+    "owned_api_pid_exited": true,
+    "listener_closed": true,
+    "semaphore_shutdown_warning_count": 1,
+    "upstream_9919_not_stopped": true
+  },
+  "final_source_sha256": {
+    "evals/pdf/mineru_v1.py": "e45dcec1dd100feb7c7a0143945e6de2a31b4ed5041f664e8f84c5c56f57bce0",
+    "evals/pdf/_v1_protocol.py": "7fe25e24e05ee96c3a4c706fe3fdac0252b21dabb12be0037f11e8276e405d47",
+    "evals/pdf/_v1_files.py": "80513a4caf26456acebcc79f95f69235b72f8a4440875842213fe82089a6d116",
+    "evals/pdf/capture.py": "deb31f9ecb7aefc81edad9636522efe3bae01ce1a14cb4316f78f2f8579cf533",
+    "evals/pdf/structured.py": "777e73912979c73b94fb682cf68322be121b71287dc0686ab74c77e5481260b5",
+    "tests/unit/test_mineru_v1_capture.py": "537f7640db4c5fda93baf4f30b416b770c0459ef58228cbe9ced833ee31dda10"
+  },
+  "native_validation_source_snapshot": "private validated-source/manifest.json; later changes only classify full Gate and validate incomplete CLI source locks",
+  "pending": [
+    "independent label adjudication",
+    "immutable model/tokenizer/service artifacts",
+    "production evidence ledger persistence and page/section representation",
+    "uncertain task and remote artifact retention policy",
+    "native API semaphore shutdown warning",
+    "strict unit suite budget below 10 seconds"
+  ],
+  "production_env_matches_prior_lock": true
+}

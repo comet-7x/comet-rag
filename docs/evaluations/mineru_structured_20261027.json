@@ -1,0 +1,302 @@
+{
+  "date": "2026-10-27",
+  "scope": "offline replay of prior real MinerU 4.0.12 Pro2605/9919 structured_content; no new model requests, production adapter or network-budget implementation",
+  "policy": "mineru-4.0.12-structured-source-v1",
+  "quality_status": "author probes, not independent PDF/model/retrieval acceptance",
+  "implementation_sha256": "9ba89f49df07f90fbd2c1cb750e67362f1ef36c6f323dbef60f4c12eddd9dd3f",
+  "reviewed_files": [
+    {
+      "path": "evals/pdf/structured.py",
+      "sha256": "13b43440fedd79004268c5de209e4650b7a98e53adec65b8800f23b22e8856b9"
+    },
+    {
+      "path": "evals/pdf/structured_audit.py",
+      "sha256": "b1bf10b5df342c3a193f7904821b72bcb4ae1f7f9b0e1ae53e7edcf7b7e71f21"
+    },
+    {
+      "path": "tests/unit/test_pdf_structured.py",
+      "sha256": "0416235c4332b39b06a998c47aedc0e2c955a2a6424fb514a3ffd07c15134806"
+    }
+  ],
+  "mapping_limits": {
+    "wire_bytes": 33554432,
+    "text_bytes": 8388608,
+    "interpretation_bytes": 2097152,
+    "block_bytes": 1048576,
+    "pages": 512,
+    "blocks": 20000,
+    "annotations_per_group": 128,
+    "evidence_units": 50000
+  },
+  "proposed_transport_only": {
+    "control_response_bytes": 262144,
+    "artifact_decoded_bytes": 33554432,
+    "cumulative_receive_bytes": 37748736,
+    "total_deadline_seconds": 900,
+    "single_file_tasks": true,
+    "output_formats": [
+      "structured_content"
+    ],
+    "zip_and_asset_fetch": false
+  },
+  "runs": [
+    {
+      "name": "nist144",
+      "sample": "nist144",
+      "source_sha256": "47f0fdf31f4f2b37fb2a8fa0bf77235aad0b3daa74a6397603a619a839500a42",
+      "input_sha256": "6337a9768fb40c3ba69ecedb8d9bdfb1c01ec243bc56f49e5aa9df26fd3b753f",
+      "canonical_sha256": "6d5cdc679cc775c232b88502359effb803e5bfe05fe1a817c2bf69f6dabd5967",
+      "body_sha256": "51e2ef4582e87dd8a370c3d7b322b78afb7a2e2c90e5ecca36d27b90d4d2edf6",
+      "wire_bytes": 4314858,
+      "canonical_bytes": 239187,
+      "evidence_units": 482,
+      "evidence_categories": {
+        "auxiliary": 87,
+        "extraction": 395
+      },
+      "source_block_types": {
+        "header": 8,
+        "doc_title": 2,
+        "text": 258,
+        "page_number": 79,
+        "paragraph_title": 54,
+        "list": 42,
+        "table": 7,
+        "page_footnote": 27
+      },
+      "heading_units": 56,
+      "table_body_units": 7,
+      "interpretation_units": 2,
+      "interpretation_bytes": 390,
+      "asset_locators": 9,
+      "asset_locator_bytes": 4028371,
+      "legacy_page_blocks_have_heading_paths": false,
+      "physical_page_count": 80,
+      "source_empty_page_numbers": [],
+      "exact_span_and_page_chunk_audit": "verified",
+      "html_table_diagnostic_count": 0,
+      "html_diagnostics_do_not_cover_markdown_tables": true
+    },
+    {
+      "name": "nist145",
+      "sample": "nist145",
+      "source_sha256": "7b0c1a9fdfc67218b8ba2098f448c100c27070db91736b3c87fed63bfa21d418",
+      "input_sha256": "1fef01f76faa6bda2e27858a8e2d9101c828eeed885f29ee1fe79a6e1238cf52",
+      "canonical_sha256": "b929253c6c8c6c507407393445393fabca0f39aa9eb1ff017b506179378cbe2b",
+      "body_sha256": "c500c943780a6240b1f6d36f50ec2b383183c90296b1988ac21eba38f477a449",
+      "wire_bytes": 95828,
+      "canonical_bytes": 10992,
+      "evidence_units": 63,
+      "evidence_categories": {
+        "auxiliary": 13,
+        "extraction": 50
+      },
+      "source_block_types": {
+        "header": 8,
+        "doc_title": 3,
+        "text": 30,
+        "paragraph_title": 12,
+        "page_number": 5,
+        "table": 1,
+        "list": 1,
+        "page_footnote": 3
+      },
+      "heading_units": 15,
+      "table_body_units": 1,
+      "interpretation_units": 1,
+      "interpretation_bytes": 47,
+      "asset_locators": 2,
+      "asset_locator_bytes": 77826,
+      "legacy_page_blocks_have_heading_paths": false,
+      "physical_page_count": 7,
+      "source_empty_page_numbers": [],
+      "exact_span_and_page_chunk_audit": "verified",
+      "html_table_diagnostic_count": 0,
+      "html_diagnostics_do_not_cover_markdown_tables": true
+    },
+    {
+      "name": "squid-off",
+      "sample": "squid",
+      "source_sha256": "e42f3b70cee6344ca8e0cb06ccc4028e56a05266cbd331c9e008fe05e62a2ffe",
+      "input_sha256": "cd347e09f37277e5756f5a969bd4ff805dedd63b25276f33dc507f59be2bf73c",
+      "canonical_sha256": "6746f813459a7c2e3a8109c1295e06e5f61a74b83af7e753eff624ece9fc1a04",
+      "body_sha256": "c8abf31aca32116227b2a924de7943e558a28ed78551634347cfaa7899f6ffbc",
+      "wire_bytes": 19539367,
+      "canonical_bytes": 177129,
+      "evidence_units": 437,
+      "evidence_categories": {
+        "extraction": 382,
+        "auxiliary": 55
+      },
+      "source_block_types": {
+        "paragraph_title": 44,
+        "text": 222,
+        "footer": 11,
+        "header": 2,
+        "list": 25,
+        "table": 8,
+        "page_number": 42,
+        "doc_title": 1,
+        "ref_text": 27
+      },
+      "heading_units": 45,
+      "table_body_units": 8,
+      "interpretation_units": 0,
+      "interpretation_bytes": 0,
+      "asset_locators": 52,
+      "asset_locator_bytes": 19317572,
+      "legacy_page_blocks_have_heading_paths": false,
+      "physical_page_count": 60,
+      "source_empty_page_numbers": [
+        4
+      ],
+      "exact_span_and_page_chunk_audit": "verified",
+      "html_table_diagnostic_count": 2,
+      "html_diagnostics_do_not_cover_markdown_tables": true
+    },
+    {
+      "name": "squid-on",
+      "sample": "squid",
+      "source_sha256": "e42f3b70cee6344ca8e0cb06ccc4028e56a05266cbd331c9e008fe05e62a2ffe",
+      "input_sha256": "aca35748db9b2956492df9083aefdf0ddd704d465093d17addcec4e4a3612ecc",
+      "canonical_sha256": "e88dae38a7503713ff50b88eb379cf9812b79b5ec9d788912ae08468edf60873",
+      "body_sha256": "19bbafc2ca707c5b61b8e7b9f395f64a07d272f6620f3d7ecbe2baa8b0d74cc6",
+      "wire_bytes": 19563283,
+      "canonical_bytes": 177139,
+      "evidence_units": 450,
+      "evidence_categories": {
+        "extraction": 395,
+        "auxiliary": 55
+      },
+      "source_block_types": {
+        "paragraph_title": 44,
+        "text": 222,
+        "footer": 11,
+        "header": 2,
+        "list": 24,
+        "table": 8,
+        "page_number": 42,
+        "doc_title": 1,
+        "ref_text": 41
+      },
+      "heading_units": 45,
+      "table_body_units": 8,
+      "interpretation_units": 43,
+      "interpretation_bytes": 21464,
+      "asset_locators": 52,
+      "asset_locator_bytes": 19317572,
+      "legacy_page_blocks_have_heading_paths": false,
+      "physical_page_count": 60,
+      "source_empty_page_numbers": [
+        4
+      ],
+      "exact_span_and_page_chunk_audit": "verified",
+      "html_table_diagnostic_count": 2,
+      "html_diagnostics_do_not_cover_markdown_tables": true
+    }
+  ],
+  "probes": [
+    {
+      "name": "squid-on",
+      "source_token_probes_passed": 13,
+      "source_token_probes_total": 13,
+      "back_cover_probes_passed": 3,
+      "numeric_cells_passed": 24,
+      "numeric_cells_total": 24
+    },
+    {
+      "name": "squid-off",
+      "source_token_probes_passed": 13,
+      "source_token_probes_total": 13,
+      "back_cover_probes_passed": 3,
+      "numeric_cells_passed": 24,
+      "numeric_cells_total": 24
+    },
+    {
+      "name": "nist145"
+    },
+    {
+      "name": "nist144",
+      "table2_source_rows_passed": 2
+    }
+  ],
+  "reverse_checks": [
+    {
+      "fault": "bool-page-accepted",
+      "test": "test_structured_mapping_rejects_uncertain_facts[bool_page]",
+      "expected_test_failed": true,
+      "exit_code": 1
+    },
+    {
+      "fault": "missing-trailing-page",
+      "test": "test_bad_mapping_never_writes_a_successful_summary[missing_page]",
+      "expected_test_failed": true,
+      "exit_code": 1
+    },
+    {
+      "fault": "interpretation-enters-body",
+      "test": "test_literal_projection_keeps_pages_titles_table_and_notes",
+      "expected_test_failed": true,
+      "exit_code": 1
+    },
+    {
+      "fault": "heading-depth-substitutes-level",
+      "test": "test_heading_stack_uses_levels_not_stack_depth",
+      "expected_test_failed": true,
+      "exit_code": 1
+    },
+    {
+      "fault": "provenance-not-in-identity",
+      "test": "test_identity_binds_structure_and_classification_but_not_ignored_asset_bytes",
+      "expected_test_failed": true,
+      "exit_code": 1
+    },
+    {
+      "fault": "auxiliary-becomes-default-evidence",
+      "test": "test_quote_rejects_unqualified_or_stale_evidence[auxiliary]",
+      "expected_test_failed": true,
+      "exit_code": 1
+    },
+    {
+      "fault": "wire-cap-removed",
+      "test": "test_each_budget_rejects_overflow[wire_bytes]",
+      "expected_test_failed": true,
+      "exit_code": 1
+    }
+  ],
+  "memory": {
+    "scope": "single process Python tracemalloc, includes bounded input read and projection; not RSS or service load benchmark",
+    "wire_bytes": 19563283,
+    "current_traced_bytes": 20718483,
+    "peak_traced_bytes": 78584430,
+    "instrumented_seconds": 0.07644854206591845,
+    "evidence_units": 450
+  },
+  "validation": {
+    "new_unit_passed": 46,
+    "new_unit_seconds": 0.12,
+    "full_unit_passed": 3681,
+    "skipped": 16,
+    "deselected": 389,
+    "xfailed": 1,
+    "final_pytest_seconds": 9.85,
+    "earlier_pytest_seconds": [
+      10.58,
+      10.0
+    ],
+    "stable_under_10_seconds_proven": false,
+    "ruff": "passed",
+    "pyright": "passed",
+    "integration_e2e_rerun": false
+  },
+  "configuration_unchanged": true,
+  "production_source_changed": false,
+  "production_switched": false,
+  "remaining": [
+    "V1 collector with shared deadline and byte budgets",
+    "production page/section representation and evidence ledger persistence",
+    "native standalone code/equation/index and new version contracts",
+    "Markdown table row/chunk budget validation",
+    "independent label review and immutable remote model artifacts"
+  ]
+}
