@@ -1,15 +1,7 @@
-"""合成 .docx 测试样本。
+"""生成独立的 DOCX 源样本，不依赖产品解析器或规范化文档 schema。
 
-**为什么是生成而非提交二进制**：
-1. `.docx` 是 zip，进了 git 就是不可 review 的黑盒 —— 谁也说不清某次改动
-   到底改了文档的什么
-2. 仓库里现有的真实文档（`poc/docs/`）含实际项目内容与内部流程，
-   本仓库计划开源，不应把它们提交进来
-3. 生成脚本本身就是"样本里有什么"的可读说明
-
-代价是合成文档的 XML 比 Word 真实输出简单，某些 Word 特有的怪异结构
-覆盖不到。`test_docx_parser.py` 里另有一条可选用例，本地存在 `poc/docs/`
-时会拿真实文档跑冒烟检查，兼顾两头。
+生成脚本保留可审阅的样本内容，避免提交二进制或用户真实资料。
+合成 XML 比 Word 输出简单，不能替代真实文档验收。
 """
 
 from __future__ import annotations
@@ -293,7 +285,7 @@ def build_header_footer(path: Path) -> Path:
     return path
 
 
-#: 名称 → 构造函数。测试按此表逐个生成并比对快照。
+#: 名称 → 构造函数，供源内容校验和后续解析测试复用。
 BUILDERS = {
     "basic": build_basic,
     "table": build_table,
