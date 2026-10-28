@@ -130,3 +130,63 @@ async def test_renewal_failure_stops_runner_before_failure_is_recorded(
     finally:
         await executor.shutdown()
         executor.runners.unregister("lease-failure")
+
+
+async def test_one_slow_renewal_does_not_fail_a_healthy_runner(monkeypatch):
+    store = InMemoryTaskStore()
+    executor = InProcessExecutor(store)
+    executor._heartbeat_interval = 0.001
+    original = store._renew_lease
+    calls = 0
+    renewed = asyncio.Event()
+
+    async def slow_once(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await asyncio.Event().wait()
+        await original(*args)
+        renewed.set()
+
+    monkeypatch.setattr(store, "_renew_lease", slow_once)
+
+    @executor.runners.register("slow-renewal")
+    async def runner(ctx):
+        await renewed.wait()
+        return Done(result="still healthy")
+
+    try:
+        task = await TaskService(store, executor).submit("slow-renewal")
+        done = await wait_for_terminal(store, task.task_id)
+        assert done.status is TaskStatus.SUCCEEDED and done.attempts == 1
+        assert calls >= 2 and done.result == "still healthy"
+    finally:
+        await executor.shutdown()
+
+
+async def test_repeated_renewal_timeouts_cannot_be_ignored_forever(monkeypatch):
+    store = InMemoryTaskStore()
+    executor = InProcessExecutor(store)
+    executor._heartbeat_interval = 0.001
+    stopped = asyncio.Event()
+
+    async def always_timeout(*args):
+        raise TimeoutError("renewal unavailable")
+
+    monkeypatch.setattr(store, "_renew_lease", always_timeout)
+
+    @executor.runners.register("repeated-renewal-timeout")
+    async def runner(ctx):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+        return Done(result="unexpected")
+
+    try:
+        task = await TaskService(store, executor).submit("repeated-renewal-timeout")
+        done = await wait_for_terminal(store, task.task_id)
+        assert done.status is TaskStatus.FAILED and stopped.is_set()
+        assert done.error is not None and done.error.code == "timeout"
+    finally:
+        await executor.shutdown()

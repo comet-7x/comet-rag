@@ -197,12 +197,22 @@ class StoreDrivenExecutor(TaskExecutor):
             await asyncio.gather(running, heartbeat, return_exceptions=True)
 
     async def _keep_lease(self, task_id: str, attempts: int) -> None:
+        timed_out = False
         while True:
             await asyncio.sleep(self._heartbeat_interval)
-            await asyncio.wait_for(
-                self._store._renew_lease(task_id, self._worker_id, attempts),
-                timeout=self._heartbeat_interval,
-            )
+            try:
+                await asyncio.wait_for(
+                    self._store._renew_lease(task_id, self._worker_id, attempts),
+                    timeout=self._heartbeat_interval,
+                )
+            except TimeoutError:
+                # 单次慢续租不代表90秒租约已失效；只容忍一次，不能无限掩盖失联。
+                if timed_out:
+                    raise
+                logger.warning(f"任务 {task_id} 单次续租超时，保留本次执行并再次确认")
+                timed_out = True
+            else:
+                timed_out = False
 
     async def _still_mine(
         self, task_id: str, *, claimed: bool, claim: _Claim | None = None
