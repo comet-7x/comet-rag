@@ -113,14 +113,20 @@ async def client(document: Path) -> AsyncIterator[httpx.AsyncClient]:
         yield http
 
 
-async def _ingest_once(http: httpx.AsyncClient, tag: int) -> None:
+async def _ingest_once(http: httpx.AsyncClient, tag: int) -> str:
     submitted = await http.post(
         "/ingest",
-        json={"kb_id": KB, "source": "doc.stub", "idempotency_key": f"bench-{tag}"},
+        # 各逻辑文档复用夹具字节，但来源身份独立，避免把同源竞争误当吞吐。
+        json={
+            "kb_id": KB,
+            "source": f"doc-{tag}.stub",
+            "idempotency_key": f"bench-{tag}",
+        },
     )
     assert submitted.status_code == 202, submitted.text
     done = await poll_until_terminal(http, submitted.json()["task_id"], timeout=60.0)
     assert done["status"] == "succeeded", done
+    return done["result"]["source_id"]
 
 
 async def test_single_document_ingest_latency(client: httpx.AsyncClient, bench) -> None:
@@ -137,7 +143,10 @@ async def test_ingest_throughput(client: httpx.AsyncClient, bench) -> None:
 
     docs = 20
     start = time.perf_counter()
-    await asyncio.gather(*(_ingest_once(client, 1000 + i) for i in range(docs)))
+    sources = await asyncio.gather(
+        *(_ingest_once(client, 1000 + i) for i in range(docs))
+    )
+    assert len(set(sources)) == docs
     elapsed = time.perf_counter() - start
 
     bench.record("throughput_docs", docs / elapsed, "doc/s", elapsed_s=elapsed)

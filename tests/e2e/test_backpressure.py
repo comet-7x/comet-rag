@@ -124,7 +124,12 @@ async def test_overload_is_refused_with_429_not_queued_forever(
     for i in range(MAX_BACKLOG * 10):
         resp = await client.post(
             "/ingest",
-            json={"kb_id": KB, "source": "slow.stub", "idempotency_key": f"doc-{i}"},
+            # 独立来源才能压到模型/队列；同源并发会先被写围栏明确拒绝。
+            json={
+                "kb_id": KB,
+                "source": f"slow-{i}.stub",
+                "idempotency_key": f"doc-{i}",
+            },
         )
         if resp.status_code == 202:
             accepted += 1
@@ -134,7 +139,9 @@ async def test_overload_is_refused_with_429_not_queued_forever(
         else:  # pragma: no cover —— 出现即是 bug
             pytest.fail(f"过载时返回了 {resp.status_code}：{resp.text}")
 
-        pending = await ctx.task_store.list_tasks(status=TaskStatus.PENDING, limit=1000)
+        pending = await ctx.task_store.list_tasks(
+            kind="ingest", status=TaskStatus.PENDING, limit=1000
+        )
         peak_backlog = max(peak_backlog, len(pending))
 
     assert refused > 0, "投了 10 倍的量却一次都没拒 —— 背压根本没生效"
@@ -154,13 +161,22 @@ async def test_refusal_does_not_create_orphan_task_records(
     await client.post("/kb", json={"kb_id": KB})
     ctx = ctx_of(client)
 
+    accepted = refused = 0
     for i in range(MAX_BACKLOG * 4):
-        await client.post(
+        response = await client.post(
             "/ingest",
-            json={"kb_id": KB, "source": "slow.stub", "idempotency_key": f"x-{i}"},
+            json={"kb_id": KB, "source": f"slow-{i}.stub", "idempotency_key": f"x-{i}"},
         )
+        if response.status_code == 202:
+            accepted += 1
+        else:
+            assert response.status_code == 429, response.text
+            refused += 1
 
-    all_tasks = await ctx.task_store.list_tasks(limit=1000)
+    # 控制记录另行保留，不把来源围栏当作被拒请求留下的业务孤儿。
+    all_tasks = await ctx.task_store.list_tasks(kind="ingest", limit=1000)
+    assert accepted > 0 and refused > 0
+    assert len(all_tasks) == accepted
     # 被拒的那些不该留下任何痕迹：总记录数不会逼近投递次数
     assert len(all_tasks) < MAX_BACKLOG * 4, (
         f"投了 {MAX_BACKLOG * 4} 次，却留下了 {len(all_tasks)} 条记录 —— "
