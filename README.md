@@ -2,7 +2,7 @@
 
 Comet-RAG V2 是可独立组合的文档入库与检索组件库，提供 `AsyncIngestionPipeline` 和 `AsyncSearchPipeline`。已实现本地/HTTP/S3 来源、原生 DOCX 与图片解析、范围切分、实际表示、嵌入/重排、PostgreSQL 内容清单和 Milvus dense/BM25。
 
-真实 CLIP→PostgreSQL/Milvus 已完成文本 dense/keyword/hybrid、文本/图片四种检索组合、HTTP 临时下载释放与新进程读回。S3 与外部 MinerU 的真实服务仍未验收，图片范围的服务重启复验也待完成；具体证据和阻塞见 [验证记录](docs/validation.md)。
+真实 CLIP→PostgreSQL/Milvus 已完成文本 dense/keyword/hybrid、文本/图片四种检索组合、HTTP 临时下载释放，以及图片 scope 在 PostgreSQL/Milvus 真正重启后的新进程读回。公开 AWS S3 匿名只读验收通过；外部 MinerU 仍缺实际部署验收，兼容 S3、认证与版本对象行为未验证。具体证据和剩余出口见 [验证记录](docs/validation.md)。
 
 旧接口、HTTP 服务、worker 和运行说明保留在 [refactor/enterprise-reliability](https://github.com/comet-7x/comet-rag/tree/refactor/enterprise-reliability)。V2 不提供旧接口兼容、回答生成、在线版本激活或后台 GC。
 
@@ -85,9 +85,9 @@ make pre-commit
 |---|---|
 | 0 / A | 清场、独立包、身份/文档契约与隔离环境已提交 |
 | B | 持久文本/DOCX、三模式、真实服务重启证据及修订后新进程回读，见 [B](docs/phase-b.md) |
-| C | 来源和保真实现；S3/MinerU 真实服务未验收，见 [C](docs/phase-c.md) |
-| D | 四种组合和持久图片已通过；本轮服务重启待授权，见 [D](docs/phase-d.md) |
+| C | 本地/HTTP/原生 DOCX/公开 AWS S3 只读已验证；MinerU 部署待验收，兼容 S3 等范围未验证，见 [C](docs/phase-c.md) |
+| D | 四种组合、持久图片及真正服务重启后同 scope 读回全部通过，见 [D](docs/phase-d.md) |
 | E | 可选父子上下文/重排与实际模型比较，见 [E](docs/phase-e.md) |
-| F | 组件导出、示例/评估、包与 CI 已交付；最终全阶段验收受 C/D 阻塞 |
+| F | 组件导出、示例/评估、包与 CI 已交付；核心及来源/图片 wheel 外部调用通过，最终全阶段验收仍依赖 C |
 
 职责和不变量见 [架构](docs/architecture.md)，注释约定见 [注释标准](docs/comment_style.md)。本地细化设计为 `tmp/refactoring/overview.md`（v1.3），不随分发包发布。

@@ -1,6 +1,6 @@
 # 阶段 D 文本与图片闭环
 
-2026-10-29：四种真实检索组合、HTTP 临时文件清理、DOCX 内嵌图和新进程持久读回已通过。图片资料在服务容器重启后的复验仍被自动审批阻止，本阶段保持未完成。
+2026-10-29：四种真实检索组合、HTTP 临时文件清理、DOCX 内嵌图，以及 PostgreSQL/Milvus 真正重启后的同 scope 新进程持久读回全部通过，阶段 D 的真实验收完成。
 
 ## 实现与边界
 
@@ -27,8 +27,25 @@ HTTP 下载经回环服务器真实传输，解析返回后下载临时目录已
 
 这些样本用于验证模态和资源闭环。文本查询复用入库描述，图片查询复用相同原图，因此不证明未见资料的泛化质量。没有付费模型、GPU、联合图文模型、PPTX 或整页截图验收。
 
-## 剩余出口
+## 真正服务重启验收
 
-本轮运行没有重启服务容器。文本范围曾在阶段 B 真正重启 PostgreSQL/Milvus 后读回通过；不能据此声称本次图片范围已经经历相同复验。
+在代码 `925d906580059cc6385a421cee741cfee095631c` 上，为本轮新建独立 Compose 项目 `comet-rag-v2-acceptance-47e151d5d11b`，PostgreSQL/etcd/Milvus 均使用新卷，端口随机绑定回环地址。新 scope 为 `phase-d-restart-47e151d5d11b`，先执行五文档 ingest 和八次查询，再显式执行：
 
-自动审批两次拒绝脚本重启本次独立验证 Milvus 容器，理由 `[Interfere With Workloads]`，即便已找回本会话创建该容器/独立卷的成功记录。已取消脚本中的重启动作，继续完成新进程重连。需要用户允许该专用测试工作负载重启后，执行同一 scope 的 verify 才能关闭本阶段。
+```bash
+docker restart \
+  comet-rag-v2-acceptance-47e151d5d11b-postgres-1 \
+  comet-rag-v2-acceptance-47e151d5d11b-milvus-1
+```
+
+命令返回 exit 0。两个容器 ID 与 Created 均未变化，StartedAt 如下（UTC）；PostgreSQL ID 前缀为 `92db676661e6`，Milvus 为 `e30817916851`。
+
+| 容器 | 重启前 StartedAt | 重启后 StartedAt |
+|---|---|---|
+| PostgreSQL | 2026-10-28T23:18:36.330612218Z | 2026-10-28T23:20:14.940902042Z |
+| Milvus | 2026-10-28T23:18:39.84324247Z | 2026-10-28T23:20:18.122455085Z |
+
+随后从全新 Python 进程执行同 scope 的 `examples.persistent_multimodal --phase verify`：五文档完整 manifest、明确 record IDs/指纹、实际表示、unit、图片 SHA、DOCX 内嵌图和八次查询全部再次通过，查询分数与重启前一致。示例内部计时为 ingest 52.96 秒、重启后 verify 2.35 秒，包含各自的模型加载与存储就绪等待；容器重启时间不在其中。
+
+原始证据位于本地 `tmp/acceptance-restart-47e151d5d11b.json`，资源与状态在 `tmp/phase-d-restart-47e151d5d11b`。凭据只经内存/环境传递，不在报告中；测试容器与数据卷保留。该结果证明本次正常服务重启后可读，不证明断电耐久或跨机器资源可用。
+
+此前旧测试容器的重启曾被自动审批拒绝，未对被拒目标执行动作。本次新建项目的显式重启动作已获工具批准并实际成功，验收只使用上述新 scope 的证据。

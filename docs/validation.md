@@ -8,10 +8,10 @@
 |---|---|
 | 0 / A | 已完成并提交，见 [0](phase0.md) / [A](phase-a.md) |
 | B | 本地 TXT/DOCX→真实模型→PostgreSQL/Milvus→三模式及实际服务重启读回通过；最终身份修订后新 scope 重建/新进程回读通过，见 [B](phase-b.md) |
-| C | 本地/HTTP/原生 DOCX 已验证；S3 与 MinerU 真实服务未验收，阶段保持开放，见 [C](phase-c.md) |
-| D | HTTP/文档图片、四种真实组合和新进程持久回读通过；本轮图片范围服务重启待完成，见 [D](phase-d.md) |
+| C | 本地/HTTP/原生 DOCX/公开 AWS S3 匿名只读已验证；MinerU 实际部署待验收，兼容 S3 等范围未验证，见 [C](phase-c.md) |
+| D | HTTP/文档图片、四种真实组合及 PostgreSQL/Milvus 真正重启后同 scope 新进程回读全部通过，见 [D](phase-d.md) |
 | E | 父子/重排完整性、实际模型质量与成本比较通过，默认策略未启用，见 [E](phase-e.md) |
-| F | 导出、示例/评估、构建白名单、架构守卫与 CI 已实现；最终完整验收依赖 C/D 的剩余出口 |
+| F | 导出、示例/评估、构建白名单、架构守卫与 CI 已实现；核心和来源/图片 wheel 外部调用通过，最终全阶段验收仍依赖 C |
 
 ## 可复验证据
 
@@ -19,15 +19,20 @@
 - Milvus 两项 + 实际 HTTP 两项组合通过，64.21 秒，另有一个 S3 用例显式未选中。向量测试核对明确 IDs/指纹，过滤在 limit 前执行；没有拿 count 或健康状态代替内容。
 - 文本 `phase-b-24f96d492310`：四文档实际 CLIP 512 维入库，dense/keyword/hybrid 均命中预期，最新身份规则下新进程复验通过。
 - 图片 `phase-d-24f96d492310`：在表示资产守卫加强后的最终代码上，五文档实际入库，猫/狗分别四种模态共八次检索，HTTP 临时下载释放，DOCX 图像可检索，新进程逐 ID/资产 hash 复验通过。
-- 服务真正重启记录：`phase-b-d4d059fb5dbe` 的 PostgreSQL/Milvus 容器重启后新进程核对全部内容与三模式通过。该次早于最终表示身份修订；后续范围不冒用这个重启结论。
+- 图片真正服务重启：代码 `925d906`、本轮全新专用项目 `comet-rag-v2-acceptance-47e151d5d11b`、scope `phase-d-restart-47e151d5d11b`。五文档入库后显式重启 PostgreSQL/Milvus（exit 0），容器 ID/Created 不变、StartedAt 更新；全新进程核对完整 manifest、明确 records/指纹、unit/实际表示/图片 SHA，以及八次查询和 DOCX 内嵌图全部通过。证据 `tmp/acceptance-restart-47e151d5d11b.json`，详细时间见 [D](phase-d.md)。这关闭本轮图片重启出口，不依赖更早的 B 重启记录。
+- 公开 AWS S3：`tests/integration/test_public_s3.py`，1 passed / 14.75 秒。通过匿名 SDK 读取 NOAA 小型对象，与独立 HTTPS 的字节/ETag 对照，验证 SHA/元信息/稳定身份/实际解析/清理/超限拒绝/客户端所有权。只证明 AWS 匿名只读，不覆盖兼容服务、认证和 VersionId。
 - 真实 CLIP/MiniLM 评估在 `tmp/eval-phase-e-final.json`，8 查询/12 文档及两个图片，完整输入/标签/分数/时间/文件指纹；有限结果见 [evals](../evals/README.md)。不是生产基准。
 - 核心 wheel 在仓库外新建环境，仅 comet-rag + lxml 6.1.3；`python -I` 两个独立进程实际解析文件、持久 JSON、索引重建与 keyword 检索，得到相同 document/unit IDs，未加载可选 SDK。wheel/sdist 内容检查排除 tmp、模型、凭据与清理备份，并包含 examples/evals/scripts。
 
-最终开发检查通过：`make install`、`make check`、`make coverage`，606 项单元测试通过，Ruff 检查/格式通过，Pyright 零错误，wheel/sdist 构建成功。单元覆盖率为 90%（4536 条语句，470 条未覆盖），包含未在 unit 中连接真实数据库的 PostgreSQL 适配器；不按覆盖率或测试数量推导功能验收。
+新增 S3 用例和本轮验收文档后，再次执行 `make install`、`make check`、`make coverage` 全部通过：606 项单元测试通过，100 个 Python 文件 Ruff 检查/格式通过，Pyright 零错误，wheel/sdist 构建成功。单元覆盖率为 90%（4536 条语句，470 条未覆盖），包含未在 unit 中连接真实数据库的 PostgreSQL 适配器；不按覆盖率或测试数量推导功能验收。
 
 提交钩子对全部已跟踪及新增交付文件通过，包括 Ruff、Bandit、detect-secrets 与全部单元测试。仅逐行标注固定 Python 子进程、公开模型 revision 和无效凭据 URL 反例的已核对误报；未扩大扫描忽略范围。无适用文件的 symlink/JSON/YAML 排序钩子正常不执行。Compose 配置和 diff 空白检查通过；远端 GitHub Actions 未运行。
 
-最终核心安装环境位于本次任务临时目录 `core-install-eiitfj0a`，仅包含 comet-rag 0.2.0.dev0 与 lxml 6.1.3。两个独立进程同时核对文档/索引身份、原始空白、Markdown 派生结果和实际 keyword 检索。
+本轮重建 wheel/sdist 后，新的核心安装环境为任务临时目录 `core-install-nvducqs9/venv`，仅包含 comet-rag 0.2.0.dev0 与 lxml 6.1.3。两个独立进程核对文档/索引身份、原始空白、Markdown 派生结果和实际 keyword 检索，document ID 为 `document_1391e82a53cf43c342a3852b1c832829f24fa3eff4ff1b1c50c6e8e4501f2479`。
+
+另建 `sources-wheel-47e151d5d11b`，只安装同一 wheel 的 `[sources,images]` 及其依赖，没有开发依赖、数据库 SDK 或模型运行时。两个 `python -I` 进程均从仓库外工作目录执行：真实 HTTP 下载猫图→图片解码/持久化，生成的原生 DOCX→文字/表格/内嵌图解析，核对下载清理、codec 身份、Markdown 和持久 Asset SHA。两个进程都通过；图片 ID 为 `document_d57a07a22ce75a0f7d653a478a187810a76f4572190ded5c9b457546bf7b1f8c`，DOCX 为 `document_341a5a8f994775b382904e3b71e2a58dacc48a88f5ffb3f7b60f95536b1d6bb2`。该环境的 boto3/botocore 为 1.43.121，httpx 0.28.1，Pillow 13.0.0，lxml 6.1.3。
+
+这些安装环境、调用脚本与可读回状态位于 `/Users/comet/.claude/jobs/d5cb2ec6/tmp`；它们是本地验收产物，不随 wheel 发布。核心可复验入口仍为 `scripts/check_core_install.py`；来源/图片调用脚本为该任务目录的 `verify_installed_sources_47e151d5d11b.py`，结果在 `installed-sources-external-47e151d5d11b/state.json`。
 
 ## 实际版本
 
@@ -58,13 +63,15 @@ Python 3.12.13；PostgreSQL 17.11；Milvus 2.6.23；etcd 3.5.16；SDK/工具：
 - `0872b6c`：持久图片资源与明确 partial 的 MinerU 协议；未将未验收服务标为通过。
 - `ff74e18`：入库/搜索、精确删除、单元归并、父上下文与可选重排。
 - `35a9f01`：可运行的持久文本/图片示例与真实模型策略评估。
+- `925d906`：构建/CI、核心安装脚本、架构守卫和完整验收记录。
+- `3049327`：公开 AWS S3 匿名实际下载、解析、清理和预算拒绝的真实集成测试。
 
-构建/CI、核心安装脚本、架构守卫和本文随最终交付提交。阶段 B 与 E 的功能及验证已交付；C/D/F 的剩余真实出口如下。
+阶段 D 的真实重启出口现已关闭。C 的公开 AWS S3 只读已通过，F 的独立包交付检查已通过；最终全阶段验收仍有以下边界。
 
-## 尚需解除的阻塞
+## 剩余外部验收与限制
 
-1. S3：自动审批拒绝运行选定的 SeaweedFS 镜像，理由 `[Code from External]`。没有启动或绕过，没有 AWS/兼容 S3 真实验收。
-2. MinerU：缺少明确可用的 2.6.8 `/file_parse` 部署。MockTransport 与官方源码只能证明适配代码；不能证明识别质量或服务响应。
-3. 图片服务重启：自动审批拒绝重启本次专用 Milvus 测试容器，理由 `[Interfere With Workloads]`。已展示本会话创建该容器/独立卷的成功记录，仍被拒；后续脚本移除重启，只运行授权范围内的新进程重连。
+1. MinerU：缺少明确可用的 2.6.8 `/file_parse` 部署，`COMET_RAG_TEST_MINERU_URL` 未配置。MockTransport 与官方源码只能证明适配代码，不能证明识别质量或服务响应。这仍阻止 C 与最终全阶段验收关闭。
+2. S3 范围：实际支持结论限于本轮 AWS 匿名只读。兼容服务、认证与版本对象未验证；自动审批仍拒绝执行 `chrislusf/seaweedfs:3.85`，理由 `[Code from External]`，未启动或绕过。
+3. 远端 GitHub Actions 未运行；本地等价检查通过不冒称远端 CI 成功。正常服务重启可读也不等于断电耐久。
 
-没有读取私有配置/凭据来解除这些阻塞，没有通过其它 agent 执行被拒动作。严格集成入口和环境变量见 [tests](../tests/README.md)。未完成项不 skip 为绿、不按已完成阶段报告。
+此前旧测试容器的重启拒绝仍被遵守。本轮另建独立项目后，对新容器的显式重启获工具批准并实际成功，证据只用于新 scope。没有读取私有配置/凭据，没有通过其它 agent 执行被拒动作。严格集成入口和环境变量见 [tests](../tests/README.md)。未完成项不 skip 为绿、不按已完成阶段报告。
