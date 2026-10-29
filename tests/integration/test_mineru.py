@@ -8,9 +8,10 @@ from pathlib import Path
 import httpx
 import pytest
 
+from comet_rag.documents.codec import dumps, loads
 from comet_rag.documents.parsers.mineru import AsyncMinerUParser
 from comet_rag.documents.projection import project_document
-from comet_rag.documents.schemas import SourceInfo
+from comet_rag.documents.schemas import ParseResult, SourceInfo
 from comet_rag.sources.types import LocalResource
 from tests.fixtures.pdf import minimal_pdf_bytes
 
@@ -60,5 +61,14 @@ def test_official_mineru_4_http_returns_text_with_explicit_partial_report(
                 "mineru_markdown_only"
             ]
             assert not client.is_closed and path.read_bytes() == data
+        saved = tmp_path / "result.json"
+        saved.write_text(dumps(result), encoding="utf-8")
+        path.unlink()
+        restored = loads(saved.read_text(encoding="utf-8"))
+        assert isinstance(restored, ParseResult) and restored == result
+        assert "Hello PDF" in project_document(restored.document).text
+        assert restored.document.source.content_hash == hashlib.sha256(data).hexdigest()
+        assert restored.report.status == "partial" and restored.report.coverage is None
+        assert not (tmp_path / "output").exists()
 
     asyncio.run(run())
