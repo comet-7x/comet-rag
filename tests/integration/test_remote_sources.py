@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.request import parse_http_list, parse_keqv_list
 from uuid import uuid4
 
 import boto3
@@ -16,7 +17,13 @@ import httpx
 import pytest
 from botocore.config import Config
 
-from comet_rag.sources import AsyncS3SourceResolver, HttpSource, S3Source, SourceError
+from comet_rag.sources import (
+    AsyncS3SourceResolver,
+    HttpSource,
+    S3Source,
+    SourceError,
+    SourceResourceLimitExceeded,
+)
 from comet_rag.sources.http import AsyncHttpSourceResolver
 
 pytestmark = pytest.mark.integration
@@ -33,6 +40,40 @@ def http_server() -> Iterator[str]:
                 self.send_header("Location", "/actual.txt?edition=2")
                 self.send_header("Content-Length", "0")
                 self.end_headers()
+            elif self.path == "/digest-redirect":
+                self.send_response(302)
+                self.send_header("Location", "/digest-protected")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            elif self.path in {"/digest-protected", "/digest-large"}:
+                authorization = self.headers.get("Authorization", "")
+                valid = False
+                if authorization.startswith("Digest "):
+                    values = parse_keqv_list(parse_http_list(authorization[7:]))
+                    first = hashlib.sha256(b"user:example:pass").hexdigest()
+                    second = hashlib.sha256(f"GET:{self.path}".encode()).hexdigest()
+                    expected = hashlib.sha256(
+                        f"{first}:nonce:{values.get('nc')}:{values.get('cnonce')}:auth:{second}".encode()
+                    ).hexdigest()
+                    valid = (
+                        values.get("uri") == self.path
+                        and values.get("response") == expected
+                    )
+                if not valid:
+                    challenge = b"x" * (64 if self.path == "/digest-large" else 4)
+                    self.send_response(401)
+                    self.send_header(
+                        "WWW-Authenticate",
+                        'Digest realm="example", nonce="nonce", algorithm=SHA-256, qop="auth"',
+                    )
+                    self.send_header("Content-Length", str(len(challenge)))
+                    self.end_headers()
+                    self.wfile.write(challenge)
+                else:
+                    self.send_response(200)
+                    self.send_header("Content-Length", "2")
+                    self.end_headers()
+                    self.wfile.write(b"ok")
             elif self.path == "/short":
                 self.send_response(200)
                 self.send_header("Content-Length", "100")
@@ -120,6 +161,42 @@ def test_real_http_incomplete_transfer_and_redirect_policy_cleanup(
                     pytest.fail("denied HTTP redirect delivered")
             assert list(tmp_path.iterdir()) == []
             assert not client.is_closed
+
+    asyncio.run(run())
+
+
+def test_real_http_digest_redirect_and_challenge_budget(
+    http_server: str, tmp_path: Path
+) -> None:
+    async def run() -> None:
+        async with httpx.AsyncClient(
+            timeout=3, trust_env=False, auth=httpx.DigestAuth("user", "pass")
+        ) as client:
+            resolver = AsyncHttpSourceResolver(
+                client,
+                policy=lambda source: source.url.startswith(f"{http_server}/"),
+                max_bytes=8,
+                temp_dir=tmp_path,
+            )
+            async with resolver.resolve(
+                HttpSource(f"{http_server}/digest-redirect")
+            ) as resource:
+                assert resource.path.read_bytes() == b"ok"
+            assert list(tmp_path.iterdir()) == []
+        # 新认证实例没有缓存挑战，确保实际读取超限的 401 响应。
+        async with httpx.AsyncClient(
+            timeout=3, trust_env=False, auth=httpx.DigestAuth("user", "pass")
+        ) as client:
+            with pytest.raises(SourceResourceLimitExceeded):
+                async with AsyncHttpSourceResolver(
+                    client,
+                    policy=lambda source: source.url.startswith(f"{http_server}/"),
+                    max_bytes=8,
+                    temp_dir=tmp_path,
+                ).resolve(HttpSource(f"{http_server}/digest-large")):
+                    pytest.fail("oversize Digest challenge delivered")
+            assert not client.is_closed
+        assert list(tmp_path.iterdir()) == []
 
     asyncio.run(run())
 

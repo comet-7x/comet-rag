@@ -47,7 +47,7 @@ PostgreSQL 测试在专用 `comet_docstore_v2` schema 中使用 UUID scope，验
 
 专用兼容 S3 测试创建本次 UUID bucket/object，仅清理自己的对象。MinerU 测试上传可读代码生成的原生文字 PDF，要求实际提取 Hello PDF、核对引擎版本并返回明确 partial Markdown；关闭客户端和删除输入后，再从 codec 快照读回相同内容/报告/身份。已在独立 MinerU 4.0.12 Flash/txt 服务通过，详见 [阶段 C](../docs/phase-c.md)。不因此声称扫描 OCR、其它 tier、原生结构或图片资源已验收。缺少部署时不执行对应集成，记录未验收，不能用 mock 替代。
 
-CI 实际启动自己 runner 的 PostgreSQL/Milvus，执行六项 PG、两项 Milvus 和两项 HTTP 用例；该 job 不包含 S3/MinerU，也不伪称 GPU 或真实模型 job。
+CI 实际启动自己 runner 的 PostgreSQL/Milvus，执行六项 PG、两项 Milvus 和三项 HTTP 用例（含实际校验 Digest 签名、同源重定向和挑战预算）；该 job 不包含 S3/MinerU，也不伪称 GPU 或真实模型 job。
 
 ## 核心安装与真实模型
 

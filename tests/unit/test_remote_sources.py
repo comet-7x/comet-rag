@@ -22,6 +22,7 @@ from comet_rag.sources import (
     LocalSource,
     S3Source,
     SourceError,
+    SourceResourceLimitExceeded,
 )
 from comet_rag.sources.http import AsyncHttpSourceResolver
 
@@ -440,6 +441,45 @@ def test_s3_cancellation_drains_thread_before_temp_cleanup(tmp_path: Path) -> No
 
     asyncio.run(run())
     assert observed == [True]
+    assert client.body.closed and not client.closed
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_local_limit_uses_public_resource_error_and_preserves_input(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "local.txt"
+    path.write_bytes(b"12345")
+
+    async def run() -> None:
+        with pytest.raises(SourceResourceLimitExceeded):
+            async with AsyncLocalSourceResolver(max_bytes=4).resolve(LocalSource(path)):
+                pytest.fail("oversize local source delivered")
+        async with AsyncLocalSourceResolver(max_bytes=5).resolve(
+            LocalSource(path)
+        ) as resource:
+            assert resource.size_bytes == 5
+            assert resource.path.read_bytes() == b"12345"
+
+    asyncio.run(run())
+    assert path.read_bytes() == b"12345"
+
+
+@pytest.mark.parametrize("returned_version", [None, "different"])
+def test_s3_requested_version_requires_matching_response(
+    tmp_path: Path, returned_version: str | None
+) -> None:
+    metadata = {"VersionId": returned_version} if returned_version is not None else {}
+    client = S3Client(io.BytesIO(b"latest"), ContentLength=6, **metadata)
+
+    async def run() -> None:
+        with pytest.raises(SourceError, match="VersionId"):
+            async with AsyncS3SourceResolver(
+                client, namespace="test", temp_dir=tmp_path
+            ).resolve(S3Source("bucket", "key", version_id="requested-old")):
+                pytest.fail("unverified S3 version delivered")
+
+    asyncio.run(run())
     assert client.body.closed and not client.closed
     assert list(tmp_path.iterdir()) == []
 

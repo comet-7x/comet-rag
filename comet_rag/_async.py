@@ -24,6 +24,30 @@ async def run_sync[**P, R](
     return task.result()
 
 
+async def close_async(
+    operation: Awaitable[None], active: BaseException | None, label: str
+) -> None:
+    """排干关闭操作；已有异常优先于取消，清理失败附注到主异常。"""
+    task = asyncio.ensure_future(operation)
+    cancelled: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            cancelled = exc
+        except Exception:
+            break
+    try:
+        task.result()
+    except Exception as cleanup:
+        primary = active if active is not None else cancelled
+        if primary is None:
+            raise
+        primary.add_note(f"{label} close failed: {type(cleanup).__name__}")
+    if cancelled is not None and active is None:
+        raise cancelled
+
+
 async def map_concurrently[T, R](
     operation: Callable[[T], Awaitable[R]], items: Sequence[T], *, limit: int
 ) -> list[R]:

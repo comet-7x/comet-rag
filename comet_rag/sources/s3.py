@@ -99,10 +99,11 @@ class AsyncS3SourceResolver:
                     if not isinstance(value, str) or not value:
                         raise SourceError(f"invalid S3 {field}")
                     metadata[key] = value
-            if source.version_id is not None:
-                if metadata.get("version_id") not in {None, source.version_id}:
-                    raise SourceError("S3 returned a different requested VersionId")
-                metadata["version_id"] = source.version_id
+            if (
+                source.version_id is not None
+                and metadata.get("version_id") != source.version_id
+            ):
+                raise SourceError("S3 response does not confirm requested VersionId")
             modified = response.get("LastModified")
             if modified is not None:
                 if not isinstance(modified, datetime):

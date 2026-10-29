@@ -8,9 +8,9 @@
 
 HTTP 使用注入的 httpx client 和必选准入策略，每次重定向发送前校验；不跨域重新注入认证。限制重定向次数、声明和实际字节数，拒绝部分响应和非 identity 内容编码。保留 ETag/Last-Modified 等版本事实，它们不冒充实际内容 hash。带已知敏感 query 的 URL 要求显式 source_id，不持久保存临时签名定位。准入回调不保证 DNS 与实际连接 IP 绑定，这由调用方的网络策略负责。
 
-S3 使用显式 namespace 与注入的同步 boto3-compatible client；保留 Bucket/Key/VersionId，请求的 VersionId 不得被替换。流式读取与实际预算/hash 核验，Body 必须关闭；ETag、VersionId、LastModified 和 SHA 分开保存。
+S3 使用显式 namespace 与注入的同步 boto3-compatible client；保留 Bucket/Key/VersionId，指定版本必须由响应 VersionId 精确确认，缺失或不匹配即拒绝交付。流式读取与实际预算/hash 核验，Body 必须关闭；ETag、VersionId、LastModified 和 SHA 分开保存。
 
-33 项 remote 单元测试和两项真实回环 HTTP 集成验证逐跳准入、认证剥离、字节预算/长度、来源、临时目录与取消所有权。单元测试不访问真实服务。
+来源单元测试与三项真实回环 HTTP 集成验证逐跳准入、认证剥离、字节预算/长度、来源、临时目录与取消所有权。新增真实 Digest 用例由回环服务校验 SHA-256 响应摘要，验证同源重定向重新认证和超限挑战拒绝；离线反例另外覆盖压缩认证响应和重复取消清理。单元测试不访问真实服务。HTTP 身份使用客户端合并 query 后的初始请求 URL，认证中间响应同样要求 identity 编码并受字节预算保护。
 
 ## 原生 DOCX
 
