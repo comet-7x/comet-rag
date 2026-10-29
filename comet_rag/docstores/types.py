@@ -5,11 +5,13 @@ from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
 from typing import Any
 
+from comet_rag.content import text_view
 from comet_rag.documents.codec import _encode
+from comet_rag.embedder.types import vector_values
 from comet_rag.identity import stable_id
 from comet_rag.indexing.codec import to_dict
 from comet_rag.indexing.types import IndexUnit, Representation, content_fingerprint
-from comet_rag.vectorstores.types import VectorConfirmation
+from comet_rag.vectorstores.types import VectorConfirmation, VectorRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +25,7 @@ class WriteManifest:
     representation_ids: tuple[str, ...]
     record_fingerprints: Mapping[str, str]
     content_fingerprint: str
+    record_vectors: Mapping[str, tuple[float, ...]]
     confirmations: tuple[VectorConfirmation, ...] = ()
     manifest_id: str = field(init=False)
 
@@ -63,6 +66,16 @@ class WriteManifest:
             "record_fingerprints",
             MappingProxyType(dict(self.record_fingerprints)),
         )
+        if not isinstance(self.record_vectors, Mapping) or set(
+            self.record_vectors
+        ) != set(self.record_fingerprints):
+            raise ValueError("record vectors must match fingerprint IDs")
+        vectors: dict[str, tuple[float, ...]] = {}
+        for key, values in self.record_vectors.items():
+            if not isinstance(values, (list, tuple)) or not values:
+                raise ValueError("record vectors must be nonempty numeric arrays")
+            vectors[key] = vector_values(values, len(values))
+        object.__setattr__(self, "record_vectors", MappingProxyType(vectors))
         confirmations = self.confirmations
         if not isinstance(confirmations, (list, tuple)) or any(
             not isinstance(value, VectorConfirmation)
@@ -85,8 +98,10 @@ class WriteManifest:
                     "units": self.unit_ids,
                     "representations": self.representation_ids,
                     "records": self.record_fingerprints,
+                    "vectors": self.record_vectors,
                     "content": self.content_fingerprint,
                 },
+                version=2,
             ),
         )
 
@@ -96,6 +111,41 @@ class WriteManifest:
 
     def with_confirmation(self, confirmation: VectorConfirmation) -> WriteManifest:
         return replace(self, confirmations=(*self.confirmations, confirmation))
+
+    def replay_records(
+        self, units: Sequence[IndexUnit], representations: Sequence[Representation]
+    ) -> tuple[VectorRecord, ...]:
+        by_id = {unit.unit_id: unit for unit in units}
+        records: list[VectorRecord] = []
+        for rep in representations:
+            record_id = stable_id(
+                "record",
+                {
+                    "scope": self.index_scope,
+                    "representation": rep.representation_id,
+                    "space": self.space_id,
+                },
+            )
+            if rep.unit_id not in by_id or record_id not in self.record_vectors:
+                raise ValueError("manifest record IDs do not match representations")
+            record = VectorRecord(
+                rep.representation_id,
+                rep.unit_id,
+                rep.source_id,
+                rep.document_id,
+                rep.index_scope,
+                rep.index_profile_id,
+                self.space_id,
+                self.record_vectors[record_id],
+                text_view(rep.content),
+                metadata=by_id[rep.unit_id].metadata,
+            )
+            if record.fingerprint != self.record_fingerprints[record_id]:
+                raise ValueError("stored vectors do not match record fingerprints")
+            records.append(record)
+        if {record.record_id for record in records} != set(self.record_ids):
+            raise ValueError("manifest record IDs do not match representations")
+        return tuple(records)
 
 
 def content_digest(
@@ -155,19 +205,7 @@ def validate_write(
     for rep in representations:
         if rep.unit_id not in by_id:
             raise ValueError("representation refers to a missing unit")
-    expected_records = {
-        stable_id(
-            "record",
-            {
-                "scope": index_scope,
-                "representation": rep.representation_id,
-                "space": manifest.space_id,
-            },
-        )
-        for rep in representations
-    }
-    if set(manifest.record_ids) != expected_records:
-        raise ValueError("manifest record IDs do not match representations")
+    manifest.replay_records(units, representations)
     for unit in units:
         path = {unit.unit_id}
         parent = unit.parent_unit_id
@@ -181,7 +219,7 @@ def validate_write(
 def manifest_to_dict(value: WriteManifest) -> dict[str, Any]:
     return {
         "type": "manifest",
-        "schema_version": 1,
+        "schema_version": 2,
         "index_scope": value.index_scope,
         "index_profile_id": value.index_profile_id,
         "source_id": value.source_id,
@@ -190,6 +228,9 @@ def manifest_to_dict(value: WriteManifest) -> dict[str, Any]:
         "unit_ids": list(value.unit_ids),
         "representation_ids": list(value.representation_ids),
         "record_fingerprints": dict(value.record_fingerprints),
+        "record_vectors": {
+            key: list(vector) for key, vector in value.record_vectors.items()
+        },
         "content_fingerprint": value.content_fingerprint,
         "manifest_id": value.manifest_id,
         "confirmations": [
@@ -210,7 +251,7 @@ def manifest_from_dict(value: Mapping[str, Any]) -> WriteManifest:
     data = dict(value)
     tag = data.pop("type", None)
     version = data.pop("schema_version", None)
-    if tag != "manifest" or type(version) is not int or version != 1:
+    if tag != "manifest" or type(version) is not int or version != 2:
         raise ValueError("unsupported manifest type/version")
     if set(data) != {item.name for item in fields(WriteManifest)}:
         raise ValueError("unknown or missing manifest fields")

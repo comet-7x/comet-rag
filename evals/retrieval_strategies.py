@@ -243,6 +243,7 @@ async def load_index(
             tuple(rep.representation_id for rep in built.representations),
             {record.record_id: record.fingerprint for record in records},
             content_digest(built.units, built.representations),
+            {record.record_id: record.vector for record in records},
         )
         started = time.perf_counter()
         await docstore.upsert_units(

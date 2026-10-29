@@ -18,7 +18,7 @@ from sqlalchemy import (
     select,
     update,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.schema import CreateSchema
@@ -35,7 +35,11 @@ class AsyncPostgresDocStore:
     """显式 prepare 创建独立表；注入的 engine 始终由创建者关闭。"""
 
     def __init__(
-        self, *, index_scope: str, engine: AsyncEngine, schema: str = "comet_rag_v2"
+        self,
+        *,
+        index_scope: str,
+        engine: AsyncEngine,
+        schema: str = "comet_docstore_v2",
     ) -> None:
         self._index_scope = _scope(index_scope)
         if (
@@ -56,14 +60,14 @@ class AsyncPostgresDocStore:
             Column("index_profile_id", Text, nullable=False),
             Column("manifest_id", Text, nullable=False),
             Column("content_fingerprint", Text, nullable=False),
-            Column("payload", JSONB, nullable=False),
+            Column("payload", JSON, nullable=False),
             UniqueConstraint("index_scope", "source_id"),
             UniqueConstraint("index_scope", "manifest_id"),
             UniqueConstraint(
                 "index_scope", "source_id", "document_id", "index_profile_id"
             ),
             CheckConstraint(
-                "payload ->> 'type' = 'manifest' AND payload ->> 'schema_version' = '1'"
+                "payload ->> 'type' = 'manifest' AND payload ->> 'schema_version' = '2'"
             ),
         )
         self._units = Table(
@@ -75,7 +79,7 @@ class AsyncPostgresDocStore:
             Column("document_id", Text, nullable=False),
             Column("index_profile_id", Text, nullable=False),
             Column("parent_unit_id", Text),
-            Column("payload", JSONB, nullable=False),
+            Column("payload", JSON, nullable=False),
             UniqueConstraint(
                 "index_scope", "source_id", "document_id", "index_profile_id", "unit_id"
             ),
@@ -127,7 +131,7 @@ class AsyncPostgresDocStore:
             Column("source_id", Text, nullable=False),
             Column("document_id", Text, nullable=False),
             Column("index_profile_id", Text, nullable=False),
-            Column("payload", JSONB, nullable=False),
+            Column("payload", JSON, nullable=False),
             ForeignKeyConstraint(
                 [
                     "index_scope",

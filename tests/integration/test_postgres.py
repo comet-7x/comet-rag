@@ -116,7 +116,9 @@ def test_postgres_persists_content_confirmations_and_exact_deletion(
                     manifest=with_content(changed_units, reps, manifest),
                 )
             omitted = with_content(
-                (units[0],), (), replace(manifest, record_fingerprints={})
+                (units[0],),
+                (),
+                replace(manifest, record_fingerprints={}, record_vectors={}),
             )
             with pytest.raises(ValueError, match="immutable manifest"):
                 await store.upsert_units(
@@ -154,6 +156,45 @@ def test_postgres_persists_content_confirmations_and_exact_deletion(
             await store.delete_manifest(manifest.document_id)
             await other.delete_units(other_manifest.unit_ids)
             await other.delete_manifest(other_manifest.document_id)
+            await client.dispose()
+
+    asyncio.run(run())
+
+
+def test_postgres_preserves_negative_zero_in_vectors_and_metadata() -> None:
+    async def run() -> None:
+        client = engine()
+        store = AsyncPostgresDocStore(index_scope=scope(), engine=client)
+        units, reps, manifest = write_batch(store.index_scope, metadata={"zero": -0.0})
+        record = replace(manifest.replay_records(units, reps)[0], vector=(1.0, -0.0))
+        expected = replace(
+            manifest,
+            record_fingerprints={record.record_id: record.fingerprint},
+            record_vectors={record.record_id: record.vector},
+        )
+        try:
+            await store.prepare()
+            await store.upsert_units(units, representations=reps, manifest=expected)
+            await client.dispose()
+            client = engine()
+            store = AsyncPostgresDocStore(
+                index_scope=expected.index_scope, engine=client
+            )
+            actual = await store.get_manifest(expected.document_id)
+            assert actual is not None and actual.manifest_id == expected.manifest_id
+            restored_units = await store.get_units(actual.unit_ids)
+            restored_reps = await store.get_representations(actual.representation_ids)
+            replay = actual.replay_records(
+                tuple(restored_units[key] for key in actual.unit_ids),
+                tuple(restored_reps[key] for key in actual.representation_ids),
+            )
+            assert replay[0].fingerprint == record.fingerprint
+            assert str(replay[0].vector[1]) == "-0.0"
+            assert str(restored_units[units[0].unit_id].metadata["zero"]) == "-0.0"
+            await store.upsert_units(units, representations=reps, manifest=expected)
+        finally:
+            await store.delete_units(expected.unit_ids)
+            await store.delete_manifest(expected.document_id)
             await client.dispose()
 
     asyncio.run(run())
@@ -200,14 +241,15 @@ def test_postgres_final_manifest_constraint_failure_rolls_back_entire_transactio
                     client.sync_engine, "before_cursor_execute", invalid_final_manifest
                 )
             assert any(
-                "INSERT INTO comet_rag_v2.docstore_units" in sql for sql in statements
-            )
-            assert any(
-                "INSERT INTO comet_rag_v2.docstore_representations" in sql
+                "INSERT INTO comet_docstore_v2.docstore_units" in sql
                 for sql in statements
             )
             assert any(
-                "INSERT INTO comet_rag_v2.docstore_manifests" in sql
+                "INSERT INTO comet_docstore_v2.docstore_representations" in sql
+                for sql in statements
+            )
+            assert any(
+                "INSERT INTO comet_docstore_v2.docstore_manifests" in sql
                 for sql in statements
             )
             assert await store.get_units(manifest.unit_ids) == {}
@@ -325,7 +367,7 @@ def test_postgres_rejects_corrupt_snapshot_identity_on_read() -> None:
                     .values(payload=to_dict(units[0]))
                 )
                 corrupted = manifest_to_dict(manifest)
-                corrupted["schema_version"] = 2
+                corrupted["schema_version"] = 1
                 with pytest.raises(IntegrityError):
                     async with connection.begin_nested():
                         await connection.execute(

@@ -10,7 +10,7 @@ from typing import Any, cast
 import pytest
 
 from comet_rag.chunkers import SourceRef
-from comet_rag.content import ContentPart, ImagePart, MediaRef, TextPart
+from comet_rag.content import ContentPart, ImagePart, MediaRef, TextPart, text_view
 from comet_rag.docstores import AsyncDocStore, AsyncMemoryDocStore, WriteManifest
 from comet_rag.docstores.types import (
     content_digest,
@@ -97,6 +97,8 @@ def write_batch(
         profile,
         "space-1",
         (1.0, 0.0),
+        text_view(rep.content),
+        metadata=child.metadata,
     )
     units = (parent, child)
     reps = (rep,)
@@ -110,6 +112,7 @@ def write_batch(
         (rep.representation_id,),
         {record.record_id: record.fingerprint},
         content_digest(units, reps),
+        {record.record_id: record.vector},
     )
     return units, reps, manifest
 
@@ -201,7 +204,9 @@ def test_memory_retries_preserve_confirmations_and_reject_same_scope_changes() -
                 changed_units, representations=reps, manifest=changed
             )
         omitted = with_content(
-            (units[0],), (), replace(manifest, record_fingerprints={})
+            (units[0],),
+            (),
+            replace(manifest, record_fingerprints={}, record_vectors={}),
         )
         with pytest.raises(ValueError, match="immutable manifest"):
             await store.upsert_units((units[0],), representations=(), manifest=omitted)
@@ -234,26 +239,50 @@ def test_memory_invalid_complete_batches_leave_no_content() -> None:
             "profile-1",
             "space-1",
             (1.0, 0.0),
+            text_view(bad_rep.content),
+            metadata=orphan.metadata,
         )
         orphan_manifest = with_content(
             bad_units,
             (bad_rep,),
             replace(
-                manifest, record_fingerprints={record.record_id: record.fingerprint}
+                manifest,
+                record_fingerprints={record.record_id: record.fingerprint},
+                record_vectors={record.record_id: record.vector},
             ),
         )
         cases = [
-            (units, reps, replace(manifest, content_fingerprint="incorrect")),
-            (units[:1], reps, manifest),
-            (units, (), manifest),
-            (units, reps, replace(manifest, record_fingerprints={})),
-            (units, reps, replace(manifest, index_scope="another-scope")),
-            (units, reps, replace(manifest, source_id="another-source")),
-            (bad_units, (bad_rep,), orphan_manifest),
+            (
+                units,
+                reps,
+                replace(manifest, content_fingerprint="incorrect"),
+                "fingerprint",
+            ),
+            (units[:1], reps, manifest, "complete ordered"),
+            (units, (), manifest, "complete ordered"),
+            (
+                units,
+                reps,
+                replace(manifest, record_fingerprints={}, record_vectors={}),
+                "record IDs",
+            ),
+            (
+                units,
+                reps,
+                replace(manifest, index_scope="another-scope"),
+                "scope mismatch",
+            ),
+            (
+                units,
+                reps,
+                replace(manifest, source_id="another-source"),
+                "identity mismatch",
+            ),
+            (bad_units, (bad_rep,), orphan_manifest, "missing parent|unit cycle"),
         ]
-        for pending_units, pending_reps, pending_manifest in cases:
+        for pending_units, pending_reps, pending_manifest, message in cases:
             store = AsyncMemoryDocStore(index_scope="scope-1")
-            with pytest.raises(ValueError):
+            with pytest.raises(ValueError, match=message):
                 await store.upsert_units(
                     pending_units,
                     representations=pending_reps,
@@ -400,6 +429,42 @@ def test_manifest_codec_rejects_incomplete_or_malformed_payload(change: str) -> 
     else:
         data["confirmations"][0]["guarantee"] = {}
     with pytest.raises(ValueError):
+        manifest_from_dict(data)
+
+
+@pytest.mark.parametrize("vectors", [None, [], {}, {"wrong": [1.0, 0.0]}])
+def test_manifest_replay_vectors_require_exact_record_ids(vectors: Any) -> None:
+    _, _, manifest = write_batch()
+    with pytest.raises(ValueError, match="vectors"):
+        replace(manifest, record_vectors=vectors)
+
+
+@pytest.mark.parametrize("vector", [[], "10", [True], [float("nan")], [float("inf")]])
+def test_manifest_replay_vectors_reject_nonfinite_or_invalid_arrays(
+    vector: Any,
+) -> None:
+    _, _, manifest = write_batch()
+    with pytest.raises(ValueError):
+        replace(manifest, record_vectors={manifest.record_ids[0]: vector})
+
+
+def test_manifest_codec_rejects_old_version_missing_or_changed_replay_vectors() -> None:
+    units, reps, manifest = write_batch()
+    for mutation in (
+        {"schema_version": 1},
+        {"record_vectors": {}},
+        {"record_vectors": {manifest.record_ids[0]: [0.0, 1.0]}},
+    ):
+        data = {**manifest_to_dict(manifest), **mutation}
+        with pytest.raises(ValueError):
+            manifest_from_dict(data)
+    changed = replace(manifest, record_vectors={manifest.record_ids[0]: (0.0, 1.0)})
+    with pytest.raises(ValueError, match="fingerprints"):
+        changed.replay_records(units, reps)
+    assert manifest.replay_records(units, reps)[0].vector == (1.0, 0.0)
+    data = manifest_to_dict(manifest)
+    del data["record_vectors"]
+    with pytest.raises(ValueError, match="missing"):
         manifest_from_dict(data)
 
 

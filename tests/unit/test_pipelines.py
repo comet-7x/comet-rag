@@ -134,6 +134,60 @@ def test_vector_response_loss_keeps_manifest_and_actual_inputs(tmp_path: Path) -
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("failure_mode", ["before_write", "response_lost"])
+def test_retry_replays_saved_vectors_without_calling_nondeterministic_model(
+    tmp_path: Path, failure_mode: str
+) -> None:
+    class InterruptedWrite(AsyncMemoryVectorStore):
+        attempts = 0
+
+        async def upsert(self, records):
+            self.attempts += 1
+            if self.attempts == 1:
+                if failure_mode == "response_lost":
+                    await super().upsert(records)
+                raise TimeoutError("write interrupted")
+            return await super().upsert(records)
+
+    async def scenario() -> None:
+        pipeline, model, docs, vectors = components(tmp_path, InterruptedWrite)
+        calls = 0
+
+        async def drifting_embed(items, *, role):
+            nonlocal calls
+            calls += 1
+            return tuple(
+                EmbeddingResult(item.id, (1.0, calls * 1e-7), model.space.space_id)
+                for item in items
+            )
+
+        model.embed = drifting_embed
+        path = tmp_path / "source.txt"
+        path.write_text("cat")
+        source = LocalSource(path, source_id="cat")
+        with pytest.raises(IngestionIncomplete) as caught:
+            await pipeline.run(source)
+        first = caught.value.result.manifest
+        assert tuple(first.record_vectors.values()) == ((1.0, 1e-7),)
+        result = await pipeline.run(source)
+        assert result.query_visible and calls == 1
+        assert result.manifest.manifest_id == first.manifest_id
+        assert result.manifest.record_vectors == first.record_vectors
+        saved = await docs.get_manifest(result.document_id)
+        assert saved is not None
+        assert set(
+            (
+                await vectors.verify_records(
+                    saved.record_ids, fingerprints=saved.record_fingerprints
+                )
+            ).present
+        ) == set(saved.record_ids)
+        again = await pipeline.run(source)
+        assert again.query_visible and calls == 1
+
+    asyncio.run(scenario())
+
+
 def test_required_content_and_changed_snapshot_are_not_silently_replaced(
     tmp_path: Path,
 ) -> None:

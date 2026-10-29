@@ -100,6 +100,7 @@ async def run(directory: Path, phase: str) -> None:
         tuple(item.representation_id for item in typed_reps),
         {record.record_id: record.fingerprint},
         content_digest(typed_units, typed_reps),
+        {record.record_id: record.vector},
     )
     docs = AsyncMemoryDocStore(index_scope=unit.index_scope)
     vectors = AsyncMemoryVectorStore(

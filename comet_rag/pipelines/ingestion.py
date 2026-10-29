@@ -126,19 +126,33 @@ class AsyncIngestionPipeline:
                     stored[item_id] for item_id in existing.representation_ids
                 )
                 await run_sync(self._validate_assets, representations, output_dir)
+                if (existing.index_profile_id, existing.space_id) != (
+                    profile,
+                    self.embedder.space.space_id,
+                ):
+                    raise ValueError(
+                        "retry profile/space conflicts with stored manifest"
+                    )
+                records = existing.replay_records(built.units, representations)
+                for record in records:
+                    record.validate(
+                        index_scope=scope,
+                        index_profile_id=profile,
+                        space=self.embedder.space,
+                    )
             else:
                 representations = built.representations
-            embeddings = await self.embedder.embed(
-                tuple(
-                    ContentItem(rep.representation_id, rep.content)
-                    for rep in representations
-                ),
-                role="document",
-            )
-            records = _records(
-                representations, embeddings, self.embedder.space, built.units
-            )
-            manifest = WriteManifest(
+                embeddings = await self.embedder.embed(
+                    tuple(
+                        ContentItem(rep.representation_id, rep.content)
+                        for rep in representations
+                    ),
+                    role="document",
+                )
+                records = _records(
+                    representations, embeddings, self.embedder.space, built.units
+                )
+            manifest = existing or WriteManifest(
                 scope,
                 profile,
                 resource.source.source_id,
@@ -148,6 +162,7 @@ class AsyncIngestionPipeline:
                 tuple(rep.representation_id for rep in representations),
                 {record.record_id: record.fingerprint for record in records},
                 content_digest(built.units, representations),
+                {record.record_id: record.vector for record in records},
             )
             await self.docstore.upsert_units(
                 built.units, representations=representations, manifest=manifest
