@@ -10,7 +10,7 @@
 | 2    | sources：本地、HTTP、S3、路由和资源所有权                               | 已审核并修复，独立复审与最终检查通过；真实 S3 边界见下文 |
 | 3    | documents：schema、codec、投影、解析器和导出                            | 已审核并修复四项问题；全量检查通过，真实引擎边界见下文 |
 | 4    | chunkers / indexing：范围、物化、表示、关系和身份                       | 已审核并修复图片出现丢失；全量检查通过，边界见下文     |
-| 5    | embedder / rerankers：预算、角色、映射与实际 SDK 能力                   | 已审核并修复；远程文本模型已小样本校准，本地模型未重验 |
+| 5    | embedder / rerankers：预算、角色、映射与实际 SDK 能力                   | 已审核并修复；远程文本已校准，本地 CLIP/MiniLM 真实复验通过 |
 | 6    | docstores / vectorstores：事务、清单、幂等、过滤与核对                  | 代码与本地检查通过；新版真实 PostgreSQL 已验，Milvus 写入被审批拦截 |
 | 7    | retrieval / pipelines：归并、融合、降级、入库与删除                     | 已审核并修复上下文过滤；真实 PG 读回验证通过，完整跨后端待验 |
 | 8    | examples / evals / 交付：真实调用、质量比较与安装边界                   | 已审核修复示例；真实本地模型评估复验通过，跨后端示例待重验 |
@@ -207,6 +207,14 @@
 - 独立从原始命中与标签重算 **44 行**逐查询指标及组均值，全部一致；三组图片指标为 1，joint 和图片候选重排明确 unsupported。报告保存在本地 `tmp/eval-module-review-20261029.json`，不打入分发包；细节见 [evals](../evals/README.md)。两图同图查询不证明跨域泛化，也不计作持久后端验收。
 - `make check`：**797 passed**，Ruff **109 文件**、Pyright **0 errors / 0 warnings**，wheel/sdist 构建通过；`make coverage`：**797 passed / 91%**（4781 条语句，426 条未覆盖）。示例修改的 pre-commit 含 Bandit、敏感信息扫描与 unit 全部通过。核心运行代码未在本组修改，上一组仓库外核心 wheel 实际调用证据仍适用；最终分发另核对当前示例/文档与本地资料排除。
 
+### 真实 PostgreSQL + CLIP 两进程补验
+
+在代码 `7aeaa2d` 上，使用独立 PostgreSQL **17.11**、本地固定 CLIP 权重、torch **2.14.1** / transformers **4.57.6** / SQLAlchemy **2.1.6** / pymilvus **2.6.17**。脚本显式设置模型离线模式，保存两份文字、两份 HTTP 图片和一份含表格/图片 DOCX，共 **5 documents / 6 units / 6 representations / 6 records / 3 assets**。HTTP 下载临时目录释放后，逐 Asset 核对持久字节 SHA。
+
+另一个全新 Python 进程仅从 PostgreSQL 的 manifest/unit/representation 读回，核对相同 IDs 与指纹，重放首次保存向量；两份文字入库重试使用禁止 document embedding 的适配器，重试成功且清单不变。两个阶段分别通过猫/狗的八次文字/图片组合和 dense/keyword/hybrid 三模式，query embedding 仍使用真实模型。向量侧明确是 **memory**，新进程从 PostgreSQL 实际向量重建，不能据此宣称 Milvus 持久化通过。
+
+首轮脚本错误地用 cat 查询只含 cats 的正文，keyword 返回空而失败；修正为确实存在的 cats 后，使用新 scope 完整重跑两进程通过，失败记录与资料保留。另合跑 **7 项真实 PostgreSQL + 2 项 HTTPX 集成：9 passed / 1.62 秒**。本地可读脚本 `tmp/verify_pg_clip_20261029.py` 与 `tmp/pg-clip-validation-6004e259bdd6/` 保存原始证据，不含连接凭据，不进入分发包。
+
 ### 尚未完成
 
-完整新版 PostgreSQL/Milvus 持久示例仍未重跑，共享 Milvus 写入审批未解除；本轮也未重启持久服务。真实模型取消/并发压力、扫描 OCR 和领域质量未验收。审核与本地修复完成不代表这些外部出口已经通过。
+本轮再次尝试共享 Milvus 集成被自动审批拒绝，要求明确批准创建集合/索引和写入/删除测试记录，测试没有执行，未换入口绕过。完整新版 PostgreSQL/Milvus 持久示例仍未重跑，共享 Milvus 写入审批未解除；本轮也未重启持久服务。真实模型取消/并发压力、扫描 OCR 和领域质量未验收。审核与本地修复完成不代表这些外部出口已经通过。
