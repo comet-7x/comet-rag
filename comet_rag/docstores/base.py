@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, Sequence
-from typing import Protocol
+from typing import Any, Protocol
 
 from comet_rag.indexing.codec import from_dict, to_dict
 from comet_rag.indexing.types import IndexUnit, Representation
 from comet_rag.vectorstores.types import VectorConfirmation
 
-from .types import WriteManifest, manifest_from_dict, manifest_to_dict, validate_write
+from .types import (
+    WriteManifest,
+    content_digest,
+    manifest_from_dict,
+    manifest_to_dict,
+    validate_write,
+)
 
 
 class AsyncDocStore(Protocol):
@@ -83,6 +89,40 @@ def _snapshot(
     snapshot = manifest_from_dict(manifest_to_dict(manifest))
     validate_write(index_scope, stored_units, stored_representations, snapshot)
     return tuple(stored_units), tuple(stored_representations), snapshot
+
+
+def _content_digest(value: IndexUnit | Representation) -> str:
+    return (
+        content_digest((value,), ())
+        if isinstance(value, IndexUnit)
+        else content_digest((), (value,))
+    )
+
+
+def _content_payload(value: IndexUnit | Representation) -> dict[str, Any]:
+    return {
+        **to_dict(value),
+        "snapshot_version": 1,
+        "snapshot_fingerprint": _content_digest(value),
+    }
+
+
+def _check_content(value: IndexUnit | Representation, fingerprint: object) -> None:
+    if not isinstance(fingerprint, str) or not fingerprint:
+        raise ValueError("missing snapshot fingerprint; rebuild in a new index_scope")
+    if _content_digest(value) != fingerprint:
+        raise ValueError("stored snapshot fingerprint mismatch")
+
+
+def _decode_content(payload: Mapping[str, Any]) -> IndexUnit | Representation:
+    data = dict(payload)
+    version = data.pop("snapshot_version", None)
+    fingerprint = data.pop("snapshot_fingerprint", None)
+    if type(version) is not int or version != 1:
+        raise ValueError("unsupported snapshot version; rebuild in a new index_scope")
+    value = from_dict(data)
+    _check_content(value, fingerprint)
+    return value
 
 
 def _same_manifest(existing: WriteManifest, incoming: WriteManifest) -> None:

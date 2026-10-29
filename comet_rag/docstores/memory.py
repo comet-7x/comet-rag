@@ -8,7 +8,16 @@ from comet_rag.indexing.codec import from_dict, to_dict
 from comet_rag.indexing.types import IndexUnit, Representation
 from comet_rag.vectorstores.types import VectorConfirmation
 
-from .base import _batch_size, _ids, _parents, _same_manifest, _scope, _snapshot
+from .base import (
+    _batch_size,
+    _check_content,
+    _content_digest,
+    _ids,
+    _parents,
+    _same_manifest,
+    _scope,
+    _snapshot,
+)
 from .types import WriteManifest, content_digest, manifest_from_dict, manifest_to_dict
 
 
@@ -20,6 +29,8 @@ class AsyncMemoryDocStore:
         self._units: dict[str, IndexUnit] = {}
         self._representations: dict[str, Representation] = {}
         self._manifests: dict[str, WriteManifest] = {}
+        self._unit_fingerprints: dict[str, str] = {}
+        self._representation_fingerprints: dict[str, str] = {}
 
     @property
     def index_scope(self) -> str:
@@ -42,11 +53,13 @@ class AsyncMemoryDocStore:
             ):
                 _same_manifest(existing, manifest)
                 stored_units = self._read_units(manifest.unit_ids)
-                stored_reps = {
-                    key: rep
-                    for key, rep in self._representations.items()
-                    if rep.document_id == manifest.document_id
-                }
+                stored_reps = await self.get_representations(
+                    [
+                        key
+                        for key, rep in self._representations.items()
+                        if rep.document_id == manifest.document_id
+                    ]
+                )
                 if (
                     set(stored_units) != set(manifest.unit_ids)
                     or set(stored_reps) != set(manifest.representation_ids)
@@ -64,7 +77,13 @@ class AsyncMemoryDocStore:
             rep.representation_id in self._representations for rep in representations
         ):
             raise ValueError("content ID already belongs to another manifest")
+        unit_fingerprints = {unit.unit_id: _content_digest(unit) for unit in units}
+        representation_fingerprints = {
+            rep.representation_id: _content_digest(rep) for rep in representations
+        }
         # 此段没有 await，验证完成后不会暴露半批次状态。
+        self._unit_fingerprints.update(unit_fingerprints)
+        self._representation_fingerprints.update(representation_fingerprints)
         self._units.update((unit.unit_id, unit) for unit in units)
         self._representations.update(
             (rep.representation_id, rep) for rep in representations
@@ -89,6 +108,8 @@ class AsyncMemoryDocStore:
         ):
             raise ValueError("stored unit identity mismatch")
         _parents(relatives)
+        for key, unit in relatives.items():
+            _check_content(unit, self._unit_fingerprints.get(key))
         return {
             key: cast(IndexUnit, from_dict(to_dict(value)))
             for key, value in requested.items()
@@ -123,6 +144,7 @@ class AsyncMemoryDocStore:
                 )
             ):
                 raise ValueError("stored representation identity mismatch")
+            _check_content(rep, self._representation_fingerprints.get(key))
             result[key] = cast(Representation, from_dict(to_dict(rep)))
         return result
 
@@ -177,8 +199,14 @@ class AsyncMemoryDocStore:
             for key, rep in self._representations.items()
             if rep.unit_id not in keys
         }
+        self._representation_fingerprints = {
+            key: fingerprint
+            for key, fingerprint in self._representation_fingerprints.items()
+            if key in self._representations
+        }
         for key in keys:
             self._units.pop(key, None)
+            self._unit_fingerprints.pop(key, None)
 
     async def delete_manifest(self, document_id: str) -> None:
         _ids((document_id,))

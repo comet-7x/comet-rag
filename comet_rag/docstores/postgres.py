@@ -23,11 +23,19 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.schema import CreateSchema
 
-from comet_rag.indexing.codec import from_dict, to_dict
 from comet_rag.indexing.types import IndexUnit, Representation
 from comet_rag.vectorstores.types import VectorConfirmation
 
-from .base import _batch_size, _ids, _parents, _same_manifest, _scope, _snapshot
+from .base import (
+    _batch_size,
+    _content_payload,
+    _decode_content,
+    _ids,
+    _parents,
+    _same_manifest,
+    _scope,
+    _snapshot,
+)
 from .types import WriteManifest, content_digest, manifest_from_dict, manifest_to_dict
 
 
@@ -198,7 +206,7 @@ class AsyncPostgresDocStore:
     def _decode[T: IndexUnit | Representation](
         self, row: RowMapping, cls: type[T]
     ) -> T:
-        value = from_dict(row["payload"])
+        value = _decode_content(row["payload"])
         names = (
             "index_scope",
             "source_id",
@@ -345,7 +353,7 @@ class AsyncPostgresDocStore:
                             "document_id": unit.document_id,
                             "index_profile_id": unit.index_profile_id,
                             "parent_unit_id": unit.parent_unit_id,
-                            "payload": to_dict(unit),
+                            "payload": _content_payload(unit),
                         }
                         for unit in units
                     ],
@@ -361,7 +369,7 @@ class AsyncPostgresDocStore:
                             "source_id": rep.source_id,
                             "document_id": rep.document_id,
                             "index_profile_id": rep.index_profile_id,
-                            "payload": to_dict(rep),
+                            "payload": _content_payload(rep),
                         }
                         for rep in representations
                     ],

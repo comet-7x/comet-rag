@@ -13,10 +13,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from comet_rag.content import MediaRef, TextPart
+from comet_rag.docstores.base import _content_payload
 from comet_rag.docstores.postgres import AsyncPostgresDocStore
 from comet_rag.docstores.types import manifest_to_dict
-from comet_rag.documents.schemas import Asset
-from comet_rag.indexing.codec import to_dict
+from comet_rag.documents.schemas import Asset, RichText, TextRun
 from comet_rag.vectorstores.types import VectorConfirmation
 from tests.unit.test_docstores import with_content, write_batch
 
@@ -343,6 +343,58 @@ def test_postgres_rejects_corrupt_snapshot_identity_on_read() -> None:
         try:
             await store.prepare()
             await store.upsert_units(units, representations=reps, manifest=manifest)
+            for corruption in ("blocks", "metadata", "representation"):
+                if corruption == "blocks":
+                    block = replace(
+                        units[0].blocks[1],
+                        rich_text=RichText((TextRun("corrupt cell"),)),
+                    )
+                    changed = replace(units[0], blocks=(units[0].blocks[0], block))
+                else:
+                    changed = replace(units[0], metadata={"corrupt": True})
+                if corruption == "representation":
+                    table = store._representations
+                    key = table.c.representation_id == reps[0].representation_id
+                    original = _content_payload(reps[0])
+                    changed_rep = replace(
+                        reps[0],
+                        assets=(Asset("extra", "a" * 64, MediaRef(path="stable.png")),),
+                    )
+                    assert changed_rep.representation_id == reps[0].representation_id
+                    corrupted = {
+                        **_content_payload(changed_rep),
+                        "snapshot_fingerprint": original["snapshot_fingerprint"],
+                    }
+                else:
+                    assert changed.unit_id == units[0].unit_id
+                    table = store._units
+                    key = table.c.unit_id == units[0].unit_id
+                    original = _content_payload(units[0])
+                    corrupted = {
+                        **_content_payload(changed),
+                        "snapshot_fingerprint": original["snapshot_fingerprint"],
+                    }
+                async with client.begin() as connection:
+                    await connection.execute(
+                        update(table)
+                        .where(table.c.index_scope == store.index_scope, key)
+                        .values(payload=corrupted)
+                    )
+                try:
+                    if corruption != "representation":
+                        with pytest.raises(ValueError, match="snapshot fingerprint"):
+                            await store.get_units([units[1].unit_id])
+                    with pytest.raises(
+                        ValueError, match="snapshot fingerprint|identity"
+                    ):
+                        await store.get_representations(manifest.representation_ids)
+                finally:
+                    async with client.begin() as connection:
+                        await connection.execute(
+                            update(table)
+                            .where(table.c.index_scope == store.index_scope, key)
+                            .values(payload=original)
+                        )
             wrong = replace(units[0], index_scope="wrong-scope")
             async with client.begin() as connection:
                 await connection.execute(
@@ -351,7 +403,7 @@ def test_postgres_rejects_corrupt_snapshot_identity_on_read() -> None:
                         store._units.c.index_scope == store.index_scope,
                         store._units.c.unit_id == units[0].unit_id,
                     )
-                    .values(payload=to_dict(wrong))
+                    .values(payload=_content_payload(wrong))
                 )
             with pytest.raises(ValueError, match="identity mismatch"):
                 await store.get_units([units[1].unit_id])
@@ -364,7 +416,7 @@ def test_postgres_rejects_corrupt_snapshot_identity_on_read() -> None:
                         store._units.c.index_scope == store.index_scope,
                         store._units.c.unit_id == units[0].unit_id,
                     )
-                    .values(payload=to_dict(units[0]))
+                    .values(payload=_content_payload(units[0]))
                 )
                 corrupted = manifest_to_dict(manifest)
                 corrupted["schema_version"] = 1
@@ -386,7 +438,7 @@ def test_postgres_rejects_corrupt_snapshot_identity_on_read() -> None:
                         store._units.c.index_scope == store.index_scope,
                         store._units.c.unit_id == units[0].unit_id,
                     )
-                    .values(payload=to_dict(units[0]))
+                    .values(payload=_content_payload(units[0]))
                 )
             await store.delete_units(manifest.unit_ids)
             await store.delete_manifest(manifest.document_id)

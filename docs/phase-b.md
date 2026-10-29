@@ -8,6 +8,7 @@
 - 字符切分保存原始 `[start,end)` 范围，不通过重复文字反向查找位置。结构切分保留表格/媒体原子性及自包含子内容，合成分隔符没有原文坐标。
 - units 保存可返回内容，representations 保存实际模型输入。身份覆盖有序内容、scope、profile 与空间；codec 重建重新核对，拒绝悬空资产、表格子内容和错误身份。
 - PostgreSQL 在一个真实事务保存完整 units、representations、manifest。清单 v2 保存实际向量，顺序重试直接重放并核指纹，避免模型浮点微差产生永久冲突。默认 schema `comet_docstore_v2`，JSON payload 保留负零等数值表示。相同 scope/source 只允许相同快照/配置重试；内容或 profile 变化要求新 scope，旧表不自动迁移。
+- DocStore 存储封套 `snapshot_version=1` 为每个 unit/representation 独立保存摘要，读取单 ID 或部分删除后的剩余快照时核验正文结构与 metadata；沿用清单摘要对 Asset 可迁移位置/name 的排除语义。公共索引 codec 与 manifest v2 不变，SQL 表结构不变。缺少摘要的旧 scope 明确拒绝，需用新 scope 重建、核对后切换，新旧进程不能混用同一 scope；本轮在新建独立 PostgreSQL 实例上完成封套、事务回滚、并发与精确删除验证，六项集成通过；既有下方端到端证据对应此前格式。
 - Milvus 使用原生 `AsyncMilvusClient`，网络调用直接 await，由调用方 await close。每个 scope 使用独立集合，绑定 profile/space/schema，原生 dense + BM25。过滤先于候选 limit。写入区分 accepted/durable/query-visible，按明确 ID 与内容指纹核对。
 - 超时可能已经写入，保留清单和 unknown 状态；不删除旧数据。删除先按 manifest 的 records 明确删除和核对，再删内容，最后删清单，Asset 保留。
 - keyword 不调用查询模型；多表示先按最佳证据归并 unit，再执行 RRF，保留各通道 raw score/rank。
