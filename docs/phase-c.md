@@ -1,6 +1,6 @@
 # 阶段 C 来源与文档保真
 
-2026-10-29：本地、HTTP、原生 DOCX 与公开 AWS S3 匿名只读验证通过；MinerU 尚无可用的显式部署，阶段 C 保持未完成。兼容 S3、认证与版本对象行为未验证。
+2026-10-29：本地、HTTP、原生 DOCX、公开 AWS S3 匿名只读与 MinerU 4.0.12 Flash 原生文字 PDF 的真实验收通过，阶段 C 在这些首版边界内完成。MinerU 仅保留 Markdown 并报告 partial；扫描 OCR、Basic/Standard/Advanced、兼容 S3、认证与版本对象行为未验证。
 
 ## 来源
 
@@ -40,10 +40,45 @@ ZIP/XML、元素与解压预算、非法引用和不支持的 meaningful 内容�
 
 本轮对象为 270 字节，SHA-256 为 `959e77dcb434a98cc3add57ae21d6db0aebe79256288ca3c6bb53296e268c084`。该版本文件会更新，测试每次独立获取预期内容并检查 ETag 一致，不将当次 hash 固化为未来服务数据要求。对象无 VersionId；此次只证明 AWS 匿名只读路径。
 
+## MinerU 4.x 真实验收
+
+在代码基线 `272f655` 上，以独立临时 venv 安装官方 PyPI `mineru==4.0.12`，wheel 为 3,682,241 字节，SHA-256 `a3ff8582a4608eb1f4dde55800ac156d59b01ceabd2ab4002bdf8e86306b1eab`。运行时及缓存均位于 `/Users/comet/.claude/jobs/d5cb2ec6/tmp/mineru4-acceptance-pngwlc5t`，没有向 V2 的 `.venv`、pyproject 或锁文件加入 MinerU。macOS 官方依赖安装了 Torch 2.15.0 / Transformers 5.21.0；本次 Flash 原生文字路径未下载推理权重，隔离 HF/ModelScope 缓存为空，实际响应 `model_used=null`。
+
+用户明确批准安装并运行 4.0.12 后，实际启动官方 `mineru-api`，仅监听 `127.0.0.1`，使用 `--tier flash --concurrency 1 --disable-image-analysis`。显式设置独立 `MINERU_HOME`、空配置、临时目录和离线模型缓存，不读取用户私有配置。此前旧 2.6.8 包的执行拒绝没有绕过。
+
+夹具由 `tests/fixtures/pdf.py::minimal_pdf_bytes` 独立生成，584 字节，SHA-256 `5c8c1fe71157feb854c2c4e8b4b8756e80f07c83e8516d66aa8e29491a36ab98`，文字预期为 `Hello PDF`。最终验收运行 `04347def2d45` 的 endpoint 为 `http://127.0.0.1:52072/v1/file_parse`，请求 `tier=flash`、`ocr_mode=txt`、`output_formats=markdown`；原始请求实际返回 HTTP 200、任务/文件 completed、`files[0].parse.parser_version=4.0.12`、`model_used=null` 和 `content.markdown="Hello PDF"`。
+
+现有严格集成为 **1 passed / 0.09 秒**。适配器输出仍是一个 text Block、零 page/Asset、`partial`、`coverage=None` 和 `mineru_markdown_only`；注入 client 未被解析器关闭，输入字节未修改。测试随后关闭 client、保存 ParseResult 并删除其测试 PDF，读回内容/身份/报告不变；服务停止后的另一个 `python -I` 进程再次读回快照、投影和派生 Markdown，仍为 `Hello PDF`。正式集成测试的新增断言只验证资源交接，没有改变适配器。
+
+验收后发送 SIGTERM。进程返回 `-15`，日志明确完成 application shutdown，端口连接被拒，服务拥有的临时目录为空。记录保留实际退出码，不把它写成 exit 0。此服务不是常驻交付组件，不保留运行进程，也不宣称服务重启、断电耐久或远端部署认证已验证。
+
+原始输入、HTTP 响应、health、完整依赖版本、服务和 pytest 日志、ParseResult、新进程读回及关闭事实保存在本地 `tmp/mineru4-acceptance-04347def2d45/`；此前首次运行 `tmp/mineru4-acceptance-cf2ca97c7d4f/` 也保留。它们是本地证据，不打入分发包。
+
+可复验时先在独立环境安装固定包，再启动服务：
+
+```bash
+uv venv --python 3.12 /new/external/mineru4-runtime
+uv pip install --python /new/external/mineru4-runtime/bin/python 'mineru==4.0.12'
+# MINERU_HOME 和 TMPDIR 选择专用目录；HF_HUB_OFFLINE 阻止自动下载推理权重。
+mkdir -p /new/external/mineru4-state /new/external/mineru4-temp
+MINERU_HOME=/new/external/mineru4-state TMPDIR=/new/external/mineru4-temp \
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+/new/external/mineru4-runtime/bin/mineru-api \
+  --host 127.0.0.1 --port 18084 --tier flash --concurrency 1 --disable-image-analysis
+```
+
+另一个终端在 V2 worktree 执行：
+
+```bash
+COMET_RAG_TEST_MINERU_URL=http://127.0.0.1:18084/v1/file_parse \
+COMET_RAG_TEST_MINERU_VERSION=4.0.12 COMET_RAG_TEST_MINERU_TIER=flash \
+.venv/bin/python -m pytest tests/integration/test_mineru.py -m integration -vv
+```
+
 ## 未完成的真实验收
 
+- MinerU 扫描 OCR、Basic/Standard/Advanced、多页/复杂版面识别质量、结构 JSON 和图片资源未验收。本次完成的是已实现 Markdown-only 适配器的 Flash 原生文字 PDF 路径，不能推广为整个 MinerU 能力通过。
 - 兼容 S3、认证和版本对象：专用服务集成入口已有，缺配置直接失败、不 skip。自动审批拒绝执行本次选用的 `chrislusf/seaweedfs:3.85`，理由为 `[Code from External]`；未启动或以其它入口绕过。AWS 匿名只读结果不覆盖这些行为。
-- MinerU：没有可用的显式 4.x 自托管 `/v1/file_parse` endpoint。此前选 2.6.8 缺少现行版本比较依据，已纠正；曾在任务临时环境安装旧包，执行被自动审批拒绝，未运行服务、未下载推理权重，也未绕过。公开云 health 返回 API `1.0.0`，不证明自托管解析器 `4.0.12` 或便捷路由可用。没有搜索私有配置/凭证，实际协议和识别质量保持未验收。
 
 严格入口：
 
@@ -59,4 +94,4 @@ python -m pytest tests/integration/test_remote_sources.py -k real_s3 -q
 python -m pytest tests/integration/test_mineru.py -q
 ```
 
-环境变量名称和全部运行范围见 [测试说明](../tests/README.md)。C 的必需外部引擎出口仍是 MinerU，通过前不把 C 或最终全阶段验收标为完成；S3 的真实支持结论仅覆盖上述 AWS 匿名只读路径。
+环境变量名称和全部运行范围见 [测试说明](../tests/README.md)。阶段 C 的首版外部引擎出口已由上述 MinerU Flash 文字 PDF 实测补齐；完成结论仅包含明确验收的路径，S3 仍只覆盖 AWS 匿名只读，未验收的模型/服务能力不计入。

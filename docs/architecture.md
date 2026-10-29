@@ -59,4 +59,4 @@ accepted、durable、query-visible 分开。向量超时可能已写入，保留
 
 [基线 B](https://github.com/comet-7x/comet-rag/tree/75d12489bb6ca96746b370d06623cfe85a64fa41)与[参考 E](https://github.com/comet-7x/comet-rag/tree/ef5e94cdeaafb836ffae03d57063911f6cae5ba1)仅用于算法和边界行为参考。没有整体合并旧库、迁移旧持久数据或保留兼容接口。
 
-公开 AWS S3 匿名只读已验收；图片 scope 的真正服务重启证据属于此前代码，本轮清单/物化/原生异步 SDK 修订后已做新 scope 入库和新进程读回，未再次重启。MinerU 实际部署仍未验收，兼容 S3、认证与版本对象行为未验证。PPTX、整页截图、回答生成、在线版本激活、GC 和持久任务不在当前交付。详细设计在 ignored `tmp/refactoring/overview.md` v1.3，正式使用和验证以本目录及实际示例为准。
+公开 AWS S3 匿名只读已验收；图片 scope 的真正服务重启证据属于此前代码，本轮清单/物化/原生异步 SDK 修订后已做新 scope 入库和新进程读回，未再次重启。MinerU 4.0.12 的回环 HTTP 服务已实际验证 Flash 原生文字 PDF 与清理后快照读回，仅保证 Markdown-only partial；扫描 OCR、其它 tier、兼容 S3、认证与版本对象行为未验证。PPTX、整页截图、回答生成、在线版本激活、GC 和持久任务不在当前交付。详细设计在 ignored `tmp/refactoring/overview.md` v1.3，正式使用和验证以本目录及实际示例为准。

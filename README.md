@@ -2,7 +2,7 @@
 
 Comet-RAG V2 是可独立组合的文档入库与检索组件库，提供 `AsyncIngestionPipeline` 和 `AsyncSearchPipeline`。已实现本地/HTTP/S3 来源、原生 DOCX 与图片解析、范围切分、实际表示、嵌入/重排、PostgreSQL 内容清单和 Milvus dense/BM25。
 
-真实 CLIP→PostgreSQL/Milvus 已完成文本 dense/keyword/hybrid、文本/图片四种检索组合和 HTTP 临时下载释放。本轮清单与原生异步 SDK 修订后已完成新 scope 入库和新进程读回；真正服务重启证据属于此前版本。公开 AWS S3 匿名只读验收通过；外部 MinerU 仍缺实际部署验收，兼容 S3、认证与版本对象行为未验证。具体证据和剩余出口见 [验证记录](docs/validation.md)。
+真实 CLIP→PostgreSQL/Milvus 已完成文本 dense/keyword/hybrid、文本/图片四种检索组合和 HTTP 临时下载释放。本轮清单与原生异步 SDK 修订后已完成新 scope 入库和新进程读回；真正服务重启证据属于此前版本。公开 AWS S3 匿名只读与 MinerU 4.0.12 Flash 原生文字 PDF 的真实 HTTP 解析验收通过；MinerU 仍为 Markdown-only partial，扫描 OCR、其它 tier、兼容 S3、认证与版本对象行为未验证。具体证据和剩余出口见 [验证记录](docs/validation.md)。
 
 旧接口、HTTP 服务、worker 和运行说明保留在 [refactor/enterprise-reliability](https://github.com/comet-7x/comet-rag/tree/refactor/enterprise-reliability)。V2 不提供旧接口兼容、回答生成、在线版本激活或后台 GC。
 
@@ -85,9 +85,9 @@ make pre-commit
 |---|---|
 | 0 / A | 清场、独立包、身份/文档契约与隔离环境已提交 |
 | B | 持久文本/DOCX、三模式、真实服务重启证据及修订后新进程回读，见 [B](docs/phase-b.md) |
-| C | 本地/HTTP/原生 DOCX/公开 AWS S3 只读已验证；MinerU 部署待验收，兼容 S3 等范围未验证，见 [C](docs/phase-c.md) |
+| C | 本地/HTTP/原生 DOCX/公开 AWS S3 只读与 MinerU 4.0.12 Flash 文字 PDF 已验证；扫描 OCR、其它 tier 与兼容 S3 等未验证，见 [C](docs/phase-c.md) |
 | D | 四种组合、持久图片和修订后新进程读回通过；此前版本有真正服务重启证据，见 [D](docs/phase-d.md) |
 | E | 可选父子上下文/重排与实际模型比较，见 [E](docs/phase-e.md) |
-| F | 组件导出、示例/评估、包与 CI 已交付；核心及来源/图片 wheel 外部调用通过，最终全阶段验收仍依赖 C |
+| F | 组件导出、示例/评估、包与 CI 配置已交付；核心及来源/图片 wheel 外部调用通过，阶段 C 的首版 MinerU 出口已补齐；未验证能力见验证记录 |
 
 职责和不变量见 [架构](docs/architecture.md)，注释约定见 [注释标准](docs/comment_style.md)。本地细化设计为 `tmp/refactoring/overview.md`（v1.3），不随分发包发布。

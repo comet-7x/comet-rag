@@ -8,16 +8,16 @@
 |---|---|
 | 0 / A | 已完成并提交，见 [0](phase0.md) / [A](phase-a.md) |
 | B | 本地 TXT/DOCX→真实模型→PostgreSQL/Milvus→三模式通过；本轮向量重放/原生异步 SDK 修订后已用新 scope 验证新进程读回，服务重启证据属于此前版本，见 [B](phase-b.md) |
-| C | 本地/HTTP/原生 DOCX/公开 AWS S3 匿名只读已验证；MinerU 实际部署待验收，兼容 S3 等范围未验证，见 [C](phase-c.md) |
+| C | 本地/HTTP/原生 DOCX/公开 AWS S3 匿名只读与 MinerU 4.0.12 Flash 原生文字 PDF 的真实验收完成；扫描 OCR、其它 tier 与兼容 S3 等未验证，见 [C](phase-c.md) |
 | D | HTTP/文档图片、四种组合与新进程读回通过；此前版本另有真正服务重启证据，本轮修订未再次重启，见 [D](phase-d.md) |
 | E | 父子/重排完整性、实际模型质量与成本比较通过，默认策略未启用，见 [E](phase-e.md) |
-| F | 导出、示例/评估、构建白名单、架构守卫与 CI 已实现；核心和来源/图片 wheel 外部调用通过，最终全阶段验收仍依赖 C |
+| F | 导出、示例/评估、构建白名单、架构守卫与 CI 配置已实现；核心和来源/图片 wheel 外部调用通过，阶段 C 首版 MinerU 出口已补齐，未验证范围继续明确列出 |
 
 ## 本轮严格审查与修复
 
 先核对需求、库内已有实现、标准库能力、上游 SDK 原生支持和最简实现，再对调用方、测试及持久行为作交叉复审。修复以下已复现问题：
 
-- MinerU 旧版本选择依据不足：改为官方 4.x `/v1/file_parse`，核对官方异步 SDK 后保留轻量 HTTP 边界；严格校验实际 parser version、任务/文件状态、上传与响应预算，202 不重传，清理失败不覆盖原始错误。实际服务仍未验收。
+- MinerU 旧版本选择依据不足：改为官方 4.x `/v1/file_parse`，核对官方异步 SDK 后保留轻量 HTTP 边界；严格校验实际 parser version、任务/文件状态、上传与响应预算，202 不重传，清理失败不覆盖原始错误。4.0.12 Flash 原生文字 PDF 的真实服务结果见下节。
 - Milvus 以同步 SDK 加线程实现异步：改注入原生 `AsyncMilvusClient`，13 个网络方法直接 await，示例和集成同步迁移，借用客户端由创建者 await close。
 - 批量任务立即失败时其它 worker 继续派发：在失败 worker 中立即停止派发，保留已启动工作取消和排干。
 - 持久 URL 凭据规则遗漏：复用同一纯标准库检查，补齐 auth、credential、空值及编码参数名，仍允许文档业务 query 中的 `key`。
@@ -36,9 +36,24 @@
 - 文本 scope `review-text-043f2924bc71`：四文档实际 CLIP→PostgreSQL/Milvus，dense/keyword/hybrid、同清单重试和新进程 verify 全部通过。进程用时为 81.84 / 3.17 秒。
 - 图片 scope `review-multimodal-043f2924bc71`：五文档、猫/狗四种组合共八次查询、HTTP 临时下载释放、DOCX 内嵌图，以及明确 IDs/指纹/实际表示/Asset SHA 在新进程复验全部通过；示例内部计时 51.46 / 2.36 秒。
 - 本轮模型/持久证据为 `tmp/review-validation-043f2924bc71.json` 与上述 scope 目录，使用 Milvus `127.0.0.1:54150` 的新集合。没有再次重启服务；下方 `925d906` 的真实重启记录只证明当时版本。
-- 新 wheel 在仓库外独立环境 `review-wheels-afe4d7f9911d-ry7etp82` 中验收。核心环境仅 comet-rag+lxml 6.1.3，来源/图片环境仅 `[sources,images]` 和其依赖；各自两个 `python -I` 进程完成实际文件解析/codec/索引/keyword，或真实 HTTP 图片/原生 DOCX/Markdown/Asset SHA/清理检查。65 个运行文件与源码逐字节一致，分发包白名单检查通过，证据为 `tmp/review-wheels-afe4d7f9911d.json`。文档完善后再次重建并在 `review-wheels-f5f563bd6ac6-mp4viqbs` 的两个新独立环境重复全部安装调用，均通过，证据为 `tmp/review-wheels-f5f563bd6ac6.json`。后续变更仅补充本记录；最终包继续核对源码、已验收运行文件和分发白名单。
+- 新 wheel 在仓库外独立环境 `review-wheels-afe4d7f9911d-ry7etp82` 中验收。核心环境仅 comet-rag+lxml 6.1.3，来源/图片环境仅 `[sources,images]` 和其依赖；各自两个 `python -I` 进程完成实际文件解析/codec/索引/keyword，或真实 HTTP 图片/原生 DOCX/Markdown/Asset SHA/清理检查。65 个运行文件与源码逐字节一致，分发包白名单检查通过，证据为 `tmp/review-wheels-afe4d7f9911d.json`。文档完善后再次重建并在 `review-wheels-f5f563bd6ac6-mp4viqbs` 的两个新独立环境重复全部安装调用，均通过，证据为 `tmp/review-wheels-f5f563bd6ac6.json`。本次 MinerU 验收仅补充集成断言和文档，运行实现未改变；最终包继续核对当前源码、已验收运行文件和分发白名单。
 
 `pymilvus` 2.6.17 首次握手取消时，handler 尚未注册、client 尚未保存引用，调用 close 仍可能无法释放。已用真实 SDK 和本地假连接策略复现；已建立连接的 RPC 取消通过测试。没有使用私有 SDK 清理包装，也不能宣称该上游问题已解决。建议应用初始化时完成 prepare，见 [架构边界](architecture.md)。
+
+## MinerU 4.x 真实服务验收
+
+2026-10-29，用户明确批准在独立临时环境安装并运行官方 PyPI `mineru==4.0.12`。固定 wheel SHA 为 `a3ff8582a4608eb1f4dde55800ac156d59b01ceabd2ab4002bdf8e86306b1eab`，包大小 3,682,241 字节；实际运行基线为 `272f655`。服务仅监听 `127.0.0.1`，Flash/txt，关闭图片分析，配置/缓存/临时文件隔离；V2 依赖没有增加 MinerU，隔离模型缓存为空。
+
+- 首次原始 HTTP 请求与现有严格集成均成功，1 passed / 0.07 秒，证据 `tmp/mineru4-acceptance-cf2ca97c7d4f/`。
+- 增加资源交接断言后再次运行，**1 passed / 0.09 秒**，最终证据 `tmp/mineru4-acceptance-04347def2d45/`。原始 PDF 为可读代码生成的 584 字节样本，SHA `5c8c1fe71157feb854c2c4e8b4b8756e80f07c83e8516d66aa8e29491a36ab98`。真实 `/v1/file_parse` 返回 HTTP 200、任务/文件 completed、实际 parser_version `4.0.12`、`model_used=null`、Markdown `Hello PDF`。
+- 适配器保留一个 text Block，明确 `partial` / `coverage=None` / `mineru_markdown_only`，零 pages/Assets。client 未被解析器关闭、输入未被修改；测试关闭 client、删除原 PDF 后，ParseResult codec 仍保持内容/身份/报告。停服后的另一个 Python 进程再次从保存快照读回并导出 Markdown，结果相同。
+- SIGTERM 后进程退出码 `-15`；日志完成 application shutdown，端口已关闭、服务临时目录为空。原始退出码保留，未写成 exit 0。没有把服务 health 代替实际解析结果，也没有把本次停服当作服务重启。
+- 补充上述集成断言和文档后，`make install`、`make check`、`make coverage`、`make pre-commit` 全部通过：660 项单元测试、Ruff 101 文件、Pyright 零错误/警告，覆盖率仍为 90%（4620 条语句、471 条未覆盖）。最终分发核对结果保存到本地 `tmp/review-delivery-final.json`，逐字节比较当前源码、wheel 和此前已在仓库外验收的 65 个运行文件，并核对 sdist 中的当前文档/测试及构建白名单。
+- 最终 wheel 再安装到仓库外 `review-wheels-aff877155d7c-yrd0khq0` 的两个新环境，核心仅 comet-rag/lxml，来源/图片仅 `[sources,images]` 及其依赖；两个环境各自的 write/read 进程均通过实际解析、身份和资源检查，证据为 `tmp/review-wheels-aff877155d7c.json`。随后只补充此验收记录；最终 sdist 与当前文档再次逐字节核对。
+
+运行时实际版本包括 Python 3.12.13、MinerU 4.0.12、docvortex 0.6.7、pypdfium2 5.14.0、FastAPI 0.162.0、uvicorn 0.54.0、httpx 0.28.1。macOS 官方包依赖还安装了 Torch 2.15.0 / Transformers 5.21.0，均在独立 venv，不能与下方 V2 开发环境版本混为一谈。完整版本与原始响应/日志、快照和新进程读回记录在本地证据目录，复验命令见 [阶段 C](phase-c.md)。
+
+这补齐阶段 C 首版外部 PDF 适配器的真实出口；结论限 Flash 原生文字 PDF 与 Markdown-only partial，不包括扫描 OCR、其它 tier、多页/复杂版面质量、结构 JSON 或图片资产。最终包交付和本地检查继续使用当前源码；未验收范围不纳入阶段完成结论。
 
 ## 此前版本的可复验证据
 
@@ -91,6 +106,7 @@ Python 3.12.13；PostgreSQL 17.11；Milvus 2.6.23；etcd 3.5.16；SDK/工具：
 - `ec0f74f`：Milvus 网络操作迁到原生异步 SDK，更新示例、取消与真实集成验证。
 - `fe57d3a`：文本/代码按原始范围物化并升级 profile，消除全文重复和平方级存储增长。
 - `c406dec`：完整记录 CLIP 分片权重和 tokenizer/processor 文件指纹。
+- `d4752b6`：真实 MinerU 集成在关闭客户端、删除输入后仍可独立读回完整 ParseResult。
 
 此前阶段实现提交：
 
@@ -103,11 +119,11 @@ Python 3.12.13；PostgreSQL 17.11；Milvus 2.6.23；etcd 3.5.16；SDK/工具：
 - `925d906`：构建/CI、核心安装脚本、架构守卫和完整验收记录。
 - `3049327`：公开 AWS S3 匿名实际下载、解析、清理和预算拒绝的真实集成测试。
 
-此前阶段 D 的真实重启出口已关闭；本轮修订只重新执行入库与新进程读回，未再次重启。C 的公开 AWS S3 只读已通过，F 的独立包交付检查已通过；最终全阶段验收仍有以下边界。
+此前阶段 D 的真实重启出口已关闭；本轮修订只重新执行入库与新进程读回，未再次重启。C 的公开 AWS S3 只读和 MinerU Flash 原生文字 PDF 通过，F 的独立包交付检查通过；首版完成结论保持以下范围限制。
 
 ## 剩余外部验收与限制
 
-1. MinerU：已改为官方 4.x 自托管 `/v1/file_parse`，核对版本 4.0.12；仍缺少明确可用的实际部署，`COMET_RAG_TEST_MINERU_URL`、VERSION 和 TIER 未配置。官方异步 SDK 与 HTTP 选型依据见 [C](phase-c.md)。MockTransport 与官方源码只证明适配代码；公开云 health 的 API 1.0.0 不证明自托管解析器版本/路由。此前旧 2.6.8 包执行被自动审批拒绝，未执行或绕过。这仍阻止 C 与最终全阶段验收关闭。
+1. MinerU：4.0.12 自托管 Flash/txt `/v1/file_parse` 实际验收通过，服务已停止；扫描 OCR、Basic/Standard/Advanced、多页/复杂版面质量、结构输出/图片资源、远端认证与服务重启未验证。官方 SDK/HTTP 选型及精确版本、复验命令见 [C](phase-c.md)。旧 2.6.8 执行拒绝没有绕过；本次 4.0.12 安装/运行是在用户明确批准后执行。
 2. S3 范围：实际支持结论限于本轮 AWS 匿名只读。兼容服务、认证与版本对象未验证；自动审批仍拒绝执行 `chrislusf/seaweedfs:3.85`，理由 `[Code from External]`，未启动或绕过。
 3. 远端 GitHub Actions 未运行；本地等价检查通过不冒称远端 CI 成功。正常服务重启可读也不等于断电耐久。
 
