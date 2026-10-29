@@ -9,6 +9,8 @@ import pytest
 PACKAGE = "comet_rag"
 ROOT = Path(__file__).resolve().parents[2] / PACKAGE
 SDK_MODULES = {
+    "anthropic",
+    "openai",
     "asyncpg",
     "boto3",
     "botocore",
@@ -37,7 +39,12 @@ def _imports(code: str, module: str, *, package: bool = False) -> tuple[str, ...
             names.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
             name = "." * node.level + (node.module or "")
-            names.append(resolve_name(name, parent) if node.level else name)
+            base = resolve_name(name, parent) if node.level else name
+            if node.module is not None:
+                names.append(base)
+            names.extend(
+                f"{base}.{alias.name}" for alias in node.names if alias.name != "*"
+            )
         elif (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
@@ -68,6 +75,7 @@ def _violations(module: str, imports: tuple[str, ...]) -> list[str]:
         if local in pure_allowed and (
             target.startswith(PACKAGE + ".")
             and target not in pure_allowed[local]
+            and target.rpartition(".")[0] not in pure_allowed[local]
             or target.split(".")[0] in SDK_MODULES
         ):
             violations.append(target)
@@ -104,6 +112,12 @@ def test_components_preserve_import_boundaries() -> None:
     ("module", "code"),
     [
         (f"{PACKAGE}.content", "import httpx"),
+        (f"{PACKAGE}.content", "import openai"),
+        (f"{PACKAGE}.content", "import anthropic"),
+        (f"{PACKAGE}.content", f"from {PACKAGE} import indexing"),
+        (f"{PACKAGE}.content", "from . import indexing"),
+        (f"{PACKAGE}.embedder.models.bad", f"from {PACKAGE} import indexing"),
+        (f"{PACKAGE}.indexing.builders.bad", "from ... import docstores"),
         (
             f"{PACKAGE}.documents.schemas",
             f"from {PACKAGE}.pipelines import AsyncSearchPipeline",
@@ -115,6 +129,24 @@ def test_components_preserve_import_boundaries() -> None:
 )
 def test_import_guard_rejects_corresponding_defects(module: str, code: str) -> None:
     assert _violations(module, _imports(code, module))
+
+
+@pytest.mark.parametrize(
+    ("module", "code", "package"),
+    [
+        (f"{PACKAGE}.documents.schemas", "from ...content import MediaRef", True),
+        (f"{PACKAGE}.documents.schemas", "from .. import codec", True),
+        (
+            f"{PACKAGE}.embedder.models.clip",
+            f"from {PACKAGE}.content import TextPart",
+            False,
+        ),
+    ],
+)
+def test_import_guard_accepts_permitted_imports(
+    module: str, code: str, package: bool
+) -> None:
+    assert not _violations(module, _imports(code, module, package=package))
 
 
 def test_removed_runtime_paths_are_absent() -> None:

@@ -627,6 +627,11 @@ def test_codec_preserves_opaque_user_json_keys_instead_of_treating_them_as_tags(
         "https://example.org/file?AWSAccessKeyId=private",
         "https://example.org/file?token=",
         "https://example.org/file?%61uth=private",
+        "https://example.org/file?client_secret=private",
+        "https://example.org/file?refresh_token=private",
+        "https://example.org/file?api-key=private",
+        "https://example.org/file?q-signature=private",
+        "https://example.org/file?%43lient%5FSecret=private",
     ],
 )
 def test_persistent_locators_reject_known_credentials_without_stripping(

@@ -13,6 +13,10 @@ def has_url_credentials(url: str, *, include_key: bool = False) -> bool:
             in {
                 "token",
                 "access_token",
+                "refresh_token",
+                "client_secret",
+                "api-key",
+                "q-signature",
                 "api_key",
                 "apikey",
                 "signature",

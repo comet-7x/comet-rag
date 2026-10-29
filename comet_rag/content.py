@@ -23,12 +23,20 @@ class MediaRef:
         if self.url is not None:
             if not isinstance(self.url, str):
                 raise TypeError("media URL must be a string")
+            if self.url != self.url.strip(" ") or any(
+                ord(char) < 32 or ord(char) == 127 for char in self.url
+            ):
+                raise ValueError(
+                    "media URL cannot contain controls or surrounding spaces"
+                )
             parts = urlsplit(self.url)
+            port = parts.port
             if (
                 parts.scheme not in {"http", "https"}
                 or not parts.hostname
                 or parts.username is not None
                 or parts.password is not None
+                or (port is not None and not 0 < port <= 65535)
             ):
                 raise ValueError(
                     "media URL must be HTTP(S) without embedded credentials"

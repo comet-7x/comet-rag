@@ -36,6 +36,28 @@ def test_media_construction_is_pure_and_requires_one_source(tmp_path: Path) -> N
             MediaRef(url=url)
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.org:bad/image.png",
+        "https://example.org:65536/image.png",
+        "https://example.org:0/image.png",
+        "https://example.org/\nimage.png",
+        "https://example.org/\timage.png",
+        "https://example.org/\x7fimage.png",
+        " https://example.org/image.png",
+    ],
+)
+def test_media_rejects_malformed_urls(url: str) -> None:
+    with pytest.raises(ValueError):
+        MediaRef(url=url)
+
+
+def test_media_preserves_valid_url_without_reading_it() -> None:
+    url = "https://example.invalid:8443/an image.png?edition=2"
+    assert MediaRef(url=url).url == url
+
+
 def test_order_whitespace_and_input_ownership() -> None:
     image = ImagePart(MediaRef(data=b"image", media_type="image/png"))
     parts = [TextPart("  text\n"), image, TextPart(" tail ")]

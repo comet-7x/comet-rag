@@ -106,6 +106,36 @@ def test_http_streams_exact_bytes_metadata_cleanup_and_client_ownership(
     asyncio.run(run())
 
 
+@pytest.mark.parametrize(
+    "parameter",
+    ["client_secret", "refresh_token", "api-key", "q-signature", "%43lient%5FSecret"],
+)
+def test_http_sensitive_queries_require_stable_id_and_are_not_persisted(
+    tmp_path: Path, parameter: str
+) -> None:
+    url = f"https://example.org/file?{parameter}=private"
+    with pytest.raises(ValueError, match="explicit source_id"):
+        HttpSource(url)
+
+    async def run() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, stream=Stream((b"text",)))
+            )
+        ) as client:
+            resolver = AsyncHttpSourceResolver(client, policy=allow, temp_dir=tmp_path)
+            async with resolver.resolve(
+                HttpSource(url, source_id="stable")
+            ) as resource:
+                assert resource.source.source_id == "stable"
+                assert resource.source.locator is None
+                assert resource.path.read_bytes() == b"text"
+            assert not client.is_closed
+        assert list(tmp_path.iterdir()) == []
+
+    asyncio.run(run())
+
+
 def test_http_policy_validates_each_redirect_before_request_and_strips_cross_origin_auth(
     tmp_path: Path,
 ) -> None:

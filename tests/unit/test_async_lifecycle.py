@@ -104,6 +104,47 @@ def test_immediate_failure_stops_other_workers_before_they_dispatch() -> None:
     asyncio.run(scenario())
 
 
+def test_cancelled_batch_drains_blocking_reader_before_returning(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "input"
+    path.write_text("retained")
+    started = threading.Event()
+    release = threading.Event()
+    read: list[str] = []
+    dispatched: list[int] = []
+
+    def reader() -> str:
+        started.set()
+        assert release.wait(5)
+        text = path.read_text()
+        read.append(text)
+        return text
+
+    async def scenario() -> None:
+        async def operation(item: int) -> str:
+            dispatched.append(item)
+            return await run_sync(reader)
+
+        task = asyncio.create_task(map_concurrently(operation, [0, 1], limit=1))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            for _ in range(3):
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert dispatched == [0]
+            assert read == ["retained"]
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
 def test_batch_is_bounded_and_preserves_order() -> None:
     async def scenario() -> None:
         active = peak = 0
