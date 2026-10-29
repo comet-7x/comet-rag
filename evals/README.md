@@ -35,4 +35,6 @@ Flat 保存 12 units / 12 representations；parent-child 保存 12 父 + 33 子 
 
 两图片的 text/media/separate 都能命中；独立表示把表示数从 2 增至 4。当前 CLIP 对联合图文返回 unsupported；当前 cross encoder 对图片候选返回 unsupported。Pipeline 默认重排失败退回原排名并记录诊断，`strict_rerank=True` 可使其失败。
 
+逐模块复审在当前 worktree 重新运行同一真实 CLIP/MiniLM 评估，报告为 `tmp/eval-module-review-20261029.json`。使用 Python 3.12.13、torch 2.14.1、transformers 4.57.6、Pillow 13.0.0、CPU threads=2；权重 SHA 与上述固定模型一致。四组文本指标与表中相同，查询总耗时依次为 0.0819 / 0.3823 / 0.1619 / 0.4983 秒。另由独立校验程序从 44 行原始 unit/source 排名与相关标签重新计算逐查询指标和均值，全部一致；text/media/separate 图片组指标均为 1，joint 和图片重排仍明确 unsupported。没有改动样本、标签或默认策略。
+
 这些是小型功能/成本证据，不是领域基准或统计显著结果。没有留出外部测试集、吞吐/并发、峰值 RSS、GPU 或付费成本测量；理论向量字节不等于实际数据库占用。dense top-k 对无关查询仍可能返回结果，拒绝低相关结果需要另外标注和校准。

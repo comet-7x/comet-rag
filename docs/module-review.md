@@ -13,7 +13,7 @@
 | 5    | embedder / rerankers：预算、角色、映射与实际 SDK 能力                   | 已审核并修复；远程文本模型已小样本校准，本地模型未重验 |
 | 6    | docstores / vectorstores：事务、清单、幂等、过滤与核对                  | 代码与本地检查通过；新版真实 PostgreSQL 已验，Milvus 写入被审批拦截 |
 | 7    | retrieval / pipelines：归并、融合、降级、入库与删除                     | 已审核并修复上下文过滤；真实 PG 读回验证通过，完整跨后端待验 |
-| 8    | examples / evals / 交付：真实调用、质量比较与安装边界                   | 待完整审核；本轮已复验核心 wheel                      |
+| 8    | examples / evals / 交付：真实调用、质量比较与安装边界                   | 已审核修复示例；真实本地模型评估复验通过，跨后端示例待重验 |
 
 每组按正确性、可读性、架构、安全与性能检查。不会将单元测试通过当作真实模型、外部服务或持久后端验收。
 
@@ -193,3 +193,20 @@
 - `make check`：**785 passed**，Ruff **108 文件**、Pyright **0 errors / 0 warnings**，wheel/sdist 构建通过；`make coverage`：**785 passed / 91%**（4781 条语句，426 条未覆盖）。
 - 最终 wheel 在仓库外新建环境仅安装 comet-rag/lxml，两个 `python -I` 进程完成 write/read，无可选 SDK 导入；66 个运行时文件与源码一致，sdist 133 个成员排除本地资料与运行产物。提交前 Bandit、敏感信息检查、lint、unit 钩子通过。
 - 本轮没有运行包含新版封套、真实远程 embedding 和真实 Milvus 的完整入库/检索链；共享 Milvus 写入审批仍阻塞，不能用本组局部验证代替。
+
+## 第八组：示例、评估与交付
+
+### 已修复
+
+两个持久示例创建 engine 后，Milvus client 或 Store 构造失败会绕过旧 finally；engine.dispose 失败也会跳过 client.close。现在创建后立即登记到标准库 AsyncExitStack，逆序关闭并复用 close_async 排干，原始准备/取消错误保持优先，关闭错误附注。两个入口增加 `--milvus-db`（默认 default），ingest/verify 使用同一显式数据库，不再只能连接默认库。未引入新包装层或依赖。
+
+### 验证证据
+
+- 新增 12 项示例回归在修改前全部失败，修复后 **12 passed**，覆盖客户端构造失败、prepare 失败、关闭失败、取消，以及默认/指定数据库的真实 argparse 入口。禁用关闭函数的内存 mutation 导致 **8 failed**。三个示例/评估 CLI 的 `--help` 实际运行通过。
+- 当前 worktree 安装锁定 local-models extra，复用本地固定权重和图片运行真实 CPU CLIP/MiniLM；12 文档/8 文字查询、两图片及 text/media/separate/joint 完整执行，未访问模型网络。权重指纹与示例文档一致。Flat MRR/Hit@1 为 **1/1**；parent-child 无重排为 **0.9375/0.875**，重排后为 **1/1**；不更改默认策略。
+- 独立从原始命中与标签重算 **44 行**逐查询指标及组均值，全部一致；三组图片指标为 1，joint 和图片候选重排明确 unsupported。报告保存在本地 `tmp/eval-module-review-20261029.json`，不打入分发包；细节见 [evals](../evals/README.md)。两图同图查询不证明跨域泛化，也不计作持久后端验收。
+- `make check`：**797 passed**，Ruff **109 文件**、Pyright **0 errors / 0 warnings**，wheel/sdist 构建通过；`make coverage`：**797 passed / 91%**（4781 条语句，426 条未覆盖）。示例修改的 pre-commit 含 Bandit、敏感信息扫描与 unit 全部通过。核心运行代码未在本组修改，上一组仓库外核心 wheel 实际调用证据仍适用；最终分发另核对当前示例/文档与本地资料排除。
+
+### 尚未完成
+
+完整新版 PostgreSQL/Milvus 持久示例仍未重跑，共享 Milvus 写入审批未解除；本轮也未重启持久服务。真实模型取消/并发压力、扫描 OCR 和领域质量未验收。审核与本地修复完成不代表这些外部出口已经通过。
