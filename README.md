@@ -60,6 +60,8 @@ async def keyword_search(docstore, vectorstore):
     return await search.run("检索词", mode="keyword", top_k=5)
 ```
 
+投影 `project_document` 和 Markdown 导出均在展开前检查全篇累计表格网格预算，默认 `max_table_cells=10_000`（零列表格按行计）；调用方可通过同名关键字显式调整。`DocumentChunker` 使用该默认上限，并提前拒绝仅合成分隔符就超过 chunk 预算的表格。Flat 构建配置已升级为 `flat_v4`，表格图片按行列及格内块顺序物化，重复出现仍保留；旧 profile 在新 scope 重建后切换。
+
 注入客户端由创建者关闭。blocks 是主数据，Markdown 通过 `from comet_rag.documents.exporters import export_markdown` 同步派生；文本投影的范围以 Python 字符 `[start,end)` 表示。导出保留表格跨度和原生公式源码，显示效果由调用方渲染器决定。`partial` 解析默认不入库。资源在下载释放前转存稳定目录，目录持久化与跨机器共享由调用方负责。
 
 同一 scope/source 仅允许相同快照与配置重试，清单保存首次实际向量以供精确重放。资料或策略变化使用新 `index_scope` 重建、核对完整 manifest 和 record 指纹，再由调用方切换实例。清单格式 v2 使用默认 PostgreSQL schema `comet_docstore_v2`。DocStore 单元与表示的 JSON 存储封套另带 `snapshot_version=1` 和独立摘要，读取时核验完整快照；公共索引 codec 不变。缺少摘要的旧 scope 必须重建后切换，不自动补摘要或迁移；同一 scope 不混用新旧 writer。PostgreSQL 内部事务不等于跨存储原子提交；写向量超时保留 unknown 清单。删除按清单明确 IDs，不自动清理共享 Asset。

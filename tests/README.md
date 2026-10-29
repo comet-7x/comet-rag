@@ -23,8 +23,8 @@ python -m pytest tests/integration/test_milvus.py -q
 # 真实回环 HTTP server，不需要外部网络。
 python -m pytest tests/integration/test_remote_sources.py -k 'not real_s3' -q
 
-# embedding 协议的真实回环 HTTP；不调用模型或外部 API。
-python -m pytest tests/integration/test_embedding_http.py -q
+# embedding、来源下载与 MinerU 响应 hook 的真实回环 HTTP；不调用模型或外部 API。
+python -m pytest tests/integration/test_embedding_http.py tests/integration/test_http_response_hooks.py -q
 
 # 公开 AWS S3 匿名只读，联网但不需要账户或凭据。
 python -m pytest tests/integration/test_public_s3.py -q
@@ -50,7 +50,7 @@ PostgreSQL 测试在专用 `comet_docstore_v2` schema 中使用 UUID scope，验
 
 专用兼容 S3 测试创建本次 UUID bucket/object，仅清理自己的对象。MinerU 测试上传可读代码生成的原生文字 PDF，要求实际提取 Hello PDF、核对引擎版本并返回明确 partial Markdown；关闭客户端和删除输入后，再从 codec 快照读回相同内容/报告/身份。已在独立 MinerU 4.0.12 Flash/txt 服务通过，详见 [阶段 C](../docs/phase-c.md)。不因此声称扫描 OCR、其它 tier、原生结构或图片资源已验收。缺少部署时不执行对应集成，记录未验收，不能用 mock 替代。
 
-CI 实际启动自己 runner 的 PostgreSQL/Milvus，执行六项 PG、两项 Milvus 和三项 HTTP 用例（含实际校验 Digest 签名、同源重定向和挑战预算）；该 job 不包含 S3/MinerU，也不伪称 GPU 或真实模型 job。
+CI 实际启动自己 runner 的 PostgreSQL/Milvus，执行 8 项 PostgreSQL、4 项 Milvus 以及来源/embedding/响应 hook 的真实回环 HTTP 用例。新增后端边界包括 16,384 units、大于 32,767 个查询 IDs、完整重试/删除和重复 prepare 正常完成/取消期间并发 dense/BM25；HTTP 覆盖 Digest、响应缓存、字节限额和截断响应。该 job 不调用外部 S3/MinerU 服务、GPU 或真实模型，MinerU hook 用例仅验证本地 HTTP 协议。
 
 ## 核心安装与真实模型
 

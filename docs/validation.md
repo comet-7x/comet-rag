@@ -2,6 +2,24 @@
 
 核验日期：2026-10-29。所有源码修改与工具运行针对 `refactor/comet-rag-v2` 当前 worktree；提交与推送按用户要求分批执行，没有迁移旧数据库或删除既有卷、集合、资料和私有配置。阶段验收的历史证据保留，逐模块复审结果与当前边界见 [审核记录](module-review.md)，当前实现不能仅凭历史检查算通过。
 
+## 全库审核修复复验（2026-10-29）
+
+在 `7e1a153` 后按审核优先级修复 8 项问题，并按 CI、文档资源、PostgreSQL、Milvus、索引及 HTTP 分批提交；对应回归与真实复验如下：
+
+- CI 分支名经环境变量传入 Bash，回归测试以真实 shell 和临时无害文件验证不会执行分支名中的命令替换。
+- 投影/Markdown 共用全篇累计表格网格预算（默认 10,000，零列按行计），切分在投影前拒绝仅分隔符就超预算的原子表格；覆盖巨大稀疏尺寸、推断尺寸、精确边界、跨表累计和非法预算。
+- PostgreSQL ID 集合改为原生 text array 与 ANY/ALL，保留完整删除集合的父子保护。真实新实例先复现 asyncpg 32,767 参数上限，再通过全部 **8 项集成 / 27.57 秒**：16,384 units、16,383 representations、额外 32,768 个缺失 IDs 的读取、清单重试、父保护和完整删除。
+- DOCX 任意后缀的实际 XML 加载都先经过同一流式检查，累计全包元素预算；覆盖 `.xml`/`.dat` 的文本与元素对照、跨部件累计及缓存不重复计数。
+- 重复 Milvus prepare 不清空已有就绪状态；确认集合/索引缺失、schema 不兼容或实际不可查询时仍失效。独立新 Milvus 2.6.23 实例全部 **4 项真实集成 / 91.58 秒**，包含正常完成/取消重复准备期间并发 dense/BM25，以及精确 IDs、过滤、重连和删除。
+- 表格图片按行列/格内块遍历，保留每次出现并去重保存 Asset；构建标识升级 `flat_v4`，旧 profile 使用新 scope 重建。distinct 图片与重复 Asset 的 joint/media/separate 三种回归通过。
+- HTTP 来源和 MinerU 接受 hook 已缓存的响应正文，两条读取路径均保留字节/长度/编码校验；**17 项真实回环 HTTP / 8.89 秒**通过（另 1 项外部 S3 显式未选），包含 embedding、下载、MinerU、流式、超限和截断。CI 显式列表已加入 embedding 与 hook 回归；MinerU 回环测试不代表真实解析服务验收。
+
+实际本地 CLIP → 本次新建 PostgreSQL/Milvus 后端的完整持久示例均通过，ingest/verify 使用不同 Python 进程：文本 scope `audit-text-e9f51b149d` 的 4 文档与 dense/keyword/hybrid 均命中预期；图片 scope `audit-images-bc8d7267ac` 的 5 文档、猫/狗各四种模态组合、DOCX 内嵌图、实际 Asset SHA 和 HTTP 临时文件释放均通过。图片 ingest 内部计时 51.30 秒。入口与结果目录记录于本地 `tmp/audit-fixes-real-examples.json`，无凭据；未重启服务，不据此声称重启耐久性或领域质量。
+
+`make check` / `make coverage` 通过：**831 unit，114 文件 Ruff/格式通过，Pyright 零错误/警告，覆盖率 92%（4830 条语句，391 条未覆盖）**；wheel/sdist 构建通过。新核心 wheel 在仓库外独立环境只安装 comet-rag/lxml 6.1.3，两次 `python -I` 进程完成 write/read、实际解析/身份/索引/keyword，未导入可选 SDK，证据 `tmp/audit-fixes-wheel.json`。
+
+既有本地资料和容器未删除。一次更改既有测试实例密码的动作被自动审批拒绝，未执行；随后改用新建、随机凭据和回环端口的实例完成上述验收。测试清理只删除自己 scope 的明确数据，保留集合、卷及模型示例证据。不连接共享远端后端。远端 GitHub Actions、扫描 OCR、GPU/压力和服务重启未在本轮执行。
+
 ## 当前出口
 
 | 阶段 | 实际状态 |
