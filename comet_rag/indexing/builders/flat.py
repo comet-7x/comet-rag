@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 from typing import Literal
 
@@ -68,7 +69,7 @@ class FlatIndexBuilder:
         return stable_id(
             "profile",
             {
-                "builder": "flat_v3",
+                "builder": "flat_v4",
                 "chunker": self.chunker.config,
                 "representations": self.representation,
                 "space": space.space_id,
@@ -103,8 +104,32 @@ class FlatIndexBuilder:
                 for block in document.blocks
                 if block.block_id in selected
             )
+            selected_by_id = {block.block_id: block for block in blocks}
+            cell_members = {
+                member
+                for block in blocks
+                if block.table is not None
+                for cell in block.table.cells or ()
+                for member in cell.block_ids
+            }
+
+            def reading_order(block: Block, by_id: dict[str, Block]) -> Iterator[Block]:
+                yield block
+                if block.table is not None:
+                    for cell in sorted(
+                        block.table.cells or (),
+                        key=lambda cell: (cell.row, cell.column),
+                    ):
+                        for member in cell.block_ids:
+                            yield from reading_order(by_id[member], by_id)
+
             media_ids: list[str] = []
-            for block in blocks:
+            for block in (
+                member
+                for root in blocks
+                if root.block_id not in cell_members
+                for member in reading_order(root, selected_by_id)
+            ):
                 values = [
                     block.asset_id,
                     block.formula.asset_id if block.formula else None,

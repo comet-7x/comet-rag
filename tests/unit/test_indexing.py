@@ -61,6 +61,43 @@ def builder(
     )
 
 
+@pytest.mark.parametrize("strategy", ["joint", "media", "separate"])
+def test_table_media_follows_cell_order_with_distinct_and_repeated_assets(
+    strategy,
+) -> None:
+    doc = document(
+        Block(
+            "table",
+            "table",
+            table=TableContent(
+                cells=(
+                    TableCell(0, 1, ("right",)),
+                    TableCell(0, 0, ("left", "again")),
+                )
+            ),
+        ),
+        Block(
+            "right", "image", parent_block_id="table", asset_id="R", alt_text="right"
+        ),
+        Block("left", "image", parent_block_id="table", asset_id="L", alt_text="left"),
+        Block(
+            "again", "image", parent_block_id="table", asset_id="L", alt_text="again"
+        ),
+        assets=(asset("L"), asset("R")),
+    )
+    built = builder(strategy).build(
+        doc, index_scope="scope", index_profile_id="profile"
+    )
+    assert text_view(built.units[0].content) == "left\nagain\tright"
+    assert [
+        part.resource.data
+        for rep in built.representations
+        for part in rep.content
+        if isinstance(part, ImagePart)
+    ] == [b"L", b"L", b"R"]
+    assert len(built.units[0].assets) == 2
+
+
 def test_materialized_table_keeps_child_blocks_metadata_and_actual_inputs() -> None:
     doc = document(
         Block(
