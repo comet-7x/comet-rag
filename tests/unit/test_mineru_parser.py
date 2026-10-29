@@ -57,17 +57,27 @@ def response_payload(
     markdown: str = " # Title \n\n| A |\n|---|\n| 001 |\n![image](images/missing.jpg)\n",
 ) -> dict[str, Any]:
     return {
-        "backend": "pipeline",
-        "version": "2.6.8",
-        "results": {"document": {"md_content": markdown}},
+        "task_id": "task_test",
+        "status": "completed",
+        "tier": "standard",
+        "output_formats": ["markdown"],
+        "files": [
+            {
+                "name": "document.pdf",
+                "status": "completed",
+                "error": None,
+                "parse": {"parser_version": "4.0.12"},
+                "content": {"markdown": markdown},
+            }
+        ],
     }
 
 
 def parser(client: httpx.AsyncClient, **kwargs: Any) -> AsyncMinerUParser:
     return AsyncMinerUParser(
         client=client,
-        endpoint="https://mineru.example/file_parse",
-        expected_version="2.6.8",
+        endpoint="https://mineru.example/v1/file_parse",
+        expected_version="4.0.12",
         **kwargs,
     )
 
@@ -77,30 +87,27 @@ def test_pinned_official_http_request_and_raw_markdown_partial_mapping(
 ) -> None:
     item = resource(tmp_path / "source")
     original = item.path.read_bytes()
-    markdown = response_payload()["results"]["document"]["md_content"]
+    markdown = response_payload()["files"][0]["content"]["markdown"]
     requests: list[httpx.Request] = []
     stream = Stream([json.dumps(response_payload()).encode()])
 
     async def handle(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         body = await request.aread()
-        assert request.method == "POST" and request.url.path == "/file_parse"
+        assert request.method == "POST" and request.url.path == "/v1/file_parse"
         assert request.headers["accept-encoding"] == "identity"
-        assert b'name="files"; filename="document.pdf"' in body
-        assert b"Content-Type: application/pdf" in body
-        assert original in body and b"untrusted-name" not in body
-        for name, value in {
-            "backend": "pipeline",
-            "parse_method": "auto",
-            "return_md": "true",
-            "return_middle_json": "false",
-            "return_model_output": "false",
-            "return_content_list": "false",
-            "return_images": "false",
-            "response_format_zip": "false",
-        }.items():
-            assert f'name="{name}"\r\n\r\n{value}\r\n'.encode() in body
-        assert b'name="output_dir"' not in body and b'name="server_url"' not in body
+        assert request.headers["content-type"] == "application/octet-stream"
+        assert int(request.headers["content-length"]) == len(original)
+        assert body == original
+        assert dict(request.url.params) == {
+            "tier": "standard",
+            "ocr_mode": "auto",
+            "output_formats": "markdown",
+            "response_format": "json",
+            "wait_timeout": "300",
+            "filename": "document.pdf",
+            "sha256sum": hashlib.sha256(original).hexdigest(),
+        }
         return httpx.Response(
             200, headers={"content-type": "application/json"}, stream=stream
         )
@@ -113,12 +120,12 @@ def test_pinned_official_http_request_and_raw_markdown_partial_mapping(
             result = await adapter.parse(item, output_dir=tmp_path / "unused-output")
             assert result.document.source is item.source
             assert result.document.parsing.engine == "mineru-http"
-            assert result.document.parsing.version == "2.6.8"
+            assert result.document.parsing.version == "4.0.12"
             assert result.document.parsing.config == {
-                "backend": "pipeline",
-                "parse_method": "auto",
+                "tier": "standard",
+                "ocr_mode": "auto",
                 "output": "markdown-only",
-                "mapping_version": 1,
+                "mapping_version": 2,
             }
             assert (
                 len(result.document.blocks) == 1
@@ -206,59 +213,26 @@ def test_complete_input_hash_size_and_byte_budget_are_validated_before_upload(
 
 
 @pytest.mark.parametrize(
-    "payload",
+    "mutation",
     [
-        {},
-        [],
-        {"backend": "pipeline", "version": "2.6.8", "results": {}, "extra": True},
-        {
-            "backend": "pipeline",
-            "version": "2.6.7",
-            "results": {"document": {"md_content": "text"}},
-        },
-        {
-            "backend": "other",
-            "version": "2.6.8",
-            "results": {"document": {"md_content": "text"}},
-        },
-        {
-            "backend": "pipeline",
-            "version": True,
-            "results": {"document": {"md_content": "text"}},
-        },
-        {"backend": "pipeline", "version": "2.6.8", "results": []},
-        {
-            "backend": "pipeline",
-            "version": "2.6.8",
-            "results": {"wrong": {"md_content": "text"}},
-        },
-        {
-            "backend": "pipeline",
-            "version": "2.6.8",
-            "results": {"document": {"md_content": "text"}, "extra": {}},
-        },
-        {"backend": "pipeline", "version": "2.6.8", "results": {"document": None}},
-        {"backend": "pipeline", "version": "2.6.8", "results": {"document": {}}},
-        {
-            "backend": "pipeline",
-            "version": "2.6.8",
-            "results": {"document": {"md_content": None}},
-        },
-        {
-            "backend": "pipeline",
-            "version": "2.6.8",
-            "results": {"document": {"md_content": ["text"]}},
-        },
-        {
-            "backend": "pipeline",
-            "version": "2.6.8",
-            "results": {"document": {"md_content": "text", "images": {}}},
-        },
+        {"task_id": ""},
+        {"task_id": 3},
+        {"status": "partial"},
+        {"status": "failed"},
+        {"status": "canceled"},
+        {"status": "running"},
+        {"tier": "flash"},
+        {"output_formats": ["markdown", "middle_json"]},
+        {"files": []},
+        {"files": [None]},
+        {"files": {}},
+        {"files": [response_payload()["files"][0]] * 2},
     ],
 )
 def test_unknown_missing_or_invalid_response_schema_fails(
-    tmp_path: Path, payload: Any
+    tmp_path: Path, mutation: dict[str, Any]
 ) -> None:
+    payload = {**response_payload(), **mutation}
     item = resource(tmp_path / "input")
 
     async def run() -> None:
@@ -298,6 +272,83 @@ def test_malformed_duplicate_or_nonfinite_json_is_rejected(
         ) as client:
             with pytest.raises(ValueError):
                 await parser(client).parse(item, output_dir=tmp_path)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"name": "other.pdf"},
+        {"status": "failed"},
+        {"error": {"code": "parse_failed"}},
+        {"parse": None},
+        {"parse": {"parser_version": "4.0.11"}},
+        {"parse": {"parser_version": True}},
+        {"content": None},
+        {"content": {}},
+        {"content": {"markdown": None}},
+        {"content": {"markdown": ["text"]}},
+        {"content": {"markdown": "text", "images": {}}},
+    ],
+)
+def test_invalid_file_results_never_map_to_partial_success(
+    tmp_path: Path, mutation: dict[str, Any]
+) -> None:
+    item = resource(tmp_path / "input")
+    payload = response_payload()
+    payload["files"][0].update(mutation)
+
+    async def run() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json=payload)
+            )
+        ) as client:
+            with pytest.raises(ValueError):
+                await parser(client).parse(item, output_dir=tmp_path)
+
+    asyncio.run(run())
+
+
+def test_wait_timeout_reports_task_without_resubmit_or_poll(tmp_path: Path) -> None:
+    item = resource(tmp_path / "input")
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(
+            202, json={"task_id": "task_still_running", "status": "running"}
+        )
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            with pytest.raises(TimeoutError, match="task_still_running.*running"):
+                await parser(client, wait_timeout=1).parse(item, output_dir=tmp_path)
+            assert len(calls) == 1 and not client.is_closed
+            assert calls[0].url.params["wait_timeout"] == "1"
+
+    asyncio.run(run())
+
+
+def test_normal_protocol_metadata_is_accepted(tmp_path: Path) -> None:
+    item = resource(tmp_path / "input")
+    payload = response_payload("text")
+    payload.update(
+        status_url="/v1/tasks/task_test", result_url="/v1/tasks/task_test/result"
+    )
+    payload["files"][0].update(
+        file_id="file_test", output_files={"markdown": "output_test"}
+    )
+
+    async def run() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json=payload)
+            )
+        ) as client:
+            result = await parser(client).parse(item, output_dir=tmp_path)
+            assert project_document(result.document).text == "text"
 
     asyncio.run(run())
 
@@ -436,6 +487,60 @@ def test_cancellation_during_http_stream_propagates_and_closes_only_response(
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("failure", ["status", "stream", "cancel", "close_only"])
+def test_response_close_failure_preserves_active_error(
+    tmp_path: Path, failure: str
+) -> None:
+    item = resource(tmp_path / "input")
+
+    async def run() -> None:
+        entered = asyncio.Event()
+        original = httpx.ReadError("original stream failure")
+
+        class CloseFailure(Stream):
+            async def __aiter__(self) -> AsyncIterator[bytes]:
+                if failure == "stream":
+                    raise original
+                if failure == "cancel":
+                    entered.set()
+                    await asyncio.Future()
+                yield json.dumps(response_payload()).encode()
+
+            async def aclose(self) -> None:
+                self.closed = True
+                raise OSError("close failed")
+
+        stream = CloseFailure([])
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    503 if failure == "status" else 200,
+                    headers={"content-type": "application/json"},
+                    stream=stream,
+                )
+            )
+        ) as client:
+            work = asyncio.create_task(parser(client).parse(item, output_dir=tmp_path))
+            if failure == "cancel":
+                await asyncio.wait_for(entered.wait(), 1)
+                work.cancel()
+            expected = {
+                "status": httpx.HTTPStatusError,
+                "stream": httpx.ReadError,
+                "cancel": asyncio.CancelledError,
+                "close_only": OSError,
+            }[failure]
+            with pytest.raises(expected) as caught:
+                await work
+            if failure == "stream":
+                assert caught.value is original
+            if failure != "close_only":
+                assert "MinerU response close failed: OSError" in caught.value.__notes__
+            assert stream.closed and not client.is_closed
+
+    asyncio.run(run())
+
+
 def test_cancelled_input_read_is_drained_and_never_uploaded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -483,9 +588,9 @@ def test_cancelled_input_read_is_drained_and_never_uploaded(
         "/file_parse",
         "ftp://mineru/file_parse",
         "https://mineru/parse",
-        "https://user:pass@mineru/file_parse",  # pragma: allowlist secret
-        "https://mineru/file_parse?token=x",
-        "https://mineru/file_parse#fragment",
+        "https://user:pass@mineru/v1/file_parse",  # pragma: allowlist secret
+        "https://mineru/v1/file_parse?token=x",
+        "https://mineru/v1/file_parse#fragment",
     ],
 )
 def test_endpoint_configuration_rejects_unverified_or_credentialed_urls(
@@ -495,7 +600,7 @@ def test_endpoint_configuration_rejects_unverified_or_credentialed_urls(
         async with httpx.AsyncClient(trust_env=False) as client:
             with pytest.raises(ValueError, match="endpoint"):
                 AsyncMinerUParser(
-                    client=client, endpoint=endpoint, expected_version="2.6.8"
+                    client=client, endpoint=endpoint, expected_version="4.0.12"
                 )
 
     asyncio.run(run())
@@ -569,22 +674,27 @@ def test_exact_input_and_response_budgets_allow_a_complete_response(
     asyncio.run(run())
 
 
-def test_configuration_requires_pinned_schema_backend_method_and_positive_limits() -> (
+def test_configuration_requires_deployed_version_tier_mode_and_positive_limits() -> (
     None
 ):
     async def run() -> None:
         async with httpx.AsyncClient(trust_env=False) as client:
             for fields in (
                 {"expected_version": "unknown"},
-                {"backend": "unknown"},
-                {"parse_method": "guess"},
+                {"expected_version": "2.6.8"},
+                {"expected_version": "5.0.0"},
+                {"tier": "unknown"},
+                {"ocr_mode": "guess"},
+                {"wait_timeout": 0},
+                {"wait_timeout": 3601},
+                {"wait_timeout": True},
                 {"max_bytes": 0},
                 {"max_response_bytes": True},
             ):
                 config: dict[str, Any] = {
                     "client": client,
-                    "endpoint": "https://mineru/file_parse",
-                    "expected_version": "2.6.8",
+                    "endpoint": "https://mineru/v1/file_parse",
+                    "expected_version": "4.0.12",
                     **fields,
                 }
                 with pytest.raises(ValueError):

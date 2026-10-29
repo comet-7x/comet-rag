@@ -24,9 +24,13 @@ ZIP/XML、元素与解压预算、非法引用和不支持的 meaningful 内容�
 
 ## MinerU
 
-显式导入 `documents.parsers.mineru.AsyncMinerUParser`，仅实现已核对的官方 MinerU 2.6.8 `/file_parse` multipart Markdown 契约。上传前实际读字节并核对 SHA/size/预算和 PDF 头/尾。返回 schema、version/backend、JSON 类型/重复键和响应预算严格校验，不跟随重定向。
+显式导入 `documents.parsers.mineru.AsyncMinerUParser`，使用 MinerU 4.x 自托管服务的 `/v1/file_parse` 单请求接口。核对版本为 `4.0.12`，官方 tag `mineru-4.0.12-released` 指向源码 commit `b7f3dd0c5f6e6d66a298239ffd02b328b873918e`。调用方声明实际部署的 4.x release，适配器核对 `files[].parse.parser_version`，库不强绑一个补丁版本。
 
-请求只启用 Markdown。输出原样保存为一个 text Block，始终 `partial`、`coverage=None`，不伪造页、原生表格或可读图片 Asset。记录请求的 parse_method；协议不返回内部实际选择，`auto` 不能被解释为已证明某种解析分支。46 项 MockTransport 单元测试通过，只证明协议映射和失败边界。
+选型按五步核对：外部 PDF 解析确有需要；复用现有注入式 `httpx.AsyncClient` 和输入校验；标准库完成 JSON/版本校验；官方 `MinerUApiParser.parse_async` 已提供异步 SDK，但完整 MinerU 包会引入服务、文档库与模型依赖，没有独立轻量客户端发行包；官方单请求 HTTP 接口已涵盖本库需求，因此直接上传原始字节，不另写上传/任务轮询框架，不增加 MinerU 运行时依赖。
+
+参数使用 query 中的 `tier`、`ocr_mode`、`output_formats=markdown`、`response_format=json`、`wait_timeout`、受控文件名和实际 SHA。上传前实际读字节并核对 hash/size/预算、PDF 头/尾；请求声明 Content-Length。响应校验任务/文件状态、tier、格式、实际 parser version、JSON 类型/重复键、编码/长度与字节预算，不跟随重定向。202 抛出包含 task_id 的 TimeoutError；上游任务可能继续，适配器不自动重传或冒称取消。
+
+只请求 Markdown，原样保存一个 text Block，始终 `partial`、`coverage=None`；不伪造页、原生表格或图片 Asset。tier/ocr_mode 是请求配置，不能据此声称已验收 OCR 或 VLM 质量。官方 [HTTP 文档](https://github.com/opendatalab/MinerU/blob/b7f3dd0c5f6e6d66a298239ffd02b328b873918e/docs/en/usage/http_api.md)明确便捷路由属于自托管服务，不能用官方云 API 的 health 成功代替此路由的真实验收。单元测试只证明协议映射和失败边界。
 
 ## 公开 AWS S3 真实验收
 
@@ -39,7 +43,7 @@ ZIP/XML、元素与解压预算、非法引用和不支持的 meaningful 内容�
 ## 未完成的真实验收
 
 - 兼容 S3、认证和版本对象：专用服务集成入口已有，缺配置直接失败、不 skip。自动审批拒绝执行本次选用的 `chrislusf/seaweedfs:3.85`，理由为 `[Code from External]`；未启动或以其它入口绕过。AWS 匿名只读结果不覆盖这些行为。
-- MinerU：没有可用的显式 2.6.8 部署 endpoint。没有搜索私有配置/凭证，也没有临时安装本地 MinerU 模型/GPU 代替外部部署。没有证明识别质量或部署响应确实符合源码。
+- MinerU：没有可用的显式 4.x 自托管 `/v1/file_parse` endpoint。此前选 2.6.8 缺少现行版本比较依据，已纠正；曾在任务临时环境安装旧包，执行被自动审批拒绝，未运行服务、未下载推理权重，也未绕过。公开云 health 返回 API `1.0.0`，不证明自托管解析器 `4.0.12` 或便捷路由可用。没有搜索私有配置/凭证，实际协议和识别质量保持未验收。
 
 严格入口：
 
@@ -50,7 +54,8 @@ python -m pytest tests/integration/test_public_s3.py -q
 # 专用兼容 S3；调用方提供 endpoint/access key/secret/region 环境变量。
 python -m pytest tests/integration/test_remote_sources.py -k real_s3 -q
 
-# COMET_RAG_TEST_MINERU_URL 为完整 /file_parse endpoint。
+# 显式提供URL(完整/v1/file_parse)、实际4.x VERSION和TIER。
+# flash + ocr_mode=txt 仅验证原生文字PDF，不能证明扫描OCR/VLM质量。
 python -m pytest tests/integration/test_mineru.py -q
 ```
 
