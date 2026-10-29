@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import urlsplit
 
+from comet_rag._urls import has_url_credentials
 from comet_rag.documents.schemas import SourceInfo
 
 
@@ -22,30 +23,6 @@ class LocalSource:
 def _source_id(value: str | None) -> None:
     if value is not None and (not isinstance(value, str) or not value.strip()):
         raise ValueError("source_id must be nonblank")
-
-
-def _sensitive_url(url: str) -> bool:
-    return any(
-        key.lower()
-        in {
-            "token",
-            "access_token",
-            "api_key",
-            "apikey",
-            "signature",
-            "sig",
-            "credential",
-            "credentials",
-            "auth",
-            "authorization",
-            "password",
-            "secret",
-            "key",
-            "awsaccesskeyid",
-        }
-        or key.lower().startswith(("x-amz-", "x-goog-"))
-        for key, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True)
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +50,7 @@ class HttpSource:
             raise ValueError(
                 "HTTP source requires an HTTP(S) URL without userinfo or fragments"
             )
-        if _sensitive_url(self.url) and self.source_id is None:
+        if has_url_credentials(self.url, include_key=True) and self.source_id is None:
             raise ValueError("sensitive HTTP query requires explicit source_id")
 
 

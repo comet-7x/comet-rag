@@ -9,6 +9,7 @@ from urllib.parse import unquote, urlsplit
 
 import httpx
 
+from comet_rag._urls import has_url_credentials
 from comet_rag.documents.schemas import SourceInfo
 from comet_rag.identity import stable_id
 
@@ -20,7 +21,7 @@ from .base import (
     _temporary_directory,
     _version,
 )
-from .types import HttpSource, LocalResource, Source, _sensitive_url
+from .types import HttpSource, LocalResource, Source
 
 
 class AsyncHttpSourceResolver:
@@ -59,10 +60,10 @@ class AsyncHttpSourceResolver:
         request = self._client.build_request(
             "GET", source.url, headers={"Accept-Encoding": "identity"}
         )
-        sensitive = _sensitive_url(source.url)
+        sensitive = has_url_credentials(source.url, include_key=True)
         for redirects in range(self._max_redirects + 1):
             hop = HttpSource(str(request.url), source.source_id)
-            sensitive |= _sensitive_url(hop.url)
+            sensitive |= has_url_credentials(hop.url, include_key=True)
             if self._policy(hop) is False:
                 raise SourceError("HTTP source rejected by admission policy")
             try:

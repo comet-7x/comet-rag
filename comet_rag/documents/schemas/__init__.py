@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from types import MappingProxyType
 from typing import Literal
-from urllib.parse import parse_qsl, urlsplit
 
+from comet_rag._urls import has_url_credentials
 from comet_rag.content import MediaRef
 from comet_rag.identity import stable_id
 
@@ -70,17 +70,7 @@ def _sequence(owner: object, name: str, item_type: type | tuple[type, ...]) -> N
 
 def _safe_locator(value: str) -> None:
     _text(value, "locator")
-    parsed = urlsplit(value)
-    keys = {key.lower() for key, _ in parse_qsl(parsed.query)}
-    if (
-        parsed.username is not None
-        or parsed.password is not None
-        or any(
-            key in {"token", "access_token", "api_key", "apikey", "signature", "sig"}
-            or key.startswith(("x-amz-", "x-goog-"))
-            for key in keys
-        )
-    ):
+    if has_url_credentials(value):
         raise ValueError(
             "persistent locator cannot contain credentials or signed access parameters"
         )

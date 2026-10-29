@@ -55,7 +55,9 @@ def _violations(module: str, imports: tuple[str, ...]) -> list[str]:
     pure_allowed = {
         "content": set(),
         "identity": set(),
+        "_urls": set(),
         "documents.schemas": {
+            f"{PACKAGE}._urls",
             f"{PACKAGE}.content",
             f"{PACKAGE}.identity",
             f"{PACKAGE}.documents.codec",

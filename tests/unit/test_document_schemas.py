@@ -618,6 +618,15 @@ def test_codec_preserves_opaque_user_json_keys_instead_of_treating_them_as_tags(
         "https://example.org/file?X-Amz-Signature=private",
         "https://example.org/file?api_key=private",
         "https://example.org/file?X-Goog-Credential=private",
+        "https://example.org/file?Auth=private",
+        "https://example.org/file?authorization=private",
+        "https://example.org/file?credential=private",
+        "https://example.org/file?credentials=private",
+        "https://example.org/file?password=private",
+        "https://example.org/file?secret=private",
+        "https://example.org/file?AWSAccessKeyId=private",
+        "https://example.org/file?token=",
+        "https://example.org/file?%61uth=private",
     ],
 )
 def test_persistent_locators_reject_known_credentials_without_stripping(
@@ -625,6 +634,8 @@ def test_persistent_locators_reject_known_credentials_without_stripping(
 ) -> None:
     with pytest.raises(ValueError, match="credentials"):
         SourceInfo("s", "a" * 64, locator)
+    with pytest.raises(ValueError, match="credentials"):
+        TextRun("link", link=locator)
     if "user@" not in locator:
         doc = document(assets=(replace(asset(), media=MediaRef(url=locator)),))
         with pytest.raises(ValueError, match="credentials"):
