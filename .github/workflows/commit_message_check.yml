@@ -46,9 +46,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Run Commitizen Branch Check
+        env:
+          BRANCH_NAME: ${{ github.head_ref }}
         run: |
-          BRANCH_NAME="${{ github.head_ref }}"
-
           if [[ ! "$BRANCH_NAME" =~ ^(main|develop|feature|bugfix|hotfix|release|refactor|docs|chore) ]]; then
             echo "❌ 分支命名不符合规范：$BRANCH_NAME"
             exit 1
