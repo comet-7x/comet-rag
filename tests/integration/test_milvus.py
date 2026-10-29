@@ -20,7 +20,11 @@ def test_milvus_scoped_dense_bm25_filters_restart_and_precise_cleanup() -> None:
         from comet_rag.vectorstores.milvus import AsyncMilvusVectorStore
 
         endpoint = os.environ.get("COMET_MILVUS_URI", "http://127.0.0.1:29530")
-        client = AsyncMilvusClient(uri=endpoint, timeout=30)
+        client = AsyncMilvusClient(
+            uri=endpoint,
+            db_name=os.environ.get("COMET_MILVUS_DB", "default"),
+            timeout=30,
+        )
         scope = f"v2it_{uuid4().hex}"
         space = EmbeddingSpace(model="integration", dimension=2, deployment="local")
         field = 'odd"\\key'
@@ -158,7 +162,11 @@ def test_milvus_scoped_dense_bm25_filters_restart_and_precise_cleanup() -> None:
             assert mismatch.unknown == ids[:1]
             assert mismatch.present == ids[1:]
             await client.close()
-            client = AsyncMilvusClient(uri=endpoint, timeout=30)
+            client = AsyncMilvusClient(
+                uri=endpoint,
+                db_name=os.environ.get("COMET_MILVUS_DB", "default"),
+                timeout=30,
+            )
             store = AsyncMilvusVectorStore(
                 client=client,
                 index_scope=scope,
@@ -202,6 +210,7 @@ def test_milvus_incompatible_prepare_preserves_collection_and_data() -> None:
 
         client = AsyncMilvusClient(
             uri=os.environ.get("COMET_MILVUS_URI", "http://127.0.0.1:29530"),
+            db_name=os.environ.get("COMET_MILVUS_DB", "default"),
             timeout=30,
         )
         scope = f"v2it_{uuid4().hex}"

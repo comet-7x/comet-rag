@@ -125,6 +125,19 @@ def test_memory_cosine_handles_zero_and_large_finite_vectors() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("metric", ["IP", "L2"])
+def test_memory_rejects_scores_outside_finite_range(metric: str) -> None:
+    async def scenario() -> None:
+        space = _space(metric)
+        store = _store(space)
+        await store.upsert([_record("large", (1e200, 1e200), space=space)])
+        with pytest.raises(ValueError, match="finite score"):
+            vector = (1e200, 1e200) if metric == "IP" else (-1e200, -1e200)
+            await store.search(_query(space, vector=vector))
+
+    asyncio.run(scenario())
+
+
 def test_memory_batch_validation_conflict_idempotence_and_snapshot_isolation() -> None:
     async def scenario() -> None:
         metadata: dict[str, object] = {
@@ -563,6 +576,38 @@ def test_milvus_filters_are_escaped_native_and_checked_before_candidate_limit() 
             with pytest.raises(ValueError):
                 await store.search(_query(), filters=invalid)
         assert sum(method == "search" for method, _ in client.calls) == 2
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("score", [True, "0.75", None])
+def test_milvus_rejects_non_numeric_scores(score: object) -> None:
+    async def scenario() -> None:
+        client = _FakeMilvusClient()
+        store = _milvus(client)
+        record = _record("a")
+        row = store._rows((record,))[0]
+        client.search_results = [
+            [{"record_id": record.record_id, "distance": score, "entity": row}]
+        ]
+        for operation in (store.search(_query()), store.search_text("comet")):
+            with pytest.raises(RuntimeError, match="score"):
+                await operation
+
+    asyncio.run(scenario())
+
+
+def test_milvus_rejects_duplicate_hits() -> None:
+    async def scenario() -> None:
+        client = _FakeMilvusClient()
+        store = _milvus(client)
+        record = _record("a")
+        row = store._rows((record,))[0]
+        hit = {"record_id": record.record_id, "distance": 0.75, "entity": row}
+        client.search_results = [[hit, hit]]
+        for operation in (store.search(_query()), store.search_text("comet")):
+            with pytest.raises(RuntimeError, match="duplicate"):
+                await operation
 
     asyncio.run(scenario())
 

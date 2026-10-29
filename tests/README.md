@@ -17,11 +17,14 @@ make pre-commit
 # 提前给定专用测试 PostgreSQL URL；不要连接旧资料数据库。
 python -m pytest tests/integration/test_postgres.py -q
 
-# COMET_MILVUS_URI 可覆盖默认回环地址 29530；每次使用 UUID scope。
+# COMET_MILVUS_URI 可覆盖默认回环地址 29530；COMET_MILVUS_DB 指定数据库（默认 default）；每次使用 UUID scope。
 python -m pytest tests/integration/test_milvus.py -q
 
 # 真实回环 HTTP server，不需要外部网络。
 python -m pytest tests/integration/test_remote_sources.py -k 'not real_s3' -q
+
+# embedding 协议的真实回环 HTTP；不调用模型或外部 API。
+python -m pytest tests/integration/test_embedding_http.py -q
 
 # 公开 AWS S3 匿名只读，联网但不需要账户或凭据。
 python -m pytest tests/integration/test_public_s3.py -q
@@ -36,7 +39,7 @@ python -m pytest tests/integration/test_mineru.py -q
 | 用例 | 显式配置 |
 |---|---|
 | PostgreSQL | `COMET_RAG_TEST_POSTGRES_URL`，SQLAlchemy asyncpg URL |
-| Milvus | `COMET_MILVUS_URI`，默认 `http://127.0.0.1:29530` |
+| Milvus | `COMET_MILVUS_URI`，默认 `http://127.0.0.1:29530`；`COMET_MILVUS_DB`，默认 `default` |
 | 公开 AWS S3 | 无环境配置；固定 NOAA 小型公开对象，禁用 AWS 配置和凭据查找，只读 |
 | 专用兼容 S3 | `COMET_RAG_TEST_S3_ENDPOINT`、`COMET_RAG_TEST_S3_ACCESS_KEY`、`COMET_RAG_TEST_S3_SECRET_KEY`、`COMET_RAG_TEST_S3_REGION` |
 | MinerU | `COMET_RAG_TEST_MINERU_URL`，完整 `/v1/file_parse` endpoint；`COMET_RAG_TEST_MINERU_VERSION`（如 `4.0.12`）、`COMET_RAG_TEST_MINERU_TIER`（如 `flash`） |

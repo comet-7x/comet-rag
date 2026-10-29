@@ -491,11 +491,18 @@ class AsyncMilvusVectorStore:
             timeout=self._timeout,
         )
         hits = []
+        seen: set[str] = set()
         for item in result[0] if result else []:
             row = item.get("entity", {}) | {"record_id": item.get("record_id")}
             if not self._valid_identity(row["record_id"], row):
                 raise RuntimeError("Milvus returned an inconsistent record identity")
-            score = float(item["distance"])
+            if row["record_id"] in seen:
+                raise RuntimeError("Milvus returned a duplicate record hit")
+            seen.add(row["record_id"])
+            score = item.get("distance")
+            if isinstance(score, bool) or not isinstance(score, (int, float)):
+                raise RuntimeError("Milvus returned a nonnumeric score")
+            score = float(score)
             if not math.isfinite(score):
                 raise RuntimeError("Milvus returned a nonfinite score")
             hits.append(

@@ -26,10 +26,17 @@ def _tokens(text: str) -> list[str]:
 
 
 def _score(left: tuple[float, ...], right: tuple[float, ...], metric: str) -> float:
-    if metric == "L2":
-        return math.fsum((a - b) ** 2 for a, b in zip(left, right, strict=True))
-    if metric == "IP":
-        return math.fsum(a * b for a, b in zip(left, right, strict=True))
+    if metric in {"L2", "IP"}:
+        try:
+            score = math.fsum(
+                (a - b) ** 2 if metric == "L2" else a * b
+                for a, b in zip(left, right, strict=True)
+            )
+        except (OverflowError, ValueError) as exc:
+            raise ValueError("vectors exceed finite score range") from exc
+        if not math.isfinite(score):
+            raise ValueError("vectors exceed finite score range")
+        return score
     left_scale, right_scale = max(map(abs, left)), max(map(abs, right))
     if not left_scale or not right_scale:
         return 0.0
