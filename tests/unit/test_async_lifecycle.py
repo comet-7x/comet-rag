@@ -85,6 +85,25 @@ def test_failed_batch_stops_dispatch_and_drains_cancel_suppressing_sibling() -> 
     asyncio.run(scenario())
 
 
+def test_immediate_failure_stops_other_workers_before_they_dispatch() -> None:
+    async def scenario() -> None:
+        started: list[int] = []
+        failure = OSError("immediate failure")
+
+        async def operation(item: int) -> int:
+            started.append(item)
+            if item == 0:
+                raise failure
+            return item
+
+        with pytest.raises(OSError) as caught:
+            await map_concurrently(operation, list(range(10)), limit=2)
+        assert caught.value is failure
+        assert started == [0]
+
+    asyncio.run(scenario())
+
+
 def test_batch_is_bounded_and_preserves_order() -> None:
     async def scenario() -> None:
         active = peak = 0

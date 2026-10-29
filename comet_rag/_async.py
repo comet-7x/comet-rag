@@ -37,10 +37,15 @@ async def map_concurrently[T, R](
     stopping = False
 
     async def worker() -> None:
+        nonlocal stopping
         for index, item in pending:
             if stopping:
                 return
-            results[index] = await operation(item)
+            try:
+                results[index] = await operation(item)
+            except BaseException:
+                stopping = True
+                raise
 
     workers = [asyncio.create_task(worker()) for _ in range(min(limit, len(items)))]
     completion = asyncio.gather(*workers)
