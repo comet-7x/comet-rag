@@ -10,9 +10,9 @@
 | 2    | sources：本地、HTTP、S3、路由和资源所有权                               | 已审核并修复，独立复审与最终检查通过；真实 S3 边界见下文 |
 | 3    | documents：schema、codec、投影、解析器和导出                            | 已审核并修复四项问题；全量检查通过，真实引擎边界见下文 |
 | 4    | chunkers / indexing：范围、物化、表示、关系和身份                       | 已审核并修复图片出现丢失；全量检查通过，边界见下文     |
-| 5    | embedder / rerankers：预算、角色、映射与实际 SDK 能力                   | 待审核                                                |
-| 6    | docstores / vectorstores：事务、清单、幂等、过滤与核对                  | 待审核                                                |
-| 7    | retrieval / pipelines：归并、融合、降级、入库与删除                     | 待审核                                                |
+| 5    | embedder / rerankers：预算、角色、映射与实际 SDK 能力                   | 已审核并修复；远程文本模型已小样本校准，本地模型未重验 |
+| 6    | docstores / vectorstores：事务、清单、幂等、过滤与核对                  | 代码与本地检查通过；新版真实 PostgreSQL 已验，Milvus 写入被审批拦截 |
+| 7    | retrieval / pipelines：归并、融合、降级、入库与删除                     | 已审核并修复上下文过滤；真实 PG 读回验证通过，完整跨后端待验 |
 | 8    | examples / evals / 交付：真实调用、质量比较与安装边界                   | 待完整审核；本轮已复验核心 wheel                      |
 
 每组按正确性、可读性、架构、安全与性能检查。不会将单元测试通过当作真实模型、外部服务或持久后端验收。
@@ -112,3 +112,84 @@
 - 最终核心 wheel 在仓库外仅安装 comet-rag/lxml，两个隔离进程 write/read 通过，66 个运行时文件匹配源码；修改文件的 pre-commit（含 Bandit、敏感信息检查、unit）通过。
 
 修复会改变 profile，旧 scope 需重建后由调用方切换。重复图片导致的实际模型输入和表示数量增加是保真结果；joint 若超模型预算或不支持多图片仍由适配器明确拒绝。本轮未运行真实模型或 PostgreSQL/Milvus，不将纯算法审核作为后端或检索质量验收。
+
+## 第五组：嵌入与重排适配器
+
+核对空间身份、角色、模态、预算、输出映射、本地加载和批次生命周期。远程适配器继续只支持文本 embeddings；本地 CLIP 只接受文字或单图片；cross encoder 逐对输出单 logit。未新增依赖、同步接口、模型能力包装或通用异常层。
+
+### 已修复
+
+1. **CLIP 忽略角色前缀。** 空间 ID 已记录 query/document 前缀，实际 processor 却只收到原文。现在每次调用取局部前缀，文本在 tokenize 与预算检查前附加；图片不附加文字。并发两角色保留各自前缀，原文空白不变。
+2. **CLIP 静默丢弃多余输出。** 单条输入若返回两行，旧代码直接取首行；零行则抛 IndexError。现在明确要求二维、恰好一行，维度和有限值仍由既有校验负责，不填补或截取结果。
+3. **本地模型取消后仍派发剩余工作。** CLIP 整批和 reranker 整组推理原先各放进一次阻塞线程，取消只在所有条目/批次完成后传播。现在 CLIP 每条、reranker 每批各自 await run_sync，排干当前工作后传播取消，不派发剩余项。reranker 仍先对完整集合 tokenize/检查预算，再开始任何推理；tokenizer、pad 与模型共用原有锁，保持跨调用互斥及稳定同分排序。
+4. **远程响应的预算与关闭边界不足。** 明确请求 identity，拒绝压缩，检查声明长度与实际原始流预算；最终关闭复用 close_async，重复取消不打断排干，未取消时原始 HTTP 错误优先于关闭错误。整个批次被调用方取消时仍按批次协调契约传播取消。共享客户端保持由创建者关闭。
+5. **独立复核发现并修正 response hook 兼容回归。** 直接迭代原始流会重读 hook 已消费的真实网络流。现在对已消费且有缓存的正文核验预算并读取缓存；未缓存流使用原始读取和统一 finally。真实 HTTPX 回环用例覆盖普通客户端和 await response.aread() 的 hook。
+
+### 验证证据
+
+- 最初新增 CLIP/HTTP 回归在旧代码上 **10 failed / 32 passed**；CLIP 多条取消新增用例因实际执行 2 条而期望 1 条失败。reranker 多批取消正常完成参数修改前执行 3 批而期望 1 批，**1 failed / 1 passed**（当前批失败参数本就停止派发）。
+- hook 兼容回归以真实回环网络验证，修正前 **1 failed / 1 passed**，修正后 **2 passed**。同时验证实际 POST 的前缀、乱序 index、声明/无声明长度预算及压缩拒绝；回环服务不是真实模型。
+- 三次仅内存 mutation 分别移除 CLIP 前缀、输出行数检查及 HTTP 压缩拒绝，对应回归均失败，磁盘源码未改写。HTTP 新增 sibling 失败回归确认停止第三批、等待正在关闭的第二批后传播首批错误。
+- 最终 `make check`：**745 passed**，Ruff **106 文件**、Pyright **0 errors / 0 warnings**，wheel/sdist 构建通过。`make coverage`：**745 passed / 90%**（4736 条语句，475 条未覆盖）。本轮比上一组新增 20 项单元测试及 2 项显式回环集成实例。
+- 核心 wheel 在仓库外的新环境仅安装 comet-rag/lxml，以两个隔离进程完成 write/read；安装验证脚本首次误用参数后已纠正为 --output-dir 并通过。最终包复验核对 66 个运行时文件匹配源码，sdist 排除本地资料和运行产物。
+
+### 边界
+
+本轮环境没有 torch/transformers，未运行本地真实权重、tokenizer 或硬件推理；既有 CLIP 与持久检索记录仍是历史证据。后续使用用户提供的远程服务完成下述小样本校准，不据此宣称跨模态或排序质量验收。OpenAI 文本入口的 max_chars 是字符预算，不等于服务端 token 限额；本轮未增加 tokenizer 或维度缩减参数。
+
+非空 CLIP 前缀此前未生效，已有向量须在新 scope 重建；不改变 space_id 编码，空前缀下正常向量语义不变。远程服务必须遵守 identity 响应；注入客户端的 auth/hook 在 send 返回前自行读取正文，其资源消耗由调用方负责，适配器预算不覆盖这些提前读取。核心安装验证不等同于可选模型 SDK 验收。
+
+### 用户提供服务后的真实校准（2026-10-29）
+
+仅发送自建猫/狗/数据库文字，不持久化地址或凭据，不读取用户配置文件；Milvus 仅做元数据只读检查，没有创建集合或写入记录。
+
+- **Embedding：** 服务自报 vLLM **0.21.0**，模型 `Qwen/Qwen3-VL-Embedding-8B`。`/v1/embeddings` 返回 identity、4096 维有限向量；单例观测 L2 norm 为 **1.0000000732**，这不替代归一化配置保证。实际调用当前 `AsyncOpenAITextEmbedder`，三文档分为两批，并发处理 query/document，结果 ID 顺序、空间 ID 和借用客户端保持开放通过。查询 “Which animal is resting on a couch?” 对猫/狗/数据库的 cosine 为 **0.752065 / 0.336721 / 0.262441**；适配器调用部分约 **0.057 秒**，不作性能基准。
+- **Reranker：** 同为 vLLM **0.21.0**，模型 `Qwen/Qwen3-VL-Reranker-8B`。真实 `/v1/rerank` 三候选全部 index 精确覆盖、分数有限；猫/狗/数据库分数为 **0.180665 / 0.008699 / 0.007165**，请求约 **0.047 秒**。这是直接 HTTP 协议校准；当前库仅实现本地 cross encoder，尚无该远程重排适配器，不冒称库内接入完成。
+- **Milvus：** 通过当前 worktree 的 `AsyncMilvusClient` 成功读取用户指定数据库的集合清单；未检查或修改已有集合结构与数据，不算持久后端契约验收。
+- **MinerU：** 所给服务 OpenAPI 是 vLLM 推理 API，模型为 `opendatalab/MinerU2.5-Pro-2605-1.2B`，有 chat/completions，缺少当前 `AsyncMinerUParser` 需要的 `/v1/file_parse`。不能直接把此模型 endpoint 当作文档解析服务。
+
+上述小样本不验证图片或联合图文输入、模型 checkpoint 不可变身份、长输入/token 边界、真实取消、检索泛化或质量收益。MinIO 和普通 LLM 不在本组验证范围，未访问；后续存储审核仍需独立 scope 和完整写入/读回证据。
+
+## 第六组：存储契约与读回一致性
+
+审核 DocStore 的快照/清单、完整批次校验、事务与删除，以及 VectorStore 的范围绑定、不可变记录、原生过滤、确认和明确 ID 核对。修改前存储定向单元测试 **103 passed**。此组代码验证与真实后端验收分别记录；提交与推送由用户明确要求后执行。
+
+### 已修复
+
+1. **DocStore 合法但损坏的快照可能保持原 ID。** 表格 blocks 正文、metadata 或未影响 representation_id 的资源结构被修改后，原读回只检查 ID、行身份和父子关系，无法检出；完整清单摘要只在整批重试时核对。现在复用现有 content_digest，为每个 unit/representation 独立保存摘要。PostgreSQL 在 JSON payload 存储封套中加入 `snapshot_version=1` 和 `snapshot_fingerprint`，解码前提取封套并逐快照核验；memory 在写入时独立保存摘要，读取单元/祖先/表示时校验，删除时同步清理。不会在读取时为已有内容重新生成可信摘要。
+2. **内存分数溢出。** 有限的大向量可使 IP 返回 inf，或使 L2 直接抛底层 OverflowError；现在统一拒绝超出有限分数范围的计算，不返回伪造或截断的分数。普通 IP/L2 和原有缩放 cosine 保持不变。
+3. **Milvus 响应分数与重复命中校验不足。** bool/string 原先可经 float() 成为分数，同一 record_id 可重复返回。现在拒绝非数值、非有限分数和重复命中，dense/BM25 共用该校验，避免重复证据进入后续排名。
+4. Milvus 集成增加 `COMET_MILVUS_DB`，默认仍为 default，重建客户端时保留数据库选择；地址与凭据未写入仓库。
+
+### 验证证据
+
+- 快照封套首批 23 个新增用例在旧实现上失败，另补一个 memory 实际表示损坏回归；最终 docstores + snapshot 定向 **66 passed**。PG 用例先由原 codec 解码确认破坏后 ID 不变，再断言新读取检查拒绝，避免把原身份守卫当作新摘要验证。
+- 向量新增六项回归修改前 **6 failed**；修复后 vectorstores **67 passed**，包括 dense/BM25 非数值分数与重复命中共同拒绝。三次内存 mutation 移除 IP 有限值、Milvus 类型及去重守卫，对应回归均失败。
+- 快照两次有效内存 mutation 禁用实际导入模块的摘要检查，memory **6 failed**、PostgreSQL 离线解码 **2 failed**。首次重建 module 的注入未作用于包导出的旧类，已识别为无效实验，不当作覆盖缺口或验证成功。
+- 最终 `make check`：**775 passed**，Ruff **107 文件**、Pyright **0 errors / 0 warnings**，wheel/sdist 构建通过。`make coverage`：**775 passed / 91%**（4775 条语句，426 条未覆盖）。修改文件的 pre-commit（含 Bandit、敏感信息检查、unit）通过。
+- 最终 wheel 在仓库外新环境仅安装 comet-rag/lxml，两个隔离进程完成 write/read；66 个运行时文件匹配源码，sdist 132 个成员排除本地资料与运行产物。核心安装不加载可选数据库/模型 SDK，不能代替真实后端验收。
+
+### 存储格式与未完成验收
+
+公共 IndexUnit/Representation codec、manifest v2 和 SQL 表结构不变；**DocStore JSON 存储封套升级**。此前无快照摘要的旧 scope 会明确拒绝读取/重试，应在新 scope 重建、验证后由调用方切换，不能混用新旧 writer。单 ID 读取不加载整篇文档，合法部分删除后剩余单元继续可读且仍校验摘要。摘要沿用既有 Asset media 访问位置/name 可迁移语义，不防御同时改写正文和摘要的操作者。
+
+损坏内容的强制清理没有加入公开接口：PostgreSQL 仍在删除前解码快照并检查关系，损坏时失败关闭，清单保留；需要专门的恢复策略，不能为清理绕过父子/范围保护。
+
+本轮新建独立 PostgreSQL 17 实例，只绑定回环随机端口、使用临时随机密码和独立内存数据目录，不复用已有容器或资料。新版六项真实 PostgreSQL 集成 **6 passed / 0.59 秒**，覆盖封套读回、身份不变的正文/metadata/资源损坏拒绝、事务回滚、并发、重连和精确删除。实例保留，内存数据目录不提供容器停止后的持久性；该证据不代表重启/断电耐久。首次 trust 免认证启动被自动审批拒绝，改用密码认证后通过。Milvus 集成写入被自动审批拒绝，要求明确批准共享数据库修改；未换工具或目标绕过。准备执行的两个用例每次生成三个独立 UUID scope/集合，共四条逻辑记录及幂等重试；创建索引/加载集合、dense/BM25/过滤/不兼容准备/客户端重连检查后，仅按本轮明确 record IDs 删除，保留新集合，不操作既有集合、不删数据库、不重启服务。此前只读连通不能作为本组持久验收通过。
+
+## 第七组：检索与流水线
+
+测试先行检查单通道排序、多表示归并、RRF、重排失败回退、父上下文与预算，再核对入库重放和精确删除。入库继续在 resolver 上下文内完成模型消费，先提交完整内容/实际表示/向量清单，再写向量并核对明确 IDs；删除失败保留清单，不删除共享资产。本轮未发现需要修改入库与删除实现的确定问题。
+
+### 已修复
+
+**父上下文扩展可能越过 metadata 过滤。** 合法父子快照可带不同 metadata，向量召回 public 子单元后，旧流程直接返回 restricted 父正文。现在复用既有过滤匹配函数，读回候选先于重排核对过滤；扩展后的上下文先于去重和预算检查同一过滤。Eq/In/And 和系统字段使用原有精确类型语义，失败直接传播，不回退到扩大范围的内容。请求仅允许某个 child unit_id 时，扩展到其他父 ID 也会失败；调用方可明确关闭扩展。
+
+### 验证证据与边界
+
+- 使用真实 memory stores、完整合法清单和向量复现，新增回归在旧实现 **9 failed / 1 passed**；修复后新增 **10 passed**，相关四组 **111 passed**。覆盖 Eq/In/And、unit_id、零预算不能掩盖过滤错误、合法父扩展与子证据保留、重排前拒绝不符过滤的读回内容。
+- 两次仅内存 mutation 分别禁用上下文与候选匹配，回归分别 **8 failed / 1 failed**，磁盘源码未改写。
+- 新增真实 PostgreSQL 父子快照读取与过滤用例，和原六项 PG、两项真实 HTTPX 回环集成合跑 **9 passed / 1.71 秒**。该搜索用例的召回使用 memory vectorstore，真实 SQL 读回不等于真实 Milvus 搜索。
+- `make check`：**785 passed**，Ruff **108 文件**、Pyright **0 errors / 0 warnings**，wheel/sdist 构建通过；`make coverage`：**785 passed / 91%**（4781 条语句，426 条未覆盖）。
+- 最终 wheel 在仓库外新建环境仅安装 comet-rag/lxml，两个 `python -I` 进程完成 write/read，无可选 SDK 导入；66 个运行时文件与源码一致，sdist 133 个成员排除本地资料与运行产物。提交前 Bandit、敏感信息检查、lint、unit 钩子通过。
+- 本轮没有运行包含新版封套、真实远程 embedding 和真实 Milvus 的完整入库/检索链；共享 Milvus 写入审批仍阻塞，不能用本组局部验证代替。
