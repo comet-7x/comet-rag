@@ -21,7 +21,7 @@ CLIP 的 512 维文本和单图片处于同一空间，预处理文件指纹进�
 
 ## 持久文本与原生 DOCX
 
-由调用方提供专用 PostgreSQL SQLAlchemy URL 环境变量 `COMET_RAG_TEST_POSTGRES_URL`，并先启动独立后端。不要在命令行或结果文件中保存凭据。
+由调用方提供专用 PostgreSQL SQLAlchemy URL 环境变量 `COMET_RAG_TEST_POSTGRES_URL`，并先启动独立后端。两个持久示例均可用 `--milvus-db` 选择已存在的 Milvus 数据库，默认 `default`；ingest 与 verify 必须使用相同数据库。不要在命令行或结果文件中保存凭据。
 
 ```bash
 python -m examples.persistent_text \
@@ -91,4 +91,4 @@ async def parse_and_chunk(path: Path):
 
 结构块与 Asset 是主数据，投影为有来源的 Python 字符范围。不可切分的表格/媒体超过 chunk 预算会失败，调用方显式选择合适预算。`partial` 必须由调用方检查，入库 pipeline 默认拒绝；不要把无原生页码的 DOCX 宣称为分页解析。
 
-客户端由创建者关闭；持久目录跨进程应保持可读。资料或切分/表示/模型配置变化使用新 scope，验证后由调用方切换搜索实例。删除只按 manifest 明确 IDs 执行，Asset 不随删除自动清理。
+示例创建的客户端按创建顺序逆序关闭，构造、准备、取消或关闭失败时仍排干其他已创建资源，原始阶段错误保留。持久目录跨进程应保持可读。资料或切分/表示/模型配置变化使用新 scope，验证后由调用方切换搜索实例。删除只按 manifest 明确 IDs 执行，Asset 不随删除自动清理。

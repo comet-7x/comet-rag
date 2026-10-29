@@ -6,7 +6,7 @@ import json
 import os
 import threading
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AsyncExitStack, contextmanager
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,6 +18,7 @@ from docx import Document
 from pymilvus import AsyncMilvusClient
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from comet_rag._async import close_async
 from comet_rag.chunkers import DocumentChunker, RecursiveTextChunker
 from comet_rag.content import ImagePart, text_view
 from comet_rag.docstores.postgres import AsyncPostgresDocStore
@@ -66,19 +67,27 @@ async def run(args: argparse.Namespace, *, image_url: str | None) -> None:
     builder = FlatIndexBuilder(
         DocumentChunker(RecursiveTextChunker(180)), representation="separate"
     )
-    engine = create_async_engine(os.environ["COMET_RAG_TEST_POSTGRES_URL"])
-    client = AsyncMilvusClient(uri=args.milvus_uri, timeout=45)
-    docs = AsyncPostgresDocStore(index_scope=args.scope, engine=engine)
-    vectors = AsyncMilvusVectorStore(
-        client=client,
-        index_scope=args.scope,
-        index_profile_id=builder.profile_id(model.space),
-        space=model.space,
-        timeout=120,
-    )
-    root = args.output_dir.resolve()
-    state_path = root / "manifest-check.json"
-    try:
+    async with AsyncExitStack() as stack:
+        engine = create_async_engine(os.environ["COMET_RAG_TEST_POSTGRES_URL"])
+        stack.push_async_exit(
+            lambda *exc: close_async(engine.dispose(), exc[1], "PostgreSQL engine")
+        )
+        client = AsyncMilvusClient(
+            uri=args.milvus_uri, db_name=args.milvus_db, timeout=45
+        )
+        stack.push_async_exit(
+            lambda *exc: close_async(client.close(), exc[1], "Milvus client")
+        )
+        docs = AsyncPostgresDocStore(index_scope=args.scope, engine=engine)
+        vectors = AsyncMilvusVectorStore(
+            client=client,
+            index_scope=args.scope,
+            index_profile_id=builder.profile_id(model.space),
+            space=model.space,
+            timeout=120,
+        )
+        root = args.output_dir.resolve()
+        state_path = root / "manifest-check.json"
         await docs.prepare()
         await vectors.prepare()
         if args.phase == "ingest":
@@ -267,9 +276,6 @@ async def run(args: argparse.Namespace, *, image_url: str | None) -> None:
                 indent=2,
             )
         )
-    finally:
-        await engine.dispose()
-        await client.close()
 
 
 def main() -> None:
@@ -281,6 +287,7 @@ def main() -> None:
     parser.add_argument("--scope", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--milvus-uri", default="http://127.0.0.1:29530")
+    parser.add_argument("--milvus-db", default="default")
     parser.add_argument("--phase", choices=("ingest", "verify"), required=True)
     args = parser.parse_args()
     if args.phase == "ingest":
