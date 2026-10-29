@@ -215,6 +215,16 @@
 
 首轮脚本错误地用 cat 查询只含 cats 的正文，keyword 返回空而失败；修正为确实存在的 cats 后，使用新 scope 完整重跑两进程通过，失败记录与资料保留。另合跑 **7 项真实 PostgreSQL + 2 项 HTTPX 集成：9 passed / 1.62 秒**。本地可读脚本 `tmp/verify_pg_clip_20261029.py` 与 `tmp/pg-clip-validation-6004e259bdd6/` 保存原始证据，不含连接凭据，不进入分发包。
 
+### 真实模型取消、并发与 tokenizer 补验
+
+在代码 `e59baf5` 上使用同一固定本地 CLIP/MiniLM 权重，CPU / torch 2.14.1 / threads=2，显式离线。通过 PyTorch 官方 forward hooks 在真实模型推理入口设置受控屏障，不替换模型输出；取消后释放屏障，真实 forward 必须完成才允许任务退出。
+
+- CLIP 文本、CLIP 图片和 MiniLM 三类各提供三个待处理项/批，每次重复取消三次：等待期间 task 不结束，释放后各完成且仅完成一个真实 forward，再传播 CancelledError，后续工作不派发。图片输入在等待和结束后逐次核对文件 SHA 保持不变。
+- 同一 CLIP adapter 并发六次 query/document 调用，六次真实推理全部完成、峰值 forward=1，输出 512 维有限且相同空前缀文字结果一致。同一 MiniLM adapter 并发四次调用、每次三候选、batch_size=1，共十二次真实 forward，峰值为 1；每组结果完整且猫候选居首。
+- 真实 tokenizer 分别得到 CLIP **102 > 77**、MiniLM **604 > 512** 的超长输入，adapter 明确 ValueError 拒绝、不截断。tokenizer 输出长度警告属预期诊断，不是接受超长输入或模型崩溃。
+
+可读验证脚本为 `tmp/verify_real_model_lifecycle_20261029.py`，结果 `tmp/real-model-lifecycle-20261029.json`。这是带受控 hook 的真实 CPU 推理生命周期检查，不代表 GPU、自然时序压力、吞吐或内存峰值验收；未改动生产代码。
+
 ### 尚未完成
 
-本轮再次尝试共享 Milvus 集成被自动审批拒绝，要求明确批准创建集合/索引和写入/删除测试记录，测试没有执行，未换入口绕过。完整新版 PostgreSQL/Milvus 持久示例仍未重跑，共享 Milvus 写入审批未解除；本轮也未重启持久服务。真实模型取消/并发压力、扫描 OCR 和领域质量未验收。审核与本地修复完成不代表这些外部出口已经通过。
+本轮再次尝试共享 Milvus 集成被自动审批拒绝，要求明确批准创建集合/索引和写入/删除测试记录，测试没有执行，未换入口绕过。完整新版 PostgreSQL/Milvus 持久示例仍未重跑，共享 Milvus 写入审批未解除；本轮也未重启持久服务。真实模型取消和小规模并发已补验，压力/吞吐、扫描 OCR 和领域质量仍未验收。审核与本地修复完成不代表这些外部出口已经通过。
