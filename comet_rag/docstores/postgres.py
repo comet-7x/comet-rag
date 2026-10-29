@@ -13,12 +13,15 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    all_,
+    any_,
+    bindparam,
     delete,
     func,
     select,
     update,
 )
-from sqlalchemy.dialects.postgresql import JSON
+from sqlalchemy.dialects.postgresql import ARRAY, JSON
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.schema import CreateSchema
@@ -257,7 +260,10 @@ class AsyncPostgresDocStore:
                     await connection.execute(
                         select(self._units).where(
                             self._units.c.index_scope == self.index_scope,
-                            self._units.c.unit_id.in_(pending),
+                            self._units.c.unit_id
+                            == any_(
+                                bindparam("unit_ids", list(pending), type_=ARRAY(Text))
+                            ),
                         )
                     )
                 )
@@ -403,7 +409,12 @@ class AsyncPostgresDocStore:
                     await connection.execute(
                         select(self._representations).where(
                             self._representations.c.index_scope == self.index_scope,
-                            self._representations.c.representation_id.in_(keys),
+                            self._representations.c.representation_id
+                            == any_(
+                                bindparam(
+                                    "representation_ids", list(keys), type_=ARRAY(Text)
+                                )
+                            ),
                         )
                     )
                 )
@@ -515,6 +526,7 @@ class AsyncPostgresDocStore:
         keys = _ids(ids)
         if not keys:
             return
+        id_array = bindparam("unit_ids", list(keys), type_=ARRAY(Text))
         async with self._engine.begin() as connection:
             units = await self._read_units(connection, keys)
             for source_id in sorted({unit.source_id for unit in units.values()}):
@@ -524,8 +536,8 @@ class AsyncPostgresDocStore:
                     select(self._units.c.unit_id)
                     .where(
                         self._units.c.index_scope == self.index_scope,
-                        self._units.c.parent_unit_id.in_(keys),
-                        self._units.c.unit_id.not_in(keys),
+                        self._units.c.parent_unit_id == any_(id_array),
+                        self._units.c.unit_id != all_(id_array),
                     )
                     .limit(1)
                 )
@@ -535,13 +547,13 @@ class AsyncPostgresDocStore:
             await connection.execute(
                 delete(self._representations).where(
                     self._representations.c.index_scope == self.index_scope,
-                    self._representations.c.unit_id.in_(keys),
+                    self._representations.c.unit_id == any_(id_array),
                 )
             )
             await connection.execute(
                 delete(self._units).where(
                     self._units.c.index_scope == self.index_scope,
-                    self._units.c.unit_id.in_(keys),
+                    self._units.c.unit_id == any_(id_array),
                 )
             )
 

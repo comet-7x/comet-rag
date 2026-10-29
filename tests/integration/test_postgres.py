@@ -12,12 +12,12 @@ from sqlalchemy import event, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from comet_rag.content import MediaRef, TextPart
+from comet_rag.content import MediaRef, TextPart, text_view
 from comet_rag.docstores.base import _content_payload
 from comet_rag.docstores.postgres import AsyncPostgresDocStore
 from comet_rag.docstores.types import manifest_to_dict
 from comet_rag.documents.schemas import Asset, RichText, TextRun
-from comet_rag.vectorstores.types import VectorConfirmation
+from comet_rag.vectorstores.types import VectorConfirmation, VectorRecord
 from tests.unit.test_docstores import with_content, write_batch
 
 pytestmark = pytest.mark.integration
@@ -156,6 +156,66 @@ def test_postgres_persists_content_confirmations_and_exact_deletion(
             await store.delete_manifest(manifest.document_id)
             await other.delete_units(other_manifest.unit_ids)
             await other.delete_manifest(other_manifest.document_id)
+            await client.dispose()
+
+    asyncio.run(run())
+
+
+def test_postgres_large_id_sets_retry_and_delete_without_parameter_overflow() -> None:
+    async def run() -> None:
+        client = engine()
+        store = AsyncPostgresDocStore(index_scope=scope(), engine=client)
+        base_units, base_reps, base_manifest = write_batch(store.index_scope)
+        parent = base_units[0]
+        children = tuple(replace(base_units[1], ordinal=i) for i in range(1, 16384))
+        units = (parent, *children)
+        reps = tuple(replace(base_reps[0], unit_id=unit.unit_id) for unit in children)
+        records = tuple(
+            VectorRecord(
+                rep.representation_id,
+                rep.unit_id,
+                rep.source_id,
+                rep.document_id,
+                rep.index_scope,
+                rep.index_profile_id,
+                base_manifest.space_id,
+                (1.0, 0.0),
+                text_view(rep.content),
+                metadata=unit.metadata,
+            )
+            for unit, rep in zip(children, reps, strict=True)
+        )
+        manifest = with_content(
+            units,
+            reps,
+            replace(
+                base_manifest,
+                record_fingerprints={r.record_id: r.fingerprint for r in records},
+                record_vectors={r.record_id: r.vector for r in records},
+            ),
+        )
+        try:
+            await store.prepare()
+            await store.upsert_units(units, representations=reps, manifest=manifest)
+            missing = tuple(f"absent-{i}" for i in range(32768))
+            assert len(await store.get_units((*manifest.unit_ids, *missing))) == 16384
+            assert (
+                len(
+                    await store.get_representations(
+                        (*manifest.representation_ids, *missing)
+                    )
+                )
+                == 16383
+            )
+            await store.upsert_units(units, representations=reps, manifest=manifest)
+            with pytest.raises(ValueError, match="surviving"):
+                await store.delete_units((parent.unit_id, *missing))
+            await store.delete_units(manifest.unit_ids)
+            await store.delete_manifest(manifest.document_id)
+            assert await store.get_units(manifest.unit_ids) == {}
+            assert await store.get_representations(manifest.representation_ids) == {}
+            assert await store.get_manifest(manifest.document_id) is None
+        finally:
             await client.dispose()
 
     asyncio.run(run())
