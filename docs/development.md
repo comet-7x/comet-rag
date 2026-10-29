@@ -22,7 +22,7 @@ make db-down
 
 启动由开发者显式执行。PostgreSQL 开启默认持久化，默认开发账号为 `comet_v2`，数据库为 `comet_rag_v2`，默认密码为 `comet_v2_dev`，可通过 `COMET_V2_POSTGRES_PASSWORD` 修改。这些是本地开发配置。
 
-阶段 0 仅检查 Compose 结构；后续验证使用独立实例。PostgreSQL 适配器显式调用 `prepare()` 创建 V2 schema/tables，Milvus 按 scope 创建独立集合。应用注入的 engine/client 由创建者关闭；源码清理不操作已有数据。现存卷会保留初始化凭据，修改 Compose 环境变量不会自动改变旧卷内账号；不要为了测试修改既有账号或删除数据卷。
+阶段 0 仅检查 Compose 结构；后续验证使用独立实例。PostgreSQL 适配器显式调用 `prepare()` 创建默认 `comet_docstore_v2` schema/tables（清单格式 v2，JSON 保留实际数值表示），旧格式在新 scope 重建，Milvus 按 scope 创建独立集合。应用注入的 engine/client 由创建者关闭；源码清理不操作已有数据。现存卷会保留初始化凭据，修改 Compose 环境变量不会自动改变旧卷内账号；不要为了测试修改既有账号或删除数据卷。
 
 ## 包验证
 

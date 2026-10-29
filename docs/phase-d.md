@@ -1,6 +1,6 @@
 # 阶段 D 文本与图片闭环
 
-2026-10-29：四种真实检索组合、HTTP 临时文件清理、DOCX 内嵌图，以及 PostgreSQL/Milvus 真正重启后的同 scope 新进程持久读回全部通过，阶段 D 的真实验收完成。
+2026-10-29：四种真实检索组合、HTTP 临时文件清理、DOCX 内嵌图，以及此前版本 PostgreSQL/Milvus 真正重启后的同 scope 新进程持久读回通过。本轮清单/物化/异步 SDK 修订后已重新入库并做新进程读回，尚未再次重启服务。
 
 ## 实现与边界
 
@@ -8,7 +8,7 @@
 
 原生 DOCX 的独立图片、表格图片、普通/行内公式图片都进入实际 ContentPart；来源 Asset 链保存但不额外产生检索表示。Flat builder 的 text/media/separate/joint 选择进入 profile。joint 仅表达实际联合输入，模型不支持时明确拒绝。
 
-`AsyncCLIPEmbedder` 使用固定本地 safetensors，文本与单图片处于 512 维共享空间。实际配置、tokenizer/processor 文件 SHA、`use_fast=False` 进入 space。文本不截断，图片有字节/像素预算，输出维度/finite/归一化校验；23 项轻量模型边界测试不加载真实模型。
+`AsyncCLIPEmbedder` 使用固定本地 safetensors，文本与单图片处于 512 维共享空间。实际配置、tokenizer/processor 文件 SHA（含 added_tokens/processor_config）、safetensors 单权重或分片索引与全部引用分片、`use_fast=False` 进入 space。文本不截断，图片有字节/像素预算，输出维度/finite/归一化校验；30 项轻量模型边界测试不加载真实模型。
 
 ## 真实持久验证
 
@@ -26,6 +26,12 @@ HTTP 下载经回环服务器真实传输，解析返回后下载临时目录已
 八个查询在新进程重新建立模型/存储客户端后再次通过。DOCX 内嵌猫图能由文字查询检索且返回可读 Asset。没有只用内存存储代替持久后端。
 
 这些样本用于验证模态和资源闭环。文本查询复用入库描述，图片查询复用相同原图，因此不证明未见资料的泛化质量。没有付费模型、GPU、联合图文模型、PPTX 或整页截图验收。
+
+## 本轮审查后的真实复验
+
+清单 v2、`flat_v2` 与原生 `AsyncMilvusClient` 修订后，用 scope `review-multimodal-043f2924bc71` 向新建 PostgreSQL 和独立 Milvus 集合写入五文档。八次真实 CLIP 检索、HTTP 下载清理、DOCX 内嵌图、逐 ID/指纹及持久 Asset SHA 在 ingest 和新进程 verify 都通过。示例内部计时为 51.46 秒与 2.36 秒；space 为 `space_ff49c5a63ab9ffeceb4b3a0994620986ed8cb87e4abfce0d2153a97403ab8c97`。本地证据为 `tmp/review-validation-043f2924bc71.json` 和同 scope 目录。
+
+本次没有重启 PostgreSQL/Milvus。以下真实重启证据对应 `925d906`，不用于宣称本轮修订已经重新通过服务重启。
 
 ## 真正服务重启验收
 

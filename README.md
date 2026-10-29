@@ -2,7 +2,7 @@
 
 Comet-RAG V2 是可独立组合的文档入库与检索组件库，提供 `AsyncIngestionPipeline` 和 `AsyncSearchPipeline`。已实现本地/HTTP/S3 来源、原生 DOCX 与图片解析、范围切分、实际表示、嵌入/重排、PostgreSQL 内容清单和 Milvus dense/BM25。
 
-真实 CLIP→PostgreSQL/Milvus 已完成文本 dense/keyword/hybrid、文本/图片四种检索组合、HTTP 临时下载释放，以及图片 scope 在 PostgreSQL/Milvus 真正重启后的新进程读回。公开 AWS S3 匿名只读验收通过；外部 MinerU 仍缺实际部署验收，兼容 S3、认证与版本对象行为未验证。具体证据和剩余出口见 [验证记录](docs/validation.md)。
+真实 CLIP→PostgreSQL/Milvus 已完成文本 dense/keyword/hybrid、文本/图片四种检索组合和 HTTP 临时下载释放。本轮清单与原生异步 SDK 修订后已完成新 scope 入库和新进程读回；真正服务重启证据属于此前版本。公开 AWS S3 匿名只读验收通过；外部 MinerU 仍缺实际部署验收，兼容 S3、认证与版本对象行为未验证。具体证据和剩余出口见 [验证记录](docs/validation.md)。
 
 旧接口、HTTP 服务、worker 和运行说明保留在 [refactor/enterprise-reliability](https://github.com/comet-7x/comet-rag/tree/refactor/enterprise-reliability)。V2 不提供旧接口兼容、回答生成、在线版本激活或后台 GC。
 
@@ -62,7 +62,7 @@ async def keyword_search(docstore, vectorstore):
 
 注入客户端由创建者关闭。blocks 是主数据，Markdown 通过 `from comet_rag.documents.exporters import export_markdown` 同步派生；文本投影的范围以 Python 字符 `[start,end)` 表示。导出保留表格跨度和原生公式源码，显示效果由调用方渲染器决定。`partial` 解析默认不入库。资源在下载释放前转存稳定目录，目录持久化与跨机器共享由调用方负责。
 
-同一 scope/source 仅允许相同快照与配置重试。资料或策略变化使用新 `index_scope` 重建、核对完整 manifest 和 record 指纹，再由调用方切换实例。PostgreSQL 内部事务不等于跨存储原子提交；写向量超时保留 unknown 清单。删除按清单明确 IDs，不自动清理共享 Asset。
+同一 scope/source 仅允许相同快照与配置重试，清单保存首次实际向量以供精确重放。资料或策略变化使用新 `index_scope` 重建、核对完整 manifest 和 record 指纹，再由调用方切换实例。清单格式 v2 使用新的默认 PostgreSQL schema `comet_docstore_v2`；此前 v1 数据需在新 scope 重建，不隐式迁移或覆盖。PostgreSQL 内部事务不等于跨存储原子提交；写向量超时保留 unknown 清单。删除按清单明确 IDs，不自动清理共享 Asset。
 
 ## 可运行示例与检查
 
@@ -86,7 +86,7 @@ make pre-commit
 | 0 / A | 清场、独立包、身份/文档契约与隔离环境已提交 |
 | B | 持久文本/DOCX、三模式、真实服务重启证据及修订后新进程回读，见 [B](docs/phase-b.md) |
 | C | 本地/HTTP/原生 DOCX/公开 AWS S3 只读已验证；MinerU 部署待验收，兼容 S3 等范围未验证，见 [C](docs/phase-c.md) |
-| D | 四种组合、持久图片及真正服务重启后同 scope 读回全部通过，见 [D](docs/phase-d.md) |
+| D | 四种组合、持久图片和修订后新进程读回通过；此前版本有真正服务重启证据，见 [D](docs/phase-d.md) |
 | E | 可选父子上下文/重排与实际模型比较，见 [E](docs/phase-e.md) |
 | F | 组件导出、示例/评估、包与 CI 已交付；核心及来源/图片 wheel 外部调用通过，最终全阶段验收仍依赖 C |
 

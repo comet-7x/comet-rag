@@ -7,13 +7,40 @@
 | 阶段 | 实际状态 |
 |---|---|
 | 0 / A | 已完成并提交，见 [0](phase0.md) / [A](phase-a.md) |
-| B | 本地 TXT/DOCX→真实模型→PostgreSQL/Milvus→三模式及实际服务重启读回通过；最终身份修订后新 scope 重建/新进程回读通过，见 [B](phase-b.md) |
+| B | 本地 TXT/DOCX→真实模型→PostgreSQL/Milvus→三模式通过；本轮向量重放/原生异步 SDK 修订后已用新 scope 验证新进程读回，服务重启证据属于此前版本，见 [B](phase-b.md) |
 | C | 本地/HTTP/原生 DOCX/公开 AWS S3 匿名只读已验证；MinerU 实际部署待验收，兼容 S3 等范围未验证，见 [C](phase-c.md) |
-| D | HTTP/文档图片、四种真实组合及 PostgreSQL/Milvus 真正重启后同 scope 新进程回读全部通过，见 [D](phase-d.md) |
+| D | HTTP/文档图片、四种组合与新进程读回通过；此前版本另有真正服务重启证据，本轮修订未再次重启，见 [D](phase-d.md) |
 | E | 父子/重排完整性、实际模型质量与成本比较通过，默认策略未启用，见 [E](phase-e.md) |
 | F | 导出、示例/评估、构建白名单、架构守卫与 CI 已实现；核心和来源/图片 wheel 外部调用通过，最终全阶段验收仍依赖 C |
 
-## 可复验证据
+## 本轮严格审查与修复
+
+先核对需求、库内已有实现、标准库能力、上游 SDK 原生支持和最简实现，再对调用方、测试及持久行为作交叉复审。修复以下已复现问题：
+
+- MinerU 旧版本选择依据不足：改为官方 4.x `/v1/file_parse`，核对官方异步 SDK 后保留轻量 HTTP 边界；严格校验实际 parser version、任务/文件状态、上传与响应预算，202 不重传，清理失败不覆盖原始错误。实际服务仍未验收。
+- Milvus 以同步 SDK 加线程实现异步：改注入原生 `AsyncMilvusClient`，13 个网络方法直接 await，示例和集成同步迁移，借用客户端由创建者 await close。
+- 批量任务立即失败时其它 worker 继续派发：在失败 worker 中立即停止派发，保留已启动工作取消和排干。
+- 持久 URL 凭据规则遗漏：复用同一纯标准库检查，补齐 auth、credential、空值及编码参数名，仍允许文档业务 query 中的 `key`。
+- 重试再次调用模型，浮点微差造成永久清单冲突：manifest v2 在 PostgreSQL 内容事务保存首次实际向量，重试直接重放并核指纹。真实 PostgreSQL JSONB 会正规化负零，payload 因而改用原生 JSON；新默认 schema `comet_docstore_v2`，不覆盖旧表。
+- 每个文本 chunk 重复保存完整来源 block：按原始范围物化文本/代码并保留样式、链接和坐标，表格/公式继续保持完整；profile 升级 `flat_v2`。20,000 字符/200 units 序列化从 4,228,870 降至 248,870 字节，10,000 字符为 124,270 字节。
+- CLIP 空间指纹遗漏分片和附加处理文件：覆盖 safetensors 索引与全部实际分片、added_tokens 和 processor_config；缺失/非法分片在模型加载前拒绝。
+
+各守卫以对应错误输入和独立预期验证；实现完成后交叉只读复审未发现上述修订的新阻断项。这是本轮已核对范围的结论，不保证所有未知缺陷均已排除。
+
+当前实现已执行 `make install`、`make check` 和 `make coverage`，全部通过：**660 passed，Ruff 101 文件，Pyright 0 errors / 0 warnings，覆盖率 90%（4620 条语句、471 条未覆盖）**。全量 pre-commit 及新增 `_urls.py` 的显式检查通过，包括 Bandit、detect-secrets、Ruff 和单元；Compose 与 diff 空白检查通过。wheel/sdist 已成功构建。
+
+真实验证结果：
+
+- 原生异步 Milvus 两项集成通过，60.90 秒，覆盖 dense/BM25、过滤、schema/space 冲突保留数据、明确 ID/指纹和重连读回。测试仅删除本次 records，集合保留。
+- 新 PostgreSQL 容器 `comet-rag-v2-review-043f2924bc71`，回环端口 57063：**6 passed / 0.59 秒**，包含向量与 metadata 负零在 dispose/reconnect 后身份和重放不变。首次运行因测试仍断言旧 schema 名而失败，修正为新 schema 后完整六项通过；未删除失败用例。
+- 文本 scope `review-text-043f2924bc71`：四文档实际 CLIP→PostgreSQL/Milvus，dense/keyword/hybrid、同清单重试和新进程 verify 全部通过。进程用时为 81.84 / 3.17 秒。
+- 图片 scope `review-multimodal-043f2924bc71`：五文档、猫/狗四种组合共八次查询、HTTP 临时下载释放、DOCX 内嵌图，以及明确 IDs/指纹/实际表示/Asset SHA 在新进程复验全部通过；示例内部计时 51.46 / 2.36 秒。
+- 本轮模型/持久证据为 `tmp/review-validation-043f2924bc71.json` 与上述 scope 目录，使用 Milvus `127.0.0.1:54150` 的新集合。没有再次重启服务；下方 `925d906` 的真实重启记录只证明当时版本。
+- 新 wheel 在仓库外独立环境 `review-wheels-afe4d7f9911d-ry7etp82` 中验收。核心环境仅 comet-rag+lxml 6.1.3，来源/图片环境仅 `[sources,images]` 和其依赖；各自两个 `python -I` 进程完成实际文件解析/codec/索引/keyword，或真实 HTTP 图片/原生 DOCX/Markdown/Asset SHA/清理检查。65 个运行文件与源码逐字节一致，分发包白名单检查通过，证据为 `tmp/review-wheels-afe4d7f9911d.json`。文档完善后再次重建并在 `review-wheels-f5f563bd6ac6-mp4viqbs` 的两个新独立环境重复全部安装调用，均通过，证据为 `tmp/review-wheels-f5f563bd6ac6.json`。后续变更仅补充本记录；最终包继续核对源码、已验收运行文件和分发白名单。
+
+`pymilvus` 2.6.17 首次握手取消时，handler 尚未注册、client 尚未保存引用，调用 close 仍可能无法释放。已用真实 SDK 和本地假连接策略复现；已建立连接的 RPC 取消通过测试。没有使用私有 SDK 清理包装，也不能宣称该上游问题已解决。建议应用初始化时完成 prepare，见 [架构边界](architecture.md)。
+
+## 此前版本的可复验证据
 
 - PostgreSQL 五项真实集成通过，最终一次为 0.45 秒。包含真正事务回滚故障、持久快照/实际表示/清单、范围隔离、确认并发、损坏拒绝和明确删除。
 - Milvus 两项 + 实际 HTTP 两项组合通过，64.21 秒，另有一个 S3 用例显式未选中。向量测试核对明确 IDs/指纹，过滤在 limit 前执行；没有拿 count 或健康状态代替内容。
@@ -55,7 +82,17 @@ Python 3.12.13；PostgreSQL 17.11；Milvus 2.6.23；etcd 3.5.16；SDK/工具：
 
 ## 功能提交
 
-本轮按职责提交，未推送，commit 不含 AI 署名：
+本轮审查修复按职责提交，未推送，commit 不含 AI 署名：
+
+- `838ef01`：批量首次失败立即停止派发并排干已启动工作。
+- `54fcc5d`：共享 URL 凭据检测，补齐持久快照和下载的验证边界。
+- `ef61c96`：按官方 MinerU 4.x 单请求协议修订适配器、反例测试和严格集成入口。
+- `7516c66`：清单 v2 保存实际向量并精确重放，PostgreSQL JSON 保留数值表示，使用新 schema。
+- `ec0f74f`：Milvus 网络操作迁到原生异步 SDK，更新示例、取消与真实集成验证。
+- `fe57d3a`：文本/代码按原始范围物化并升级 profile，消除全文重复和平方级存储增长。
+- `c406dec`：完整记录 CLIP 分片权重和 tokenizer/processor 文件指纹。
+
+此前阶段实现提交：
 
 - `0ca651f`：受限来源获取、原生 TXT/DOCX 与 Markdown 派生导出。
 - `b9d4c53`：范围切分、实际单元/表示、严格 codec 与嵌入模型。
@@ -66,12 +103,12 @@ Python 3.12.13；PostgreSQL 17.11；Milvus 2.6.23；etcd 3.5.16；SDK/工具：
 - `925d906`：构建/CI、核心安装脚本、架构守卫和完整验收记录。
 - `3049327`：公开 AWS S3 匿名实际下载、解析、清理和预算拒绝的真实集成测试。
 
-阶段 D 的真实重启出口现已关闭。C 的公开 AWS S3 只读已通过，F 的独立包交付检查已通过；最终全阶段验收仍有以下边界。
+此前阶段 D 的真实重启出口已关闭；本轮修订只重新执行入库与新进程读回，未再次重启。C 的公开 AWS S3 只读已通过，F 的独立包交付检查已通过；最终全阶段验收仍有以下边界。
 
 ## 剩余外部验收与限制
 
-1. MinerU：缺少明确可用的 2.6.8 `/file_parse` 部署，`COMET_RAG_TEST_MINERU_URL` 未配置。MockTransport 与官方源码只能证明适配代码，不能证明识别质量或服务响应。这仍阻止 C 与最终全阶段验收关闭。
+1. MinerU：已改为官方 4.x 自托管 `/v1/file_parse`，核对版本 4.0.12；仍缺少明确可用的实际部署，`COMET_RAG_TEST_MINERU_URL`、VERSION 和 TIER 未配置。官方异步 SDK 与 HTTP 选型依据见 [C](phase-c.md)。MockTransport 与官方源码只证明适配代码；公开云 health 的 API 1.0.0 不证明自托管解析器版本/路由。此前旧 2.6.8 包执行被自动审批拒绝，未执行或绕过。这仍阻止 C 与最终全阶段验收关闭。
 2. S3 范围：实际支持结论限于本轮 AWS 匿名只读。兼容服务、认证与版本对象未验证；自动审批仍拒绝执行 `chrislusf/seaweedfs:3.85`，理由 `[Code from External]`，未启动或绕过。
 3. 远端 GitHub Actions 未运行；本地等价检查通过不冒称远端 CI 成功。正常服务重启可读也不等于断电耐久。
 
-此前旧测试容器的重启拒绝仍被遵守。本轮另建独立项目后，对新容器的显式重启获工具批准并实际成功，证据只用于新 scope。没有读取私有配置/凭据，没有通过其它 agent 执行被拒动作。严格集成入口和环境变量见 [tests](../tests/README.md)。未完成项不 skip 为绿、不按已完成阶段报告。
+此前旧测试容器的重启拒绝仍被遵守。代码 `925d906` 验收时另建独立项目，对该项目新容器的显式重启获工具批准并实际成功，证据只用于当时新 scope；本轮审查修订未再次重启。没有读取私有配置/凭据，没有通过其它 agent 执行被拒动作。严格集成入口和环境变量见 [tests](../tests/README.md)。未完成项不 skip 为绿、不按已完成阶段报告。
