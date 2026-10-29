@@ -14,7 +14,9 @@ from comet_rag.documents.schemas import (
     Asset,
     Block,
     FormulaContent,
+    InlineCode,
     InlineFormula,
+    Location,
     ParsedDocument,
     ParsingInfo,
     RichText,
@@ -22,8 +24,10 @@ from comet_rag.documents.schemas import (
     TableCell,
     TableContent,
     TextRun,
+    TextStyle,
 )
 from comet_rag.embedder import EmbeddingSpace
+from comet_rag.identity import canonical_json
 from comet_rag.indexing.builders.flat import FlatIndexBuilder
 from comet_rag.indexing.codec import from_dict, to_dict
 from comet_rag.indexing.types import IndexUnit, Representation, content_fingerprint
@@ -77,6 +81,107 @@ def test_materialized_table_keeps_child_blocks_metadata_and_actual_inputs() -> N
     assert rep.content == (TextPart(" 00123 "),) and rep.source_refs == unit.source_refs
     for value in (unit, rep):
         assert from_dict(to_dict(value)) == value
+
+
+def test_text_units_retain_selected_ranges_without_duplicating_the_source_block() -> (
+    None
+):
+    text = "0123456789" * 2_000
+    doc = document(Block("b", "text", rich_text=RichText((TextRun(text),))))
+    built = builder(size=100).build(doc, index_scope="s", index_profile_id="p")
+    stored = [to_dict(unit) for unit in built.units]
+    assert len(built.units) == 200
+    assert [text_view(unit.content) for unit in built.units] == [
+        text[i : i + 100] for i in range(0, len(text), 100)
+    ]
+    assert [unit.blocks[0].rich_text for unit in built.units] == [
+        RichText((TextRun(text[i : i + 100]),)) for i in range(0, len(text), 100)
+    ]
+    assert [
+        (unit.source_refs[0].start, unit.source_refs[0].end) for unit in built.units
+    ] == [(i, i + 100) for i in range(0, len(text), 100)]
+    assert sum(len(canonical_json(value)) for value in stored) < len(text) * 20
+    assert doc.blocks[0].rich_text == RichText((TextRun(text),))
+
+
+def test_partial_rich_text_and_code_keep_style_links_whitespace_and_source_coordinates() -> (
+    None
+):
+    location = Location(element_id="original-paragraph", start=10, end=20)
+    style = TextStyle(bold=True, color="#123456")
+    doc = document(
+        Block(
+            "rich",
+            "paragraph",
+            rich_text=RichText(
+                (
+                    TextRun("ab", style, "https://example.org"),
+                    InlineCode(" c\t"),
+                    TextRun("def", TextStyle(italic=True)),
+                )
+            ),
+            locations=(location,),
+        ),
+        Block(
+            "code", "code", code="  f()\n  g()", language="python", filename="sample.py"
+        ),
+    )
+    flat = FlatIndexBuilder(DocumentChunker(RecursiveTextChunker(4, separators=("",))))
+    built = flat.build(doc, index_scope="s", index_profile_id="p")
+    first, second = built.units[:2]
+    assert first.content == (TextPart("ab c"),)
+    assert first.blocks[0].rich_text == RichText(
+        (TextRun("ab", style, "https://example.org"), InlineCode(" c"))
+    )
+    assert second.content == (TextPart("\tdef"),)
+    assert second.blocks[0].rich_text == RichText(
+        (InlineCode("\t"), TextRun("def", TextStyle(italic=True)))
+    )
+    assert second.source_refs == (SourceRef(doc.document_id, "rich", start=4, end=8),)
+    assert first.blocks[0].locations == second.blocks[0].locations == (location,)
+    code_units = [
+        unit
+        for unit in built.units
+        if any(ref.block_id == "code" for ref in unit.source_refs)
+    ]
+    assert (
+        "".join(
+            block.code or ""
+            for unit in code_units
+            for block in unit.blocks
+            if block.block_id == "code"
+        )
+        == "  f()\n  g()"
+    )
+    assert all(
+        block.language == "python" and block.filename == "sample.py"
+        for unit in code_units
+        for block in unit.blocks
+        if block.block_id == "code"
+    )
+    assert all(from_dict(to_dict(unit)) == unit for unit in built.units)
+
+
+def test_selected_formula_source_remains_whole_when_chunk_crosses_its_expression() -> (
+    None
+):
+    formula = InlineFormula(FormulaContent("x^2+y^2", "latex"))
+    doc = document(
+        Block(
+            "b", "paragraph", rich_text=RichText((TextRun("a"), formula, TextRun("z")))
+        )
+    )
+    flat = FlatIndexBuilder(DocumentChunker(RecursiveTextChunker(4, separators=("",))))
+    built = flat.build(doc, index_scope="s", index_profile_id="p")
+    assert [text_view(unit.content) for unit in built.units] == ["ax^2", "+y^2", "z"]
+    assert [unit.blocks[0].rich_text for unit in built.units] == [
+        RichText((TextRun("a"), formula)),
+        RichText((formula,)),
+        RichText((TextRun("z"),)),
+    ]
+    assert [
+        (unit.source_refs[0].start, unit.source_refs[0].end) for unit in built.units
+    ] == [(0, 4), (4, 8), (8, 9)]
 
 
 @pytest.mark.parametrize("kind", ["image", "formula", "inline_formula", "table"])

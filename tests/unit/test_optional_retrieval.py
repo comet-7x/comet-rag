@@ -252,6 +252,16 @@ def test_parent_child_builder_preserves_caller_metadata() -> None:
     assert all(unit.metadata == document.metadata for unit in built.units)
     assert built.units[1].parent_unit_id == built.units[0].unit_id
     assert built.units[2].parent_unit_id == built.units[0].unit_id
+    assert [unit.blocks[0].rich_text for unit in built.units] == [
+        RichText((TextRun("0123456789"),)),
+        RichText((TextRun("01234"),)),
+        RichText((TextRun("56789"),)),
+    ]
+    assert [unit.source_refs for unit in built.units] == [
+        (SourceRef(document.document_id, "b", start=0, end=10),),
+        (SourceRef(document.document_id, "b", start=0, end=5),),
+        (SourceRef(document.document_id, "b", start=5, end=10),),
+    ]
 
 
 def context_units() -> tuple[IndexUnit, IndexUnit, IndexUnit, IndexUnit]:

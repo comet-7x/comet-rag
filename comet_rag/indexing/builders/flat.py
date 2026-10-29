@@ -1,14 +1,55 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Literal
 
-from comet_rag.chunkers import DocumentChunker
+from comet_rag.chunkers import DocumentChunker, SourceRef
 from comet_rag.content import ImagePart, TextPart
-from comet_rag.documents.schemas import InlineFormula, ParsedDocument
+from comet_rag.documents.schemas import (
+    Block,
+    InlineCode,
+    InlineFormula,
+    ParsedDocument,
+    RichText,
+    TextRun,
+)
 from comet_rag.embedder.types import EmbeddingSpace
 from comet_rag.identity import stable_id
 
 from ..types import BuildResult, IndexUnit, Representation
+
+
+def _selected_block(block: Block, refs: tuple[SourceRef, ...]) -> Block:
+    if not refs or any(ref.start is None for ref in refs):
+        return block
+    if block.code is not None:
+        return replace(
+            block, code="".join(block.code[ref.start : ref.end] for ref in refs)
+        )
+    if block.rich_text is None:
+        return block
+    inlines: list[TextRun | InlineCode | InlineFormula] = []
+    position = 0
+    for inline in block.rich_text.inlines:
+        text = (
+            inline.formula.expression or ""
+            if isinstance(inline, InlineFormula)
+            else inline.text
+        )
+        end = position + len(text)
+        for ref in refs:
+            if ref.start is None or ref.end is None:
+                continue
+            start, stop = max(ref.start, position), min(ref.end, end)
+            if start < stop:
+                # 公式源码不可截成另一条公式；原文选择仍由 source_refs 精确限定。
+                inlines.append(
+                    inline
+                    if isinstance(inline, InlineFormula)
+                    else replace(inline, text=text[start - position : stop - position])
+                )
+        position = end
+    return replace(block, rich_text=RichText(tuple(inlines)))
 
 
 class FlatIndexBuilder:
@@ -27,7 +68,7 @@ class FlatIndexBuilder:
         return stable_id(
             "profile",
             {
-                "builder": "flat_v1",
+                "builder": "flat_v2",
                 "chunker": self.chunker.config,
                 "representations": self.representation,
                 "space": space.space_id,
@@ -44,7 +85,10 @@ class FlatIndexBuilder:
         for chunk in self.chunker.chunk(document):
             if not chunk.source_refs:
                 continue
-            selected = {ref.block_id for ref in chunk.source_refs}
+            refs_by_block: dict[str, list[SourceRef]] = {}
+            for ref in chunk.source_refs:
+                refs_by_block.setdefault(ref.block_id, []).append(ref)
+            selected = set(refs_by_block)
             pending = list(selected)
             while pending:
                 block = by_id[pending.pop()]
@@ -55,7 +99,9 @@ class FlatIndexBuilder:
                                 selected.add(child)
                                 pending.append(child)
             blocks = tuple(
-                block for block in document.blocks if block.block_id in selected
+                _selected_block(block, tuple(refs_by_block.get(block.block_id, ())))
+                for block in document.blocks
+                if block.block_id in selected
             )
             asset_ids: list[str] = []
             for block in blocks:
