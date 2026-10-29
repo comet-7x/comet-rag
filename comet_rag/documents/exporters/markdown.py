@@ -4,6 +4,7 @@ import re
 from html import escape
 from urllib.parse import quote, urlsplit
 
+from .._tables import table_dimensions, validate_table_expansion
 from ..schemas import (
     Asset,
     Block,
@@ -120,7 +121,7 @@ def _run(run: TextRun, *, html: bool) -> str:
     return value
 
 
-def export_markdown(document: ParsedDocument) -> str:
+def export_markdown(document: ParsedDocument, *, max_table_cells: int = 10_000) -> str:
     """从当前 blocks 派生 Markdown 数据，不提供 HTML 消毒或公式执行保证。
 
     链接只接受 HTTP(S)、mailto 和相对目标；已知栅格图片仅引用路径/URL，
@@ -129,6 +130,7 @@ def export_markdown(document: ParsedDocument) -> str:
     """
     if not isinstance(document, ParsedDocument):
         raise TypeError("export_markdown requires ParsedDocument")
+    validate_table_expansion(document, max_table_cells)
     blocks = {block.block_id: block for block in document.blocks}
     assets = {asset.asset_id: asset for asset in document.assets}
     members = {
@@ -270,16 +272,7 @@ def export_markdown(document: ParsedDocument) -> str:
                 assets[table.asset_id], None, html=html
             )
         cells = table.cells or ()
-        rows = (
-            table.rows
-            if table.rows is not None
-            else max((cell.row + cell.row_span for cell in cells), default=0)
-        )
-        columns = (
-            table.columns
-            if table.columns is not None
-            else max((cell.column + cell.column_span for cell in cells), default=0)
-        )
+        rows, columns = table_dimensions(table)
         by_position = {(cell.row, cell.column): cell for cell in cells}
         output = ["<table>"]
         for row in range(rows):

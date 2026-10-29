@@ -538,6 +538,78 @@ def test_non_docx_bytes_are_errors(tmp_path: Path, data: bytes) -> None:
         _parse(path)
 
 
+@pytest.mark.parametrize("suffix", ["xml", "dat"])
+@pytest.mark.parametrize("budget", ["text", "elements"])
+def test_docx_xml_budgets_follow_content_types_not_suffix(
+    tmp_path: Path, suffix: str, budget: str
+) -> None:
+    from comet_rag.documents.parsers.docx.package import CT, RELS
+
+    path = tmp_path / "renamed.docx"
+    name = f"word/document.{suffix}"
+    text = "x" * 1000 if budget == "text" else "x"
+    paragraphs = 1 if budget == "text" else 100
+    with ZipFile(path, "w") as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            f'<Types xmlns="{CT}"><Override PartName="/{name}" '
+            'ContentType="application/vnd.openxmlformats-officedocument.'
+            'wordprocessingml.document.main+xml"/></Types>',
+        )
+        archive.writestr(
+            "_rels/.rels",
+            f'<Relationships xmlns="{RELS}"><Relationship Id="r1" '
+            f'Type="{_R}/officeDocument" Target="{name}"/></Relationships>',
+        )
+        archive.writestr(
+            name,
+            f'<w:document xmlns:w="{_W}"><w:body>'
+            + f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>" * paragraphs
+            + "</w:body></w:document>",
+        )
+    assert _parse(path).report.status == "complete"
+    limits = (
+        ArchiveLimits(max_xml_text_chars=64)
+        if budget == "text"
+        else ArchiveLimits(max_xml_elements=10)
+    )
+    with pytest.raises(ArchiveResourceLimitExceeded):
+        _parse(path, archive_limits=limits)
+
+
+def test_renamed_xml_part_uses_shared_budget_and_is_checked_once(
+    tmp_path: Path,
+) -> None:
+    from comet_rag.documents.parsers.docx.package import CT, RELS, Package
+
+    path = tmp_path / "aggregate.docx"
+    with ZipFile(path, "w") as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            f'<Types xmlns="{CT}"><Override PartName="/word/document.dat" '
+            'ContentType="application/vnd.openxmlformats-officedocument.'
+            'wordprocessingml.document.main+xml"/></Types>',
+        )
+        archive.writestr(
+            "_rels/.rels",
+            f'<Relationships xmlns="{RELS}"><Relationship Id="r1" '
+            f'Type="{_R}/officeDocument" Target="word/document.dat"/></Relationships>',
+        )
+        archive.writestr(
+            "word/document.dat",
+            f'<w:document xmlns:w="{_W}"><w:body><w:p><w:r><w:t>x</w:t>'
+            "</w:r></w:p></w:body></w:document>",
+        )
+    with ZipFile(path) as archive:
+        package = Package(archive, tmp_path, ArchiveLimits(max_xml_elements=9))
+        root = package.xml(package.main)
+        assert package.xml(package.main) is root
+    with ZipFile(path) as archive:
+        package = Package(archive, tmp_path, ArchiveLimits(max_xml_elements=8))
+        with pytest.raises(ArchiveResourceLimitExceeded, match="elements"):
+            package.xml(package.main)
+
+
 def test_docx_budgets_reject_before_dom_and_materialization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

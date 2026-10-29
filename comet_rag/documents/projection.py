@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ._tables import table_dimensions, validate_table_expansion
 from .schemas import Block, FormulaContent, InlineFormula, ParsedDocument
 
 
@@ -33,8 +34,11 @@ class TextProjection:
     limitations: tuple[ProjectionLimitation, ...]
 
 
-def project_document(document: ParsedDocument) -> TextProjection:
+def project_document(
+    document: ParsedDocument, *, max_table_cells: int = 10_000
+) -> TextProjection:
     """偏移按 Python 字符计数；图片公式保留零宽诊断而不伪造字符。"""
+    validate_table_expansion(document, max_table_cells)
     blocks = {block.block_id: block for block in document.blocks}
     cell_members = {
         member
@@ -112,18 +116,7 @@ def project_document(document: ParsedDocument) -> TextProjection:
                 )
                 return
             cells = {(cell.row, cell.column): cell for cell in table.cells}
-            rows = (
-                table.rows
-                if table.rows is not None
-                else max((cell.row + cell.row_span for cell in table.cells), default=0)
-            )
-            columns = (
-                table.columns
-                if table.columns is not None
-                else max(
-                    (cell.column + cell.column_span for cell in table.cells), default=0
-                )
-            )
+            rows, columns = table_dimensions(table)
             if (
                 sum(cell.row_span * cell.column_span for cell in table.cells)
                 < rows * columns

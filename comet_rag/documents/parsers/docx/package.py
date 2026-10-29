@@ -74,7 +74,13 @@ class Package:
             ):
                 raise ValueError(f"unsafe or duplicate DOCX archive member: {name!r}")
             self.names.add(name)
-        _validate_xml_members(archive, members, limits)
+        self._limits = limits
+        self._validated_xml = {
+            member.filename
+            for member in members
+            if member.filename.lower().endswith((".xml", ".rels"))
+        }
+        self._xml_elements = _validate_xml_members(archive, members, limits)
         self._xml: dict[str, etree._Element] = {}
         self._relationships: dict[str, dict[str, Relationship]] = {}
         self.assets: dict[str, Asset] = {}
@@ -111,6 +117,15 @@ class Package:
         if name not in self._xml:
             if name not in self.names:
                 raise ValueError(f"missing DOCX part: {name}")
+            if name not in self._validated_xml:
+                self._xml_elements = _validate_xml_members(
+                    self.archive,
+                    [self.archive.getinfo(name)],
+                    self._limits,
+                    xml_names={name},
+                    element_count=self._xml_elements,
+                )
+                self._validated_xml.add(name)
             root = etree.fromstring(
                 self.archive.read(name),
                 parser=etree.XMLParser(

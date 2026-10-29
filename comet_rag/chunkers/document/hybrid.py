@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from comet_rag.documents._tables import table_dimensions
 from comet_rag.documents.projection import TextProjection, project_document
 from comet_rag.documents.schemas import Block, InlineFormula, ParsedDocument
 
@@ -34,18 +35,7 @@ def _block_ranges(
         table = block.table
         if table is None or table.cells is None:
             return lengths.get(block.block_id, 0)
-        rows = (
-            table.rows
-            if table.rows is not None
-            else max((cell.row + cell.row_span for cell in table.cells), default=0)
-        )
-        columns = (
-            table.columns
-            if table.columns is not None
-            else max(
-                (cell.column + cell.column_span for cell in table.cells), default=0
-            )
-        )
+        rows, columns = table_dimensions(table)
         # 投影只给叶块范围；这里只计 v1 合成分隔符，不重新渲染正文。
         return (
             max(rows - 1, 0)
@@ -141,6 +131,16 @@ class DocumentChunker:
     def chunk(self, document: ParsedDocument) -> tuple[Chunk, ...]:
         if not isinstance(document, ParsedDocument):
             raise TypeError("document must be a ParsedDocument")
+        for block in document.blocks:
+            if block.table is not None and block.table.cells is not None:
+                rows, columns = table_dimensions(block.table)
+                separators = max(rows - 1, 0) + rows * max(columns - 1, 0)
+                if separators > self.text_chunker.chunk_size:
+                    raise ValueError(
+                        f"atomic table block {block.block_id!r} exceeds "
+                        f"chunk_size={self.text_chunker.chunk_size}: "
+                        f"{separators} characters in table separators"
+                    )
         projection = project_document(document)
         span_ends = tuple(span.end for span in projection.spans)
         chunks: list[Chunk] = []

@@ -105,7 +105,10 @@ def _validate_xml_members(
     archive: ZipFile,
     members: list[ZipInfo],
     limits: ArchiveLimits,
-) -> None:
+    *,
+    xml_names: set[str] | None = None,
+    element_count: int = 0,
+) -> int:
     def check_text(value: str | None, filename: str) -> None:
         if len(value or "") > limits.max_xml_text_chars:
             raise ArchiveResourceLimitExceeded(
@@ -113,10 +116,13 @@ def _validate_xml_members(
                 f"{limits.max_xml_text_chars:,} characters"
             )
 
-    element_count = 0
     try:
         for member in members:
-            if not member.filename.lower().endswith((".xml", ".rels")):
+            if (
+                member.filename not in xml_names
+                if xml_names is not None
+                else not member.filename.lower().endswith((".xml", ".rels"))
+            ):
                 continue
             with archive.open(member) as stream:
                 context = etree.iterparse(
@@ -144,3 +150,4 @@ def _validate_xml_members(
                             del parent[0]
     except etree.XMLSyntaxError as exc:
         raise ValueError(f"Invalid XML member in document archive: {exc}") from exc
+    return element_count
