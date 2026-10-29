@@ -16,7 +16,7 @@ from comet_rag.retrieval.context import select_contexts
 from comet_rag.retrieval.grouping import group_and_fuse
 from comet_rag.retrieval.types import SearchMatch, SearchResult
 from comet_rag.vectorstores.base import AsyncVectorStore
-from comet_rag.vectorstores.filters import Filter
+from comet_rag.vectorstores.filters import Filter, matches
 
 
 class AsyncSearchPipeline:
@@ -129,6 +129,8 @@ class AsyncSearchPipeline:
                 self.vectorstore.index_profile_id,
             ):
                 raise ValueError("stored content identity/scope/profile mismatch")
+            if not matches(unit, filters):
+                raise ValueError("stored content does not satisfy search filters")
             for item in evidence[unit_id]:
                 hit = item.hit
                 rep = representations[hit.representation_id]
@@ -194,6 +196,7 @@ class AsyncSearchPipeline:
             docstore=self.docstore,
             expand_parents=expand_parents,
             budget=context_budget,
+            filters=filters,
         )
         return SearchResult(
             matched,

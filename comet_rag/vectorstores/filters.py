@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from comet_rag.indexing.types import IndexUnit
 from comet_rag.vectorstores.types import VectorRecord
 
 type Scalar = str | int | float | bool
@@ -105,7 +106,7 @@ def validate_metadata(record: VectorRecord, fields: Mapping[str, type]) -> None:
             _scalar(value, fields[name])
 
 
-def matches(record: VectorRecord, filters: Filter | None) -> bool:
+def matches(record: VectorRecord | IndexUnit, filters: Filter | None) -> bool:
     if filters is None:
         return True
     if isinstance(filters, And):

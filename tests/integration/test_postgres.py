@@ -161,6 +161,37 @@ def test_postgres_persists_content_confirmations_and_exact_deletion(
     asyncio.run(run())
 
 
+def test_postgres_parent_context_expansion_preserves_search_filters() -> None:
+    from comet_rag.vectorstores.filters import Eq
+    from tests.unit.test_search_context_filters import search_fixture
+
+    async def run() -> None:
+        client = engine()
+        store = AsyncPostgresDocStore(index_scope=scope(), engine=client)
+        try:
+            await store.prepare()
+            search, _, child = await search_fixture(docstore=store)
+            plain = await search.run(
+                "cat", mode="keyword", filters=Eq("visibility", "public")
+            )
+            assert plain.contexts == (child,)
+            with pytest.raises(ValueError, match="context.*filter"):
+                await search.run(
+                    "cat",
+                    mode="keyword",
+                    filters=Eq("visibility", "public"),
+                    expand_parents=True,
+                )
+        finally:
+            manifests = [manifest async for manifest in store.iter_manifests()]
+            for manifest in manifests:
+                await store.delete_units(manifest.unit_ids)
+                await store.delete_manifest(manifest.document_id)
+            await client.dispose()
+
+    asyncio.run(run())
+
+
 def test_postgres_preserves_negative_zero_in_vectors_and_metadata() -> None:
     async def run() -> None:
         client = engine()

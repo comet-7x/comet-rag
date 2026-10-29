@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from comet_rag.content import text_view
 from comet_rag.docstores.base import AsyncDocStore
 from comet_rag.indexing.types import IndexUnit
+from comet_rag.vectorstores.filters import Filter, matches
 
 
 async def select_contexts(
@@ -13,6 +14,7 @@ async def select_contexts(
     docstore: AsyncDocStore,
     expand_parents: bool,
     budget: int | None,
+    filters: Filter | None = None,
 ) -> tuple[tuple[IndexUnit, ...], tuple[str, ...]]:
     """扩展一层显式父内容；字符预算只选择完整单元，不截断原内容或资产。"""
     parent_ids = tuple(
@@ -50,6 +52,8 @@ async def select_contexts(
             raise ValueError(
                 "parent context belongs to a different scope/profile/snapshot"
             )
+        if not matches(context, filters):
+            raise ValueError("context does not satisfy search filters")
         if context.unit_id in seen:
             continue
         seen.add(context.unit_id)
