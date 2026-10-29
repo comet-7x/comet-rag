@@ -68,7 +68,7 @@ jobs:
           export COMET_V2_POSTGRES_PASSWORD="$(openssl rand -hex 24)"
           export COMET_RAG_TEST_POSTGRES_URL="postgresql+asyncpg://comet_v2:${COMET_V2_POSTGRES_PASSWORD}@127.0.0.1:15432/comet_rag_v2"
           docker compose up -d --wait --wait-timeout 240
-          uv run --locked pytest tests/integration/test_postgres.py tests/integration/test_milvus.py tests/integration/test_remote_sources.py -k 'not real_s3' -q
+          uv run --locked pytest tests/integration/test_postgres.py tests/integration/test_milvus.py tests/integration/test_remote_sources.py tests/integration/test_embedding_http.py tests/integration/test_http_response_hooks.py -k 'not real_s3' -q
       - name: 保留后端失败日志
         if: failure()
         run: docker compose logs --no-color

@@ -179,7 +179,12 @@ class AsyncHttpSourceResolver:
                 size = 0
                 try:
                     with destination.open("xb") as stream:
-                        async for chunk in response.aiter_raw():
+                        chunks = (
+                            httpx.ByteStream(response.content)
+                            if response.is_stream_consumed
+                            else response.aiter_raw()
+                        )
+                        async for chunk in chunks:
                             size += len(chunk)
                             if size > self._max_bytes:
                                 raise SourceResourceLimitExceeded(

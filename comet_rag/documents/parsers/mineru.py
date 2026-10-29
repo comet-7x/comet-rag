@@ -128,8 +128,13 @@ class AsyncMinerUParser:
             if not isinstance(response.stream, httpx.AsyncByteStream):
                 raise TypeError("MinerU requires an asynchronous response stream")
             body = bytearray()
-            # 已要求 identity；直接读原始流，将自动关闭集中到可排干的 finally。
-            async for chunk in response.stream:
+            # hook 可能已缓存正文；两条路径均校验实际字节并集中排干关闭。
+            chunks = (
+                httpx.ByteStream(response.content)
+                if response.is_stream_consumed
+                else response.stream
+            )
+            async for chunk in chunks:
                 if len(body) + len(chunk) > self._max_response_bytes:
                     raise ValueError("MinerU response exceeds byte budget")
                 body.extend(chunk)
