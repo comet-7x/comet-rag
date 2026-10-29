@@ -18,22 +18,38 @@
 
 `make check` / `make coverage` 通过：**831 unit，114 文件 Ruff/格式通过，Pyright 零错误/警告，覆盖率 92%（4830 条语句，391 条未覆盖）**；wheel/sdist 构建通过。新核心 wheel 在仓库外独立环境只安装 comet-rag/lxml 6.1.3，两次 `python -I` 进程完成 write/read、实际解析/身份/索引/keyword，未导入可选 SDK，证据 `tmp/audit-fixes-wheel.json`。
 
-既有本地资料和容器未删除。一次更改既有测试实例密码的动作被自动审批拒绝，未执行；随后改用新建、随机凭据和回环端口的实例完成上述验收。测试清理只删除自己 scope 的明确数据，保留集合、卷及模型示例证据。不连接共享远端后端。远端 GitHub Actions、扫描 OCR、GPU/压力和服务重启未在本轮执行。
+既有本地资料和容器未删除。一次更改既有测试实例密码的动作被自动审批拒绝，未执行；随后改用新建、随机凭据和回环端口的实例完成上述验收。测试清理只删除自己 scope 的明确数据，保留集合、卷及模型示例证据。不连接共享远端后端。扫描 OCR、GPU/压力未在本轮执行。
+
+### 最新代码的实际重启与远端 CI
+
+在已推送的 `62e3dd40966041e78936cb49ed34bed99c5b2b9b` 上，使用本次独立 Compose 项目 `comet-rag-v2-audit-550539a220` 的命名数据卷、随机回环端口和本地 CLIP，先向文本 scope `audit-restart-text-18612b1c31` 写入 4 文档，向图片 scope `audit-restart-images-4abaa715b4` 写入 5 文档。随后实际执行 `docker compose -p comet-rag-v2-audit-550539a220 restart postgres milvus etcd`；检查项目标签和卷，确认容器 ID/Created 保持不变、StartedAt 改变：
+
+| 服务 / 容器 ID 前缀 | 重启前 StartedAt（UTC） | 重启后 StartedAt（UTC） |
+|---|---|---|
+| PostgreSQL / `8fd5969d6c78` | 2026-10-29T11:29:51.488936174Z | 2026-10-29T11:31:56.816823593Z |
+| Milvus / `7aebedeb12e1` | 2026-10-29T11:29:54.534303467Z | 2026-10-29T11:31:59.850922845Z |
+| etcd / `281d8433a3ea` | 2026-10-29T11:29:51.442364299Z | 2026-10-29T11:31:56.785878343Z |
+
+健康检查后，分别在全新 Python 进程执行两个示例的 `--phase verify`，读取原 scope，未重新入库：manifest、unit、representation、明确 record IDs/指纹、实际向量与 Asset SHA 均通过；文本 dense/keyword/hybrid 和猫/狗四种图文组合共八次查询均命中预期，DOCX 内嵌图片与 HTTP 下载释放检查通过。图片 ingest 内部计时 51.65 秒，重启后 verify 1.82 秒，不含服务重启耗时。无凭据证据在本地 `tmp/audit-fixes-restart-result.json`，资源在同名 scope 目录；容器和卷保留。
+
+首次重启后的验证曾因 Docker 重新分配随机宿主端口而在连接阶段失败。验收脚本改为重启后重新读取实际绑定，再次实际重启并完成上述原 scope 验证；没有修改库实现，也未通过重新入库掩盖持久性问题。这证明正常服务重启后可读，不证明断电耐久、跨机器资产共享或领域检索质量。
+
+同一提交的远端 [Tests #40865660999](https://github.com/comet-7x/comet-rag/actions/runs/40865660999) 全部通过：**831 unit / 21.18 秒，92% 覆盖率，Pyright 零错误/警告，wheel/sdist 构建及仓库外核心安装/跨进程读回**；runner 独立后端上的 **29 项 PostgreSQL/Milvus/HTTP 集成 / 229.73 秒**通过，外部 S3 1 项按配置未选。[Ruff #40865661031](https://github.com/comet-7x/comet-rag/actions/runs/40865661031) 通过。以上 CI 与重启证据对应 `62e3dd4`，后续仅文档提交不改变已验证运行代码。
 
 ## 当前出口
 
 | 阶段 | 实际状态 |
 |---|---|
 | 0 / A | 已完成并提交，见 [0](phase0.md) / [A](phase-a.md) |
-| B | 本地 TXT/DOCX→真实模型→PostgreSQL/Milvus→三模式通过；本轮向量重放/原生异步 SDK 修订后已用新 scope 验证新进程读回，服务重启证据属于此前版本，见 [B](phase-b.md) |
+| B | 本地 TXT/DOCX→真实模型→PostgreSQL/Milvus→三模式通过；`62e3dd4` 已通过实际服务重启后的原 scope 新进程读回，见 [B](phase-b.md) |
 | C | 本地/HTTP/原生 DOCX/公开 AWS S3 匿名只读与 MinerU 4.0.12 Flash 原生文字 PDF 的真实验收完成；扫描 OCR、其它 tier 与兼容 S3 等未验证，见 [C](phase-c.md) |
-| D | HTTP/文档图片、四种组合与新进程读回通过；此前版本另有真正服务重启证据，本轮修订未再次重启，见 [D](phase-d.md) |
+| D | HTTP/文档图片、四种组合与持久 Asset SHA 通过；`62e3dd4` 已通过实际服务重启后的原 scope 八次查询，见 [D](phase-d.md) |
 | E | 父子/重排完整性、实际模型质量与成本比较通过，默认策略未启用，见 [E](phase-e.md) |
 | F | 导出、示例/评估、构建白名单、架构守卫与 CI 配置已实现；核心和来源/图片 wheel 外部调用通过，阶段 C 首版 MinerU 出口已补齐，未验证范围继续明确列出 |
 
 ## 逐模块复审
 
-从 `44cd6fb` 开始的新一轮审核按依赖逐组推进；顺序、已复现问题、修复和本轮验证边界见 [逐模块审核记录](module-review.md)。下文保留此前阶段验收证据，不将其自动视为本轮所有模块已通过。最新补验在 `7aeaa2d` 上完成真实本地 CLIP + 独立 PostgreSQL 两进程入库/读回、保存向量重放、图片 SHA 与八次跨模态检查；向量侧使用 memory，完整 Milvus 仍待审批。另 7 项 PostgreSQL 与 2 项 HTTPX 集成合跑通过，证据与失败脚本修正见审核记录。
+从 `44cd6fb` 开始的新一轮审核按依赖逐组推进；顺序、已复现问题、修复和各轮验证边界见 [逐模块审核记录](module-review.md)。下文保留此前阶段验收证据，不将其自动视为本轮所有模块已通过。此前 `7aeaa2d` 的补验使用真实本地 CLIP + 独立 PostgreSQL，向量侧使用 memory，当时共享 Milvus 写入审批未解除；另 7 项 PostgreSQL 与 2 项 HTTPX 集成通过。最新独立 Milvus、完整持久示例、实际重启和远端 CI 证据见本文开头，未对被拒绝的共享后端执行写入。
 
 ## 本轮严格审查与修复
 

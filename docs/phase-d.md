@@ -1,12 +1,12 @@
 # 阶段 D 文本与图片闭环
 
-2026-10-29：四种真实检索组合、HTTP 临时文件清理、DOCX 内嵌图，以及此前版本 PostgreSQL/Milvus 真正重启后的同 scope 新进程持久读回通过。本轮清单/物化/异步 SDK 修订后已重新入库并做新进程读回，尚未再次重启服务。
+2026-10-29：最新 `62e3dd4` 已通过四种真实检索组合、HTTP 临时文件清理、DOCX 内嵌图，以及 PostgreSQL/Milvus/etcd 实际重启后的原 scope 新进程持久读回；清单、实际向量、逐 ID/指纹和持久图片 SHA 均核对通过。
 
 ## 实现与边界
 
 `AsyncImageParser` 验证实际字节 SHA/size、格式、像素和单帧，Pillow verify 后重新解码以拒绝截断图像；原始字节按 hash 写入 scope 的持久目录，冲突不会覆盖。保存原始像素坐标和 EXIF，不自动旋转、OCR 或生成描述。PNG/JPEG/WebP/GIF/BMP/TIFF 单帧入口有 31 项单元测试。
 
-原生 DOCX 的独立图片、表格图片、普通/行内公式图片都进入实际 ContentPart；同一 Asset 的多次出现保留为多份 ImagePart，资源及来源 Asset 链只保存一份，来源图片不额外产生检索表示。Flat builder 的 text/media/separate/joint 选择进入 profile；本轮保留重复出现的修复将 builder 配置版本改为 flat_v3，需在新 scope 重建后切换。joint 仅表达实际联合输入，模型不支持时明确拒绝。
+原生 DOCX 的独立图片、表格图片、普通/行内公式图片都进入实际 ContentPart；同一 Asset 的多次出现保留为多份 ImagePart，资源及来源 Asset 链只保存一份，来源图片不额外产生检索表示。Flat builder 的 text/media/separate/joint 选择进入 profile；保留重复出现的修复使用 flat_v3，随后表格图片按行列及格内块顺序物化的修复升级为当前 flat_v4，需在新 scope 重建后切换。joint 仅表达实际联合输入，模型不支持时明确拒绝。
 
 `AsyncCLIPEmbedder` 使用固定本地 safetensors，文本与单图片处于 512 维共享空间。实际配置、tokenizer/processor 文件 SHA（含 added_tokens/processor_config）、safetensors 单权重或分片索引与全部引用分片、`use_fast=False` 进入 space。文本不截断，图片有字节/像素预算，输出维度/finite/归一化校验；30 项轻量模型边界测试不加载真实模型。
 
@@ -31,9 +31,15 @@ HTTP 下载经回环服务器真实传输，解析返回后下载临时目录已
 
 清单 v2、`flat_v2` 与原生 `AsyncMilvusClient` 修订后，用 scope `review-multimodal-043f2924bc71` 向新建 PostgreSQL 和独立 Milvus 集合写入五文档。八次真实 CLIP 检索、HTTP 下载清理、DOCX 内嵌图、逐 ID/指纹及持久 Asset SHA 在 ingest 和新进程 verify 都通过。示例内部计时为 51.46 秒与 2.36 秒；space 为 `space_ff49c5a63ab9ffeceb4b3a0994620986ed8cb87e4abfce0d2153a97403ab8c97`。本地证据为 `tmp/review-validation-043f2924bc71.json` 和同 scope 目录。
 
-本次没有重启 PostgreSQL/Milvus。以下真实重启证据对应 `925d906`，不用于宣称本轮修订已经重新通过服务重启。
+`review-multimodal-043f2924bc71` 这一轮没有重启服务，其新进程读回证据单独保留。
 
-## 真正服务重启验收
+## 最新审核修复后的实际重启
+
+`62e3dd4` 使用当前 `flat_v4`、清单 v2 与存储封套，在本次独立 Compose 项目的 scope `audit-restart-images-4abaa715b4` 完成五文档真实 CLIP 入库。实际重启带命名数据卷的 PostgreSQL/Milvus/etcd 后，重新读取随机端口绑定，在全新 Python 进程只执行原 scope 的 verify，未重新入库。八次查询、完整清单/实际表示/向量、明确 record IDs/指纹、图片 SHA、DOCX 内嵌图与 HTTP 下载释放均通过；ingest 内部计时 51.65 秒，重启后 verify 1.82 秒。
+
+容器 ID/Created 不变且 StartedAt 改变，证据在本地 `tmp/audit-fixes-restart-result.json`，详细时间和远端 CI 见 [交付验证](validation.md#最新代码的实际重启与远端-ci)。首次验收脚本因重启后随机端口变化而连接失败，刷新实际绑定后再次重启并通过；没有修改运行实现。以下保留旧版本重启证据。
+
+## 此前版本的真正服务重启验收
 
 在代码 `925d906580059cc6385a421cee741cfee095631c` 上，为本轮新建独立 Compose 项目 `comet-rag-v2-acceptance-47e151d5d11b`，PostgreSQL/etcd/Milvus 均使用新卷，端口随机绑定回环地址。新 scope 为 `phase-d-restart-47e151d5d11b`，先执行五文档 ingest 和八次查询，再显式执行：
 

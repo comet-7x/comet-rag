@@ -26,7 +26,9 @@
 
 本轮审查修订后，在全新 PostgreSQL 容器 `comet-rag-v2-review-043f2924bc71` 和新 scope `review-text-043f2924bc71` 完成四文档实际 CLIP 入库与全新进程 verify，三模式均命中预期，实际向量清单和原生异步 Milvus 路径通过；六项 PostgreSQL 集成为 6 passed / 0.59 秒。该次没有重启服务，不能替代此前重启记录。证据为 `tmp/review-validation-043f2924bc71.json` 与同名 scope 目录。
 
-完整静态检查、单元/覆盖率、提交钩子和仅核心 wheel 安装记录统一见 [交付验证](validation.md)。后续 C 的公开 AWS S3 只读已验证，MinerU 部署待验收；这些单独记录，不计入本阶段文本闭环通过项。
+最新 `62e3dd4` 复验使用本次独立 Compose 项目及命名数据卷：四文档写入 scope `audit-restart-text-18612b1c31` 后，实际重启 PostgreSQL/Milvus/etcd，在新 Python 进程读取原 scope，完整清单、实际向量、逐 ID/指纹和 dense/keyword/hybrid 均通过，未重新入库。全部 PostgreSQL 8 项、Milvus 4 项真实集成及远端 CI 通过；重启时间、容器证据与首次随机端口变化的验收脚本修正见 [交付验证](validation.md#最新代码的实际重启与远端-ci)。前述旧版本记录保留为历史证据。
+
+完整静态检查、单元/覆盖率、提交钩子和仅核心 wheel 安装记录统一见 [交付验证](validation.md)。后续 C 的公开 AWS S3 匿名只读和 MinerU 4.0.12 Flash 文字 PDF 已验证；扫描 OCR 等未验证范围单独记录，不计入本阶段文本闭环通过项。
 
 ## 保证边界
 
