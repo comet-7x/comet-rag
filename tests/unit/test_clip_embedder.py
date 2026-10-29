@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import math
 import threading
 from collections.abc import Iterator
@@ -433,6 +434,118 @@ def test_clip_load_is_local_uses_safe_weights_and_records_preprocessing_hashes(
         assert updated.space.space_id != first_id
 
     asyncio.run(scenario())
+
+
+def test_clip_load_fingerprints_referenced_shards_and_complete_processor_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model, processor = Model(), Processor()
+    calls: list[str] = []
+
+    def pretrained(kind: str, *args: Any, **kwargs: Any) -> Any:
+        calls.append(kind)
+        return model if kind == "model" else processor
+
+    sdk = SimpleNamespace(
+        CLIPModel=SimpleNamespace(
+            from_pretrained=lambda *args, **kwargs: pretrained("model", *args, **kwargs)
+        ),
+        CLIPProcessor=SimpleNamespace(
+            from_pretrained=lambda *args, **kwargs: pretrained(
+                "processor", *args, **kwargs
+            )
+        ),
+    )
+    monkeypatch.setattr(clip, "import_module", lambda name: sdk)
+    contents = {
+        "config.json": b"config",
+        "preprocessor_config.json": b"image processor",
+        "processor_config.json": b"processor state",
+        "tokenizer_config.json": b"tokenizer",
+        "added_tokens.json": b"additional vocabulary",
+        "special_tokens_map.json": b"special tokens",
+        "vocab.json": b"vocabulary",
+        "merges.txt": b"merges",
+        "model.safetensors.index.json": json.dumps(
+            {
+                "weight_map": {
+                    "left": "weights/left.safetensors",
+                    "right": "right.safetensors",
+                }
+            }
+        ).encode(),
+        "weights/left.safetensors": b"left weights",
+        "right.safetensors": b"right weights",
+    }
+    for name, data in contents.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    (tmp_path / "unused.safetensors").write_bytes(b"not loaded")
+    (tmp_path / "README.md").write_bytes(b"not model input")
+
+    async def scenario() -> None:
+        first = await clip.AsyncCLIPEmbedder.load(
+            tmp_path, model_id="fixture", revision="same"
+        )
+        assert first.space.preprocessing["files"] == {
+            name: hashlib.sha256(data).hexdigest() for name, data in contents.items()
+        }
+        for name in (
+            "weights/left.safetensors",
+            "right.safetensors",
+            "added_tokens.json",
+            "processor_config.json",
+            "model.safetensors.index.json",
+        ):
+            path = tmp_path / name
+            original = path.read_bytes()
+            path.write_bytes(
+                original + (b" " if name.endswith(".json") else b"changed")
+            )
+            updated = await clip.AsyncCLIPEmbedder.load(
+                tmp_path, model_id="fixture", revision="same"
+            )
+            assert updated.space.space_id != first.space.space_id
+            path.write_bytes(original)
+        assert calls == ["model", "processor"] * 6
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "shard",
+    [
+        "../outside.safetensors",
+        "/absolute.safetensors",
+        "weights\\\\outside.safetensors",
+        "pytorch_model.bin",
+        "",
+        42,
+    ],
+)
+def test_clip_rejects_invalid_or_missing_shards_before_loading_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shard: object
+) -> None:
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"weight": shard}})
+    )
+
+    def sdk(name: str) -> Any:
+        pytest.fail("invalid weight index must fail before loading models")
+
+    monkeypatch.setattr(clip, "import_module", sdk)
+    with pytest.raises(ValueError, match="shard index"):
+        asyncio.run(
+            clip.AsyncCLIPEmbedder.load(tmp_path, model_id="fixture", revision="same")
+        )
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"weight": "missing.safetensors"}})
+    )
+    with pytest.raises(FileNotFoundError):
+        asyncio.run(
+            clip.AsyncCLIPEmbedder.load(tmp_path, model_id="fixture", revision="same")
+        )
 
 
 def test_clip_cancellation_drains_inference_and_serializes_model_access(

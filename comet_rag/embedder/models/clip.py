@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import threading
 from collections.abc import Sequence
 from importlib import import_module
@@ -12,6 +13,49 @@ from comet_rag.content import ContentItem, ImagePart, content_parts, text_view
 from comet_rag.identity import file_hash
 
 from ..types import EmbeddingResult, EmbeddingSpace, vector_values
+
+
+def _model_files(directory: Path) -> dict[str, str]:
+    names = {
+        "model.safetensors",
+        "config.json",
+        "preprocessor_config.json",
+        "processor_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "added_tokens.json",
+        "vocab.json",
+        "merges.txt",
+    }
+    files = {
+        name: file_hash(directory / name)
+        for name in sorted(names)
+        if (directory / name).is_file()
+    }
+    if "model.safetensors" not in files:
+        index = directory / "model.safetensors.index.json"
+        payload = json.loads(index.read_bytes())
+        weights = payload.get("weight_map") if isinstance(payload, dict) else None
+        if (
+            not isinstance(weights, dict)
+            or not weights
+            or any(
+                not isinstance(name, str)
+                or not isinstance(filename, str)
+                or not filename
+                or Path(filename).is_absolute()
+                or ".." in Path(filename).parts
+                or "\\" in filename
+                or Path(filename).suffix != ".safetensors"
+                for name, filename in weights.items()
+            )
+        ):
+            raise ValueError("invalid local safetensors shard index")
+        files[index.name] = file_hash(index)
+        for filename in sorted(set(weights.values())):
+            files[filename] = file_hash(directory / filename)
+    return files
 
 
 class AsyncCLIPEmbedder:
@@ -45,6 +89,7 @@ class AsyncCLIPEmbedder:
         cls, model_dir: Path, *, model_id: str, revision: str, device: str = "cpu"
     ) -> AsyncCLIPEmbedder:
         def load_model() -> AsyncCLIPEmbedder:
+            files = _model_files(Path(model_dir))
             transformers = import_module("transformers")
             model = transformers.CLIPModel.from_pretrained(
                 model_dir, local_files_only=True, use_safetensors=True
@@ -52,22 +97,6 @@ class AsyncCLIPEmbedder:
             processor = transformers.CLIPProcessor.from_pretrained(
                 model_dir, local_files_only=True, use_fast=False
             )
-            files = {
-                path.name: file_hash(path)
-                for path in sorted(Path(model_dir).iterdir())
-                if path.is_file()
-                and path.name
-                in {
-                    "model.safetensors",
-                    "config.json",
-                    "preprocessor_config.json",
-                    "tokenizer.json",
-                    "tokenizer_config.json",
-                    "special_tokens_map.json",
-                    "vocab.json",
-                    "merges.txt",
-                }
-            }
             space = EmbeddingSpace(
                 model_id,
                 model.config.projection_dim,
