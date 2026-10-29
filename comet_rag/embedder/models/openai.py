@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import re
+import sys
 from collections.abc import Sequence
 from typing import Literal
 
 import httpx
 
-from comet_rag._async import map_concurrently
+from comet_rag._async import close_async, map_concurrently
 from comet_rag.content import ContentItem, ImagePart, content_parts, text_view
 
 from ..types import EmbeddingResult, EmbeddingSpace, vector_values
@@ -70,7 +72,7 @@ class AsyncOpenAITextEmbedder:
             batch: tuple[tuple[ContentItem, ...], list[str]],
         ) -> tuple[EmbeddingResult, ...]:
             selected, inputs = batch
-            async with self.client.stream(
+            request = self.client.build_request(
                 "POST",
                 self.endpoint,
                 json={
@@ -78,13 +80,47 @@ class AsyncOpenAITextEmbedder:
                     "input": inputs,
                     "encoding_format": "float",
                 },
-            ) as response:
+                headers={"Accept-Encoding": "identity"},
+            )
+            response = await self.client.send(
+                request, stream=True, follow_redirects=False
+            )
+            try:
                 response.raise_for_status()
+                if response.headers.get(
+                    "content-encoding", "identity"
+                ).strip().lower() not in {"", "identity"}:
+                    raise ValueError("embedding response must use identity encoding")
+                header = response.headers.get("content-length")
+                if header is not None and re.fullmatch(r"[0-9]+", header) is None:
+                    raise ValueError("invalid embedding Content-Length")
+                length = int(header) if header is not None else None
+                if length is not None and length > self.max_response_bytes:
+                    raise ValueError("embedding response exceeds byte budget")
+                if not isinstance(response.stream, httpx.AsyncByteStream):
+                    raise TypeError(
+                        "embedding requires an asynchronous response stream"
+                    )
                 body = bytearray()
-                async for data in response.aiter_bytes():
-                    if len(body) + len(data) > self.max_response_bytes:
+                if response.is_stream_consumed:
+                    # 注入客户端的 hook 可提前缓存正文；不再读取已关闭的流。
+                    if len(response.content) > self.max_response_bytes:
                         raise ValueError("embedding response exceeds byte budget")
-                    body.extend(data)
+                    body.extend(response.content)
+                else:
+                    # identity 原始流避免隐式解压和自动关闭绕过预算与排干。
+                    async for data in response.stream:
+                        if len(body) + len(data) > self.max_response_bytes:
+                            raise ValueError("embedding response exceeds byte budget")
+                        body.extend(data)
+                if length is not None and len(body) != length:
+                    raise ValueError(
+                        "embedding response length does not match Content-Length"
+                    )
+            finally:
+                await close_async(
+                    response.aclose(), sys.exception(), "embedding response"
+                )
             import json
 
             payload = json.loads(body)

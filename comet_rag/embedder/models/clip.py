@@ -116,59 +116,63 @@ class AsyncCLIPEmbedder:
             items
         ):
             raise ValueError("invalid embedding role or duplicate IDs")
-        return await run_sync(self._embed, tuple(items))
+        prefix = (
+            self.space.query_prefix if role == "query" else self.space.document_prefix
+        )
+        results = []
+        for item in items:
+            results.append(await run_sync(self._embed, item, prefix))
+        return tuple(results)
 
-    def _embed(self, items: tuple[ContentItem, ...]) -> tuple[EmbeddingResult, ...]:
+    def _embed(self, item: ContentItem, prefix: str) -> EmbeddingResult:
         torch = import_module("torch")
         Image = import_module("PIL.Image")
 
-        result = []
         with self._lock, torch.inference_mode():
-            for item in items:
-                parts = content_parts(item.content)
-                images = [
-                    part.resource for part in parts if isinstance(part, ImagePart)
-                ]
-                text = text_view(item.content)
-                if images:
-                    if len(images) != 1 or text:
-                        raise ValueError(
-                            "CLIP supports one image or text per item; joint input requires another model"
-                        )
-                    resource = images[0]
-                    if resource.path is not None:
-                        with Path(resource.path).open("rb") as stream:
-                            data = stream.read(self.max_media_bytes + 1)
-                    elif resource.data is not None:
-                        data = resource.data
-                    else:
-                        raise ValueError("CLIP requires local or inline image bytes")
-                    if len(data) > self.max_media_bytes:
-                        raise ValueError("image exceeds byte budget")
-                    with Image.open(io.BytesIO(data)) as image:
-                        if image.width * image.height > self.max_pixels:
-                            raise ValueError("image exceeds pixel budget")
-                        image.load()
-                        inputs = self.processor(
-                            images=image.convert("RGB"), return_tensors="pt"
-                        )
-                        vector = self.model.get_image_features(**inputs.to(self.device))
+            parts = content_parts(item.content)
+            images = [part.resource for part in parts if isinstance(part, ImagePart)]
+            text = text_view(item.content)
+            if images:
+                if len(images) != 1 or text:
+                    raise ValueError(
+                        "CLIP supports one image or text per item; joint input requires another model"
+                    )
+                resource = images[0]
+                if resource.path is not None:
+                    with Path(resource.path).open("rb") as stream:
+                        data = stream.read(self.max_media_bytes + 1)
+                elif resource.data is not None:
+                    data = resource.data
                 else:
+                    raise ValueError("CLIP requires local or inline image bytes")
+                if len(data) > self.max_media_bytes:
+                    raise ValueError("image exceeds byte budget")
+                with Image.open(io.BytesIO(data)) as image:
+                    if image.width * image.height > self.max_pixels:
+                        raise ValueError("image exceeds pixel budget")
+                    image.load()
                     inputs = self.processor(
-                        text=[text], padding=True, truncation=False, return_tensors="pt"
+                        images=image.convert("RGB"), return_tensors="pt"
                     )
-                    if (
-                        inputs["input_ids"].shape[-1]
-                        > self.model.config.text_config.max_position_embeddings
-                    ):
-                        raise ValueError("text exceeds CLIP token budget")
-                    vector = self.model.get_text_features(**inputs.to(self.device))
-                vector = vector / vector.norm(dim=-1, keepdim=True)
-                result.append(
-                    EmbeddingResult(
-                        item.id,
-                        vector_values(vector[0].cpu().tolist(), self.space.dimension),
-                        self.space.space_id,
-                    )
+                    vector = self.model.get_image_features(**inputs.to(self.device))
+            else:
+                inputs = self.processor(
+                    text=[prefix + text],
+                    padding=True,
+                    truncation=False,
+                    return_tensors="pt",
                 )
-        return tuple(result)
+                if (
+                    inputs["input_ids"].shape[-1]
+                    > self.model.config.text_config.max_position_embeddings
+                ):
+                    raise ValueError("text exceeds CLIP token budget")
+                vector = self.model.get_text_features(**inputs.to(self.device))
+            if len(vector.shape) != 2 or vector.shape[0] != 1:
+                raise ValueError("CLIP must return exactly one vector per item")
+            vector = vector / vector.norm(dim=-1, keepdim=True)
+            return EmbeddingResult(
+                item.id,
+                vector_values(vector[0].cpu().tolist(), self.space.dimension),
+                self.space.space_id,
+            )

@@ -207,6 +207,8 @@ def test_clip_preserves_order_identity_text_whitespace_and_image_channel(
             "image-rgb",
             "image-close",
             "inference-exit",
+            "inference-enter",
+            "inference-exit",
         ]
         assert model.evaluated and model.device == "cpu"
         assert threading.get_ident() not in runtime.inference_threads
@@ -601,6 +603,95 @@ def test_clip_cancellation_drains_inference_and_serializes_model_access(
                 first, *([second] if second is not None else []), return_exceptions=True
             )
         assert path.read_bytes() == b"borrowed-image"
+
+    asyncio.run(scenario())
+
+
+def test_clip_cancellation_stops_remaining_items(runtime: Runtime) -> None:
+    entered, release = threading.Event(), threading.Event()
+
+    class Blocking(Model):
+        def get_text_features(self, **inputs: Any) -> Tensor:
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("inference not released")
+            return super().get_text_features(**inputs)
+
+    async def scenario() -> None:
+        model = Blocking()
+        task = asyncio.create_task(
+            _embedder(model).embed(
+                [ContentItem("first", "a"), ContentItem("second", "b")],
+                role="document",
+            )
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert len(model.calls) == 1
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_clip_applies_per_call_prefix_before_token_budget(runtime: Runtime) -> None:
+    class TextProcessor(Processor):
+        def __call__(self, **kwargs: Any) -> Batch:
+            if "text" in kwargs:
+                self.tokens = len(kwargs["text"][0])
+            return super().__call__(**kwargs)
+
+    async def scenario() -> None:
+        model, processor = Model(), TextProcessor()
+        adapter = clip.AsyncCLIPEmbedder(
+            model=model,
+            processor=processor,
+            space=EmbeddingSpace(
+                "fake-clip",
+                2,
+                "injected",
+                normalized=True,
+                query_prefix="q:",
+                document_prefix="d:",
+            ),
+        )
+        await asyncio.gather(
+            adapter.embed([ContentItem("q", " x")], role="query"),
+            adapter.embed([ContentItem("d", " y")], role="document"),
+        )
+        assert sorted(call["text"][0] for call in processor.calls) == ["d: y", "q: x"]
+        with pytest.raises(ValueError, match="token budget"):
+            await adapter.embed([ContentItem("over", "xyz")], role="query")
+        assert len(model.calls) == 2
+        image = ContentItem(
+            "image", [ImagePart(MediaRef(data=b"i", media_type="image/png"))]
+        )
+        await adapter.embed([image], role="query")
+        assert model.calls[-1][0] == "image"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("rows", [[], [[3.0, 4.0], [4.0, 3.0]]])
+def test_clip_requires_exactly_one_output_vector(
+    runtime: Runtime, rows: list[list[float]]
+) -> None:
+    class WrongCount(Model):
+        def get_text_features(self, **inputs: Any) -> Tensor:
+            return Tensor(rows)
+
+    async def scenario() -> None:
+        with pytest.raises(ValueError, match="one vector"):
+            await _embedder(WrongCount()).embed(
+                [ContentItem("one", "text")], role="query"
+            )
 
     asyncio.run(scenario())
 

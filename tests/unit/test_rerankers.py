@@ -383,6 +383,45 @@ def test_load_uses_only_existing_local_directory_safe_weights_and_no_remote_code
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("fail_current_batch", [False, True])
+def test_cancellation_drains_current_batch_without_starting_remaining_batches(
+    fake_torch: None, fail_current_batch: bool
+) -> None:
+    entered, release = threading.Event(), threading.Event()
+
+    class Blocking(Model):
+        def __call__(self, **inputs: Any) -> SimpleNamespace:
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("test inference was not released")
+            result = super().__call__(**inputs)
+            if fail_current_batch:
+                raise RuntimeError("cancelled batch failed")
+            return result
+
+    async def run() -> None:
+        model, tokenizer = Blocking([1.0, 2.0, 3.0]), Tokenizer()
+        adapter = reranker(model, tokenizer, batch_size=1)
+        task = asyncio.create_task(
+            adapter.rerank("q", [ContentItem(str(index), "x") for index in range(3)])
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert model.calls == 1 and len(tokenizer.pad_batches) == 1
+            assert not model.closed
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
+
+
 def test_cancellation_waits_for_inference_and_lock_serializes_calls(
     fake_torch: None,
 ) -> None:
@@ -406,9 +445,20 @@ def test_cancellation_waits_for_inference_and_lock_serializes_calls(
                 with counter_lock:
                     active -= 1
 
+    class GuardedTokenizer(Tokenizer):
+        def __call__(
+            self, queries: list[str], texts: list[str], **kwargs: Any
+        ) -> dict[str, Any]:
+            assert active == 0
+            return super().__call__(queries, texts, **kwargs)
+
+        def pad(self, features: list[dict[str, Any]], **kwargs: Any) -> Batch:
+            assert active == 0
+            return super().pad(features, **kwargs)
+
     async def run() -> None:
         model = Blocking([1.0, 2.0])
-        adapter = reranker(model)
+        adapter = reranker(model, GuardedTokenizer())
         first = asyncio.create_task(adapter.rerank("q", [ContentItem("a", "a")]))
         second: asyncio.Task[RerankResult] | None = None
         try:
