@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from comet_rag.docstores.types import WriteManifest
 from comet_rag.documents.schemas import ParseReport
+from comet_rag.errors import CometRAGError
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +19,7 @@ class IngestionResult:
     query_visible: bool
 
 
-class IngestionIncomplete(RuntimeError):
+class IngestionIncomplete(CometRAGError, RuntimeError):
     """内容清单已提交，向量状态需按相同身份核对后才能切换。"""
 
     def __init__(self, result: IngestionResult) -> None:

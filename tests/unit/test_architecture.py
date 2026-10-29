@@ -62,6 +62,7 @@ def _violations(module: str, imports: tuple[str, ...]) -> list[str]:
     pure_allowed = {
         "content": set(),
         "identity": set(),
+        "errors": set(),
         "_urls": set(),
         "documents.schemas": {
             f"{PACKAGE}._urls",
@@ -112,6 +113,8 @@ def test_components_preserve_import_boundaries() -> None:
     ("module", "code"),
     [
         (f"{PACKAGE}.content", "import httpx"),
+        (f"{PACKAGE}.errors", "import httpx"),
+        (f"{PACKAGE}.errors", f"from {PACKAGE}.sources import SourceError"),
         (f"{PACKAGE}.content", "import openai"),
         (f"{PACKAGE}.content", "import anthropic"),
         (f"{PACKAGE}.content", f"from {PACKAGE} import indexing"),

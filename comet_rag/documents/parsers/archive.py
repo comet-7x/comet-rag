@@ -7,6 +7,8 @@ from zipfile import BadZipFile, ZipFile, ZipInfo
 
 from lxml import etree
 
+from comet_rag.errors import CometRAGError
+
 
 @dataclass(frozen=True, slots=True)
 class ArchiveLimits:
@@ -38,7 +40,7 @@ class ArchiveLimits:
             raise ValueError("max_compression_ratio must be positive and finite")
 
 
-class ArchiveResourceLimitExceeded(ValueError):
+class ArchiveResourceLimitExceeded(CometRAGError, ValueError):
     """压缩容器超过允许的资源预算。"""
 
 

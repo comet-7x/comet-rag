@@ -64,6 +64,12 @@ async def keyword_search(docstore, vectorstore):
 
 同一 scope/source 仅允许相同快照与配置重试，清单保存首次实际向量以供精确重放。资料或策略变化使用新 `index_scope` 重建、核对完整 manifest 和 record 指纹，再由调用方切换实例。清单格式 v2 使用新的默认 PostgreSQL schema `comet_docstore_v2`；此前 v1 数据需在新 scope 重建，不隐式迁移或覆盖。PostgreSQL 内部事务不等于跨存储原子提交；写向量超时保留 unknown 清单。删除按清单明确 IDs，不自动清理共享 Asset。
 
+## 异常
+
+`from comet_rag import CometRAGError` 可统一捕获库定义的异常。现有 `SourceError`（包括 `SourceResourceLimitExceeded`）、`ArchiveResourceLimitExceeded` 和 `IngestionIncomplete` 均继承该基类，同时保留原有的 `ValueError` 或 `RuntimeError` 分类；模块专属信息仍由具体异常携带。
+
+这不是所有失败的包装：参数校验仍可能抛出 `ValueError`／`TypeError`，文件系统和 SDK 异常按组件契约传播，`asyncio.CancelledError` 始终传播。后续模块新增自定义异常时继承 `CometRAGError`，不增加错误码或统一响应结构。
+
 ## 可运行示例与检查
 
 [examples](examples/README.md) 提供实际运行的持久文本/DOCX 和 HTTP 图片/文档图片示例，包含新进程 verify。父子上下文、重排与表示策略的真实质量/成本比较见 [evals](evals/README.md)。当前默认 flat、不启用重排；CLIP 不支持联合图文，不能用向量平均代替。

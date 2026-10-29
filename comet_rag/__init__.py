@@ -1,3 +1,5 @@
 from __future__ import annotations
 
-__all__: list[str] = []
+from .errors import CometRAGError
+
+__all__ = ["CometRAGError"]
