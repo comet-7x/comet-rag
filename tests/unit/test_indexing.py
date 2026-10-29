@@ -27,7 +27,7 @@ from comet_rag.documents.schemas import (
     TextStyle,
 )
 from comet_rag.embedder import EmbeddingSpace
-from comet_rag.identity import canonical_json
+from comet_rag.identity import canonical_json, stable_id
 from comet_rag.indexing.builders.flat import FlatIndexBuilder
 from comet_rag.indexing.codec import from_dict, to_dict
 from comet_rag.indexing.types import IndexUnit, Representation, content_fingerprint
@@ -220,6 +220,41 @@ def test_all_image_payloads_materialize_without_embedding_provenance_images(
         builder().build(doc, index_scope="scope", index_profile_id="profile")
 
 
+@pytest.mark.parametrize("strategy", ["media", "joint", "separate"])
+def test_repeated_image_occurrences_share_asset_without_dropping_inputs(
+    strategy: Literal["media", "joint", "separate"],
+) -> None:
+    pixels = asset("logo")
+    doc = document(
+        Block(
+            "table",
+            "table",
+            table=TableContent(
+                cells=(TableCell(0, 0, ("left",)), TableCell(0, 1, ("right",)))
+            ),
+        ),
+        Block("left", "image", asset_id="logo", parent_block_id="table"),
+        Block("right", "image", asset_id="logo", parent_block_id="table"),
+        assets=(pixels,),
+    )
+    built = builder(strategy).build(doc, index_scope="s", index_profile_id="p")
+    (unit,) = built.units
+    assert unit.assets == (pixels,)
+    assert [part for part in unit.content if isinstance(part, ImagePart)] == [
+        ImagePart(pixels.media),
+        ImagePart(pixels.media),
+    ]
+    assert [
+        part
+        for rep in built.representations
+        for part in rep.content
+        if isinstance(part, ImagePart)
+    ] == [ImagePart(pixels.media), ImagePart(pixels.media)]
+    assert all(
+        from_dict(to_dict(value)) == value for value in (unit, *built.representations)
+    )
+
+
 def test_input_fingerprints_use_actual_bytes_not_access_path_and_keep_order(
     tmp_path: Path,
 ) -> None:
@@ -242,6 +277,16 @@ def test_profile_and_unit_identity_bind_scope_strategy_chunking_and_space() -> N
     flat = builder()
     space = EmbeddingSpace("model", 2, "local", version="1")
     profile = flat.profile_id(space)
+    previous_profile = stable_id(
+        "profile",
+        {
+            "builder": "flat_v2",
+            "chunker": flat.chunker.config,
+            "representations": flat.representation,
+            "space": space.space_id,
+        },
+    )
+    assert profile != previous_profile
     assert profile != builder(size=2).profile_id(space)
     assert profile != builder("joint").profile_id(space)
     assert profile != flat.profile_id(replace(space, version="2"))

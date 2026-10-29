@@ -68,7 +68,7 @@ class FlatIndexBuilder:
         return stable_id(
             "profile",
             {
-                "builder": "flat_v2",
+                "builder": "flat_v3",
                 "chunker": self.chunker.config,
                 "representations": self.representation,
                 "space": space.space_id,
@@ -103,7 +103,7 @@ class FlatIndexBuilder:
                 for block in document.blocks
                 if block.block_id in selected
             )
-            asset_ids: list[str] = []
+            media_ids: list[str] = []
             for block in blocks:
                 values = [
                     block.asset_id,
@@ -117,9 +117,10 @@ class FlatIndexBuilder:
                         if isinstance(inline, InlineFormula)
                     )
                 for asset_id in values:
-                    if asset_id is not None and asset_id not in asset_ids:
-                        asset_ids.append(asset_id)
-            media_ids = tuple(asset_ids)
+                    if asset_id is not None:
+                        media_ids.append(asset_id)
+            # Asset 按身份保存一份，实际图片输入仍保留每次出现。
+            asset_ids = list(dict.fromkeys(media_ids))
             # 派生资源的来源也随单元保存，但不把来源图片当作额外检索表示。
             for asset_id in asset_ids:
                 for source_asset in asset_by_id[asset_id].source_asset_ids:

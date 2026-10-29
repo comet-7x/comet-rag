@@ -6,7 +6,7 @@
 
 `AsyncImageParser` 验证实际字节 SHA/size、格式、像素和单帧，Pillow verify 后重新解码以拒绝截断图像；原始字节按 hash 写入 scope 的持久目录，冲突不会覆盖。保存原始像素坐标和 EXIF，不自动旋转、OCR 或生成描述。PNG/JPEG/WebP/GIF/BMP/TIFF 单帧入口有 31 项单元测试。
 
-原生 DOCX 的独立图片、表格图片、普通/行内公式图片都进入实际 ContentPart；来源 Asset 链保存但不额外产生检索表示。Flat builder 的 text/media/separate/joint 选择进入 profile。joint 仅表达实际联合输入，模型不支持时明确拒绝。
+原生 DOCX 的独立图片、表格图片、普通/行内公式图片都进入实际 ContentPart；同一 Asset 的多次出现保留为多份 ImagePart，资源及来源 Asset 链只保存一份，来源图片不额外产生检索表示。Flat builder 的 text/media/separate/joint 选择进入 profile；本轮保留重复出现的修复将 builder 配置版本改为 flat_v3，需在新 scope 重建后切换。joint 仅表达实际联合输入，模型不支持时明确拒绝。
 
 `AsyncCLIPEmbedder` 使用固定本地 safetensors，文本与单图片处于 512 维共享空间。实际配置、tokenizer/processor 文件 SHA（含 added_tokens/processor_config）、safetensors 单权重或分片索引与全部引用分片、`use_fast=False` 进入 space。文本不截断，图片有字节/像素预算，输出维度/finite/归一化校验；30 项轻量模型边界测试不加载真实模型。
 

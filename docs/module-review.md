@@ -9,7 +9,7 @@
 | 1    | `content.py`、`identity.py`、`_urls.py`、`_async.py` 与架构守卫 | 已审核并修复三项问题，验证见下文                      |
 | 2    | sources：本地、HTTP、S3、路由和资源所有权                               | 已审核并修复，独立复审与最终检查通过；真实 S3 边界见下文 |
 | 3    | documents：schema、codec、投影、解析器和导出                            | 已审核并修复四项问题；全量检查通过，真实引擎边界见下文 |
-| 4    | chunkers / indexing：范围、物化、表示、关系和身份                       | 待审核                                                |
+| 4    | chunkers / indexing：范围、物化、表示、关系和身份                       | 已审核并修复图片出现丢失；全量检查通过，边界见下文     |
 | 5    | embedder / rerankers：预算、角色、映射与实际 SDK 能力                   | 待审核                                                |
 | 6    | docstores / vectorstores：事务、清单、幂等、过滤与核对                  | 待审核                                                |
 | 7    | retrieval / pipelines：归并、融合、降级、入库与删除                     | 待审核                                                |
@@ -95,3 +95,20 @@
 ### 边界
 
 本轮 DOCX 用例实际生成并解析 OOXML，未用 Word 渲染器验证排版；MinerU 关闭回归使用离线流，未重启或调用真实 MinerU 服务，既有 4.0.12 Flash 验收仍是历史证据。schema/projection 版本不变，但此前解析失败或错误重复编号的 DOCX 将产生修正后的快照，调用方应在新 scope 重建并核对后切换。XML 文本预算在完整节点可用时判断，不替代 ZIP 总量限制。
+
+## 第四组：切分范围与索引物化
+
+核对递归字符切分、跨 Block 来源映射、原子元素预算、flat/parent-child builder、类型及 codec。165 项既有切分/索引/可选检索用例通过；另用固定随机种子生成 10,000 组文本、长度和 overlap，核对字符范围、硬预算及完整覆盖，未发现递归算法需要修改的问题。父子范围唯一包含与跨界拒绝保留既有实现。
+
+### 已修复
+
+表格内两个 ImageBlock 引用同一 Asset 时，旧 builder 对 Asset 去重后直接用于实际输入，导致两个图片出现只物化一份 ImagePart。现在实际图片序列保留每次引用，Asset 及其来源资源独立去重；media/joint/separate 都保留重复出现，指纹按有序 parts 计算。builder 配置改为 `flat_v3`，避免修正前后策略共用 profile；单元/表示 codec 版本不变。
+
+### 验证与边界
+
+- 新增三种表示策略用例修改前 **3 failed**，修复后通过，覆盖单元、表示及 codec 往返；新增 profile 版本隔离断言。内存 mutation 恢复图片去重后三项均失败，磁盘未改写。
+- 独立复核此修复及输入指纹，未发现确定残留，定向 **3 passed**。
+- `make check`：**725 passed**，Ruff 104 文件、Pyright **0 errors / 0 warnings**，wheel/sdist 构建通过；`make coverage`：**725 passed / 90%**（4706 条语句，474 条未覆盖）。
+- 最终核心 wheel 在仓库外仅安装 comet-rag/lxml，两个隔离进程 write/read 通过，66 个运行时文件匹配源码；修改文件的 pre-commit（含 Bandit、敏感信息检查、unit）通过。
+
+修复会改变 profile，旧 scope 需重建后由调用方切换。重复图片导致的实际模型输入和表示数量增加是保真结果；joint 若超模型预算或不支持多图片仍由适配器明确拒绝。本轮未运行真实模型或 PostgreSQL/Milvus，不将纯算法审核作为后端或检索质量验收。
