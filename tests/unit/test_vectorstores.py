@@ -803,7 +803,8 @@ def test_milvus_cancellation_reaches_native_io_without_followup_or_cleanup(
         call.assert_awaited_once()
         assert client.calls[-1][0] == rpc
         if operation == "prepare":
-            assert not store._prepared
+            assert store._prepared
+            await store.search(_query())
         if operation == "upsert":
             assert record.record_id in client.rows
         if operation == "delete":
@@ -883,6 +884,52 @@ def test_milvus_prepare_rejects_incompatible_schema_and_indexes_without_mutation
         )
         with pytest.raises(RuntimeError, match="prepare"):
             await store.search(_query())
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["success", "cancel", "timeout"])
+def test_repeated_prepare_preserves_concurrent_search_readiness(outcome: str) -> None:
+    async def scenario() -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        class Client(_PreparingMilvusClient):
+            hold = False
+
+            async def has_collection(self, name: str, **kwargs: Any) -> bool:
+                if self.hold:
+                    entered.set()
+                    await release.wait()
+                    if outcome == "timeout":
+                        raise TimeoutError("transient preparation failure")
+                return await super().has_collection(name, **kwargs)
+
+        client = Client()
+        store = _milvus(client)
+        await store.prepare()
+        await store.search(_query())
+        client.hold = True
+        pending = asyncio.create_task(store.prepare())
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            await store.search(_query())
+            await store.search_text("cat")
+            if outcome == "cancel":
+                pending.cancel()
+            release.set()
+            if outcome == "success":
+                await pending
+            else:
+                with pytest.raises(
+                    asyncio.CancelledError if outcome == "cancel" else TimeoutError
+                ):
+                    await pending
+            await store.search(_query())
+            await store.search_text("cat")
+            assert client.loaded
+        finally:
+            release.set()
+            await asyncio.gather(pending, return_exceptions=True)
 
     asyncio.run(scenario())
 

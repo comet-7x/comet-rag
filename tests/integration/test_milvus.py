@@ -202,6 +202,97 @@ def test_milvus_scoped_dense_bm25_filters_restart_and_precise_cleanup() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("cancel_repeat", [False, True])
+def test_milvus_search_remains_available_during_repeated_prepare(
+    cancel_repeat: bool,
+) -> None:
+    async def scenario() -> None:
+        from pymilvus import AsyncMilvusClient
+
+        from comet_rag.vectorstores.milvus import AsyncMilvusVectorStore
+
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        class Client(AsyncMilvusClient):
+            hold = False
+
+            async def has_collection(
+                self, collection_name: str, timeout: float | None = None, **kwargs
+            ) -> bool:
+                present = await super().has_collection(
+                    collection_name, timeout=timeout, **kwargs
+                )
+                if self.hold:
+                    entered.set()
+                    await release.wait()
+                return present
+
+        client = Client(
+            uri=os.environ["COMET_MILVUS_URI"],
+            db_name=os.environ.get("COMET_MILVUS_DB", "default"),
+            timeout=30,
+        )
+        space = EmbeddingSpace("integration", 2, "local")
+        store = AsyncMilvusVectorStore(
+            client=client,
+            index_scope=f"v2it_{uuid4().hex}",
+            index_profile_id="readiness",
+            space=space,
+            timeout=45,
+        )
+        record = VectorRecord(
+            "representation",
+            "unit",
+            "source",
+            "document",
+            store.index_scope,
+            store.index_profile_id,
+            space.space_id,
+            (1.0, 0.0),
+            "comet",
+        )
+        pending = None
+        try:
+            await store.prepare()
+            await store.upsert((record,))
+            client.hold = True
+            pending = asyncio.create_task(store.prepare())
+            await asyncio.wait_for(entered.wait(), 10)
+            query = EmbeddingResult("query", (1.0, 0.0), space.space_id)
+            for _ in range(3):
+                dense, keyword = await asyncio.gather(
+                    store.search(query), store.search_text("comet")
+                )
+                assert [hit.record_id for hit in dense] == [record.record_id]
+                assert [hit.record_id for hit in keyword] == [record.record_id]
+            if cancel_repeat:
+                pending.cancel()
+            release.set()
+            if cancel_repeat:
+                with pytest.raises(asyncio.CancelledError):
+                    await pending
+            else:
+                await pending
+            assert [hit.record_id for hit in await store.search(query)] == [
+                record.record_id
+            ]
+            assert [hit.record_id for hit in await store.search_text("comet")] == [
+                record.record_id
+            ]
+        finally:
+            release.set()
+            if pending is not None:
+                await asyncio.gather(pending, return_exceptions=True)
+            client.hold = False
+            try:
+                await store.prepare()
+                await store.delete((record.record_id,))
+            finally:
+                await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_milvus_incompatible_prepare_preserves_collection_and_data() -> None:
     async def scenario() -> None:
         from pymilvus import AsyncMilvusClient

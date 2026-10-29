@@ -136,9 +136,16 @@ class AsyncMilvusVectorStore:
             raise RuntimeError("prepare() must succeed before using the Milvus store")
 
     async def prepare(self) -> None:
-        self._prepared = False
+        try:
+            await self._prepare()
+        except ValueError:
+            self._prepared = False
+            raise
+
+    async def _prepare(self) -> None:
         name = self.collection_name
         if not await self._client.has_collection(name, timeout=self._timeout):
+            self._prepared = False
             schema = self._client.create_schema(
                 auto_id=False,
                 enable_dynamic_field=False,
@@ -204,6 +211,7 @@ class AsyncMilvusVectorStore:
             ):
                 raise ValueError(f"incompatible Milvus index for {field}")
         if missing:
+            self._prepared = False
             parameters = self._client.prepare_index_params()
             for field, index_name, kind, metric in missing:
                 parameters.add_index(
@@ -230,6 +238,7 @@ class AsyncMilvusVectorStore:
         if (await self._client.get_load_state(name, timeout=self._timeout)).get(
             "state"
         ) != LoadState.Loaded:
+            self._prepared = False
             raise RuntimeError("Milvus collection is not loaded")
         # 元数据 Loaded 可能早于重启后的分片恢复；用数据查询确认实际就绪。
         deadline = time.monotonic() + self._timeout
@@ -245,6 +254,7 @@ class AsyncMilvusVectorStore:
                 )
                 break
             except MilvusException as exc:
+                self._prepared = False
                 if exc.code != 503 or time.monotonic() >= deadline:
                     raise
                 await asyncio.sleep(min(0.2, max(0, deadline - time.monotonic())))
