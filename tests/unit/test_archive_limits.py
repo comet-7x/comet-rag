@@ -76,6 +76,31 @@ def test_xml_text_and_tail_budgets(tmp_path: Path, xml: bytes) -> None:
         validate_zip_archive(path, ArchiveLimits(max_xml_text_chars=16))
 
 
+@pytest.mark.parametrize("ending", [b"</root>", b"<next/></root>"])
+def test_xml_tail_budget_spans_parser_read_buffers(
+    tmp_path: Path, ending: bytes
+) -> None:
+    path = write_archive(
+        tmp_path / "tail.docx",
+        {"document.xml": b"<root><cell/>" + b"x" * 1_000_000 + ending},
+    )
+    with pytest.raises(ArchiveResourceLimitExceeded, match="text/tail"):
+        validate_zip_archive(path, ArchiveLimits(max_xml_text_chars=40_000))
+
+
+def test_xml_tail_budget_counts_characters_and_allows_exact_boundary(
+    tmp_path: Path,
+) -> None:
+    text = "星" * 40_000
+    path = write_archive(
+        tmp_path / "tail.docx",
+        {"document.xml": f"<root><cell/>{text}<next/>{text}</root>".encode()},
+    )
+    validate_zip_archive(path, ArchiveLimits(max_xml_text_chars=40_000))
+    with pytest.raises(ArchiveResourceLimitExceeded, match="text/tail"):
+        validate_zip_archive(path, ArchiveLimits(max_xml_text_chars=39_999))
+
+
 def test_invalid_zip_and_xml_fail_explicitly(tmp_path: Path) -> None:
     path = tmp_path / "invalid.docx"
     path.write_bytes(b"not a zip")

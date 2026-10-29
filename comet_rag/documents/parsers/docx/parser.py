@@ -118,6 +118,7 @@ class _Mapper:
         self.issues: list[ParseIssue] = []
         self._serial = 0
         self._table_cells = 0
+        self._fields: list[_Field] = []
 
     def identifier(self) -> str:
         value = f"docx_{self._serial}"
@@ -205,6 +206,8 @@ class _Mapper:
     ) -> tuple[str, ...]:
         if depth > 64:
             raise ValueError("DOCX content nesting exceeds 64 levels")
+        if depth == 0:
+            self._fields.clear()
         members: list[str] = []
         for child in container:
             if child.tag == q("p"):
@@ -236,6 +239,14 @@ class _Mapper:
                 members.extend(
                     self.walk(child, part, parent=parent, role=role, depth=depth + 1)
                 )
+        if depth == 0 and self._fields:
+            self.issue(
+                "unclosed_field",
+                "Unclosed field display text is retained without evaluating its instruction.",
+                container,
+                part,
+            )
+            self._fields.clear()
         return tuple(members)
 
     def paragraph(
@@ -290,6 +301,7 @@ class _Mapper:
             if not inlines and not empty:
                 return
             block_id = self.identifier()
+            continuation = kind == "list_item" and bool(members)
             if kind == "code" and all(
                 isinstance(item, (TextRun, InlineCode)) for item in inlines
             ):
@@ -318,10 +330,10 @@ class _Mapper:
                     )
                 block = Block(
                     block_id,
-                    "paragraph" if kind == "code" else kind,
+                    "paragraph" if kind == "code" or continuation else kind,
                     rich_text=RichText(tuple(inlines)),
-                    level=level,
-                    marker=marker,
+                    level=None if continuation else level,
+                    marker=None if continuation else marker,
                 )
             block = replace(
                 block,
@@ -337,7 +349,8 @@ class _Mapper:
 
         for token in tokens:
             if isinstance(token, _Image):
-                flush()
+                # 图片开头的列表项仍需一个承载编号的首片段。
+                flush(empty=kind == "list_item" and not members)
                 block_id = self.identifier()
                 self.blocks.append(
                     Block(
@@ -361,7 +374,7 @@ class _Mapper:
         self, container: etree._Element, paragraph: etree._Element, part: str
     ) -> list[_Token]:
         tokens: list[_Token] = []
-        fields: list[_Field] = []
+        fields = self._fields
 
         def field_link(instruction: str, element: etree._Element) -> str | None:
             match = re.match(
@@ -563,13 +576,6 @@ class _Mapper:
 
         for child in container:
             visit(child)
-        if fields:
-            self.issue(
-                "unclosed_field",
-                "Unclosed field display text is retained without evaluating its instruction.",
-                container,
-                part,
-            )
         return tokens
 
     def images(self, element: etree._Element, part: str) -> list[_Image]:

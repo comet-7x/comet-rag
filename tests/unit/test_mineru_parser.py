@@ -541,6 +541,73 @@ def test_response_close_failure_preserves_active_error(
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("failure", ["status", "read", "success", "close_failure"])
+def test_repeated_cancellation_drains_response_close(
+    tmp_path: Path, failure: str
+) -> None:
+    item = resource(tmp_path / "input")
+
+    async def run() -> None:
+        reading = asyncio.Event()
+        closing = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingClose(Stream):
+            async def __aiter__(self) -> AsyncIterator[bytes]:
+                if failure == "read":
+                    reading.set()
+                    await asyncio.Event().wait()
+                yield json.dumps(response_payload()).encode()
+
+            async def aclose(self) -> None:
+                closing.set()
+                await release.wait()
+                self.closed = True
+                if failure == "close_failure":
+                    raise OSError("close failed")
+
+        stream = BlockingClose([])
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    503 if failure == "status" else 200,
+                    headers={"content-type": "application/json"},
+                    stream=stream,
+                )
+            )
+        ) as client:
+            task = asyncio.create_task(parser(client).parse(item, output_dir=tmp_path))
+            try:
+                if failure == "read":
+                    await asyncio.wait_for(reading.wait(), 3)
+                    task.cancel()
+                await asyncio.wait_for(closing.wait(), 3)
+                for _ in range(3):
+                    task.cancel()
+                    await asyncio.sleep(0)
+                    assert not task.done()
+                release.set()
+                expected = (
+                    httpx.HTTPStatusError
+                    if failure == "status"
+                    else asyncio.CancelledError
+                )
+                with pytest.raises(expected) as caught:
+                    await task
+                assert stream.closed and not client.is_closed
+                if failure == "close_failure":
+                    assert (
+                        "MinerU response close failed: OSError"
+                        in caught.value.__notes__
+                    )
+            finally:
+                release.set()
+                await asyncio.gather(task, return_exceptions=True)
+        assert item.path.read_bytes() == minimal_pdf_bytes()
+
+    asyncio.run(run())
+
+
 def test_cancelled_input_read_is_drained_and_never_uploaded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

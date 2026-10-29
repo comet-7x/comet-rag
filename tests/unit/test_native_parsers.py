@@ -643,6 +643,119 @@ def test_field_hyperlinks_content_controls_and_native_list_levels(
     assert result.report.status == "complete"
 
 
+@pytest.mark.parametrize("story", ["body", "header", "footer"])
+@pytest.mark.parametrize("hyperlink", [False, True], ids=["toc", "hyperlink"])
+def test_fields_span_paragraphs_in_each_story(
+    tmp_path: Path, story: str, hyperlink: bool
+) -> None:
+    doc = Document()
+    container = doc if story == "body" else getattr(doc.sections[0], story)
+    paragraph = container.add_paragraph()
+    for boundary, instruction in (
+        ("begin", None),
+        (None, ' HYPERLINK "https://example.org/field" ' if hyperlink else " TOC "),
+        ("separate", None),
+    ):
+        run = OxmlElement("w:r")
+        child = OxmlElement("w:fldChar" if boundary else "w:instrText")
+        if boundary:
+            child.set(qn("w:fldCharType"), boundary)
+        else:
+            child.text = instruction
+        run.append(child)
+        paragraph._p.append(run)
+    paragraph.add_run("first entry")
+    paragraph = container.add_paragraph("second entry")
+    run = OxmlElement("w:r")
+    boundary = OxmlElement("w:fldChar")
+    boundary.set(qn("w:fldCharType"), "end")
+    run.append(boundary)
+    paragraph._p.append(run)
+    path = tmp_path / "spanning.docx"
+    doc.save(str(path))
+
+    result = _parse(path)
+    entries = [block for block in result.document.blocks if _text(block)]
+    assert [_text(block) for block in entries] == ["first entry", "second entry"]
+    assert [block.role for block in entries] == [None if story == "body" else story] * 2
+    assert all(
+        isinstance(inline, TextRun)
+        and inline.link == ("https://example.org/field" if hyperlink else None)
+        for block in entries
+        if block.rich_text
+        for inline in block.rich_text.inlines
+    )
+    assert result.report.status == ("complete" if hyperlink else "partial")
+    assert [issue.code for issue in result.report.issues] == (
+        [] if hyperlink else ["unsupported_field"]
+    )
+
+
+def test_unclosed_fields_are_isolated_between_stories(tmp_path: Path) -> None:
+    doc = Document()
+    for container, text in (
+        (doc, "body"),
+        (doc.sections[0].header, "header"),
+        (doc.sections[0].first_page_header, "first header"),
+    ):
+        paragraph = container.add_paragraph(text)
+        run = OxmlElement("w:r")
+        boundary = OxmlElement("w:fldChar")
+        boundary.set(qn("w:fldCharType"), "begin")
+        run.append(boundary)
+        paragraph._p.append(run)
+    doc.sections[0].footer.add_paragraph("footer")
+    path = tmp_path / "isolated.docx"
+    doc.save(str(path))
+
+    result = _parse(path)
+    assert [_text(block) for block in result.document.blocks if _text(block)] == [
+        "body",
+        "header",
+        "first header",
+        "footer",
+    ]
+    assert result.report.status == "partial"
+    issues = result.report.issues
+    assert [issue.code for issue in issues] == ["unclosed_field"] * 3
+    parts: set[str] = set()
+    for issue in issues:
+        element_id = issue.locations[0].element_id
+        assert element_id is not None
+        parts.add(element_id.split(":")[0])
+    assert len(parts) == 3
+
+
+@pytest.mark.parametrize("leading_text", ["first ", ""], ids=["middle", "start"])
+def test_inline_images_do_not_duplicate_list_items(
+    tmp_path: Path, leading_text: str
+) -> None:
+    with ZipFile(build_image(tmp_path / "source.docx")) as archive:
+        png = archive.read("word/media/image1.png")
+    doc = Document()
+    paragraph = doc.add_paragraph(leading_text, style="List Number")
+    paragraph.add_run().add_picture(io.BytesIO(png))
+    paragraph.add_run(" tail")
+    doc.add_paragraph("second", style="List Number")
+    path = tmp_path / "list-image.docx"
+    doc.save(str(path))
+
+    result = _parse(path)
+    blocks = result.document.blocks
+    assert [block.kind for block in blocks] == [
+        "list_item",
+        "image",
+        "paragraph",
+        "list_item",
+    ]
+    assert [_text(block) for block in blocks] == [leading_text, "", " tail", "second"]
+    assert [block.marker for block in blocks] == ["1.", None, None, "2."]
+    assert [block.level for block in blocks] == [0, None, None, 0]
+    assert blocks[0].locations == blocks[2].locations
+    assert result.report.status == "complete"
+    assert loads(dumps(result)) == result
+
+
 def test_external_images_and_unsupported_fields_have_partial_issues(
     tmp_path: Path,
 ) -> None:

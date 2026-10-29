@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from comet_rag._async import run_sync
+from comet_rag._async import close_async, run_sync
 from comet_rag.documents.schemas import (
     Block,
     ParsedDocument,
@@ -125,23 +125,18 @@ class AsyncMinerUParser:
             length = int(header) if header is not None else None
             if length is not None and length > self._max_response_bytes:
                 raise ValueError("MinerU response exceeds byte budget")
+            if not isinstance(response.stream, httpx.AsyncByteStream):
+                raise TypeError("MinerU requires an asynchronous response stream")
             body = bytearray()
-            async for chunk in response.aiter_bytes():
+            # 已要求 identity；直接读原始流，将自动关闭集中到可排干的 finally。
+            async for chunk in response.stream:
                 if len(body) + len(chunk) > self._max_response_bytes:
                     raise ValueError("MinerU response exceeds byte budget")
                 body.extend(chunk)
             if length is not None and len(body) != length:
                 raise ValueError("MinerU response length does not match Content-Length")
         finally:
-            active = sys.exception()
-            try:
-                await response.aclose()
-            except Exception as cleanup:
-                if active is None:
-                    raise
-                active.add_note(
-                    f"MinerU response close failed: {type(cleanup).__name__}"
-                )
+            await close_async(response.aclose(), sys.exception(), "MinerU response")
         payload = json.loads(
             body.decode("utf-8"),
             object_pairs_hook=_unique_object,

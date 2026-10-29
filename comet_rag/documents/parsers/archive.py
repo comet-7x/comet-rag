@@ -106,6 +106,13 @@ def _validate_xml_members(
     members: list[ZipInfo],
     limits: ArchiveLimits,
 ) -> None:
+    def check_text(value: str | None, filename: str) -> None:
+        if len(value or "") > limits.max_xml_text_chars:
+            raise ArchiveResourceLimitExceeded(
+                f"XML text/tail node in {filename!r} exceeds "
+                f"{limits.max_xml_text_chars:,} characters"
+            )
+
     element_count = 0
     try:
         for member in members:
@@ -125,17 +132,15 @@ def _validate_xml_members(
                         raise ArchiveResourceLimitExceeded(
                             f"Archive XML contains more than {limits.max_xml_elements:,} elements"
                         )
-                    text_chars = max(len(element.text or ""), len(element.tail or ""))
-                    if text_chars > limits.max_xml_text_chars:
-                        raise ArchiveResourceLimitExceeded(
-                            f"XML text/tail node in {member.filename!r} exceeds "
-                            f"{limits.max_xml_text_chars:,} characters"
-                        )
-                    # clear 后还要移除已处理的兄弟，避免父节点持有全部空壳。
-                    element.clear()
+                    check_text(element.text, member.filename)
+                    # 子节点 end 时 tail 可能尚未读完；父节点 end 后再核验。
+                    for child in element:
+                        check_text(child.tail, member.filename)
+                    element.clear(keep_tail=True)
                     parent = element.getparent()
                     if parent is not None:
-                        while element.getprevious() is not None:
+                        while (previous := element.getprevious()) is not None:
+                            check_text(previous.tail, member.filename)
                             del parent[0]
     except etree.XMLSyntaxError as exc:
         raise ValueError(f"Invalid XML member in document archive: {exc}") from exc
