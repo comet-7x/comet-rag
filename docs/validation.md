@@ -36,6 +36,18 @@
 
 同一提交的远端 [Tests #40865660999](https://github.com/comet-7x/comet-rag/actions/runs/40865660999) 全部通过：**831 unit / 21.18 秒，92% 覆盖率，Pyright 零错误/警告，wheel/sdist 构建及仓库外核心安装/跨进程读回**；runner 独立后端上的 **29 项 PostgreSQL/Milvus/HTTP 集成 / 229.73 秒**通过，外部 S3 1 项按配置未选。[Ruff #40865661031](https://github.com/comet-7x/comet-rag/actions/runs/40865661031) 通过。以上 CI 与重启证据对应 `62e3dd4`，后续仅文档提交不改变已验证运行代码。
 
+## 跨后端故障恢复补验（2026-10-29）
+
+基于 `ea6e679` 的运行代码，新增 `tests/integration/test_pipeline_recovery.py`，对应 v1.3 evaluation §4.3；本次只增加测试、CI 入口与文档，没有修改库实现或依赖。使用本轮独立 Compose 项目的 PostgreSQL 17.11 / Milvus 2.6.23、SQLAlchemy 2.1.6 / asyncpg 0.32.0 / pymilvus 2.6.17，两个全新 UUID scope，**1 passed / 42.25 秒**：
+
+- A 保存原快照；相同 source 在 B 写入变更快照。原生 Milvus SDK 实际 upsert + flush 成功后，测试客户端主动丢弃响应并抛 TimeoutError，验证 PostgreSQL 已保存完整内容、实际向量及 unknown 清单，按明确 IDs/指纹查询确认 B 的记录实际存在；A 的 dense/keyword/hybrid 仍返回原文。
+- 关闭两后端客户端并重建，读回同一 unknown 清单；B 幂等重试不再调用嵌入，manifest 身份、向量与记录指纹不变，完成真实查询可见性核对。调用方显式创建 B 的搜索实例后返回变更正文，A 继续可查。
+- B 的真实 delete + flush 成功后同样丢弃响应，验证其 unit/representation/manifest 保留；再次重连后重试删除，仅 B 的明确记录和内容消失，A 的清单与三模式查询、原输入文件保留。清理只涉及本次两个 scope 的明确记录，集合和卷保留。
+
+反例校验在独立 pytest 进程中临时替换 `run` 方法，强制重试重新调用嵌入：同一真实后端用例在 `document` 调用次数断言处失败（3 != 2，31.56 秒），证明新增检查能拦住该回归；磁盘生产源码未修改。`make check` 通过：831 unit、115 文件 Ruff/格式、Pyright 零错误/警告与 wheel/sdist 构建。
+
+用例已接入 CI 的真实后端 job。二维 ProbeEmbedder 仅隔离存储和编排，不代表真实模型质量；响应丢失由客户端在真实落盘后注入，不是网络断开或服务崩溃测试；本用例中的恢复指关闭并重新创建客户端，实际服务重启证据见上一节。原始通过/反例输出保留在本地会话日志。
+
 ## 当前出口
 
 | 阶段 | 实际状态 |
