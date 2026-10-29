@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
@@ -8,10 +9,15 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
-from pymilvus import DataType, Function, FunctionType, MilvusClient, MilvusException
+from pymilvus import (
+    AsyncMilvusClient,
+    DataType,
+    Function,
+    FunctionType,
+    MilvusException,
+)
 from pymilvus.client.types import LoadState
 
-from comet_rag._async import run_sync
 from comet_rag.embedder.types import EmbeddingResult, EmbeddingSpace
 from comet_rag.identity import canonical_json, stable_id
 from comet_rag.vectorstores.base import _binding, _ids, _limit, _query, _records
@@ -68,12 +74,12 @@ def _params(value: object) -> Mapping[str, Any]:
 
 
 class AsyncMilvusVectorStore:
-    """每个 scope 使用稳定集合；注入的同步客户端由创建者关闭，单写者由调用方保证。"""
+    """每个 scope 使用稳定集合；注入的异步客户端由创建者关闭，单写者由调用方保证。"""
 
     def __init__(
         self,
         *,
-        client: MilvusClient,
+        client: AsyncMilvusClient,
         index_scope: str,
         index_profile_id: str,
         space: EmbeddingSpace,
@@ -130,12 +136,9 @@ class AsyncMilvusVectorStore:
             raise RuntimeError("prepare() must succeed before using the Milvus store")
 
     async def prepare(self) -> None:
-        await run_sync(self._prepare)
-
-    def _prepare(self) -> None:
         self._prepared = False
         name = self.collection_name
-        if not self._client.has_collection(name, timeout=self._timeout):
+        if not await self._client.has_collection(name, timeout=self._timeout):
             schema = self._client.create_schema(
                 auto_id=False,
                 enable_dynamic_field=False,
@@ -166,7 +169,7 @@ class AsyncMilvusVectorStore:
                     output_field_names=["sparse"],
                 )
             )
-            self._client.create_collection(
+            await self._client.create_collection(
                 name,
                 schema=schema,
                 consistency_level="Strong",
@@ -174,12 +177,14 @@ class AsyncMilvusVectorStore:
             )
         description = cast(
             "Mapping[str, Any]",
-            self._client.describe_collection(name, timeout=self._timeout),
+            await self._client.describe_collection(name, timeout=self._timeout),
         )
         self._validate_schema(description)
         indexes = [
-            self._client.describe_index(name, index_name, timeout=self._timeout)
-            for index_name in self._client.list_indexes(name, timeout=self._timeout)
+            await self._client.describe_index(name, index_name, timeout=self._timeout)
+            for index_name in await self._client.list_indexes(
+                name, timeout=self._timeout
+            )
         ]
         missing = []
         for field, (index_name, kind) in _INDEXES.items():
@@ -207,10 +212,10 @@ class AsyncMilvusVectorStore:
                     index_type=kind,
                     metric_type=metric,
                 )
-            self._client.create_index(name, parameters, timeout=self._timeout)
+            await self._client.create_index(name, parameters, timeout=self._timeout)
             # 重新检查真实索引描述，不能把建索引 ACK 当成已准备完成。
             for field, index_name, kind, metric in missing:
-                index = self._client.describe_index(
+                index = await self._client.describe_index(
                     name, index_name, timeout=self._timeout
                 )
                 params = _params(index.get("params"))
@@ -221,17 +226,16 @@ class AsyncMilvusVectorStore:
                     or index.get("state") not in (None, "Finished")
                 ):
                     raise ValueError(f"incompatible Milvus index for {field}")
-        self._client.load_collection(name, timeout=self._timeout)
-        if (
-            self._client.get_load_state(name, timeout=self._timeout).get("state")
-            != LoadState.Loaded
-        ):
+        await self._client.load_collection(name, timeout=self._timeout)
+        if (await self._client.get_load_state(name, timeout=self._timeout)).get(
+            "state"
+        ) != LoadState.Loaded:
             raise RuntimeError("Milvus collection is not loaded")
         # 元数据 Loaded 可能早于重启后的分片恢复；用数据查询确认实际就绪。
         deadline = time.monotonic() + self._timeout
         while True:
             try:
-                self._client.query(
+                await self._client.query(
                     name,
                     filter='record_id in [""]',
                     output_fields=["record_id"],
@@ -243,7 +247,7 @@ class AsyncMilvusVectorStore:
             except MilvusException as exc:
                 if exc.code != 503 or time.monotonic() >= deadline:
                     raise
-                time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+                await asyncio.sleep(min(0.2, max(0, deadline - time.monotonic())))
         self._prepared = True
 
     def _validate_schema(self, description: Mapping[str, Any]) -> None:
@@ -324,11 +328,13 @@ class AsyncMilvusVectorStore:
             rows.append(row)
         return rows
 
-    def _lookup(self, ids: tuple[str, ...]) -> dict[str, Mapping[str, Any] | None]:
+    async def _lookup(
+        self, ids: tuple[str, ...]
+    ) -> dict[str, Mapping[str, Any] | None]:
         found: dict[str, Mapping[str, Any] | None] = {}
         for offset in range(0, len(ids), 1000):
             batch = ids[offset : offset + 1000]
-            rows = self._client.query(
+            rows = await self._client.query(
                 self.collection_name,
                 filter=f"record_id in {json.dumps(batch, ensure_ascii=False)}",
                 output_fields=list(_IDENTITY),
@@ -366,10 +372,10 @@ class AsyncMilvusVectorStore:
             is not None
         )
 
-    def _verify(
+    async def _verify(
         self, ids: tuple[str, ...], fingerprints: Mapping[str, str] | None
     ) -> RecordVerification:
-        rows = self._lookup(ids)
+        rows = await self._lookup(ids)
         present, missing, unknown = [], [], []
         for key in ids:
             row = rows.get(key)
@@ -396,13 +402,8 @@ class AsyncMilvusVectorStore:
         )
         rows = self._rows(snapshots)
         self._ready()
-        return await run_sync(self._upsert, snapshots, rows)
-
-    def _upsert(
-        self, records: tuple[VectorRecord, ...], rows: list[dict[str, Any]]
-    ) -> VectorConfirmation:
-        ids = tuple(record.record_id for record in records)
-        existing = self._lookup(ids)
+        ids = tuple(record.record_id for record in snapshots)
+        existing = await self._lookup(ids)
         for row in rows:
             key = row["record_id"]
             previous = existing.get(key)
@@ -417,14 +418,14 @@ class AsyncMilvusVectorStore:
         new_rows = [row for row in rows if row["record_id"] not in existing]
         accepted = True
         if new_rows:
-            response = self._client.upsert(
+            response = await self._client.upsert(
                 self.collection_name, new_rows, timeout=self._timeout
             )
             accepted = response.get("upsert_count") == len(new_rows)
         if ids:
-            self._client.flush(self.collection_name, timeout=self._timeout)
-        verification = self._verify(
-            ids, {record.record_id: record.fingerprint for record in records}
+            await self._client.flush(self.collection_name, timeout=self._timeout)
+        verification = await self._verify(
+            ids, {record.record_id: record.fingerprint for record in snapshots}
         )
         unknown = (
             tuple(key for key in ids if key not in verification.present)
@@ -447,8 +448,7 @@ class AsyncMilvusVectorStore:
         _limit(limit)
         validate_filter(filters, self._fields)
         self._ready()
-        return await run_sync(
-            self._search,
+        return await self._search(
             [list(query.vector)],
             "dense",
             self.space.metric,
@@ -466,11 +466,9 @@ class AsyncMilvusVectorStore:
         self._ready()
         if not text.strip():
             return ()
-        return await run_sync(
-            self._search, [text], "sparse", "BM25", limit, expression(filters)
-        )
+        return await self._search([text], "sparse", "BM25", limit, expression(filters))
 
-    def _search(
+    async def _search(
         self, data: list[Any], field: str, metric: str, limit: int, predicate: str
     ) -> tuple[VectorHit, ...]:
         binding = " and ".join(
@@ -481,7 +479,7 @@ class AsyncMilvusVectorStore:
                 ("space_id", self.space.space_id),
             )
         )
-        result = self._client.search(
+        result = await self._client.search(
             self.collection_name,
             data=data,
             anns_field=field,
@@ -525,23 +523,20 @@ class AsyncMilvusVectorStore:
         ids = _ids(record_ids, fingerprints)
         expected = dict(fingerprints) if fingerprints is not None else None
         self._ready()
-        return await run_sync(self._verify, ids, expected)
+        return await self._verify(ids, expected)
 
     async def delete(self, record_ids: Sequence[str]) -> VectorConfirmation:
         ids = _ids(record_ids)
         self._ready()
-        return await run_sync(self._delete, ids)
-
-    def _delete(self, ids: tuple[str, ...]) -> VectorConfirmation:
         for offset in range(0, len(ids), 1000):
-            self._client.delete(
+            await self._client.delete(
                 self.collection_name,
                 ids=list(ids[offset : offset + 1000]),
                 timeout=self._timeout,
             )
         if ids:
-            self._client.flush(self.collection_name, timeout=self._timeout)
-        verification = self._verify(ids, None)
+            await self._client.flush(self.collection_name, timeout=self._timeout)
+        verification = await self._verify(ids, None)
         unknown = tuple(key for key in ids if key not in verification.missing)
         return VectorConfirmation(
             ids,

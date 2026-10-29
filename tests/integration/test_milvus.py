@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 
-from comet_rag._async import run_sync
 from comet_rag.embedder.types import EmbeddingResult, EmbeddingSpace
 from comet_rag.vectorstores import And, Eq, In, VectorRecord
 
@@ -16,12 +15,12 @@ pytestmark = pytest.mark.integration
 
 def test_milvus_scoped_dense_bm25_filters_restart_and_precise_cleanup() -> None:
     async def scenario() -> None:
-        from pymilvus import MilvusClient
+        from pymilvus import AsyncMilvusClient
 
         from comet_rag.vectorstores.milvus import AsyncMilvusVectorStore
 
         endpoint = os.environ.get("COMET_MILVUS_URI", "http://127.0.0.1:29530")
-        client = await run_sync(MilvusClient, uri=endpoint, timeout=30)
+        client = AsyncMilvusClient(uri=endpoint, timeout=30)
         scope = f"v2it_{uuid4().hex}"
         space = EmbeddingSpace(model="integration", dimension=2, deployment="local")
         field = 'odd"\\key'
@@ -158,8 +157,8 @@ def test_milvus_scoped_dense_bm25_filters_restart_and_precise_cleanup() -> None:
             )
             assert mismatch.unknown == ids[:1]
             assert mismatch.present == ids[1:]
-            await run_sync(client.close)
-            client = await run_sync(MilvusClient, uri=endpoint, timeout=30)
+            await client.close()
+            client = AsyncMilvusClient(uri=endpoint, timeout=30)
             store = AsyncMilvusVectorStore(
                 client=client,
                 index_scope=scope,
@@ -190,19 +189,18 @@ def test_milvus_scoped_dense_bm25_filters_restart_and_precise_cleanup() -> None:
                 await store.prepare()
                 await store.delete(ids)
             finally:
-                await run_sync(client.close)
+                await client.close()
 
     asyncio.run(scenario())
 
 
 def test_milvus_incompatible_prepare_preserves_collection_and_data() -> None:
     async def scenario() -> None:
-        from pymilvus import MilvusClient
+        from pymilvus import AsyncMilvusClient
 
         from comet_rag.vectorstores.milvus import AsyncMilvusVectorStore
 
-        client = await run_sync(
-            MilvusClient,
+        client = AsyncMilvusClient(
             uri=os.environ.get("COMET_MILVUS_URI", "http://127.0.0.1:29530"),
             timeout=30,
         )
@@ -229,7 +227,7 @@ def test_milvus_incompatible_prepare_preserves_collection_and_data() -> None:
         try:
             await store.prepare()
             await store.upsert([record])
-            original = await run_sync(client.describe_collection, store.collection_name)
+            original = await client.describe_collection(store.collection_name)
             configurations = [
                 {"index_profile_id": "different", "space": space},
                 {
@@ -252,8 +250,7 @@ def test_milvus_incompatible_prepare_preserves_collection_and_data() -> None:
                 with pytest.raises(ValueError, match="incompatible"):
                     await incompatible.prepare()
                 assert (
-                    await run_sync(client.describe_collection, store.collection_name)
-                    == original
+                    await client.describe_collection(store.collection_name) == original
                 )
                 assert (
                     await store.verify_records(
@@ -278,6 +275,6 @@ def test_milvus_incompatible_prepare_preserves_collection_and_data() -> None:
                 await store.prepare()
                 await store.delete([record.record_id])
             finally:
-                await run_sync(client.close)
+                await client.close()
 
     asyncio.run(scenario())

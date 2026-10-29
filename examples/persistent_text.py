@@ -6,10 +6,9 @@ import json
 import os
 from pathlib import Path
 
-from pymilvus import MilvusClient
+from pymilvus import AsyncMilvusClient
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from comet_rag._async import run_sync
 from comet_rag.chunkers import DocumentChunker, RecursiveTextChunker
 from comet_rag.content import text_view
 from comet_rag.docstores.postgres import AsyncPostgresDocStore
@@ -37,7 +36,7 @@ async def run(args: argparse.Namespace) -> None:
     )
     builder = FlatIndexBuilder(DocumentChunker(RecursiveTextChunker(180)))
     engine = create_async_engine(os.environ["COMET_RAG_TEST_POSTGRES_URL"])
-    client = await run_sync(MilvusClient, uri=args.milvus_uri, timeout=45)
+    client = AsyncMilvusClient(uri=args.milvus_uri, timeout=45)
     docs = AsyncPostgresDocStore(index_scope=args.scope, engine=engine)
     vectors = AsyncMilvusVectorStore(
         client=client,
@@ -178,7 +177,7 @@ async def run(args: argparse.Namespace) -> None:
         )
     finally:
         await engine.dispose()
-        await run_sync(client.close)
+        await client.close()
 
 
 def main() -> None:

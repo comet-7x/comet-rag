@@ -11,6 +11,7 @@ import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import FrozenInstanceError, replace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -383,14 +384,14 @@ class _FakeMilvusClient:
         self.calls.append((method, kwargs))
         self.thread_ids.add(threading.get_ident())
 
-    def query(self, collection_name: str, **kwargs: Any) -> list[dict[str, Any]]:
+    async def query(self, collection_name: str, **kwargs: Any) -> list[dict[str, Any]]:
         self._call("query", kwargs)
         if self.queries:
             return self.queries.pop(0)
         ids = json.loads(kwargs["filter"].split(" in ", 1)[1])
         return [dict(self.rows[key]) for key in ids if key in self.rows]
 
-    def upsert(
+    async def upsert(
         self, collection_name: str, rows: list[dict[str, Any]], **kwargs: Any
     ) -> dict[str, Any]:
         self._call("upsert", kwargs)
@@ -399,12 +400,12 @@ class _FakeMilvusClient:
             raise self.upsert_failure
         return {"upsert_count": len(rows) if self.ack_count is None else self.ack_count}
 
-    def flush(self, collection_name: str, **kwargs: Any) -> None:
+    async def flush(self, collection_name: str, **kwargs: Any) -> None:
         self._call("flush", kwargs)
         if self.flush_failure:
             raise self.flush_failure
 
-    def delete(
+    async def delete(
         self, collection_name: str, ids: Sequence[str], **kwargs: Any
     ) -> dict[str, int]:
         self._call("delete", kwargs | {"ids": ids})
@@ -412,7 +413,9 @@ class _FakeMilvusClient:
             self.rows.pop(key, None)
         return {"delete_count": len(ids)}
 
-    def search(self, collection_name: str, **kwargs: Any) -> list[list[dict[str, Any]]]:
+    async def search(
+        self, collection_name: str, **kwargs: Any
+    ) -> list[list[dict[str, Any]]]:
         self._call("search", kwargs)
         return self.search_results
 
@@ -453,7 +456,7 @@ def test_milvus_explicit_id_verification_chunks_and_does_not_use_count() -> None
             and "fingerprint" in kwargs["output_fields"]
             for kwargs in calls
         )
-        assert threading.get_ident() not in client.thread_ids
+        assert client.thread_ids == {threading.get_ident()}
         client.rows[ids[0]]["representation_id"] = "corrupted"
         client.rows[ids[1]]["index_scope"] = "other"
         client.rows[ids[2]]["fingerprint"] = _record("different").fingerprint
@@ -603,30 +606,30 @@ class _PreparingMilvusClient(_FakeMilvusClient):
         self.index_failure: Exception | None = None
         self.loaded = False
 
-    def has_collection(self, name: str, **kwargs: Any) -> bool:
+    async def has_collection(self, name: str, **kwargs: Any) -> bool:
         self._call("has_collection", kwargs)
         return self.description is not None
 
     def create_schema(self, **kwargs: Any) -> Any:
-        from pymilvus import MilvusClient
+        from pymilvus import AsyncMilvusClient
 
-        return MilvusClient.create_schema(**kwargs)
+        return AsyncMilvusClient.create_schema(**kwargs)
 
-    def create_collection(self, name: str, *, schema: Any, **kwargs: Any) -> None:
+    async def create_collection(self, name: str, *, schema: Any, **kwargs: Any) -> None:
         self._call("create_collection", kwargs)
         self.description = schema.to_dict()
 
-    def describe_collection(self, name: str, **kwargs: Any) -> dict[str, Any]:
+    async def describe_collection(self, name: str, **kwargs: Any) -> dict[str, Any]:
         self._call("describe_collection", kwargs)
         assert self.description is not None
         return copy.deepcopy(self.description)
 
     def prepare_index_params(self) -> Any:
-        from pymilvus import MilvusClient
+        from pymilvus import AsyncMilvusClient
 
-        return MilvusClient.prepare_index_params()
+        return AsyncMilvusClient.prepare_index_params()
 
-    def create_index(self, name: str, parameters: Any, **kwargs: Any) -> None:
+    async def create_index(self, name: str, parameters: Any, **kwargs: Any) -> None:
         self._call("create_index", kwargs)
         if self.index_failure:
             raise self.index_failure
@@ -636,27 +639,132 @@ class _PreparingMilvusClient(_FakeMilvusClient):
                 "state": "Finished"
             }
 
-    def list_indexes(self, name: str, **kwargs: Any) -> list[str]:
+    async def list_indexes(self, name: str, **kwargs: Any) -> list[str]:
         self._call("list_indexes", kwargs)
         return list(self.indexes)
 
-    def describe_index(
+    async def describe_index(
         self, name: str, index_name: str, **kwargs: Any
     ) -> dict[str, Any]:
         self._call("describe_index", kwargs)
         return dict(self.indexes[index_name])
 
-    def load_collection(self, name: str, **kwargs: Any) -> None:
+    async def load_collection(self, name: str, **kwargs: Any) -> None:
         self._call("load_collection", kwargs)
         if self.load_failure:
             raise self.load_failure
         self.loaded = True
 
-    def get_load_state(self, name: str, **kwargs: Any) -> dict[str, Any]:
+    async def get_load_state(self, name: str, **kwargs: Any) -> dict[str, Any]:
         from pymilvus.client.types import LoadState
 
         self._call("get_load_state", kwargs)
         return {"state": LoadState.Loaded if self.loaded else LoadState.NotLoad}
+
+
+def test_milvus_awaits_native_io_and_keeps_client_ownership(monkeypatch) -> None:
+    async def scenario() -> None:
+        client = _PreparingMilvusClient()
+        methods = (
+            "has_collection",
+            "create_collection",
+            "describe_collection",
+            "list_indexes",
+            "describe_index",
+            "create_index",
+            "load_collection",
+            "get_load_state",
+            "query",
+            "upsert",
+            "flush",
+            "search",
+            "delete",
+        )
+        calls = {}
+        for method in methods:
+            call = AsyncMock(wraps=getattr(client, method))
+            monkeypatch.setattr(client, method, call)
+            calls[method] = call
+        close = AsyncMock()
+        monkeypatch.setattr(client, "close", close, raising=False)
+        store = _milvus(client)
+        await store.prepare()
+        await store.prepare()
+        record = _record("a")
+        await store.upsert([record])
+        await store.search(_query())
+        await store.search_text("comet")
+        assert (await store.verify_records([record.record_id])).present == (
+            record.record_id,
+        )
+        assert (await store.delete([record.record_id])).query_visible
+        for call in calls.values():
+            assert call.await_count == call.call_count > 0
+        close.assert_not_called()
+        assert client.thread_ids == {threading.get_ident()}
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("operation", "rpc"),
+    [
+        ("prepare", "has_collection"),
+        ("upsert", "upsert"),
+        ("search", "search"),
+        ("search_text", "search"),
+        ("verify_records", "query"),
+        ("delete", "delete"),
+    ],
+)
+def test_milvus_cancellation_reaches_native_io_without_followup_or_cleanup(
+    operation: str, rpc: str, monkeypatch
+) -> None:
+    async def scenario() -> None:
+        client = _PreparingMilvusClient()
+        store = _milvus(client)
+        await store.prepare()
+        record = _record("a")
+        if operation == "delete":
+            await store.upsert([record])
+        started, cancelled = asyncio.Event(), asyncio.Event()
+        original = getattr(client, rpc)
+
+        async def blocked(*args: Any, **kwargs: Any) -> Any:
+            result = await original(*args, **kwargs)
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+            return result
+
+        call = AsyncMock(side_effect=blocked)
+        monkeypatch.setattr(client, rpc, call)
+        arguments = {
+            "prepare": (),
+            "upsert": ([record],),
+            "search": (_query(),),
+            "search_text": ("comet",),
+            "verify_records": ([record.record_id],),
+            "delete": ([record.record_id],),
+        }
+        task = asyncio.create_task(getattr(store, operation)(*arguments[operation]))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert cancelled.is_set()
+        call.assert_awaited_once()
+        assert client.calls[-1][0] == rpc
+        if operation == "prepare":
+            assert not store._prepared
+        if operation == "upsert":
+            assert record.record_id in client.rows
+        if operation == "delete":
+            assert record.record_id not in client.rows
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize(
@@ -752,7 +860,7 @@ def test_milvus_prepare_resumes_after_index_or_load_failure_without_drop() -> No
         await store.prepare()
         assert sum(method == "create_collection" for method, _ in client.calls) == 1
         assert sum(method == "create_index" for method, _ in client.calls) == 2
-        assert threading.get_ident() not in client.thread_ids
+        assert client.thread_ids == {threading.get_ident()}
 
     asyncio.run(scenario())
 
@@ -767,18 +875,22 @@ def test_milvus_prepare_requires_data_query_after_load(monkeypatch) -> None:
             super().__init__()
             self.attempts = 0
 
-        def query(self, collection_name: str, **kwargs: Any) -> list[dict[str, Any]]:
+        async def query(
+            self, collection_name: str, **kwargs: Any
+        ) -> list[dict[str, Any]]:
             self.attempts += 1
             if self.attempts == 1:
                 raise MilvusException(code=503, message="channel not serviceable")
-            return super().query(collection_name, **kwargs)
+            return await super().query(collection_name, **kwargs)
 
     async def scenario() -> None:
         client = Recovering()
         store = _milvus(client)
-        monkeypatch.setattr(milvus.time, "sleep", lambda _: None)
+        pause = AsyncMock()
+        monkeypatch.setattr(milvus.asyncio, "sleep", pause)
         await store.prepare()
         assert client.attempts == 2 and store._prepared
+        pause.assert_awaited_once()
         client.attempts = 0
         store._timeout = 0.000001
         with pytest.raises(MilvusException):
