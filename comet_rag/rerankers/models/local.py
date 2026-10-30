@@ -16,10 +16,10 @@ from comet_rag.content import (
     content_parts,
 )
 
-from ..types import RankedItem, RerankResult, _candidates
+from ..types import RankedItem, RerankResult, _validate_candidates
 
 
-def _text(content: ContentInput) -> str:
+def _require_text_only(content: ContentInput) -> str:
     parts = content_parts(content)
     if any(isinstance(part, ImagePart) for part in parts):
         raise ValueError("local cross encoder does not support images")
@@ -40,15 +40,24 @@ class AsyncLocalReranker:
         max_tokens: int | None = None,
         batch_size: int = 16,
     ) -> None:
-        if any(
-            not isinstance(value, str) or not value.strip()
-            for value in (model_id, revision, device)
+        for name, value in (
+            ("model_id", model_id),
+            ("revision", revision),
+            ("device", device),
         ):
-            raise ValueError("model_id, revision and device must be nonblank")
-        if type(batch_size) is not int or batch_size < 1:
+            if not isinstance(value, str):
+                raise ValueError(f"{name} must be a string")
+            if not value.strip():
+                raise ValueError(f"{name} must be nonblank")
+        if type(batch_size) is not int:
+            raise ValueError("batch_size must be an integer")
+        if batch_size < 1:
             raise ValueError("batch_size must be a positive integer")
-        if max_tokens is not None and (type(max_tokens) is not int or max_tokens < 1):
-            raise ValueError("max_tokens must be a positive integer")
+        if max_tokens is not None:
+            if type(max_tokens) is not int:
+                raise ValueError("max_tokens must be an integer")
+            if max_tokens < 1:
+                raise ValueError("max_tokens must be a positive integer")
         if getattr(model.config, "num_labels", None) != 1:
             raise ValueError("local cross encoder requires exactly one relevance logit")
         limits = [
@@ -57,7 +66,9 @@ class AsyncLocalReranker:
             max_tokens,
         ]
         limits = [value for value in limits if type(value) is int and value > 0]
-        if not limits or min(limits) >= 1_000_000_000:
+        if not limits:
+            raise ValueError("a finite model token budget is required")
+        if min(limits) >= 1_000_000_000:
             raise ValueError("a finite model token budget is required")
         self.model_id = model_id
         self.revision = revision
@@ -109,18 +120,17 @@ class AsyncLocalReranker:
     async def rerank(
         self, query: ContentInput, candidates: Sequence[ContentItem]
     ) -> RerankResult:
-        items = _candidates(candidates)
-        query_text = _text(query)
-        texts = tuple(_text(item.content) for item in items)
+        items = _validate_candidates(candidates)
+        query_text = _require_text_only(query)
+        texts = tuple(_require_text_only(item.content) for item in items)
         if not items:
             return RerankResult((), self.model_id, "logit", revision=self.revision)
         encoded = await run_sync(self._encode, query_text, texts)
         scores: list[float] = []
         for start in range(0, len(items), self.batch_size):
-            features = [
-                {key: values[index] for key, values in encoded.items()}
-                for index in range(start, min(start + self.batch_size, len(items)))
-            ]
+            features = []
+            for index in range(start, min(start + self.batch_size, len(items))):
+                features.append({key: values[index] for key, values in encoded.items()})
             scores.extend(await run_sync(self._score_batch, features))
         order = sorted(range(len(items)), key=lambda index: scores[index], reverse=True)
         result = RerankResult(
@@ -145,9 +155,11 @@ class AsyncLocalReranker:
                 truncation=False,
             )
             ids = encoded["input_ids"]
-            if len(ids) != len(texts) or any(
-                len(tokens) > self.max_tokens for tokens in ids
-            ):
+            if len(ids) != len(texts):
+                raise ValueError(
+                    "query/candidate pair exceeds cross encoder token budget or count"
+                )
+            if any(len(tokens) > self.max_tokens for tokens in ids):
                 raise ValueError(
                     "query/candidate pair exceeds cross encoder token budget or count"
                 )
@@ -168,11 +180,11 @@ class AsyncLocalReranker:
             scores: list[float] = []
             for value in values:
                 score = value[0]
-                if (
-                    isinstance(score, bool)
-                    or not isinstance(score, (int, float))
-                    or not math.isfinite(score)
-                ):
+                if isinstance(score, bool):
+                    raise ValueError("model logits must be finite numbers")
+                if not isinstance(score, (int, float)):
+                    raise ValueError("model logits must be finite numbers")
+                if not math.isfinite(score):
                     raise ValueError("model logits must be finite numbers")
                 scores.append(float(score))
             return scores

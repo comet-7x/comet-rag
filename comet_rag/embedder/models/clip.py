@@ -15,7 +15,7 @@ from comet_rag.identity import file_hash
 from ..types import EmbeddingResult, EmbeddingSpace, vector_values
 
 
-def _model_files(directory: Path) -> dict[str, str]:
+def _hash_model_files(directory: Path) -> dict[str, str]:
     names = {
         "model.safetensors",
         "config.json",
@@ -37,21 +37,26 @@ def _model_files(directory: Path) -> dict[str, str]:
         index = directory / "model.safetensors.index.json"
         payload = json.loads(index.read_bytes())
         weights = payload.get("weight_map") if isinstance(payload, dict) else None
-        if (
-            not isinstance(weights, dict)
-            or not weights
-            or any(
-                not isinstance(name, str)
-                or not isinstance(filename, str)
-                or not filename
-                or Path(filename).is_absolute()
-                or ".." in Path(filename).parts
-                or "\\" in filename
-                or Path(filename).suffix != ".safetensors"
-                for name, filename in weights.items()
-            )
-        ):
+        if not isinstance(weights, dict):
             raise ValueError("invalid local safetensors shard index")
+        if not weights:
+            raise ValueError("invalid local safetensors shard index")
+        for name, filename in weights.items():
+            if not isinstance(name, str):
+                raise ValueError("invalid local safetensors shard index")
+            if not isinstance(filename, str):
+                raise ValueError("invalid local safetensors shard index")
+            if not filename:
+                raise ValueError("invalid local safetensors shard index")
+            path = Path(filename)
+            if path.is_absolute():
+                raise ValueError("invalid local safetensors shard index")
+            if ".." in path.parts:
+                raise ValueError("invalid local safetensors shard index")
+            if "\\" in filename:
+                raise ValueError("invalid local safetensors shard index")
+            if path.suffix != ".safetensors":
+                raise ValueError("invalid local safetensors shard index")
         files[index.name] = file_hash(index)
         for filename in sorted(set(weights.values())):
             files[filename] = file_hash(directory / filename)
@@ -71,11 +76,11 @@ class AsyncCLIPEmbedder:
         max_media_bytes: int = 20 * 1024 * 1024,
         max_pixels: int = 40_000_000,
     ) -> None:
-        if any(
-            type(value) is not int or value <= 0
-            for value in (max_media_bytes, max_pixels)
-        ):
-            raise ValueError("media budgets must be positive integers")
+        for value in (max_media_bytes, max_pixels):
+            if type(value) is not int:
+                raise ValueError("media budgets must be positive integers")
+            if value <= 0:
+                raise ValueError("media budgets must be positive integers")
         self.model = model.eval().to(device)
         self.processor = processor
         self.space = space
@@ -89,7 +94,7 @@ class AsyncCLIPEmbedder:
         cls, model_dir: Path, *, model_id: str, revision: str, device: str = "cpu"
     ) -> AsyncCLIPEmbedder:
         def load_model() -> AsyncCLIPEmbedder:
-            files = _model_files(Path(model_dir))
+            files = _hash_model_files(Path(model_dir))
             transformers = import_module("transformers")
             model = transformers.CLIPModel.from_pretrained(
                 model_dir, local_files_only=True, use_safetensors=True
@@ -112,9 +117,9 @@ class AsyncCLIPEmbedder:
     async def embed(
         self, items: Sequence[ContentItem], *, role: Literal["query", "document"]
     ) -> tuple[EmbeddingResult, ...]:
-        if role not in ("query", "document") or len({item.id for item in items}) != len(
-            items
-        ):
+        if role not in ("query", "document"):
+            raise ValueError("invalid embedding role or duplicate IDs")
+        if len({item.id for item in items}) != len(items):
             raise ValueError("invalid embedding role or duplicate IDs")
         prefix = (
             self.space.query_prefix if role == "query" else self.space.document_prefix
@@ -133,7 +138,11 @@ class AsyncCLIPEmbedder:
             images = [part.resource for part in parts if isinstance(part, ImagePart)]
             text = text_view(item.content)
             if images:
-                if len(images) != 1 or text:
+                if len(images) != 1:
+                    raise ValueError(
+                        "CLIP supports one image or text per item; joint input requires another model"
+                    )
+                if text:
                     raise ValueError(
                         "CLIP supports one image or text per item; joint input requires another model"
                     )
@@ -168,7 +177,9 @@ class AsyncCLIPEmbedder:
                 ):
                     raise ValueError("text exceeds CLIP token budget")
                 vector = self.model.get_text_features(**inputs.to(self.device))
-            if len(vector.shape) != 2 or vector.shape[0] != 1:
+            if len(vector.shape) != 2:
+                raise ValueError("CLIP must return exactly one vector per item")
+            if vector.shape[0] != 1:
                 raise ValueError("CLIP must return exactly one vector per item")
             vector = vector / vector.norm(dim=-1, keepdim=True)
             return EmbeddingResult(

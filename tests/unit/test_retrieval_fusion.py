@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from enum import IntEnum
 
 import pytest
 
@@ -47,6 +48,15 @@ def test_results_do_not_mutate_or_share_input_state() -> None:
     first[0].ranks["dense"] = 999
     assert channels == before
     assert reciprocal_rank_fusion(channels)[0].ranks == {"dense": 1, "keyword": 1}
+
+
+def test_smoothing_accepts_integer_subclasses() -> None:
+    class Smoothing(IntEnum):
+        ONE = 1
+
+    fused = reciprocal_rank_fusion({"dense": ["a", "b"]}, rrf_k=Smoothing.ONE)
+    assert [item.unit_id for item in fused] == ["a", "b"]
+    assert [item.score for item in fused] == pytest.approx([1 / 2, 1 / 3])
 
 
 @pytest.mark.parametrize("rrf_k", [0, -1, True, 1.5])

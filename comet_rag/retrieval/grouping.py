@@ -27,13 +27,12 @@ def group_and_fuse(
                     previous.higher_is_better,
                 ):
                     raise ValueError("mixed score semantics in one channel")
-                if (
-                    hit.higher_is_better
-                    and hit.score > previous.score
-                    or not hit.higher_is_better
-                    and hit.score < previous.score
-                ):
-                    raise ValueError("backend hits must be in relevant order")
+                if hit.higher_is_better:
+                    if hit.score > previous.score:
+                        raise ValueError("backend hits must be in relevant order")
+                else:
+                    if hit.score < previous.score:
+                        raise ValueError("backend hits must be in relevant order")
             previous = hit
             evidence.setdefault(hit.unit_id, []).append(
                 RetrievalEvidence(channel, rank, hit)

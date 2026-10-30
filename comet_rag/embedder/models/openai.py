@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sys
 from collections.abc import Sequence
@@ -27,9 +28,16 @@ class AsyncOpenAITextEmbedder:
         max_chars: int = 32_000,
         max_response_bytes: int = 16 * 1024 * 1024,
     ) -> None:
-        for value in (batch_size, concurrency, max_chars, max_response_bytes):
-            if type(value) is not int or value <= 0:
-                raise ValueError("model budgets must be positive integers")
+        for name, value in (
+            ("batch_size", batch_size),
+            ("concurrency", concurrency),
+            ("max_chars", max_chars),
+            ("max_response_bytes", max_response_bytes),
+        ):
+            if type(value) is not int:
+                raise ValueError(f"{name} must be an integer")
+            if value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
         self.client = client
         self.space = space
         self.endpoint = endpoint
@@ -43,9 +51,9 @@ class AsyncOpenAITextEmbedder:
     ) -> tuple[EmbeddingResult, ...]:
         if role not in ("query", "document"):
             raise ValueError("unsupported embedding role")
-        if any(not isinstance(item, ContentItem) for item in items) or len(
-            {item.id for item in items}
-        ) != len(items):
+        if any(not isinstance(item, ContentItem) for item in items):
+            raise ValueError("batch items must be ContentItems")
+        if len({item.id for item in items}) != len(items):
             raise ValueError("batch IDs must be unique")
         prefix = (
             self.space.query_prefix if role == "query" else self.space.document_prefix
@@ -92,11 +100,13 @@ class AsyncOpenAITextEmbedder:
                 ).strip().lower() not in {"", "identity"}:
                     raise ValueError("embedding response must use identity encoding")
                 header = response.headers.get("content-length")
-                if header is not None and re.fullmatch(r"[0-9]+", header) is None:
-                    raise ValueError("invalid embedding Content-Length")
+                if header is not None:
+                    if re.fullmatch(r"[0-9]+", header) is None:
+                        raise ValueError("invalid embedding Content-Length")
                 length = int(header) if header is not None else None
-                if length is not None and length > self.max_response_bytes:
-                    raise ValueError("embedding response exceeds byte budget")
+                if length is not None:
+                    if length > self.max_response_bytes:
+                        raise ValueError("embedding response exceeds byte budget")
                 if not isinstance(response.stream, httpx.AsyncByteStream):
                     raise TypeError(
                         "embedding requires an asynchronous response stream"
@@ -113,19 +123,20 @@ class AsyncOpenAITextEmbedder:
                         if len(body) + len(data) > self.max_response_bytes:
                             raise ValueError("embedding response exceeds byte budget")
                         body.extend(data)
-                if length is not None and len(body) != length:
-                    raise ValueError(
-                        "embedding response length does not match Content-Length"
-                    )
+                if length is not None:
+                    if len(body) != length:
+                        raise ValueError(
+                            "embedding response length does not match Content-Length"
+                        )
             finally:
                 await close_async(
                     response.aclose(), sys.exception(), "embedding response"
                 )
-            import json
-
             payload = json.loads(body)
             values = payload.get("data") if isinstance(payload, dict) else None
-            if not isinstance(values, list) or len(values) != len(selected):
+            if not isinstance(values, list):
+                raise ValueError("embedding response data must be a list")
+            if len(values) != len(selected):
                 raise ValueError("embedding response count mismatch")
             results: dict[int, EmbeddingResult] = {}
             for entry in values:
@@ -133,12 +144,13 @@ class AsyncOpenAITextEmbedder:
                     raise ValueError("invalid embedding entry")
                 index = entry.get("index")
                 vector = entry.get("embedding")
-                if (
-                    type(index) is not int
-                    or not 0 <= index < len(selected)
-                    or index in results
-                    or not isinstance(vector, list)
-                ):
+                if type(index) is not int:
+                    raise ValueError("invalid or duplicate embedding index")
+                if not 0 <= index < len(selected):
+                    raise ValueError("invalid or duplicate embedding index")
+                if index in results:
+                    raise ValueError("invalid or duplicate embedding index")
+                if not isinstance(vector, list):
                     raise ValueError("invalid or duplicate embedding index")
                 results[index] = EmbeddingResult(
                     selected[index].id,

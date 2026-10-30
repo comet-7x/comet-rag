@@ -11,7 +11,11 @@ from comet_rag.identity import stable_id
 
 
 def vector_values(values: Sequence[float], dimension: int) -> tuple[float, ...]:
-    if len(values) != dimension or any(
+    if len(values) != dimension:
+        raise ValueError(
+            "vector must have the configured dimension and finite numeric values"
+        )
+    if any(
         isinstance(value, bool)
         or not isinstance(value, (int, float))
         or not math.isfinite(value)
@@ -37,28 +41,30 @@ class EmbeddingSpace:
     space_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if any(
-            not isinstance(value, str) or not value.strip()
-            for value in (self.model, self.deployment)
-        ):
-            raise ValueError("model and deployment must be nonblank")
-        if type(self.dimension) is not int or self.dimension < 1:
+        for name, value in (("model", self.model), ("deployment", self.deployment)):
+            if not isinstance(value, str):
+                raise ValueError(f"{name} must be a string")
+            if not value.strip():
+                raise ValueError(f"{name} must be nonblank")
+        if type(self.dimension) is not int:
+            raise ValueError("dimension must be an integer")
+        if self.dimension < 1:
             raise ValueError("dimension must be positive")
-        if self.version is not None and (
-            not isinstance(self.version, str) or not self.version
-        ):
-            raise ValueError("version must be nonempty or unknown")
-        if (
-            self.metric not in ("COSINE", "IP", "L2")
-            or type(self.normalized) is not bool
-        ):
-            raise ValueError("invalid space configuration")
-        if (
-            not isinstance(self.query_prefix, str)
-            or not isinstance(self.document_prefix, str)
-            or not isinstance(self.preprocessing, Mapping)
-        ):
-            raise ValueError("invalid preprocessing configuration")
+        if self.version is not None:
+            if not isinstance(self.version, str):
+                raise ValueError("version must be a string")
+            if not self.version:
+                raise ValueError("version must be nonempty or unknown")
+        if self.metric not in ("COSINE", "IP", "L2"):
+            raise ValueError("metric must be COSINE, IP or L2")
+        if type(self.normalized) is not bool:
+            raise ValueError("normalized must be a boolean")
+        if not isinstance(self.query_prefix, str):
+            raise ValueError("query_prefix must be a string")
+        if not isinstance(self.document_prefix, str):
+            raise ValueError("document_prefix must be a string")
+        if not isinstance(self.preprocessing, Mapping):
+            raise ValueError("preprocessing must be a mapping")
         object.__setattr__(self, "preprocessing", _freeze(self.preprocessing))
         object.__setattr__(
             self,
@@ -87,8 +93,12 @@ class EmbeddingResult:
     space_id: str
 
     def __post_init__(self) -> None:
-        if not self.item_id or not self.space_id or not self.vector:
-            raise ValueError("embedding identities and vector must be nonempty")
+        if not self.item_id:
+            raise ValueError("item_id must be nonempty")
+        if not self.space_id:
+            raise ValueError("space_id must be nonempty")
+        if not self.vector:
+            raise ValueError("vector must be nonempty")
         object.__setattr__(self, "vector", vector_values(self.vector, len(self.vector)))
 
 
