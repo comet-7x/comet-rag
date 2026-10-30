@@ -20,7 +20,13 @@ from pymilvus.client.types import LoadState
 
 from comet_rag.embedder.types import EmbeddingResult, EmbeddingSpace
 from comet_rag.identity import canonical_json, stable_id
-from comet_rag.vectorstores.base import _binding, _ids, _limit, _query, _records
+from comet_rag.vectorstores.base import (
+    _binding,
+    _ids,
+    _limit,
+    _query,
+    _snapshot_records,
+)
 from comet_rag.vectorstores.filters import (
     Filter,
     _field_types,
@@ -55,7 +61,9 @@ _MAX_FLOAT32 = (2 - 2**-23) * 2**127
 
 
 def collection_name_for(index_scope: str) -> str:
-    if not isinstance(index_scope, str) or not index_scope.strip():
+    if not isinstance(index_scope, str):
+        raise ValueError("index_scope must be a string")
+    if not index_scope.strip():
         raise ValueError("index_scope must be nonblank")
     return "v2_scope_" + hashlib.sha256(index_scope.encode("utf-8")).hexdigest()
 
@@ -87,12 +95,13 @@ class AsyncMilvusVectorStore:
         timeout: float = 30.0,
     ) -> None:
         _binding(index_scope, index_profile_id, space)
-        if (
-            isinstance(timeout, bool)
-            or not isinstance(timeout, (int, float))
-            or not math.isfinite(timeout)
-            or timeout <= 0
-        ):
+        if isinstance(timeout, bool):
+            raise ValueError("timeout must be positive and finite")
+        if not isinstance(timeout, (int, float)):
+            raise ValueError("timeout must be positive and finite")
+        if not math.isfinite(timeout):
+            raise ValueError("timeout must be positive and finite")
+        if timeout <= 0:
             raise ValueError("timeout must be positive and finite")
         self._client = client
         self._index_scope = index_scope
@@ -199,7 +208,10 @@ class AsyncMilvusVectorStore:
             metric = self.space.metric if field == "dense" else "BM25"
             if not existing:
                 missing.append((field, index_name, kind, metric))
-            elif len(existing) != 1 or any(
+                continue
+            if len(existing) != 1:
+                raise ValueError(f"incompatible Milvus index for {field}")
+            if any(
                 _params(index.get("params")).get("index_type", index.get("index_type"))
                 != kind
                 or _params(index.get("params")).get(
@@ -227,12 +239,13 @@ class AsyncMilvusVectorStore:
                     name, index_name, timeout=self._timeout
                 )
                 params = _params(index.get("params"))
-                if (
-                    index.get("field_name") != field
-                    or params.get("index_type", index.get("index_type")) != kind
-                    or params.get("metric_type", index.get("metric_type")) != metric
-                    or index.get("state") not in (None, "Finished")
-                ):
+                if index.get("field_name") != field:
+                    raise ValueError(f"incompatible Milvus index for {field}")
+                if params.get("index_type", index.get("index_type")) != kind:
+                    raise ValueError(f"incompatible Milvus index for {field}")
+                if params.get("metric_type", index.get("metric_type")) != metric:
+                    raise ValueError(f"incompatible Milvus index for {field}")
+                if index.get("state") not in (None, "Finished"):
                     raise ValueError(f"incompatible Milvus index for {field}")
         await self._client.load_collection(name, timeout=self._timeout)
         if (await self._client.get_load_state(name, timeout=self._timeout)).get(
@@ -255,7 +268,9 @@ class AsyncMilvusVectorStore:
                 break
             except MilvusException as exc:
                 self._prepared = False
-                if exc.code != 503 or time.monotonic() >= deadline:
+                if exc.code != 503:
+                    raise
+                if time.monotonic() >= deadline:
                     raise
                 await asyncio.sleep(min(0.2, max(0, deadline - time.monotonic())))
         self._prepared = True
@@ -272,19 +287,23 @@ class AsyncMilvusVectorStore:
             "dense": DataType.FLOAT_VECTOR,
             "sparse": DataType.SPARSE_FLOAT_VECTOR,
         }
-        if set(fields) != set(expected) or any(
-            fields[name].get("type") != kind for name, kind in expected.items()
-        ):
+        if set(fields) != set(expected):
             raise ValueError("incompatible Milvus field schema")
-        if (
-            _true(description.get("auto_id"))
-            or _true(description.get("enable_dynamic_field"))
-            or any(
-                _true(field.get("auto_id"))
-                or _true(field.get("nullable"))
-                or _true(field.get("is_primary")) != (name == "record_id")
-                for name, field in fields.items()
+        if any(fields[name].get("type") != kind for name, kind in expected.items()):
+            raise ValueError("incompatible Milvus field schema")
+        if _true(description.get("auto_id")):
+            raise ValueError(
+                "incompatible Milvus primary key or dynamic/nullable schema"
             )
+        if _true(description.get("enable_dynamic_field")):
+            raise ValueError(
+                "incompatible Milvus primary key or dynamic/nullable schema"
+            )
+        if any(
+            _true(field.get("auto_id"))
+            or _true(field.get("nullable"))
+            or _true(field.get("is_primary")) != (name == "record_id")
+            for name, field in fields.items()
         ):
             raise ValueError(
                 "incompatible Milvus primary key or dynamic/nullable schema"
@@ -299,13 +318,14 @@ class AsyncMilvusVectorStore:
         ):
             raise ValueError("incompatible Milvus vector dimension")
         text_params = _params(fields["keyword_text"].get("params"))
-        if (
-            not _true(text_params.get("enable_analyzer"))
-            or _params(text_params.get("analyzer_params")) != _ANALYZER
-        ):
+        if not _true(text_params.get("enable_analyzer")):
+            raise ValueError("incompatible Milvus BM25 analyzer")
+        if _params(text_params.get("analyzer_params")) != _ANALYZER:
             raise ValueError("incompatible Milvus BM25 analyzer")
         functions = description.get("functions") or []
-        if len(functions) != 1 or not any(
+        if len(functions) != 1:
+            raise ValueError("incompatible Milvus BM25 function")
+        if not any(
             function.get("name") == _FUNCTION
             and function.get("type") in (FunctionType.BM25, "BM25")
             and function.get("input_field_names") == ["keyword_text"]
@@ -314,21 +334,22 @@ class AsyncMilvusVectorStore:
         ):
             raise ValueError("incompatible Milvus BM25 function")
 
-    def _rows(self, records: tuple[VectorRecord, ...]) -> list[dict[str, Any]]:
+    def _encode_rows(self, records: tuple[VectorRecord, ...]) -> list[dict[str, Any]]:
         rows = []
         for record in records:
             row = {name: getattr(record, name) for name in _IDENTITY}
             metadata = canonical_json(record.metadata)
-            if (
-                len(metadata) > 65536
-                or len(record.keyword_text.encode("utf-8")) > 65535
-                or any(
-                    len(value.encode("utf-8"))
-                    > (128 if key in ("record_id", "fingerprint") else 65535)
-                    for key, value in row.items()
-                )
-                or any(abs(value) > _MAX_FLOAT32 for value in record.vector)
+            if len(metadata) > 65536:
+                raise ValueError("record exceeds Milvus field limits")
+            if len(record.keyword_text.encode("utf-8")) > 65535:
+                raise ValueError("record exceeds Milvus field limits")
+            if any(
+                len(value.encode("utf-8"))
+                > (128 if key in ("record_id", "fingerprint") else 65535)
+                for key, value in row.items()
             ):
+                raise ValueError("record exceeds Milvus field limits")
+            if any(abs(value) > _MAX_FLOAT32 for value in record.vector):
                 raise ValueError("record exceeds Milvus field limits")
             row.update(
                 metadata=json.loads(metadata),
@@ -353,7 +374,9 @@ class AsyncMilvusVectorStore:
             )
             for row in rows:
                 key = row.get("record_id")
-                if not isinstance(key, str) or key not in batch:
+                if not isinstance(key, str):
+                    raise RuntimeError("Milvus returned an unexpected record identity")
+                if key not in batch:
                     raise RuntimeError("Milvus returned an unexpected record identity")
                 found[key] = row if key not in found else None
         return found
@@ -407,24 +430,24 @@ class AsyncMilvusVectorStore:
         )
 
     async def upsert(self, records: Sequence[VectorRecord]) -> VectorConfirmation:
-        snapshots = _records(
+        snapshots = _snapshot_records(
             records, self.index_scope, self.index_profile_id, self.space, self._fields
         )
-        rows = self._rows(snapshots)
+        rows = self._encode_rows(snapshots)
         self._ready()
         ids = tuple(record.record_id for record in snapshots)
         existing = await self._lookup(ids)
         for row in rows:
             key = row["record_id"]
             previous = existing.get(key)
-            if key in existing and (
-                not self._valid_identity(key, previous)
-                or any(
+            if key in existing:
+                if not self._valid_identity(key, previous):
+                    raise ValueError("conflicting content for the same record ID")
+                if any(
                     previous is None or previous.get(name) != row[name]
                     for name in _IDENTITY
-                )
-            ):
-                raise ValueError("conflicting content for the same record ID")
+                ):
+                    raise ValueError("conflicting content for the same record ID")
         new_rows = [row for row in rows if row["record_id"] not in existing]
         accepted = True
         if new_rows:
@@ -510,7 +533,9 @@ class AsyncMilvusVectorStore:
                 raise RuntimeError("Milvus returned a duplicate record hit")
             seen.add(row["record_id"])
             score = item.get("distance")
-            if isinstance(score, bool) or not isinstance(score, (int, float)):
+            if isinstance(score, bool):
+                raise RuntimeError("Milvus returned a nonnumeric score")
+            if not isinstance(score, (int, float)):
                 raise RuntimeError("Milvus returned a nonnumeric score")
             score = float(score)
             if not math.isfinite(score):

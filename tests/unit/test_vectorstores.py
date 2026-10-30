@@ -452,7 +452,7 @@ def test_milvus_explicit_id_verification_chunks_and_does_not_use_count() -> None
         client = _FakeMilvusClient()
         store = _milvus(client)
         records = [_record(str(index)) for index in range(1001)]
-        for row in store._rows(tuple(records)):
+        for row in store._encode_rows(tuple(records)):
             client.rows[row["record_id"]] = row
         ids = tuple(record.record_id for record in records)
         result = await store.verify_records(
@@ -586,7 +586,7 @@ def test_milvus_rejects_non_numeric_scores(score: object) -> None:
         client = _FakeMilvusClient()
         store = _milvus(client)
         record = _record("a")
-        row = store._rows((record,))[0]
+        row = store._encode_rows((record,))[0]
         client.search_results = [
             [{"record_id": record.record_id, "distance": score, "entity": row}]
         ]
@@ -602,7 +602,7 @@ def test_milvus_rejects_duplicate_hits() -> None:
         client = _FakeMilvusClient()
         store = _milvus(client)
         record = _record("a")
-        row = store._rows((record,))[0]
+        row = store._encode_rows((record,))[0]
         hit = {"record_id": record.record_id, "distance": 0.75, "entity": row}
         client.search_results = [[hit, hit]]
         for operation in (store.search(_query()), store.search_text("comet")):
@@ -617,7 +617,7 @@ def test_milvus_named_primary_key_hits_and_inconsistent_responses() -> None:
         client = _FakeMilvusClient()
         store = _milvus(client)
         record = _record("a")
-        row = store._rows((record,))[0]
+        row = store._encode_rows((record,))[0]
         client.search_results = [
             [{"record_id": record.record_id, "distance": 0.75, "entity": row}]
         ]

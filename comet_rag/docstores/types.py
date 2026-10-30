@@ -30,30 +30,31 @@ class WriteManifest:
     manifest_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if any(
-            not isinstance(value, str) or not value.strip()
-            for value in (
-                self.index_scope,
-                self.index_profile_id,
-                self.source_id,
-                self.document_id,
-                self.space_id,
-                self.content_fingerprint,
-            )
+        for name in (
+            "index_scope",
+            "index_profile_id",
+            "source_id",
+            "document_id",
+            "space_id",
+            "content_fingerprint",
         ):
-            raise ValueError("manifest identities must be nonblank")
+            value = getattr(self, name)
+            if not isinstance(value, str):
+                raise ValueError(f"{name} must be a string")
+            if not value.strip():
+                raise ValueError(f"{name} must be nonblank")
         for name in ("unit_ids", "representation_ids"):
             values = getattr(self, name)
-            if (
-                not isinstance(values, (list, tuple))
-                or any(
-                    not isinstance(value, str) or not value.strip() for value in values
-                )
-                or len(values) != len(set(values))
-            ):
+            if not isinstance(values, (list, tuple)):
+                raise ValueError("manifest IDs must be unique nonblank strings")
+            if any(not isinstance(value, str) or not value.strip() for value in values):
+                raise ValueError("manifest IDs must be unique nonblank strings")
+            if len(values) != len(set(values)):
                 raise ValueError("manifest IDs must be unique nonblank strings")
             object.__setattr__(self, name, tuple(values))
-        if not isinstance(self.record_fingerprints, Mapping) or any(
+        if not isinstance(self.record_fingerprints, Mapping):
+            raise ValueError("record fingerprints must be an ID mapping")
+        if any(
             not isinstance(key, str)
             or not key.strip()
             or not isinstance(value, str)
@@ -66,21 +67,25 @@ class WriteManifest:
             "record_fingerprints",
             MappingProxyType(dict(self.record_fingerprints)),
         )
-        if not isinstance(self.record_vectors, Mapping) or set(
-            self.record_vectors
-        ) != set(self.record_fingerprints):
+        if not isinstance(self.record_vectors, Mapping):
+            raise ValueError("record vectors must match fingerprint IDs")
+        if set(self.record_vectors) != set(self.record_fingerprints):
             raise ValueError("record vectors must match fingerprint IDs")
         vectors: dict[str, tuple[float, ...]] = {}
         for key, values in self.record_vectors.items():
-            if not isinstance(values, (list, tuple)) or not values:
+            if not isinstance(values, (list, tuple)):
+                raise ValueError("record vectors must be nonempty numeric arrays")
+            if not values:
                 raise ValueError("record vectors must be nonempty numeric arrays")
             vectors[key] = vector_values(values, len(values))
         object.__setattr__(self, "record_vectors", MappingProxyType(vectors))
         confirmations = self.confirmations
-        if not isinstance(confirmations, (list, tuple)) or any(
-            not isinstance(value, VectorConfirmation)
-            or not set(value.record_ids) <= set(self.record_ids)
-            for value in confirmations
+        if not isinstance(confirmations, (list, tuple)):
+            raise ValueError("confirmation must reference expected records")
+        if any(not isinstance(value, VectorConfirmation) for value in confirmations):
+            raise ValueError("confirmation must reference expected records")
+        if any(
+            not set(value.record_ids) <= set(self.record_ids) for value in confirmations
         ):
             raise ValueError("confirmation must reference expected records")
         object.__setattr__(self, "confirmations", tuple(confirmations))
@@ -126,7 +131,9 @@ class WriteManifest:
                     "space": self.space_id,
                 },
             )
-            if rep.unit_id not in by_id or record_id not in self.record_vectors:
+            if rep.unit_id not in by_id:
+                raise ValueError("manifest record IDs do not match representations")
+            if record_id not in self.record_vectors:
                 raise ValueError("manifest record IDs do not match representations")
             record = VectorRecord(
                 rep.representation_id,
@@ -180,9 +187,10 @@ def validate_write(
 ) -> None:
     if manifest.index_scope != index_scope:
         raise ValueError("manifest scope mismatch")
+    if tuple(unit.unit_id for unit in units) != manifest.unit_ids:
+        raise ValueError("manifest must enumerate the complete ordered content")
     if (
-        tuple(unit.unit_id for unit in units) != manifest.unit_ids
-        or tuple(rep.representation_id for rep in representations)
+        tuple(rep.representation_id for rep in representations)
         != manifest.representation_ids
     ):
         raise ValueError("manifest must enumerate the complete ordered content")
@@ -210,7 +218,9 @@ def validate_write(
         path = {unit.unit_id}
         parent = unit.parent_unit_id
         while parent is not None:
-            if parent in path or parent not in by_id:
+            if parent in path:
+                raise ValueError("missing parent or unit cycle")
+            if parent not in by_id:
                 raise ValueError("missing parent or unit cycle")
             path.add(parent)
             parent = by_id[parent].parent_unit_id
@@ -251,7 +261,11 @@ def manifest_from_dict(value: Mapping[str, Any]) -> WriteManifest:
     data = dict(value)
     tag = data.pop("type", None)
     version = data.pop("schema_version", None)
-    if tag != "manifest" or type(version) is not int or version != 2:
+    if tag != "manifest":
+        raise ValueError("unsupported manifest type/version")
+    if type(version) is not int:
+        raise ValueError("unsupported manifest type/version")
+    if version != 2:
         raise ValueError("unsupported manifest type/version")
     if set(data) != {item.name for item in fields(WriteManifest)}:
         raise ValueError("unknown or missing manifest fields")
@@ -261,13 +275,17 @@ def manifest_from_dict(value: Mapping[str, Any]) -> WriteManifest:
             raise ValueError(f"{name} must be an array")
     confirmation_fields = {item.name for item in fields(VectorConfirmation)}
     for item in data["confirmations"]:
-        if not isinstance(item, dict) or set(item) != confirmation_fields:
+        if not isinstance(item, dict):
+            raise ValueError("unknown or missing confirmation fields")
+        if set(item) != confirmation_fields:
             raise ValueError("unknown or missing confirmation fields")
         if any(
             not isinstance(item[name], list) for name in ("record_ids", "unknown_ids")
         ):
             raise ValueError("confirmation IDs must be arrays")
-        if not isinstance(item["guarantee"], str) or not item["guarantee"].strip():
+        if not isinstance(item["guarantee"], str):
+            raise ValueError("confirmation guarantee must be nonblank")
+        if not item["guarantee"].strip():
             raise ValueError("confirmation guarantee must be nonblank")
     try:
         data["confirmations"] = tuple(

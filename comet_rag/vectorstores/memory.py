@@ -6,7 +6,14 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 
 from comet_rag.embedder.types import EmbeddingResult, EmbeddingSpace
-from comet_rag.vectorstores.base import _binding, _hit, _ids, _limit, _query, _records
+from comet_rag.vectorstores.base import (
+    _binding,
+    _hit,
+    _ids,
+    _limit,
+    _query,
+    _snapshot_records,
+)
 from comet_rag.vectorstores.filters import (
     Filter,
     _field_types,
@@ -82,13 +89,14 @@ class AsyncMemoryVectorStore:
         return None
 
     async def upsert(self, records: Sequence[VectorRecord]) -> VectorConfirmation:
-        snapshots = _records(
+        snapshots = _snapshot_records(
             records, self.index_scope, self.index_profile_id, self.space, self._fields
         )
         for record in snapshots:
             previous = self._records.get(record.record_id)
-            if previous is not None and previous.fingerprint != record.fingerprint:
-                raise ValueError("conflicting content for the same record ID")
+            if previous is not None:
+                if previous.fingerprint != record.fingerprint:
+                    raise ValueError("conflicting content for the same record ID")
         self._records = self._records | {
             record.record_id: record for record in snapshots
         }
@@ -141,9 +149,9 @@ class AsyncMemoryVectorStore:
         average_length = sum(sum(tokens.values()) for _, tokens in documents) / len(
             documents
         )
-        frequencies = {
-            term: sum(term in tokens for _, tokens in documents) for term in terms
-        }
+        frequencies = {}
+        for term in terms:
+            frequencies[term] = sum(1 for _, tokens in documents if term in tokens)
         hits: list[VectorHit] = []
         for record, tokens in documents:
             if not matches(record, filters):

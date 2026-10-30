@@ -47,16 +47,19 @@ class AsyncVectorStore(Protocol):
 
 
 def _binding(index_scope: str, index_profile_id: str, space: EmbeddingSpace) -> None:
-    if any(
-        not isinstance(value, str) or not value.strip()
-        for value in (index_scope, index_profile_id)
+    for name, value in (
+        ("index_scope", index_scope),
+        ("index_profile_id", index_profile_id),
     ):
-        raise ValueError("scope and profile must be nonblank")
+        if not isinstance(value, str):
+            raise ValueError(f"{name} must be a string")
+        if not value.strip():
+            raise ValueError(f"{name} must be nonblank")
     if not isinstance(space, EmbeddingSpace):
         raise ValueError("space must be an EmbeddingSpace")
 
 
-def _records(
+def _snapshot_records(
     records: Sequence[VectorRecord],
     index_scope: str,
     index_profile_id: str,
@@ -73,8 +76,9 @@ def _records(
         )
         validate_metadata(snapshot, fields)
         previous = snapshots.get(snapshot.record_id)
-        if previous is not None and previous.fingerprint != snapshot.fingerprint:
-            raise ValueError("conflicting content for the same record ID")
+        if previous is not None:
+            if previous.fingerprint != snapshot.fingerprint:
+                raise ValueError("conflicting content for the same record ID")
         snapshots[snapshot.record_id] = snapshot
     return tuple(snapshots.values())
 
@@ -85,21 +89,27 @@ def _ids(
     if isinstance(record_ids, (str, bytes)):
         raise ValueError("record_ids must be a sequence of IDs")
     values = tuple(record_ids)
-    if any(not isinstance(value, str) or not value.strip() for value in values):
-        raise ValueError("record IDs must be nonblank strings")
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError("record IDs must be nonblank strings")
+        if not value.strip():
+            raise ValueError("record IDs must be nonblank strings")
     if len(values) != len(set(values)):
         raise ValueError("record IDs must be unique")
-    if fingerprints is not None and (
-        not isinstance(fingerprints, Mapping)
-        or any(
-            not isinstance(key, str)
-            or not key
-            or not isinstance(value, str)
-            or not value
-            for key, value in fingerprints.items()
+    if fingerprints is None:
+        return values
+    if not isinstance(fingerprints, Mapping):
+        raise ValueError(
+            "fingerprints must contain a nonempty expected fingerprint for every ID"
         )
-        or not set(values) <= fingerprints.keys()
+    if any(
+        not isinstance(key, str) or not key or not isinstance(value, str) or not value
+        for key, value in fingerprints.items()
     ):
+        raise ValueError(
+            "fingerprints must contain a nonempty expected fingerprint for every ID"
+        )
+    if not set(values) <= fingerprints.keys():
         raise ValueError(
             "fingerprints must contain a nonempty expected fingerprint for every ID"
         )
@@ -107,13 +117,17 @@ def _ids(
 
 
 def _query(query: EmbeddingResult, space: EmbeddingSpace) -> None:
-    if not isinstance(query, EmbeddingResult) or query.space_id != space.space_id:
+    if not isinstance(query, EmbeddingResult):
+        raise ValueError("query embedding space mismatch")
+    if query.space_id != space.space_id:
         raise ValueError("query embedding space mismatch")
     vector_values(query.vector, space.dimension)
 
 
 def _limit(limit: int) -> None:
-    if type(limit) is not int or limit <= 0:
+    if type(limit) is not int:
+        raise ValueError("limit must be an integer")
+    if limit <= 0:
         raise ValueError("limit must be a positive integer")
 
 

@@ -34,10 +34,10 @@ from .base import (
     _content_payload,
     _decode_content,
     _ids,
-    _parents,
-    _same_manifest,
     _scope,
     _snapshot,
+    _validate_manifest_match,
+    _validate_unit_parents,
 )
 from .types import WriteManifest, content_digest, manifest_from_dict, manifest_to_dict
 
@@ -53,10 +53,11 @@ class AsyncPostgresDocStore:
         schema: str = "comet_docstore_v2",
     ) -> None:
         self._index_scope = _scope(index_scope)
-        if (
-            not isinstance(schema, str)
-            or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", schema) is None
-        ):
+        if not isinstance(schema, str):
+            raise ValueError(
+                "schema must be a PostgreSQL identifier of at most 63 ASCII characters"
+            )
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", schema) is None:
             raise ValueError(
                 "schema must be a PostgreSQL identifier of at most 63 ASCII characters"
             )
@@ -221,17 +222,19 @@ class AsyncPostgresDocStore:
             names += ("representation_id",)
         else:
             names += ("parent_unit_id",)
-        if (
-            not isinstance(value, cls)
-            or value.index_scope != self.index_scope
-            or any(getattr(value, name) != row[name] for name in names)
-        ):
+        if not isinstance(value, cls):
+            raise ValueError("stored content identity mismatch")
+        if value.index_scope != self.index_scope:
+            raise ValueError("stored content identity mismatch")
+        if any(getattr(value, name) != row[name] for name in names):
             raise ValueError("stored content identity mismatch")
         return value
 
-    def _manifest(self, row: RowMapping) -> WriteManifest:
+    def _decode_manifest_row(self, row: RowMapping) -> WriteManifest:
         value = manifest_from_dict(row["payload"])
-        if value.index_scope != self.index_scope or any(
+        if value.index_scope != self.index_scope:
+            raise ValueError("stored manifest identity mismatch")
+        if any(
             getattr(value, name) != row[name]
             for name in (
                 "index_scope",
@@ -277,15 +280,16 @@ class AsyncPostgresDocStore:
                     raise ValueError("invalid unit type")
                 found.add(value.unit_id)
                 result[value.unit_id] = value
-            if not first and found != pending:
-                raise ValueError("missing parent")
+            if not first:
+                if found != pending:
+                    raise ValueError("missing parent")
             pending = {
                 unit.parent_unit_id
                 for unit in result.values()
                 if unit.parent_unit_id is not None and unit.parent_unit_id not in result
             }
             first = False
-        _parents(result)
+        _validate_unit_parents(result)
         return {key: result[key] for key in requested if key in result}
 
     async def upsert_units(
@@ -316,7 +320,7 @@ class AsyncPostgresDocStore:
             )
             if rows:
                 for row in rows:
-                    _same_manifest(self._manifest(row), manifest)
+                    _validate_manifest_match(self._decode_manifest_row(row), manifest)
                 stored_units = await self._read_units(connection, manifest.unit_ids)
                 rep_rows = (
                     (
@@ -335,10 +339,16 @@ class AsyncPostgresDocStore:
                     row["representation_id"]: self._decode(row, Representation)
                     for row in rep_rows
                 }
+                if set(stored_units) != set(manifest.unit_ids):
+                    raise ValueError(
+                        "stored manifest content is incomplete or inconsistent"
+                    )
+                if set(stored_reps) != set(manifest.representation_ids):
+                    raise ValueError(
+                        "stored manifest content is incomplete or inconsistent"
+                    )
                 if (
-                    set(stored_units) != set(manifest.unit_ids)
-                    or set(stored_reps) != set(manifest.representation_ids)
-                    or content_digest(
+                    content_digest(
                         [stored_units[key] for key in manifest.unit_ids],
                         [stored_reps[key] for key in manifest.representation_ids],
                     )
@@ -432,11 +442,13 @@ class AsyncPostgresDocStore:
             )
             for rep in result.values():
                 unit = units.get(rep.unit_id)
-                if unit is None or (
-                    rep.source_id,
-                    rep.document_id,
-                    rep.index_profile_id,
-                ) != (unit.source_id, unit.document_id, unit.index_profile_id):
+                if unit is None:
+                    raise ValueError("representation unit identity mismatch")
+                if (rep.source_id, rep.document_id, rep.index_profile_id) != (
+                    unit.source_id,
+                    unit.document_id,
+                    unit.index_profile_id,
+                ):
                     raise ValueError("representation unit identity mismatch")
             return result
 
@@ -455,7 +467,7 @@ class AsyncPostgresDocStore:
                 .mappings()
                 .first()
             )
-            return self._manifest(row) if row is not None else None
+            return self._decode_manifest_row(row) if row is not None else None
 
     async def iter_manifests(
         self, document_id: str | None = None, batch_size: int = 100
@@ -484,7 +496,7 @@ class AsyncPostgresDocStore:
                     .mappings()
                     .all()
                 )
-                batch = [self._manifest(row) for row in rows]
+                batch = [self._decode_manifest_row(row) for row in rows]
             if not batch:
                 return
             for manifest in batch:
@@ -512,7 +524,7 @@ class AsyncPostgresDocStore:
             )
             if row is None:
                 raise ValueError("manifest does not exist")
-            manifest = self._manifest(row).with_confirmation(confirmation)
+            manifest = self._decode_manifest_row(row).with_confirmation(confirmation)
             await connection.execute(
                 update(self._manifests)
                 .where(
@@ -574,7 +586,7 @@ class AsyncPostgresDocStore:
             )
             if row is None:
                 return
-            manifest = self._manifest(row)
+            manifest = self._decode_manifest_row(row)
             await self._lock(connection, "source", manifest.source_id)
             await self._lock(connection, "document", document_id)
             for table in (self._units, self._representations):

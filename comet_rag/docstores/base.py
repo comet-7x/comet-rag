@@ -50,21 +50,25 @@ class AsyncDocStore(Protocol):
 
 
 def _scope(value: str) -> str:
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str):
+        raise ValueError("index_scope must be a string")
+    if not value.strip():
         raise ValueError("index_scope must be nonblank")
     return value
 
 
 def _ids(values: Sequence[str]) -> tuple[str, ...]:
-    if isinstance(values, (str, bytes)) or any(
-        not isinstance(value, str) or not value.strip() for value in values
-    ):
+    if isinstance(values, (str, bytes)):
+        raise ValueError("IDs must be a sequence of nonblank strings")
+    if any(not isinstance(value, str) or not value.strip() for value in values):
         raise ValueError("IDs must be a sequence of nonblank strings")
     return tuple(dict.fromkeys(values))
 
 
 def _batch_size(value: int) -> None:
-    if type(value) is not int or value <= 0:
+    if type(value) is not int:
+        raise ValueError("batch_size must be an integer")
+    if value <= 0:
         raise ValueError("batch_size must be a positive integer")
 
 
@@ -108,7 +112,9 @@ def _content_payload(value: IndexUnit | Representation) -> dict[str, Any]:
 
 
 def _check_content(value: IndexUnit | Representation, fingerprint: object) -> None:
-    if not isinstance(fingerprint, str) or not fingerprint:
+    if not isinstance(fingerprint, str):
+        raise ValueError("missing snapshot fingerprint; rebuild in a new index_scope")
+    if not fingerprint:
         raise ValueError("missing snapshot fingerprint; rebuild in a new index_scope")
     if _content_digest(value) != fingerprint:
         raise ValueError("stored snapshot fingerprint mismatch")
@@ -118,28 +124,31 @@ def _decode_content(payload: Mapping[str, Any]) -> IndexUnit | Representation:
     data = dict(payload)
     version = data.pop("snapshot_version", None)
     fingerprint = data.pop("snapshot_fingerprint", None)
-    if type(version) is not int or version != 1:
+    if type(version) is not int:
+        raise ValueError("unsupported snapshot version; rebuild in a new index_scope")
+    if version != 1:
         raise ValueError("unsupported snapshot version; rebuild in a new index_scope")
     value = from_dict(data)
     _check_content(value, fingerprint)
     return value
 
 
-def _same_manifest(existing: WriteManifest, incoming: WriteManifest) -> None:
-    if (
-        existing.manifest_id != incoming.manifest_id
-        or existing.content_fingerprint != incoming.content_fingerprint
-    ):
+def _validate_manifest_match(existing: WriteManifest, incoming: WriteManifest) -> None:
+    if existing.manifest_id != incoming.manifest_id:
+        raise ValueError("immutable manifest conflict; rebuild in a new index_scope")
+    if existing.content_fingerprint != incoming.content_fingerprint:
         raise ValueError("immutable manifest conflict; rebuild in a new index_scope")
 
 
-def _parents(units: Mapping[str, IndexUnit]) -> None:
+def _validate_unit_parents(units: Mapping[str, IndexUnit]) -> None:
     for unit in units.values():
         path = {unit.unit_id}
         child = unit
         while child.parent_unit_id is not None:
             parent = units.get(child.parent_unit_id)
-            if parent is None or parent.unit_id in path:
+            if parent is None:
+                raise ValueError("missing parent or unit cycle")
+            if parent.unit_id in path:
                 raise ValueError("missing parent or unit cycle")
             if (
                 parent.index_scope,

@@ -33,12 +33,14 @@ class VectorRecord:
             self.index_profile_id,
             self.space_id,
         ):
-            if not isinstance(value, str) or not value.strip():
+            if not isinstance(value, str):
                 raise ValueError("record identity fields must be nonblank")
-        if not isinstance(self.keyword_text, str) or not isinstance(
-            self.metadata, Mapping
-        ):
-            raise ValueError("invalid keyword text or metadata")
+            if not value.strip():
+                raise ValueError("record identity fields must be nonblank")
+        if not isinstance(self.keyword_text, str):
+            raise ValueError("keyword_text must be a string")
+        if not isinstance(self.metadata, Mapping):
+            raise ValueError("metadata must be a mapping")
         object.__setattr__(self, "vector", vector_values(self.vector, len(self.vector)))
         if not self.vector:
             raise ValueError("vector must be nonempty")
@@ -114,9 +116,9 @@ class VectorConfirmation:
     def __post_init__(self) -> None:
         for name in ("record_ids", "unknown_ids"):
             values = tuple(getattr(self, name))
-            if any(not isinstance(value, str) or not value for value in values) or len(
-                values
-            ) != len(set(values)):
+            if any(not isinstance(value, str) or not value for value in values):
+                raise ValueError("confirmation IDs must be unique nonempty strings")
+            if len(values) != len(set(values)):
                 raise ValueError("confirmation IDs must be unique nonempty strings")
             object.__setattr__(self, name, values)
         if not set(self.unknown_ids) <= set(self.record_ids):
@@ -126,8 +128,11 @@ class VectorConfirmation:
             for value in (self.accepted, self.durable, self.query_visible)
         ):
             raise ValueError("confirmation flags must be boolean")
-        if self.query_visible and (not self.accepted or self.unknown_ids):
-            raise ValueError("visible records require known acceptance")
+        if self.query_visible:
+            if not self.accepted:
+                raise ValueError("visible records require known acceptance")
+            if self.unknown_ids:
+                raise ValueError("visible records require known acceptance")
 
 
 @dataclass(frozen=True, slots=True)

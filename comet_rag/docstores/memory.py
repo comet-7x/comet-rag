@@ -13,10 +13,10 @@ from .base import (
     _check_content,
     _content_digest,
     _ids,
-    _parents,
-    _same_manifest,
     _scope,
     _snapshot,
+    _validate_manifest_match,
+    _validate_unit_parents,
 )
 from .types import WriteManifest, content_digest, manifest_from_dict, manifest_to_dict
 
@@ -47,33 +47,42 @@ class AsyncMemoryDocStore:
             self.index_scope, units, representations, manifest
         )
         for existing in self._manifests.values():
-            if (
-                existing.source_id == manifest.source_id
-                or existing.document_id == manifest.document_id
-            ):
-                _same_manifest(existing, manifest)
-                stored_units = self._read_units(manifest.unit_ids)
-                stored_reps = await self.get_representations(
-                    [
-                        key
-                        for key, rep in self._representations.items()
-                        if rep.document_id == manifest.document_id
-                    ]
+            if existing.source_id == manifest.source_id:
+                _validate_manifest_match(existing, manifest)
+            elif existing.document_id == manifest.document_id:
+                _validate_manifest_match(existing, manifest)
+            else:
+                continue
+            stored_units = self._read_units(manifest.unit_ids)
+            stored_reps = await self.get_representations(
+                [
+                    key
+                    for key, rep in self._representations.items()
+                    if rep.document_id == manifest.document_id
+                ]
+            )
+            if set(stored_units) != set(manifest.unit_ids):
+                raise ValueError(
+                    "stored manifest content is incomplete or inconsistent"
                 )
-                if (
-                    set(stored_units) != set(manifest.unit_ids)
-                    or set(stored_reps) != set(manifest.representation_ids)
-                    or content_digest(
-                        [stored_units[key] for key in manifest.unit_ids],
-                        [stored_reps[key] for key in manifest.representation_ids],
-                    )
-                    != manifest.content_fingerprint
-                ):
-                    raise ValueError(
-                        "stored manifest content is incomplete or inconsistent"
-                    )
-                return
-        if any(unit.unit_id in self._units for unit in units) or any(
+            if set(stored_reps) != set(manifest.representation_ids):
+                raise ValueError(
+                    "stored manifest content is incomplete or inconsistent"
+                )
+            if (
+                content_digest(
+                    [stored_units[key] for key in manifest.unit_ids],
+                    [stored_reps[key] for key in manifest.representation_ids],
+                )
+                != manifest.content_fingerprint
+            ):
+                raise ValueError(
+                    "stored manifest content is incomplete or inconsistent"
+                )
+            return
+        if any(unit.unit_id in self._units for unit in units):
+            raise ValueError("content ID already belongs to another manifest")
+        if any(
             rep.representation_id in self._representations for rep in representations
         ):
             raise ValueError("content ID already belongs to another manifest")
@@ -96,18 +105,18 @@ class AsyncMemoryDocStore:
         pending = list(requested.values())
         while pending:
             parent_id = pending.pop().parent_unit_id
-            if parent_id is not None and parent_id not in relatives:
-                parent = self._units.get(parent_id)
-                if parent is None:
-                    raise ValueError("missing parent")
-                relatives[parent_id] = parent
-                pending.append(parent)
-        if any(
-            unit.index_scope != self.index_scope or unit.unit_id != key
-            for key, unit in relatives.items()
-        ):
+            if parent_id is not None:
+                if parent_id not in relatives:
+                    parent = self._units.get(parent_id)
+                    if parent is None:
+                        raise ValueError("missing parent")
+                    relatives[parent_id] = parent
+                    pending.append(parent)
+        if any(unit.index_scope != self.index_scope for unit in relatives.values()):
             raise ValueError("stored unit identity mismatch")
-        _parents(relatives)
+        if any(unit.unit_id != key for key, unit in relatives.items()):
+            raise ValueError("stored unit identity mismatch")
+        _validate_unit_parents(relatives)
         for key, unit in relatives.items():
             _check_content(unit, self._unit_fingerprints.get(key))
         return {
@@ -127,21 +136,20 @@ class AsyncMemoryDocStore:
             if rep is None:
                 continue
             unit = self._read_units((rep.unit_id,)).get(rep.unit_id)
+            if unit is None:
+                raise ValueError("stored representation identity mismatch")
+            if rep.representation_id != key:
+                raise ValueError("stored representation identity mismatch")
             if (
-                unit is None
-                or rep.representation_id != key
-                or (
-                    rep.index_scope,
-                    rep.source_id,
-                    rep.document_id,
-                    rep.index_profile_id,
-                )
-                != (
-                    self.index_scope,
-                    unit.source_id,
-                    unit.document_id,
-                    unit.index_profile_id,
-                )
+                rep.index_scope,
+                rep.source_id,
+                rep.document_id,
+                rep.index_profile_id,
+            ) != (
+                self.index_scope,
+                unit.source_id,
+                unit.document_id,
+                unit.index_profile_id,
             ):
                 raise ValueError("stored representation identity mismatch")
             _check_content(rep, self._representation_fingerprints.get(key))
