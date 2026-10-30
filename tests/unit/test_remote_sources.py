@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from comet_rag.documents.schemas import SourceInfo
+from comet_rag.errors import SourceError, SourceResourceLimitError
 from comet_rag.sources import (
     AsyncLocalSourceResolver,
     AsyncS3SourceResolver,
@@ -23,8 +24,6 @@ from comet_rag.sources import (
     LocalResource,
     LocalSource,
     S3Source,
-    SourceError,
-    SourceResourceLimitExceeded,
 )
 from comet_rag.sources.http import AsyncHttpSourceResolver
 
@@ -501,7 +500,7 @@ def test_local_limit_uses_public_resource_error_and_preserves_input(
     path.write_bytes(b"12345")
 
     async def run() -> None:
-        with pytest.raises(SourceResourceLimitExceeded):
+        with pytest.raises(SourceResourceLimitError):
             async with AsyncLocalSourceResolver(max_bytes=4).resolve(LocalSource(path)):
                 pytest.fail("oversize local source delivered")
         async with AsyncLocalSourceResolver(max_bytes=5).resolve(

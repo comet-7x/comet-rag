@@ -34,7 +34,26 @@ ADAPTERS = {
 def _imports(code: str, module: str, *, package: bool = False) -> tuple[str, ...]:
     names = []
     parent = module if package else module.rpartition(".")[0]
-    for node in ast.walk(ast.parse(code)):
+    tree = ast.parse(code)
+    type_only = set()
+    if module == f"{PACKAGE}.errors":
+        for statement in tree.body:
+            if not isinstance(statement, ast.If):
+                continue
+            if not isinstance(statement.test, ast.Name):
+                continue
+            if statement.test.id != "TYPE_CHECKING":
+                continue
+            for node in statement.body:
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                if node.level or node.module != f"{PACKAGE}.pipelines.types":
+                    continue
+                if [alias.name for alias in node.names] == ["IngestionResult"]:
+                    type_only.add(node)
+    for node in ast.walk(tree):
+        if node in type_only:
+            continue
         if isinstance(node, ast.Import):
             names.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
@@ -115,6 +134,11 @@ def test_components_preserve_import_boundaries() -> None:
         (f"{PACKAGE}.content", "import httpx"),
         (f"{PACKAGE}.errors", "import httpx"),
         (f"{PACKAGE}.errors", f"from {PACKAGE}.sources import SourceError"),
+        (f"{PACKAGE}.errors", f"from {PACKAGE}.pipelines.types import IngestionResult"),
+        (
+            f"{PACKAGE}.errors",
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import httpx",
+        ),
         (f"{PACKAGE}.content", "import openai"),
         (f"{PACKAGE}.content", "import anthropic"),
         (f"{PACKAGE}.content", f"from {PACKAGE} import indexing"),
@@ -139,6 +163,11 @@ def test_import_guard_rejects_corresponding_defects(module: str, code: str) -> N
     [
         (f"{PACKAGE}.documents.schemas", "from ...content import MediaRef", True),
         (f"{PACKAGE}.documents.schemas", "from .. import codec", True),
+        (
+            f"{PACKAGE}.errors",
+            f"from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from {PACKAGE}.pipelines.types import IngestionResult",
+            False,
+        ),
         (
             f"{PACKAGE}.embedder.models.clip",
             f"from {PACKAGE}.content import TextPart",

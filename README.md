@@ -68,7 +68,7 @@ async def keyword_search(docstore, vectorstore):
 
 ## 异常
 
-`from comet_rag import CometRAGError` 可统一捕获库定义的异常。现有 `SourceError`（包括 `SourceResourceLimitExceeded`）、`ArchiveResourceLimitExceeded` 和 `IngestionIncomplete` 均继承该基类，同时保留原有的 `ValueError` 或 `RuntimeError` 分类；模块专属信息仍由具体异常携带。
+所有自定义异常集中定义在 `comet_rag/errors.py`，统一从 `comet_rag.errors` 导入；组件包不再导出异常类型。`CometRAGError` 也继续从包根导出，用于统一捕获库定义的异常。`SourceError`（包括 `SourceResourceLimitError`）、`ArchiveResourceLimitError` 和 `IngestionIncompleteError` 均继承该基类，同时保留原有的 `ValueError` 或 `RuntimeError` 分类；`IngestionIncompleteError.result` 保留已提交的入库结果，原始失败通过 `__cause__` 获取。
 
 这不是所有失败的包装：参数校验仍可能抛出 `ValueError`／`TypeError`，文件系统和 SDK 异常按组件契约传播，`asyncio.CancelledError` 始终传播。后续模块新增自定义异常时继承 `CometRAGError`，不增加错误码或统一响应结构。
 

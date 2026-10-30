@@ -13,7 +13,8 @@ import pytest
 
 from comet_rag.documents.parsers.mineru import AsyncMinerUParser
 from comet_rag.documents.projection import project_document
-from comet_rag.sources import HttpSource, SourceError, SourceResourceLimitExceeded
+from comet_rag.errors import SourceError, SourceResourceLimitError
+from comet_rag.sources import HttpSource
 from comet_rag.sources.http import AsyncHttpSourceResolver
 from tests.unit.test_mineru_parser import resource, response_payload
 
@@ -88,7 +89,7 @@ def test_http_source_response_hooks_preserve_bytes_and_limits(
                     max_bytes=len(BODY) - 1,
                     temp_dir=tmp_path,
                 )
-                with pytest.raises(SourceResourceLimitExceeded):
+                with pytest.raises(SourceResourceLimitError):
                     async with bounded.resolve(HttpSource(hook_server + path)):
                         pytest.fail("oversize body accepted")
             assert not client.is_closed

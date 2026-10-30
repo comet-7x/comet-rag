@@ -13,11 +13,11 @@ from comet_rag.chunkers import DocumentChunker, RecursiveTextChunker
 from comet_rag.content import text_view
 from comet_rag.docstores.postgres import AsyncPostgresDocStore
 from comet_rag.documents.parsers.text import AsyncTextParser
+from comet_rag.errors import IngestionIncompleteError
 from comet_rag.indexing import FlatIndexBuilder
 from comet_rag.pipelines import (
     AsyncIngestionPipeline,
     AsyncSearchPipeline,
-    IngestionIncomplete,
     delete_document,
 )
 from comet_rag.sources import AsyncLocalSourceResolver, LocalSource
@@ -143,7 +143,7 @@ def test_rebuild_lost_responses_reconnect_replay_and_exact_delete(
             manifests[0] = original.manifest
             source_path.write_text("cat rebuilt snapshot", encoding="utf-8")
             client.lose_upsert = True
-            with pytest.raises(IngestionIncomplete) as caught:
+            with pytest.raises(IngestionIncompleteError) as caught:
                 await pipelines[1].run(source)
             assert isinstance(caught.value.__cause__, TimeoutError)
             incomplete = caught.value.result

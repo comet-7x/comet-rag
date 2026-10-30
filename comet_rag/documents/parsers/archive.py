@@ -7,7 +7,7 @@ from zipfile import BadZipFile, ZipFile, ZipInfo
 
 from lxml import etree
 
-from comet_rag.errors import CometRAGError
+from comet_rag.errors import ArchiveResourceLimitError
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,10 +45,6 @@ class ArchiveLimits:
             raise ValueError("max_compression_ratio must be positive and finite")
 
 
-class ArchiveResourceLimitExceeded(CometRAGError, ValueError):
-    """压缩容器超过允许的资源预算。"""
-
-
 def validate_zip_archive(
     path: str | Path,
     limits: ArchiveLimits | None = None,
@@ -67,7 +63,7 @@ def validate_zip_archive(
 
 def _validate_zip_metadata(members: list[ZipInfo], limits: ArchiveLimits) -> None:
     if len(members) > limits.max_members:
-        raise ArchiveResourceLimitExceeded(
+        raise ArchiveResourceLimitError(
             f"Archive contains {len(members):,} members; limit is {limits.max_members:,}"
         )
 
@@ -79,7 +75,7 @@ def _validate_zip_metadata(members: list[ZipInfo], limits: ArchiveLimits) -> Non
                 f"Encrypted archive member is not supported: {member.filename}"
             )
         if member.file_size > limits.max_member_uncompressed_bytes:
-            raise ArchiveResourceLimitExceeded(
+            raise ArchiveResourceLimitError(
                 f"Archive member {member.filename!r} expands to "
                 f"{member.file_size:,} bytes; per-member limit is "
                 f"{limits.max_member_uncompressed_bytes:,}"
@@ -87,20 +83,20 @@ def _validate_zip_metadata(members: list[ZipInfo], limits: ArchiveLimits) -> Non
         total_uncompressed += member.file_size
         total_compressed += member.compress_size
         if total_uncompressed > limits.max_total_uncompressed_bytes:
-            raise ArchiveResourceLimitExceeded(
+            raise ArchiveResourceLimitError(
                 f"Archive expands to more than {limits.max_total_uncompressed_bytes:,} bytes"
             )
         if member.file_size:
             ratio = member.file_size / max(member.compress_size, 1)
             if ratio > limits.max_compression_ratio:
-                raise ArchiveResourceLimitExceeded(
+                raise ArchiveResourceLimitError(
                     f"Archive member {member.filename!r} has compression ratio "
                     f"{ratio:.1f}x; limit is {limits.max_compression_ratio:.1f}x"
                 )
     if total_uncompressed:
         ratio = total_uncompressed / max(total_compressed, 1)
         if ratio > limits.max_compression_ratio:
-            raise ArchiveResourceLimitExceeded(
+            raise ArchiveResourceLimitError(
                 f"Archive has overall compression ratio {ratio:.1f}x; limit is "
                 f"{limits.max_compression_ratio:.1f}x"
             )
@@ -116,7 +112,7 @@ def _validate_xml_members(
 ) -> int:
     def check_text(value: str | None, filename: str) -> None:
         if len(value or "") > limits.max_xml_text_chars:
-            raise ArchiveResourceLimitExceeded(
+            raise ArchiveResourceLimitError(
                 f"XML text/tail node in {filename!r} exceeds "
                 f"{limits.max_xml_text_chars:,} characters"
             )
@@ -140,7 +136,7 @@ def _validate_xml_members(
                 for _, element in context:
                     element_count += 1
                     if element_count > limits.max_xml_elements:
-                        raise ArchiveResourceLimitExceeded(
+                        raise ArchiveResourceLimitError(
                             f"Archive XML contains more than {limits.max_xml_elements:,} elements"
                         )
                     check_text(element.text, member.filename)

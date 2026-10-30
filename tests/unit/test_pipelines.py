@@ -15,12 +15,12 @@ from comet_rag.docstores.memory import AsyncMemoryDocStore
 from comet_rag.documents.parsers.text import AsyncTextParser
 from comet_rag.documents.schemas import Asset, ParsedDocument
 from comet_rag.embedder.types import EmbeddingResult, EmbeddingSpace
+from comet_rag.errors import IngestionIncompleteError
 from comet_rag.indexing.builders.flat import FlatIndexBuilder
 from comet_rag.indexing.types import BuildResult, IndexUnit, Representation
 from comet_rag.pipelines import (
     AsyncIngestionPipeline,
     AsyncSearchPipeline,
-    IngestionIncomplete,
     delete_document,
 )
 from comet_rag.sources.local import AsyncLocalSourceResolver
@@ -117,9 +117,18 @@ def test_vector_response_loss_keeps_manifest_and_actual_inputs(tmp_path: Path) -
         pipeline, _, docs, vectors = components(tmp_path, LostResponse)
         path = tmp_path / "source.txt"
         path.write_text("cat")
-        with pytest.raises(IngestionIncomplete) as caught:
+        with pytest.raises(IngestionIncompleteError) as caught:
             await pipeline.run(LocalSource(path, source_id="cat"))
-        result = caught.value.result
+        error = caught.value
+        assert isinstance(error, RuntimeError)
+        assert isinstance(error.__cause__, TimeoutError)
+        assert str(error.__cause__) == "accepted, response lost"
+        result = error.result
+        assert result.database_committed
+        assert result.source_id == "cat"
+        assert error.args == (
+            f"vector state unknown or incomplete for {result.manifest.manifest_id}",
+        )
         manifest = await docs.get_manifest(result.document_id)
         assert manifest is not None
         assert manifest.confirmations[-1].unknown_ids == manifest.record_ids
@@ -165,7 +174,7 @@ def test_retry_replays_saved_vectors_without_calling_nondeterministic_model(
         path = tmp_path / "source.txt"
         path.write_text("cat")
         source = LocalSource(path, source_id="cat")
-        with pytest.raises(IngestionIncomplete) as caught:
+        with pytest.raises(IngestionIncompleteError) as caught:
             await pipeline.run(source)
         first = caught.value.result.manifest
         assert tuple(first.record_vectors.values()) == ((1.0, 1e-7),)

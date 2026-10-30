@@ -10,9 +10,9 @@ from pathlib import Path
 
 from comet_rag._async import run_sync
 from comet_rag.documents.schemas import SourceInfo
+from comet_rag.errors import SourceResourceLimitError
 from comet_rag.identity import stable_id
 
-from .base import SourceResourceLimitExceeded
 from .types import LocalResource, LocalSource, Source
 
 
@@ -44,7 +44,7 @@ class AsyncLocalSourceResolver:
             while chunk := stream.read(min(1024 * 1024, self._max_bytes - size + 1)):
                 size += len(chunk)
                 if size > self._max_bytes:
-                    raise SourceResourceLimitExceeded(
+                    raise SourceResourceLimitError(
                         f"local source exceeds {self._max_bytes} bytes"
                     )
                 digest.update(chunk)

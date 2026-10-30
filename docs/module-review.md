@@ -48,7 +48,7 @@
 
 ### 已修复
 
-1. 本地超限改抛公共 `SourceResourceLimitExceeded`，与 HTTP/S3 一致；该异常仍属于 ValueError。验证限额恰好等于输入大小可读、超限失败且原件不变。
+1. 本地超限改抛公共 `SourceResourceLimitError`，与 HTTP/S3 一致；该异常仍属于 ValueError。验证限额恰好等于输入大小可读、超限失败且原件不变。
 2. S3 指定版本时必须由响应的 VersionId 精确确认；缺失或不匹配直接失败并关闭 Body、清理下载。不再把请求版本伪装为服务端已确认版本。
 3. HTTP 来源身份和非敏感定位采用客户端合并参数后的初始请求 URL，保留具有定位意义的普通 query；仍以初始入口为来源，不用重定向结果改变来源身份。
 4. 同源重定向继续使用注入认证，并为新 URI 重新生成认证头；一旦跨源不恢复原客户端认证。原有跨域认证剥离测试保留。
@@ -58,7 +58,7 @@
 
 ### 全局异常基类
 
-新增 `comet_rag.errors.CometRAGError` 并从包根公开导出。现有 SourceError、ArchiveResourceLimitExceeded、IngestionIncomplete 继承它，SourceResourceLimitExceeded 通过 SourceError 继承；保留原有 ValueError/RuntimeError 分类和异常数据。错误基类仅依赖标准库，架构守卫增加对应负例。
+新增 `comet_rag.errors.CometRAGError` 并从包根公开导出。现有 SourceError、ArchiveResourceLimitError、IngestionIncompleteError 继承它，SourceResourceLimitError 通过 SourceError 继承；保留原有 ValueError/RuntimeError 分类和异常数据。错误基类仅依赖标准库，架构守卫增加对应负例。
 
 统一捕获仅涵盖库定义的异常。没有把参数校验、所有文件系统/SDK 失败或 CancelledError 一律包装，也没有预建其它模块的空异常类型；后续新增模块自定义异常使用同一基类。公开说明见 README 的异常小节。
 

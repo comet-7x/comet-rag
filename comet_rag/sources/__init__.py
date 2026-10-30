@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .base import AsyncSourceResolver, SourceError, SourceResourceLimitExceeded
+from .base import AsyncSourceResolver
 from .local import AsyncLocalSourceResolver
 from .resolver import AsyncSourceRouter
 from .s3 import AsyncS3SourceResolver
@@ -31,6 +31,4 @@ __all__ = [
     "LocalSource",
     "S3Source",
     "Source",
-    "SourceError",
-    "SourceResourceLimitExceeded",
 ]

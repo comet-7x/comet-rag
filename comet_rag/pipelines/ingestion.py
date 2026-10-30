@@ -15,6 +15,7 @@ from comet_rag.embedder.types import (
     EmbeddingResult,
     EmbeddingSpace,
 )
+from comet_rag.errors import IngestionIncompleteError
 from comet_rag.identity import file_hash, stable_id
 from comet_rag.indexing.base import IndexBuilder
 from comet_rag.indexing.types import IndexUnit, Representation
@@ -23,7 +24,7 @@ from comet_rag.sources.types import Source
 from comet_rag.vectorstores.base import AsyncVectorStore
 from comet_rag.vectorstores.types import VectorConfirmation, VectorRecord
 
-from .types import IngestionIncomplete, IngestionResult
+from .types import IngestionResult
 
 
 def _build_records(
@@ -213,7 +214,7 @@ class AsyncIngestionPipeline:
                     manifest.document_id, unknown
                 )
                 current = await self.docstore.get_manifest(manifest.document_id)
-                raise IngestionIncomplete(
+                raise IngestionIncompleteError(
                     replace(result, manifest=current or manifest)
                 ) from exc
             current = await self.docstore.get_manifest(manifest.document_id)

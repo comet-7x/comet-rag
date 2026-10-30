@@ -16,10 +16,10 @@ from botocore.credentials import CredentialResolver
 
 from comet_rag.documents.parsers import AsyncTextParser
 from comet_rag.documents.projection import project_document
+from comet_rag.errors import SourceResourceLimitError
 from comet_rag.sources import (
     AsyncS3SourceResolver,
     S3Source,
-    SourceResourceLimitExceeded,
 )
 
 pytestmark = pytest.mark.integration
@@ -87,7 +87,7 @@ def test_public_aws_s3_download_parse_metadata_and_cleanup(tmp_path: Path) -> No
             async with resolver.resolve(S3Source(bucket, key)) as again:
                 assert again.source.source_id == source_id
             assert list(tmp_path.iterdir()) == []
-            with pytest.raises(SourceResourceLimitExceeded, match="budget"):
+            with pytest.raises(SourceResourceLimitError, match="budget"):
                 async with AsyncS3SourceResolver(
                     client,
                     namespace="public-aws-noaa-ghcn",

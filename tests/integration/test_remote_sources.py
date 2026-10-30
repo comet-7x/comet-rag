@@ -17,12 +17,11 @@ import httpx
 import pytest
 from botocore.config import Config
 
+from comet_rag.errors import SourceError, SourceResourceLimitError
 from comet_rag.sources import (
     AsyncS3SourceResolver,
     HttpSource,
     S3Source,
-    SourceError,
-    SourceResourceLimitExceeded,
 )
 from comet_rag.sources.http import AsyncHttpSourceResolver
 
@@ -187,7 +186,7 @@ def test_real_http_digest_redirect_and_challenge_budget(
         async with httpx.AsyncClient(
             timeout=3, trust_env=False, auth=httpx.DigestAuth("user", "pass")
         ) as client:
-            with pytest.raises(SourceResourceLimitExceeded):
+            with pytest.raises(SourceResourceLimitError):
                 async with AsyncHttpSourceResolver(
                     client,
                     policy=lambda source: source.url.startswith(f"{http_server}/"),

@@ -12,11 +12,10 @@ import httpx
 from comet_rag._async import close_async
 from comet_rag._urls import has_url_credentials
 from comet_rag.documents.schemas import SourceInfo
+from comet_rag.errors import SourceError, SourceResourceLimitError
 from comet_rag.identity import stable_id
 
 from .base import (
-    SourceError,
-    SourceResourceLimitExceeded,
     _encode_source_version,
     _parse_content_length,
     _temporary_directory,
@@ -35,7 +34,7 @@ class _BudgetStream(httpx.AsyncByteStream):
         async for chunk in self._stream:
             size += len(chunk)
             if size > self._max_bytes:
-                raise SourceResourceLimitExceeded("HTTP body exceeds byte budget")
+                raise SourceResourceLimitError("HTTP body exceeds byte budget")
             yield chunk
 
     async def aclose(self) -> None:
@@ -178,7 +177,7 @@ class AsyncHttpSourceResolver:
                     raise SourceError("HTTP source must deliver identity-encoded bytes")
                 length = _parse_content_length(response.headers.get("content-length"))
                 if length is not None and length > self._max_bytes:
-                    raise SourceResourceLimitExceeded(
+                    raise SourceResourceLimitError(
                         "HTTP Content-Length exceeds byte budget"
                     )
                 digest = hashlib.sha256()
@@ -193,7 +192,7 @@ class AsyncHttpSourceResolver:
                         async for chunk in chunks:
                             size += len(chunk)
                             if size > self._max_bytes:
-                                raise SourceResourceLimitExceeded(
+                                raise SourceResourceLimitError(
                                     "HTTP body exceeds byte budget"
                                 )
                             if length is not None and size > length:

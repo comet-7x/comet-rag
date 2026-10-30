@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from .archive import (
     ArchiveLimits,
-    ArchiveResourceLimitExceeded,
     validate_zip_archive,
 )
 from .base import AsyncDocumentParser
@@ -14,6 +13,5 @@ __all__ = [
     "AsyncDocxParser",
     "AsyncTextParser",
     "ArchiveLimits",
-    "ArchiveResourceLimitExceeded",
     "validate_zip_archive",
 ]

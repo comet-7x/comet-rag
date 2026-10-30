@@ -8,9 +8,9 @@ import pytest
 
 from comet_rag.documents.parsers import (
     ArchiveLimits,
-    ArchiveResourceLimitExceeded,
     validate_zip_archive,
 )
+from comet_rag.errors import ArchiveResourceLimitError
 
 
 def write_archive(
@@ -42,7 +42,7 @@ def test_compression_budget_is_checked_before_parsing_xml(tmp_path: Path) -> Non
         {"word/document.xml": b"x" * 100_000},
         compression=ZIP_DEFLATED,
     )
-    with pytest.raises(ArchiveResourceLimitExceeded, match="compression ratio"):
+    with pytest.raises(ArchiveResourceLimitError, match="compression ratio"):
         validate_zip_archive(path, ArchiveLimits(max_compression_ratio=5.0))
 
 
@@ -62,7 +62,7 @@ def test_archive_budgets_apply_across_members(
         tmp_path / "bounded.docx",
         {"first.xml": b"<root/>", "second.rels": b"<root><cell/></root>"},
     )
-    with pytest.raises(ArchiveResourceLimitExceeded, match=message):
+    with pytest.raises(ArchiveResourceLimitError, match=message):
         validate_zip_archive(path, limits)
 
 
@@ -72,7 +72,7 @@ def test_archive_budgets_apply_across_members(
 )
 def test_xml_text_and_tail_budgets(tmp_path: Path, xml: bytes) -> None:
     path = write_archive(tmp_path / "text.docx", {"document.xml": xml})
-    with pytest.raises(ArchiveResourceLimitExceeded, match="text/tail"):
+    with pytest.raises(ArchiveResourceLimitError, match="text/tail"):
         validate_zip_archive(path, ArchiveLimits(max_xml_text_chars=16))
 
 
@@ -84,7 +84,7 @@ def test_xml_tail_budget_spans_parser_read_buffers(
         tmp_path / "tail.docx",
         {"document.xml": b"<root><cell/>" + b"x" * 1_000_000 + ending},
     )
-    with pytest.raises(ArchiveResourceLimitExceeded, match="text/tail"):
+    with pytest.raises(ArchiveResourceLimitError, match="text/tail"):
         validate_zip_archive(path, ArchiveLimits(max_xml_text_chars=40_000))
 
 
@@ -97,7 +97,7 @@ def test_xml_tail_budget_counts_characters_and_allows_exact_boundary(
         {"document.xml": f"<root><cell/>{text}<next/>{text}</root>".encode()},
     )
     validate_zip_archive(path, ArchiveLimits(max_xml_text_chars=40_000))
-    with pytest.raises(ArchiveResourceLimitExceeded, match="text/tail"):
+    with pytest.raises(ArchiveResourceLimitError, match="text/tail"):
         validate_zip_archive(path, ArchiveLimits(max_xml_text_chars=39_999))
 
 

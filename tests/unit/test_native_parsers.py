@@ -19,10 +19,7 @@ from docx.styles.style import CharacterStyle, ParagraphStyle
 from lxml import etree
 
 from comet_rag.documents.codec import dumps, loads
-from comet_rag.documents.parsers.archive import (
-    ArchiveLimits,
-    ArchiveResourceLimitExceeded,
-)
+from comet_rag.documents.parsers.archive import ArchiveLimits
 from comet_rag.documents.parsers.docx import AsyncDocxParser
 from comet_rag.documents.parsers.text import AsyncTextParser
 from comet_rag.documents.projection import project_document
@@ -33,6 +30,7 @@ from comet_rag.documents.schemas import (
     ParseResult,
     TextRun,
 )
+from comet_rag.errors import ArchiveResourceLimitError
 from comet_rag.sources import AsyncLocalSourceResolver, LocalResource, LocalSource
 from tests.fixtures.docx.build import (
     build_basic,
@@ -573,7 +571,7 @@ def test_docx_xml_budgets_follow_content_types_not_suffix(
         if budget == "text"
         else ArchiveLimits(max_xml_elements=10)
     )
-    with pytest.raises(ArchiveResourceLimitExceeded):
+    with pytest.raises(ArchiveResourceLimitError):
         _parse(path, archive_limits=limits)
 
 
@@ -606,7 +604,7 @@ def test_renamed_xml_part_uses_shared_budget_and_is_checked_once(
         assert package.xml(package.main) is root
     with ZipFile(path) as archive:
         package = Package(archive, tmp_path, ArchiveLimits(max_xml_elements=8))
-        with pytest.raises(ArchiveResourceLimitExceeded, match="elements"):
+        with pytest.raises(ArchiveResourceLimitError, match="elements"):
             package.xml(package.main)
 
 
@@ -624,7 +622,7 @@ def test_docx_budgets_reject_before_dom_and_materialization(
         return original(text, parser=parser)
 
     monkeypatch.setattr(etree, "fromstring", fromstring)
-    with pytest.raises(ArchiveResourceLimitExceeded):
+    with pytest.raises(ArchiveResourceLimitError):
         _parse(path, archive_limits=ArchiveLimits(max_members=1))
     assert calls == []
     assert not (tmp_path / "assets").exists()
@@ -909,7 +907,7 @@ def test_bad_xml_and_expansion_budgets_fail_before_assets(tmp_path: Path) -> Non
         ArchiveLimits(max_compression_ratio=1),
         ArchiveLimits(max_member_uncompressed_bytes=10),
     ):
-        with pytest.raises(ArchiveResourceLimitExceeded):
+        with pytest.raises(ArchiveResourceLimitError):
             _parse(path, archive_limits=limits)
     assert not (tmp_path / "assets").exists()
 

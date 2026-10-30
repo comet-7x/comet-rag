@@ -10,11 +10,10 @@ from urllib.parse import quote
 
 from comet_rag._async import run_sync
 from comet_rag.documents.schemas import SourceInfo
+from comet_rag.errors import SourceError, SourceResourceLimitError
 from comet_rag.identity import stable_id
 
 from .base import (
-    SourceError,
-    SourceResourceLimitExceeded,
     _encode_source_version,
     _parse_content_length,
     _temporary_directory,
@@ -75,9 +74,7 @@ class AsyncS3SourceResolver:
                 raise SourceError("S3 response has no readable body")
             length = _parse_content_length(response.get("ContentLength"))
             if length is not None and length > self._max_bytes:
-                raise SourceResourceLimitExceeded(
-                    "S3 ContentLength exceeds byte budget"
-                )
+                raise SourceResourceLimitError("S3 ContentLength exceeds byte budget")
             digest = hashlib.sha256()
             size = 0
             with destination.open("xb") as stream:
@@ -89,7 +86,7 @@ class AsyncS3SourceResolver:
                         break
                     size += len(chunk)
                     if size > self._max_bytes:
-                        raise SourceResourceLimitExceeded("S3 body exceeds byte budget")
+                        raise SourceResourceLimitError("S3 body exceeds byte budget")
                     if length is not None and size > length:
                         raise SourceError("S3 body exceeds ContentLength")
                     stream.write(chunk)

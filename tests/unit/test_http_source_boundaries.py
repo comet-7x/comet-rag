@@ -8,7 +8,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from comet_rag.sources import HttpSource, SourceError, SourceResourceLimitExceeded
+from comet_rag.errors import SourceError, SourceResourceLimitError
+from comet_rag.sources import HttpSource
 from comet_rag.sources.http import AsyncHttpSourceResolver
 
 
@@ -106,7 +107,7 @@ def test_auth_flow_cleanup_preserves_download_failure(
                         await asyncio.sleep(0)
                         assert not task.done()
                 release.set()
-                with pytest.raises(SourceResourceLimitExceeded) as captured:
+                with pytest.raises(SourceResourceLimitError) as captured:
                     await task
                 assert closed == [True]
                 if close_failure:
@@ -218,7 +219,7 @@ def test_digest_challenge_respects_download_budget(
                 client, policy=lambda source: True, max_bytes=8, temp_dir=tmp_path
             )
             if len(challenge_body) + 4 > 8:
-                with pytest.raises(SourceResourceLimitExceeded):
+                with pytest.raises(SourceResourceLimitError):
                     async with resolver.resolve(
                         HttpSource("https://example.org/protected")
                     ):
@@ -293,7 +294,7 @@ def test_digest_budget_failure_survives_stream_close_failure(tmp_path: Path) -> 
                 )
             ),
         ) as client:
-            with pytest.raises(SourceResourceLimitExceeded) as captured:
+            with pytest.raises(SourceResourceLimitError) as captured:
                 async with AsyncHttpSourceResolver(
                     client, policy=lambda source: True, max_bytes=4, temp_dir=tmp_path
                 ).resolve(HttpSource("https://example.org/protected")):

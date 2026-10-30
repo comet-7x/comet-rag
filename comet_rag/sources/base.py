@@ -6,7 +6,7 @@ from contextlib import AbstractAsyncContextManager, contextmanager
 from pathlib import Path
 from typing import Protocol
 
-from comet_rag.errors import CometRAGError
+from comet_rag.errors import SourceError
 from comet_rag.identity import canonical_json
 
 from .types import LocalResource, Source
@@ -14,14 +14,6 @@ from .types import LocalResource, Source
 
 class AsyncSourceResolver(Protocol):
     def resolve(self, source: Source) -> AbstractAsyncContextManager[LocalResource]: ...
-
-
-class SourceError(CometRAGError, ValueError):
-    """来源获取或完整性校验失败；消息不包含认证定位。"""
-
-
-class SourceResourceLimitExceeded(SourceError):
-    """交付字节或上游声明大小超过来源预算。"""
 
 
 @contextmanager
