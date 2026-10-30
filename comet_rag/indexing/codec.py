@@ -47,11 +47,11 @@ def from_dict(value: Mapping[str, Any]) -> IndexUnit | Representation:
     data = dict(value)
     tag = data.pop("type", None)
     version = data.pop("schema_version", None)
-    if (
-        type(version) is not int
-        or version != 1
-        or tag not in ("unit", "representation")
-    ):
+    if tag not in ("unit", "representation"):
+        raise ValueError("unsupported indexing type/version")
+    if type(version) is not int:
+        raise ValueError("unsupported indexing type/version")
+    if version != 1:
         raise ValueError("unsupported indexing type/version")
     cls = IndexUnit if tag == "unit" else Representation
     if set(data) != {item.name for item in fields(cls)}:
@@ -65,9 +65,14 @@ def from_dict(value: Mapping[str, Any]) -> IndexUnit | Representation:
     for part in data["content"]:
         if not isinstance(part, dict):
             raise ValueError("invalid content part")
-        if set(part) == {"type", "text"} and part["type"] == "text_part":
+        part_type = part.get("type")
+        if part_type == "text_part":
+            if set(part) != {"type", "text"}:
+                raise ValueError("invalid content part tag or fields")
             parts.append(TextPart(part["text"]))
-        elif set(part) == {"type", "resource"} and part["type"] == "image_part":
+        elif part_type == "image_part":
+            if set(part) != {"type", "resource"}:
+                raise ValueError("invalid content part tag or fields")
             parts.append(ImagePart(_decode(part["resource"], "media")))
         else:
             raise ValueError("invalid content part tag or fields")

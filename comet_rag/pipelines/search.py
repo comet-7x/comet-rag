@@ -29,12 +29,11 @@ class AsyncSearchPipeline:
         reranker: AsyncReranker | None = None,
         strict_rerank: bool = False,
     ) -> None:
-        if (
-            docstore.index_scope != vectorstore.index_scope
-            or embedder is not None
-            and embedder.space.space_id != vectorstore.space.space_id
-        ):
+        if docstore.index_scope != vectorstore.index_scope:
             raise ValueError("search scope/space mismatch")
+        if embedder is not None:
+            if embedder.space.space_id != vectorstore.space.space_id:
+                raise ValueError("search scope/space mismatch")
         self.docstore = docstore
         self.vectorstore = vectorstore
         self.embedder = embedder
@@ -56,15 +55,22 @@ class AsyncSearchPipeline:
         context_budget: int | None = None,
         filters: Filter | None = None,
     ) -> SearchResult:
-        if (
-            type(expand_parents) is not bool
-            or context_budget is not None
-            and (type(context_budget) is not int or context_budget < 0)
+        if type(expand_parents) is not bool:
+            raise ValueError("expand_parents must be boolean")
+        if context_budget is not None:
+            if type(context_budget) is not int:
+                raise ValueError("context_budget must be an integer")
+            if context_budget < 0:
+                raise ValueError("context_budget must be nonnegative")
+        for name, value in (
+            ("top_k", top_k),
+            ("recall_limit", recall_limit),
+            ("rerank_limit", rerank_limit),
         ):
-            raise ValueError("context budget must be nonnegative and expansion boolean")
-        for value in (top_k, recall_limit, rerank_limit):
-            if type(value) is not int or value <= 0:
-                raise ValueError("search limits must be positive integers")
+            if type(value) is not int:
+                raise ValueError(f"{name} must be an integer")
+            if value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
         parts = content_parts(query)
         has_image = any(isinstance(part, ImagePart) for part in parts)
         if mode is None:
@@ -72,12 +78,13 @@ class AsyncSearchPipeline:
         if mode not in ("dense", "keyword", "hybrid"):
             raise ValueError("unknown search mode")
         text = keyword_text if keyword_text is not None else text_view(query)
-        if (
-            not isinstance(text, str)
-            or mode in ("keyword", "hybrid")
-            and not text.strip()
-        ):
+        if not isinstance(text, str):
             raise ValueError("keyword search requires an explicit nonblank text view")
+        if mode in ("keyword", "hybrid"):
+            if not text.strip():
+                raise ValueError(
+                    "keyword search requires an explicit nonblank text view"
+                )
         channels = {}
         if mode in ("dense", "hybrid"):
             if self.embedder is None:
@@ -85,11 +92,11 @@ class AsyncSearchPipeline:
             embeddings = await self.embedder.embed(
                 (ContentItem("query", query),), role="query"
             )
-            if (
-                len(embeddings) != 1
-                or embeddings[0].item_id != "query"
-                or embeddings[0].space_id != self.vectorstore.space.space_id
-            ):
+            if len(embeddings) != 1:
+                raise ValueError("query embedding identity/count/space mismatch")
+            if embeddings[0].item_id != "query":
+                raise ValueError("query embedding identity/count/space mismatch")
+            if embeddings[0].space_id != self.vectorstore.space.space_id:
                 raise ValueError("query embedding identity/count/space mismatch")
             channels["dense"] = await self.vectorstore.search(
                 embeddings[0], limit=recall_limit, filters=filters
@@ -124,7 +131,9 @@ class AsyncSearchPipeline:
             raise ValueError("required search representations are missing")
         for unit_id in selected:
             unit = units[unit_id]
-            if unit.unit_id != unit_id or (unit.index_scope, unit.index_profile_id) != (
+            if unit.unit_id != unit_id:
+                raise ValueError("stored content identity/scope/profile mismatch")
+            if (unit.index_scope, unit.index_profile_id) != (
                 self.vectorstore.index_scope,
                 self.vectorstore.index_profile_id,
             ):
@@ -134,54 +143,53 @@ class AsyncSearchPipeline:
             for item in evidence[unit_id]:
                 hit = item.hit
                 rep = representations[hit.representation_id]
+                if rep.representation_id != hit.representation_id:
+                    raise ValueError("retrieval and stored content identities disagree")
+                if (hit.unit_id, hit.document_id, hit.source_id) != (
+                    unit.unit_id,
+                    unit.document_id,
+                    unit.source_id,
+                ):
+                    raise ValueError("retrieval and stored content identities disagree")
                 if (
-                    rep.representation_id != hit.representation_id
-                    or (hit.unit_id, hit.document_id, hit.source_id)
-                    != (
-                        unit.unit_id,
-                        unit.document_id,
-                        unit.source_id,
-                    )
-                    or (
-                        rep.unit_id,
-                        rep.document_id,
-                        rep.source_id,
-                        rep.index_scope,
-                        rep.index_profile_id,
-                    )
-                    != (
-                        unit.unit_id,
-                        unit.document_id,
-                        unit.source_id,
-                        unit.index_scope,
-                        unit.index_profile_id,
-                    )
+                    rep.unit_id,
+                    rep.document_id,
+                    rep.source_id,
+                    rep.index_scope,
+                    rep.index_profile_id,
+                ) != (
+                    unit.unit_id,
+                    unit.document_id,
+                    unit.source_id,
+                    unit.index_scope,
+                    unit.index_profile_id,
                 ):
                     raise ValueError("retrieval and stored content identities disagree")
         diagnostics: list[str] = []
         rerank_result = None
         rerank_scores = {}
         ranked = order
-        if self.reranker is not None and order:
-            candidates = tuple(
-                ContentItem(item_id, units[item_id].content)
-                for item_id in order[:rerank_limit]
-            )
-            try:
-                rerank_result = await self.reranker.rerank(query, candidates)
-                rerank_result.validate(candidates)
-            except Exception as exc:
-                rerank_result = None
-                if self.strict_rerank:
-                    raise
-                diagnostics.append(f"rerank_failed:{type(exc).__name__}")
-            else:
-                ranked = tuple(item.candidate_id for item in rerank_result.items)
-                rerank_scores = {
-                    item.candidate_id: item.score for item in rerank_result.items
-                }
-                if len(ranked) < top_k and len(order) > len(ranked):
-                    diagnostics.append("rerank_limit_restricts_matches")
+        if self.reranker is not None:
+            if order:
+                candidates = tuple(
+                    ContentItem(item_id, units[item_id].content)
+                    for item_id in order[:rerank_limit]
+                )
+                try:
+                    rerank_result = await self.reranker.rerank(query, candidates)
+                    rerank_result.validate(candidates)
+                except Exception as exc:
+                    rerank_result = None
+                    if self.strict_rerank:
+                        raise
+                    diagnostics.append(f"rerank_failed:{type(exc).__name__}")
+                else:
+                    ranked = tuple(item.candidate_id for item in rerank_result.items)
+                    rerank_scores = {
+                        item.candidate_id: item.score for item in rerank_result.items
+                    }
+                    if len(ranked) < top_k and len(order) > len(ranked):
+                        diagnostics.append("rerank_limit_restricts_matches")
         matched = tuple(
             SearchMatch(
                 units[item_id],

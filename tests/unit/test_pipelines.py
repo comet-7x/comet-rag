@@ -308,7 +308,7 @@ def test_document_metadata_reaches_native_prefilter() -> None:
         SourceInfo,
         TextRun,
     )
-    from comet_rag.pipelines.ingestion import _records
+    from comet_rag.pipelines.ingestion import _build_records
 
     async def scenario() -> None:
         model = ProbeEmbedder()
@@ -329,7 +329,9 @@ def test_document_metadata_reaches_native_prefilter() -> None:
             ),
             role="document",
         )
-        records = _records(built.representations, embeddings, model.space, built.units)
+        records = _build_records(
+            built.representations, embeddings, model.space, built.units
+        )
         vectors = AsyncMemoryVectorStore(
             index_scope="scope",
             index_profile_id=builder.profile_id(model.space),

@@ -19,7 +19,9 @@ def _assets(assets: tuple[Asset, ...]) -> None:
         visited: set[str] = set()
         while pending:
             asset_id = pending.pop()
-            if asset_id not in by_id or asset_id == asset.asset_id:
+            if asset_id not in by_id:
+                raise ValueError("missing source asset or asset cycle")
+            if asset_id == asset.asset_id:
                 raise ValueError("missing source asset or asset cycle")
             if asset_id not in visited:
                 visited.add(asset_id)
@@ -54,26 +56,30 @@ def _blocks(blocks: tuple[Block, ...], assets: tuple[Asset, ...]) -> None:
             )
         if any(value is not None and value not in asset_ids for value in references):
             raise ValueError("missing block asset")
-        if block.table is not None and block.table.cells is not None:
-            for cell in block.table.cells:
-                for member in cell.block_ids:
-                    if (
-                        member not in by_id
-                        or by_id[member].parent_block_id != block.block_id
-                        or member in owned
+        if block.table is not None:
+            if block.table.cells is not None:
+                for cell in block.table.cells:
+                    for member in cell.block_ids:
+                        if member not in by_id:
+                            raise ValueError("missing or invalid table cell block")
+                        if by_id[member].parent_block_id != block.block_id:
+                            raise ValueError("missing or invalid table cell block")
+                        if member in owned:
+                            raise ValueError("missing or invalid table cell block")
+                        owned.add(member)
+                    if list(cell.block_ids) != sorted(
+                        cell.block_ids, key=order.__getitem__
                     ):
-                        raise ValueError("missing or invalid table cell block")
-                    owned.add(member)
-                if list(cell.block_ids) != sorted(
-                    cell.block_ids, key=order.__getitem__
-                ):
-                    raise ValueError("cell order conflicts with unit block order")
+                        raise ValueError("cell order conflicts with unit block order")
     for block in blocks:
-        if (
-            block.parent_block_id in by_id
-            and by_id[block.parent_block_id].table is not None
-            and block.block_id not in owned
-        ):
+        if block.parent_block_id is None:
+            continue
+        parent_block = by_id.get(block.parent_block_id)
+        if parent_block is None:
+            continue
+        if parent_block.table is None:
+            continue
+        if block.block_id not in owned:
             raise ValueError("table child must belong to a cell")
 
 
@@ -136,14 +142,19 @@ class IndexUnit:
             self.source_id,
             self.document_id,
         ):
-            if not isinstance(value, str) or not value.strip():
+            if not isinstance(value, str):
                 raise ValueError("unit identity fields must be nonblank")
-        if type(self.ordinal) is not int or self.ordinal < 0:
+            if not value.strip():
+                raise ValueError("unit identity fields must be nonblank")
+        if type(self.ordinal) is not int:
+            raise ValueError("ordinal must be an integer")
+        if self.ordinal < 0:
             raise ValueError("ordinal must be nonnegative")
-        if self.parent_unit_id is not None and (
-            not isinstance(self.parent_unit_id, str) or not self.parent_unit_id.strip()
-        ):
-            raise ValueError("parent ID must be a nonblank string")
+        if self.parent_unit_id is not None:
+            if not isinstance(self.parent_unit_id, str):
+                raise ValueError("parent ID must be a nonblank string")
+            if not self.parent_unit_id.strip():
+                raise ValueError("parent ID must be a nonblank string")
         object.__setattr__(self, "content", content_parts(self.content))
         for name, cls in (
             ("source_refs", SourceRef),
@@ -152,14 +163,14 @@ class IndexUnit:
             ("blocks", Block),
         ):
             values = getattr(self, name)
-            if not isinstance(values, (list, tuple)) or any(
-                not isinstance(value, cls) for value in values
-            ):
+            if not isinstance(values, (list, tuple)):
+                raise ValueError(f"invalid {name}")
+            if any(not isinstance(value, cls) for value in values):
                 raise ValueError(f"invalid {name}")
             object.__setattr__(self, name, tuple(values))
-        if not self.source_refs or any(
-            ref.document_id != self.document_id for ref in self.source_refs
-        ):
+        if not self.source_refs:
+            raise ValueError("unit references must belong to its snapshot")
+        if any(ref.document_id != self.document_id for ref in self.source_refs):
             raise ValueError("unit references must belong to its snapshot")
         if len({ref.projection_version for ref in self.source_refs}) > 1:
             raise ValueError("unit references must use the same projection_version")
@@ -206,7 +217,9 @@ class Representation:
             self.document_id,
             self.purpose,
         ):
-            if not isinstance(value, str) or not value.strip():
+            if not isinstance(value, str):
+                raise ValueError("representation identity fields must be nonblank")
+            if not value.strip():
                 raise ValueError("representation identity fields must be nonblank")
         object.__setattr__(self, "content", content_parts(self.content))
         for name, cls in (
@@ -215,9 +228,9 @@ class Representation:
             ("assets", Asset),
         ):
             values = getattr(self, name)
-            if not isinstance(values, (list, tuple)) or any(
-                not isinstance(value, cls) for value in values
-            ):
+            if not isinstance(values, (list, tuple)):
+                raise ValueError(f"invalid {name}")
+            if any(not isinstance(value, cls) for value in values):
                 raise ValueError(f"invalid {name}")
             object.__setattr__(self, name, tuple(values))
         if any(

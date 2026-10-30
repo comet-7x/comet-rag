@@ -26,7 +26,7 @@ from comet_rag.vectorstores.types import VectorConfirmation, VectorRecord
 from .types import IngestionIncomplete, IngestionResult
 
 
-def _records(
+def _build_records(
     representations: Sequence[Representation],
     embeddings: Sequence[EmbeddingResult],
     space: EmbeddingSpace,
@@ -87,11 +87,11 @@ class AsyncIngestionPipeline:
         if type(accept_partial) is not bool:
             raise ValueError("accept_partial must be boolean")
         self.accept_partial = accept_partial
-        if (
-            docstore.index_scope != vectorstore.index_scope
-            or builder.profile_id(embedder.space) != vectorstore.index_profile_id
-            or embedder.space.space_id != vectorstore.space.space_id
-        ):
+        if docstore.index_scope != vectorstore.index_scope:
+            raise ValueError("pipeline scope/profile/space mismatch")
+        if builder.profile_id(embedder.space) != vectorstore.index_profile_id:
+            raise ValueError("pipeline scope/profile/space mismatch")
+        if embedder.space.space_id != vectorstore.space.space_id:
             raise ValueError("pipeline scope/profile/space mismatch")
 
     async def run(self, source: Source) -> IngestionResult:
@@ -101,8 +101,9 @@ class AsyncIngestionPipeline:
         output_dir = self.output_dir / stable_id("scope", scope)
         async with self.resolver.resolve(source) as resource:
             parsed = await self.parser.parse(resource, output_dir=output_dir)
-            if parsed.report.status == "partial" and not self.accept_partial:
-                raise ValueError("partial parsing requires explicit acceptance")
+            if parsed.report.status == "partial":
+                if not self.accept_partial:
+                    raise ValueError("partial parsing requires explicit acceptance")
             built = self.builder.build(
                 parsed.document, index_scope=scope, index_profile_id=profile
             )
@@ -149,7 +150,7 @@ class AsyncIngestionPipeline:
                     ),
                     role="document",
                 )
-                records = _records(
+                records = _build_records(
                     representations, embeddings, self.embedder.space, built.units
                 )
             manifest = existing or WriteManifest(
@@ -186,11 +187,11 @@ class AsyncIngestionPipeline:
                 verification = await self.vectorstore.verify_records(
                     manifest.record_ids, fingerprints=manifest.record_fingerprints
                 )
-                if (
-                    set(verification.present) != set(manifest.record_ids)
-                    or verification.missing
-                    or verification.unknown
-                ):
+                if set(verification.present) != set(manifest.record_ids):
+                    raise RuntimeError("expected records are not query-visible")
+                if verification.missing:
+                    raise RuntimeError("expected records are not query-visible")
+                if verification.unknown:
                     raise RuntimeError("expected records are not query-visible")
                 visible = VectorConfirmation(
                     manifest.record_ids,
@@ -228,11 +229,15 @@ class AsyncIngestionPipeline:
             for asset in value.assets:
                 if asset.media.path is not None:
                     path = Path(asset.media.path).resolve()
-                    if (
-                        not path.is_relative_to(output_dir.resolve())
-                        or not path.is_file()
-                        or file_hash(path) != asset.content_hash
-                    ):
+                    if not path.is_relative_to(output_dir.resolve()):
+                        raise ValueError(
+                            "asset must be retained with matching bytes under scope output directory"
+                        )
+                    if not path.is_file():
+                        raise ValueError(
+                            "asset must be retained with matching bytes under scope output directory"
+                        )
+                    if file_hash(path) != asset.content_hash:
                         raise ValueError(
                             "asset must be retained with matching bytes under scope output directory"
                         )
@@ -257,11 +262,11 @@ async def delete_document(
         raise ValueError("deletion profile/space mismatch")
     await vectorstore.delete(manifest.record_ids)
     verification = await vectorstore.verify_records(manifest.record_ids)
-    if (
-        set(verification.missing) != set(manifest.record_ids)
-        or verification.unknown
-        or verification.present
-    ):
+    if set(verification.missing) != set(manifest.record_ids):
+        raise RuntimeError("vector deletion is not confirmed; manifest retained")
+    if verification.unknown:
+        raise RuntimeError("vector deletion is not confirmed; manifest retained")
+    if verification.present:
         raise RuntimeError("vector deletion is not confirmed; manifest retained")
     await docstore.delete_units(manifest.unit_ids)
     await docstore.delete_manifest(document_id)

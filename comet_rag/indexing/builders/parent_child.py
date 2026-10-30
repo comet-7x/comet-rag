@@ -58,14 +58,18 @@ class ParentChildIndexBuilder:
         materialized: list[IndexUnit] = []
         by_previous: dict[str, IndexUnit] = {}
         for original in children.units:
-            matches = [
-                parent
-                for parent in parent_units
-                if all(
-                    any(_contains(parent_ref, ref) for parent_ref in parent.source_refs)
-                    for ref in original.source_refs
-                )
-            ]
+            matches = []
+            for parent in parent_units:
+                contained = True
+                for ref in original.source_refs:
+                    covers = any(
+                        _contains(parent_ref, ref) for parent_ref in parent.source_refs
+                    )
+                    if not covers:
+                        contained = False
+                        break
+                if contained:
+                    matches.append(parent)
             if len(matches) != 1:
                 raise ValueError(
                     "child range requires exactly one containing parent; align chunk boundaries and disable parent overlap"
