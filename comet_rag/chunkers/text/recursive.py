@@ -19,20 +19,22 @@ class RecursiveTextChunker:
     separators: Sequence[str] = DEFAULT_SEPARATORS
 
     def __post_init__(self) -> None:
-        if type(self.chunk_size) is not int or self.chunk_size <= 0:
+        if type(self.chunk_size) is not int:
+            raise ValueError("chunk_size must be an integer")
+        if self.chunk_size <= 0:
             raise ValueError("chunk_size must be a positive integer")
-        if (
-            type(self.chunk_overlap) is not int
-            or not 0 <= self.chunk_overlap < self.chunk_size
-        ):
+        if type(self.chunk_overlap) is not int:
+            raise ValueError("chunk_overlap must be an integer")
+        if not 0 <= self.chunk_overlap < self.chunk_size:
             raise ValueError("chunk_overlap must satisfy 0 <= overlap < chunk_size")
-        if (
-            isinstance(self.separators, str)
-            or not isinstance(self.separators, Sequence)
-            or not self.separators
-            or any(not isinstance(separator, str) for separator in self.separators)
-        ):
-            raise ValueError("separators must be a nonempty sequence of strings")
+        if isinstance(self.separators, str):
+            raise ValueError("separators must be a sequence of strings")
+        if not isinstance(self.separators, Sequence):
+            raise ValueError("separators must be a sequence of strings")
+        if not self.separators:
+            raise ValueError("separators must be nonempty")
+        if any(not isinstance(separator, str) for separator in self.separators):
+            raise ValueError("separators must contain only strings")
         object.__setattr__(self, "separators", tuple(self.separators))
 
     @property

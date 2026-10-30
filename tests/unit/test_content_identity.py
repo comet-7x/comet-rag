@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import subprocess  # nosec B404
 import sys
+from enum import IntEnum
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -53,6 +55,24 @@ def test_media_rejects_malformed_urls(url: str) -> None:
         MediaRef(url=url)
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"path": 42},
+        {"data": bytearray(b"x"), "media_type": "image/png"},
+        {"path": "image.png", "media_type": 42},
+    ],
+)
+def test_invalid_media_parameters_preserve_value_error(values: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        MediaRef(**values)
+
+
+def test_invalid_content_item_id_preserves_value_error() -> None:
+    with pytest.raises(ValueError):
+        ContentItem(42, "text")  # type: ignore[arg-type]
+
+
 def test_media_preserves_valid_url_without_reading_it() -> None:
     url = "https://example.invalid:8443/an image.png?edition=2"
     assert MediaRef(url=url).url == url
@@ -87,6 +107,27 @@ def test_canonical_encoding_has_independent_expected_bytes() -> None:
     assert stable_id("unit", ["a", "b"]) != stable_id("unit", ["b", "a"])
     assert stable_id("unit", {"a": 1}) != stable_id("unit", {"a": 1}, version=2)
     assert stable_id("unit", {"a": 1}) != stable_id("document", {"a": 1})
+
+
+def test_identity_version_accepts_integer_subclasses() -> None:
+    class Version(IntEnum):
+        ONE = 1
+
+    expected = (
+        "unit_" + hashlib.sha256(b'{"kind":"unit","value":{},"version":1}').hexdigest()
+    )
+    assert stable_id("unit", {}, version=Version.ONE) == expected
+
+
+@pytest.mark.parametrize("version", [True, 1.5, "1", None, 0, -1])
+def test_invalid_identity_version_preserves_value_error(version: Any) -> None:
+    with pytest.raises(ValueError):
+        stable_id("unit", {}, version=version)
+
+
+def test_invalid_identity_kind_preserves_value_error() -> None:
+    with pytest.raises(ValueError):
+        stable_id(42, {})  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

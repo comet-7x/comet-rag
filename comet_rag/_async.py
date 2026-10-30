@@ -44,15 +44,18 @@ async def close_async(
         if primary is None:
             raise
         primary.add_note(f"{label} close failed: {type(cleanup).__name__}")
-    if cancelled is not None and active is None:
-        raise cancelled
+    if active is None:
+        if cancelled is not None:
+            raise cancelled
 
 
 async def map_concurrently[T, R](
     operation: Callable[[T], Awaitable[R]], items: Sequence[T], *, limit: int
 ) -> list[R]:
     """固定数量的 worker 保序处理；失败停止领取并排干已启动调用。"""
-    if type(limit) is not int or limit <= 0:
+    if type(limit) is not int:
+        raise ValueError("limit must be an integer")
+    if limit <= 0:
         raise ValueError("limit must be a positive integer")
     if not items:
         return []

@@ -12,7 +12,7 @@ type JSONValue = (
 )
 
 
-def _json_value(value: object) -> JSONValue:
+def _normalize_json_value(value: object) -> JSONValue:
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float):
@@ -22,15 +22,15 @@ def _json_value(value: object) -> JSONValue:
     if isinstance(value, Mapping):
         if any(not isinstance(key, str) for key in value):
             raise TypeError("JSON keys must be strings")
-        return {key: _json_value(item) for key, item in value.items()}
+        return {key: _normalize_json_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
+        return [_normalize_json_value(item) for item in value]
     raise TypeError(f"unsupported identity value: {type(value).__name__}")
 
 
 def canonical_json(value: object) -> bytes:
     return json.dumps(
-        _json_value(value),
+        _normalize_json_value(value),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -39,10 +39,16 @@ def canonical_json(value: object) -> bytes:
 
 
 def stable_id(kind: str, value: object, *, version: int = 1) -> str:
-    if not isinstance(kind, str) or re.fullmatch(r"[a-z][a-z0-9_]*", kind) is None:
+    if not isinstance(kind, str):
+        raise ValueError("identity kind must be a string")
+    if re.fullmatch(r"[a-z][a-z0-9_]*", kind) is None:
         raise ValueError("identity kind must be a lowercase tag")
-    if isinstance(version, bool) or not isinstance(version, int) or version <= 0:
-        raise ValueError("identity version must be a positive integer")
+    if isinstance(version, bool):
+        raise ValueError("identity version must be an integer")
+    if not isinstance(version, int):
+        raise ValueError("identity version must be an integer")
+    if version <= 0:
+        raise ValueError("identity version must be positive")
     payload = canonical_json({"kind": kind, "version": version, "value": value})
     return f"{kind}_{hashlib.sha256(payload).hexdigest()}"
 

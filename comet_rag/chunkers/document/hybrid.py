@@ -37,15 +37,11 @@ def _block_ranges(
             return lengths.get(block.block_id, 0)
         rows, columns = table_dimensions(table)
         # 投影只给叶块范围；这里只计 v1 合成分隔符，不重新渲染正文。
-        return (
-            max(rows - 1, 0)
-            + rows * max(columns - 1, 0)
-            + sum(
-                max(len(cell.block_ids) - 1, 0)
-                + sum(width(blocks[member]) for member in cell.block_ids)
-                for cell in table.cells
-            )
-        )
+        total = max(rows - 1, 0) + rows * max(columns - 1, 0)
+        for cell in table.cells:
+            total += max(len(cell.block_ids) - 1, 0)
+            total += sum(width(blocks[member]) for member in cell.block_ids)
+        return total
 
     result: list[tuple[Block, int, int]] = []
     position = 0
@@ -132,15 +128,18 @@ class DocumentChunker:
         if not isinstance(document, ParsedDocument):
             raise TypeError("document must be a ParsedDocument")
         for block in document.blocks:
-            if block.table is not None and block.table.cells is not None:
-                rows, columns = table_dimensions(block.table)
-                separators = max(rows - 1, 0) + rows * max(columns - 1, 0)
-                if separators > self.text_chunker.chunk_size:
-                    raise ValueError(
-                        f"atomic table block {block.block_id!r} exceeds "
-                        f"chunk_size={self.text_chunker.chunk_size}: "
-                        f"{separators} characters in table separators"
-                    )
+            if block.table is None:
+                continue
+            if block.table.cells is None:
+                continue
+            rows, columns = table_dimensions(block.table)
+            separators = max(rows - 1, 0) + rows * max(columns - 1, 0)
+            if separators > self.text_chunker.chunk_size:
+                raise ValueError(
+                    f"atomic table block {block.block_id!r} exceeds "
+                    f"chunk_size={self.text_chunker.chunk_size}: "
+                    f"{separators} characters in table separators"
+                )
         projection = project_document(document)
         span_ends = tuple(span.end for span in projection.spans)
         chunks: list[Chunk] = []
