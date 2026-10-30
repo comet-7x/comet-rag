@@ -15,10 +15,10 @@ from comet_rag.identity import stable_id
 from .base import (
     SourceError,
     SourceResourceLimitExceeded,
-    _content_length,
-    _positive_limit,
+    _encode_source_version,
+    _parse_content_length,
     _temporary_directory,
-    _version,
+    _validate_positive_limit,
 )
 from .types import LocalResource, S3Source, Source
 
@@ -38,11 +38,13 @@ class AsyncS3SourceResolver:
         max_bytes: int = 256 * 1024 * 1024,
         temp_dir: Path | None = None,
     ) -> None:
-        if not isinstance(namespace, str) or not namespace.strip():
+        if not isinstance(namespace, str):
+            raise ValueError("S3 namespace must be a string")
+        if not namespace.strip():
             raise ValueError("S3 namespace must be nonblank")
         if not callable(getattr(client, "get_object", None)):
             raise TypeError("S3 source requires an injected synchronous S3 client")
-        _positive_limit("max_bytes", max_bytes)
+        _validate_positive_limit("max_bytes", max_bytes)
         self._client = client
         self._namespace = namespace
         self._max_bytes = max_bytes
@@ -64,12 +66,14 @@ class AsyncS3SourceResolver:
         except Exception as exc:
             raise SourceError(f"S3 get_object failed: {type(exc).__name__}") from exc
         body = response.get("Body")
-        if body is None or not callable(getattr(body, "close", None)):
+        if body is None:
+            raise SourceError("S3 response has no closable body")
+        if not callable(getattr(body, "close", None)):
             raise SourceError("S3 response has no closable body")
         try:
             if not callable(getattr(body, "read", None)):
                 raise SourceError("S3 response has no readable body")
-            length = _content_length(response.get("ContentLength"))
+            length = _parse_content_length(response.get("ContentLength"))
             if length is not None and length > self._max_bytes:
                 raise SourceResourceLimitExceeded(
                     "S3 ContentLength exceeds byte budget"
@@ -96,24 +100,27 @@ class AsyncS3SourceResolver:
             for field, key in (("VersionId", "version_id"), ("ETag", "etag")):
                 value = response.get(field)
                 if value is not None:
-                    if not isinstance(value, str) or not value:
+                    if not isinstance(value, str):
+                        raise SourceError(f"invalid S3 {field}")
+                    if not value:
                         raise SourceError(f"invalid S3 {field}")
                     metadata[key] = value
-            if (
-                source.version_id is not None
-                and metadata.get("version_id") != source.version_id
-            ):
-                raise SourceError("S3 response does not confirm requested VersionId")
+            if source.version_id is not None:
+                if metadata.get("version_id") != source.version_id:
+                    raise SourceError(
+                        "S3 response does not confirm requested VersionId"
+                    )
             modified = response.get("LastModified")
             if modified is not None:
                 if not isinstance(modified, datetime):
                     raise SourceError("invalid S3 LastModified")
                 metadata["last_modified"] = modified.isoformat()
             media_type = response.get("ContentType")
-            if media_type is not None and (
-                not isinstance(media_type, str) or not media_type.strip()
-            ):
-                raise SourceError("invalid S3 ContentType")
+            if media_type is not None:
+                if not isinstance(media_type, str):
+                    raise SourceError("invalid S3 ContentType")
+                if not media_type.strip():
+                    raise SourceError("invalid S3 ContentType")
             resource = LocalResource(
                 path=destination,
                 source=SourceInfo(
@@ -130,7 +137,7 @@ class AsyncS3SourceResolver:
                     ),
                     digest.hexdigest(),
                     locator=f"s3://{quote(source.bucket, safe='')}/{quote(source.key, safe='/')}",
-                    source_version=_version(metadata),
+                    source_version=_encode_source_version(metadata),
                 ),
                 original_name=PurePosixPath(source.key).name or None,
                 media_type=media_type,

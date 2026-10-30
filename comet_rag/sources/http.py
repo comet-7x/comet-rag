@@ -17,10 +17,10 @@ from comet_rag.identity import stable_id
 from .base import (
     SourceError,
     SourceResourceLimitExceeded,
-    _content_length,
-    _positive_limit,
+    _encode_source_version,
+    _parse_content_length,
     _temporary_directory,
-    _version,
+    _validate_positive_limit,
 )
 from .types import HttpSource, LocalResource, Source
 
@@ -93,8 +93,10 @@ class AsyncHttpSourceResolver:
             raise TypeError("HTTP source requires an injected httpx.AsyncClient")
         if not callable(policy):
             raise TypeError("HTTP source requires an admission policy")
-        _positive_limit("max_bytes", max_bytes)
-        if type(max_redirects) is not int or max_redirects < 0:
+        _validate_positive_limit("max_bytes", max_bytes)
+        if type(max_redirects) is not int:
+            raise ValueError("max_redirects must be an integer")
+        if max_redirects < 0:
             raise ValueError("max_redirects must be a nonnegative integer")
         self._client = client
         self._policy = policy
@@ -161,7 +163,11 @@ class AsyncHttpSourceResolver:
                     if auth_allowed and self._client.auth is not None:
                         request.headers.pop("Authorization", None)
                     continue
-                if not 200 <= response.status_code < 300 or response.status_code == 206:
+                if not 200 <= response.status_code < 300:
+                    raise SourceError(
+                        f"HTTP source returned status {response.status_code}"
+                    )
+                if response.status_code == 206:
                     raise SourceError(
                         f"HTTP source returned status {response.status_code}"
                     )
@@ -170,7 +176,7 @@ class AsyncHttpSourceResolver:
                 )
                 if encoding not in {"", "identity"}:
                     raise SourceError("HTTP source must deliver identity-encoded bytes")
-                length = _content_length(response.headers.get("content-length"))
+                length = _parse_content_length(response.headers.get("content-length"))
                 if length is not None and length > self._max_bytes:
                     raise SourceResourceLimitExceeded(
                         "HTTP Content-Length exceeds byte budget"
@@ -214,7 +220,7 @@ class AsyncHttpSourceResolver:
                         source.source_id or stable_id("source", {"http": initial_url}),
                         digest.hexdigest(),
                         locator=None if sensitive else initial_url,
-                        source_version=_version(
+                        source_version=_encode_source_version(
                             {
                                 "etag": response.headers.get("etag"),
                                 "last_modified": response.headers.get("last-modified"),

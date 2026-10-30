@@ -13,12 +13,14 @@ from typing import Any
 import httpx
 import pytest
 
+from comet_rag.documents.schemas import SourceInfo
 from comet_rag.sources import (
     AsyncLocalSourceResolver,
     AsyncS3SourceResolver,
     AsyncSourceResolver,
     AsyncSourceRouter,
     HttpSource,
+    LocalResource,
     LocalSource,
     S3Source,
     SourceError,
@@ -57,6 +59,53 @@ class S3Client:
 
 def allow(source: HttpSource) -> bool:
     return True
+
+
+@pytest.mark.parametrize(
+    "source_type, values",
+    [
+        (LocalSource, {"path": 42}),
+        (LocalSource, {"path": "file.txt", "source_id": 42}),
+        (HttpSource, {"url": 42}),
+        (HttpSource, {"url": "https://example.test/file", "source_id": 42}),
+        (S3Source, {"bucket": 42, "key": "key"}),
+        (S3Source, {"bucket": "bucket", "key": 42}),
+        (S3Source, {"bucket": "bucket", "key": "key", "version_id": 42}),
+        (S3Source, {"bucket": "bucket", "key": "key", "source_id": 42}),
+    ],
+)
+def test_invalid_source_parameters_preserve_value_error(
+    source_type: Any, values: dict[str, Any]
+) -> None:
+    with pytest.raises(ValueError):
+        source_type(**values)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"original_name": 42},
+        {"media_type": 42},
+        {"size_bytes": True},
+    ],
+)
+def test_invalid_resource_parameters_preserve_value_error(
+    tmp_path: Path, values: dict[str, Any]
+) -> None:
+    with pytest.raises(ValueError):
+        LocalResource(
+            path=tmp_path / "resource",
+            source=SourceInfo("source", "0" * 64),
+            **values,
+        )
+
+
+def test_invalid_s3_namespace_preserves_value_error() -> None:
+    with pytest.raises(ValueError):
+        AsyncS3SourceResolver(
+            S3Client(io.BytesIO()),
+            namespace=42,  # type: ignore[arg-type]
+        )
 
 
 def test_http_streams_exact_bytes_metadata_cleanup_and_client_ownership(

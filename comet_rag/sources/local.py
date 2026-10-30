@@ -20,7 +20,9 @@ class AsyncLocalSourceResolver:
     """只读借用本地文件；调用方保证上下文内原件稳定。"""
 
     def __init__(self, *, max_bytes: int = 256 * 1024 * 1024) -> None:
-        if type(max_bytes) is not int or max_bytes <= 0:
+        if type(max_bytes) is not int:
+            raise ValueError("max_bytes must be an integer")
+        if max_bytes <= 0:
             raise ValueError("max_bytes must be a positive integer")
         self._max_bytes = max_bytes
 

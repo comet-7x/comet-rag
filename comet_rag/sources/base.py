@@ -39,21 +39,27 @@ def _temporary_directory(parent: Path | None) -> Iterator[Path]:
         directory.cleanup()
 
 
-def _positive_limit(name: str, value: int) -> None:
-    if type(value) is not int or value <= 0:
+def _validate_positive_limit(name: str, value: int) -> None:
+    if type(value) is not int:
+        raise ValueError(f"{name} must be an integer")
+    if value <= 0:
         raise ValueError(f"{name} must be a positive integer")
 
 
-def _content_length(value: object) -> int | None:
+def _parse_content_length(value: object) -> int | None:
     if value is None:
         return None
-    if isinstance(value, str) and value.isascii() and value.isdecimal():
-        return int(value)
-    if type(value) is int and value >= 0:
-        return value
+    if isinstance(value, str):
+        if value.isascii() and value.isdecimal():
+            return int(value)
+        raise SourceError("invalid upstream Content-Length")
+    if type(value) is int:
+        if value >= 0:
+            return value
+        raise SourceError("invalid upstream Content-Length")
     raise SourceError("invalid upstream Content-Length")
 
 
-def _version(values: dict[str, object]) -> str | None:
+def _encode_source_version(values: dict[str, object]) -> str | None:
     nonempty = {key: value for key, value in values.items() if value is not None}
     return canonical_json(nonempty).decode("utf-8") if nonempty else None
