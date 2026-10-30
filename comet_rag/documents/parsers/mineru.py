@@ -42,37 +42,43 @@ class AsyncMinerUParser:
         if not isinstance(client, httpx.AsyncClient):
             raise TypeError("MinerU requires an injected httpx.AsyncClient")
         url = httpx.URL(endpoint)
-        if (
-            url.scheme not in {"http", "https"}
-            or not url.host
-            or url.userinfo
-            or url.query
-            or url.fragment
-            or not url.path.endswith("/v1/file_parse")
-        ):
-            raise ValueError(
-                "MinerU endpoint must be an HTTP(S) /v1/file_parse URL without userinfo, query or fragment"
-            )
-        if (
-            not isinstance(expected_version, str)
-            or re.fullmatch(r"4\.[0-9]+\.[0-9]+", expected_version) is None
-        ):
+        endpoint_hint = "MinerU endpoint must be an HTTP(S) /v1/file_parse URL without userinfo, query or fragment"
+        if url.scheme not in {"http", "https"}:
+            raise ValueError(endpoint_hint)
+        if not url.host:
+            raise ValueError(endpoint_hint)
+        if url.userinfo:
+            raise ValueError(endpoint_hint)
+        if url.query:
+            raise ValueError(endpoint_hint)
+        if url.fragment:
+            raise ValueError(endpoint_hint)
+        if not url.path.endswith("/v1/file_parse"):
+            raise ValueError(endpoint_hint)
+        if not isinstance(expected_version, str):
             raise ValueError(
                 "MinerU requires the expected deployed 4.x release version"
             )
-        if tier not in {"flash", "basic", "standard", "advanced"} or ocr_mode not in {
-            "auto",
-            "txt",
-            "ocr",
-        }:
+        if re.fullmatch(r"4\.[0-9]+\.[0-9]+", expected_version) is None:
+            raise ValueError(
+                "MinerU requires the expected deployed 4.x release version"
+            )
+        if tier not in {"flash", "basic", "standard", "advanced"}:
             raise ValueError("unsupported MinerU tier or ocr_mode")
-        if type(wait_timeout) is not int or not 1 <= wait_timeout <= 3600:
+        if ocr_mode not in {"auto", "txt", "ocr"}:
+            raise ValueError("unsupported MinerU tier or ocr_mode")
+        if type(wait_timeout) is not int:
             raise ValueError("MinerU wait_timeout must be an integer from 1 to 3600")
-        if any(
-            type(value) is not int or value <= 0
-            for value in (max_bytes, max_response_bytes)
+        if not 1 <= wait_timeout <= 3600:
+            raise ValueError("MinerU wait_timeout must be an integer from 1 to 3600")
+        for name, value in (
+            ("max_bytes", max_bytes),
+            ("max_response_bytes", max_response_bytes),
         ):
-            raise ValueError("MinerU byte budgets must be positive integers")
+            if type(value) is not int:
+                raise ValueError(f"MinerU {name} must be an integer")
+            if value <= 0:
+                raise ValueError(f"MinerU {name} must be a positive integer")
         self._client = client
         self._endpoint = url
         self._version = expected_version
@@ -83,7 +89,7 @@ class AsyncMinerUParser:
         self._max_response_bytes = max_response_bytes
 
     async def parse(self, resource: LocalResource, *, output_dir: Path) -> ParseResult:
-        data = await run_sync(self._pdf, resource)
+        data = await run_sync(self._read_validated_pdf, resource)
         request = self._client.build_request(
             "POST",
             self._endpoint,
@@ -106,9 +112,10 @@ class AsyncMinerUParser:
         response = await self._client.send(request, stream=True, follow_redirects=False)
         try:
             response.raise_for_status()
+            if response.status_code not in {200, 202}:
+                raise ValueError("MinerU requires a 200 JSON parsing result")
             if (
-                response.status_code not in {200, 202}
-                or response.headers.get("content-type", "")
+                response.headers.get("content-type", "")
                 .split(";", 1)[0]
                 .strip()
                 .lower()
@@ -120,11 +127,13 @@ class AsyncMinerUParser:
             ).strip().lower() not in {"", "identity"}:
                 raise ValueError("MinerU response must use identity encoding")
             header = response.headers.get("content-length")
-            if header is not None and re.fullmatch(r"[0-9]+", header) is None:
-                raise ValueError("invalid MinerU Content-Length")
+            if header is not None:
+                if re.fullmatch(r"[0-9]+", header) is None:
+                    raise ValueError("invalid MinerU Content-Length")
             length = int(header) if header is not None else None
-            if length is not None and length > self._max_response_bytes:
-                raise ValueError("MinerU response exceeds byte budget")
+            if length is not None:
+                if length > self._max_response_bytes:
+                    raise ValueError("MinerU response exceeds byte budget")
             if not isinstance(response.stream, httpx.AsyncByteStream):
                 raise TypeError("MinerU requires an asynchronous response stream")
             body = bytearray()
@@ -138,8 +147,11 @@ class AsyncMinerUParser:
                 if len(body) + len(chunk) > self._max_response_bytes:
                     raise ValueError("MinerU response exceeds byte budget")
                 body.extend(chunk)
-            if length is not None and len(body) != length:
-                raise ValueError("MinerU response length does not match Content-Length")
+            if length is not None:
+                if len(body) != length:
+                    raise ValueError(
+                        "MinerU response length does not match Content-Length"
+                    )
         finally:
             await close_async(response.aclose(), sys.exception(), "MinerU response")
         payload = json.loads(
@@ -147,49 +159,48 @@ class AsyncMinerUParser:
             object_pairs_hook=_unique_object,
             parse_constant=_invalid_constant,
         )
-        if (
-            not isinstance(payload, dict)
-            or not isinstance(payload.get("task_id"), str)
-            or not payload["task_id"]
-        ):
+        if not isinstance(payload, dict):
+            raise ValueError("MinerU response requires a task_id")
+        if not isinstance(payload.get("task_id"), str):
+            raise ValueError("MinerU response requires a task_id")
+        if not payload["task_id"]:
             raise ValueError("MinerU response requires a task_id")
         if response.status_code == 202:
             # 上游等待超时/断连后任务仍运行；不自动重传或伪造完成结果。
             raise TimeoutError(
                 f"MinerU wait budget exhausted; remote task {payload['task_id']} may still be running"
             )
-        if (
-            payload.get("status") != "completed"
-            or payload.get("tier") != self._tier
-            or payload.get("output_formats") != ["markdown"]
-        ):
+        if payload.get("status") != "completed":
+            raise ValueError("MinerU task status/tier/output mismatch")
+        if payload.get("tier") != self._tier:
+            raise ValueError("MinerU task status/tier/output mismatch")
+        if payload.get("output_formats") != ["markdown"]:
             raise ValueError("MinerU task status/tier/output mismatch")
         files = payload.get("files")
-        if (
-            not isinstance(files, list)
-            or len(files) != 1
-            or not isinstance(files[0], dict)
-        ):
+        if not isinstance(files, list):
+            raise ValueError("MinerU response must contain only the uploaded document")
+        if len(files) != 1:
+            raise ValueError("MinerU response must contain only the uploaded document")
+        if not isinstance(files[0], dict):
             raise ValueError("MinerU response must contain only the uploaded document")
         result = files[0]
-        if (
-            result.get("name") != "document.pdf"
-            or result.get("status") != "completed"
-            or result.get("error") is not None
-        ):
+        if result.get("name") != "document.pdf":
+            raise ValueError("MinerU uploaded document did not complete successfully")
+        if result.get("status") != "completed":
+            raise ValueError("MinerU uploaded document did not complete successfully")
+        if result.get("error") is not None:
             raise ValueError("MinerU uploaded document did not complete successfully")
         parsing = result.get("parse")
-        if (
-            not isinstance(parsing, dict)
-            or parsing.get("parser_version") != self._version
-        ):
+        if not isinstance(parsing, dict):
+            raise ValueError("MinerU response version mismatch")
+        if parsing.get("parser_version") != self._version:
             raise ValueError("MinerU response version mismatch")
         content = result.get("content")
-        if (
-            not isinstance(content, dict)
-            or set(content) != {"markdown"}
-            or not isinstance(content["markdown"], str)
-        ):
+        if not isinstance(content, dict):
+            raise ValueError("MinerU document requires exactly one Markdown string")
+        if set(content) != {"markdown"}:
+            raise ValueError("MinerU document requires exactly one Markdown string")
+        if not isinstance(content["markdown"], str):
             raise ValueError("MinerU document requires exactly one Markdown string")
         markdown = content["markdown"]
         return ParseResult(
@@ -222,9 +233,13 @@ class AsyncMinerUParser:
             ),
         )
 
-    def _pdf(self, resource: LocalResource) -> bytes:
+    def _read_validated_pdf(self, resource: LocalResource) -> bytes:
         data = _read_resource(resource, self._max_bytes)
-        if not data.startswith(b"%PDF-") or not data.rstrip().endswith(b"%%EOF"):
+        if not data.startswith(b"%PDF-"):
+            raise ValueError(
+                "MinerU input requires PDF signature and final %%EOF marker"
+            )
+        if not data.rstrip().endswith(b"%%EOF"):
             raise ValueError(
                 "MinerU input requires PDF signature and final %%EOF marker"
             )

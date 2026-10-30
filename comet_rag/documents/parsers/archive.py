@@ -28,15 +28,20 @@ class ArchiveLimits:
             "max_xml_text_chars",
         ):
             value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            if isinstance(value, bool):
+                raise ValueError(f"{name} must be a positive integer")
+            if not isinstance(value, int):
+                raise ValueError(f"{name} must be a positive integer")
+            if value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
         ratio = self.max_compression_ratio
-        if (
-            isinstance(ratio, bool)
-            or not isinstance(ratio, (int, float))
-            or not math.isfinite(ratio)
-            or ratio <= 0
-        ):
+        if isinstance(ratio, bool):
+            raise ValueError("max_compression_ratio must be positive and finite")
+        if not isinstance(ratio, (int, float)):
+            raise ValueError("max_compression_ratio must be positive and finite")
+        if not math.isfinite(ratio):
+            raise ValueError("max_compression_ratio must be positive and finite")
+        if ratio <= 0:
             raise ValueError("max_compression_ratio must be positive and finite")
 
 

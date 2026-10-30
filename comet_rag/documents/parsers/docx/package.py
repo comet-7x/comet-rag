@@ -65,13 +65,15 @@ class Package:
         self.names: set[str] = set()
         for member in members:
             name = member.filename
-            if (
-                name in self.names
-                or "\\" in name
-                or name.startswith("/")
-                or any(part in {".", ".."} for part in name.rstrip("/").split("/"))
-                or stat.S_ISLNK(member.external_attr >> 16)
-            ):
+            if name in self.names:
+                raise ValueError(f"unsafe or duplicate DOCX archive member: {name!r}")
+            if "\\" in name:
+                raise ValueError(f"unsafe or duplicate DOCX archive member: {name!r}")
+            if name.startswith("/"):
+                raise ValueError(f"unsafe or duplicate DOCX archive member: {name!r}")
+            if any(part in {".", ".."} for part in name.rstrip("/").split("/")):
+                raise ValueError(f"unsafe or duplicate DOCX archive member: {name!r}")
+            if stat.S_ISLNK(member.external_attr >> 16):
                 raise ValueError(f"unsafe or duplicate DOCX archive member: {name!r}")
             self.names.add(name)
         self._limits = limits
@@ -96,7 +98,11 @@ class Package:
             else:
                 raise ValueError("invalid DOCX content type declaration")
             media_type = item.get("ContentType")
-            if not key or not media_type or key in target:
+            if not key:
+                raise ValueError("invalid or duplicate DOCX content type")
+            if not media_type:
+                raise ValueError("invalid or duplicate DOCX content type")
+            if key in target:
                 raise ValueError("invalid or duplicate DOCX content type")
             target[key] = media_type
         mains = [
@@ -104,7 +110,9 @@ class Package:
             for item in self.relationships("").values()
             if item.kind == f"{R}/officeDocument"
         ]
-        if len(mains) != 1 or mains[0].external:
+        if len(mains) != 1:
+            raise ValueError("DOCX requires one internal officeDocument relationship")
+        if mains[0].external:
             raise ValueError("DOCX requires one internal officeDocument relationship")
         self.main = mains[0].target
         if (
@@ -135,9 +143,9 @@ class Package:
                     huge_tree=False,
                 ),
             )
-            if root.getroottree().docinfo.internalDTD is not None or any(
-                isinstance(node, etree._Entity) for node in root.iter()
-            ):
+            if root.getroottree().docinfo.internalDTD is not None:
+                raise ValueError(f"DTD and entities are not supported in DOCX: {name}")
+            if any(isinstance(node, etree._Entity) for node in root.iter()):
                 raise ValueError(f"DTD and entities are not supported in DOCX: {name}")
             self._xml[name] = root
             references = [
@@ -151,8 +159,9 @@ class Package:
                 if any(rid not in relationships for rid in references):
                     raise ValueError(f"missing DOCX resource relationship in {name}")
         root = self._xml[name]
-        if expected is not None and root.tag != expected:
-            raise ValueError(f"unexpected DOCX XML root in {name}")
+        if expected is not None:
+            if root.tag != expected:
+                raise ValueError(f"unexpected DOCX XML root in {name}")
         return root
 
     def relationships(self, part: str) -> dict[str, Relationship]:
@@ -170,25 +179,30 @@ class Package:
             for item in self.xml(name, q("Relationships", RELS)):
                 rid, kind, target = item.get("Id"), item.get("Type"), item.get("Target")
                 mode = item.get("TargetMode", "Internal")
-                if (
-                    item.tag != q("Relationship", RELS)
-                    or not rid
-                    or not kind
-                    or not target
-                    or rid in result
-                    or mode not in {"Internal", "External"}
-                ):
+                if item.tag != q("Relationship", RELS):
+                    raise ValueError(f"invalid DOCX relationship in {name}")
+                if not rid:
+                    raise ValueError(f"invalid DOCX relationship in {name}")
+                if not kind:
+                    raise ValueError(f"invalid DOCX relationship in {name}")
+                if not target:
+                    raise ValueError(f"invalid DOCX relationship in {name}")
+                if rid in result:
+                    raise ValueError(f"invalid DOCX relationship in {name}")
+                if mode not in {"Internal", "External"}:
                     raise ValueError(f"invalid DOCX relationship in {name}")
                 external = mode == "External"
                 if not external:
                     parsed = urlsplit(target)
-                    if (
-                        parsed.scheme
-                        or parsed.netloc
-                        or parsed.query
-                        or parsed.fragment
-                        or "\\" in target
-                    ):
+                    if parsed.scheme:
+                        raise ValueError("invalid internal DOCX relationship target")
+                    if parsed.netloc:
+                        raise ValueError("invalid internal DOCX relationship target")
+                    if parsed.query:
+                        raise ValueError("invalid internal DOCX relationship target")
+                    if parsed.fragment:
+                        raise ValueError("invalid internal DOCX relationship target")
+                    if "\\" in target:
                         raise ValueError("invalid internal DOCX relationship target")
                     decoded = unquote(parsed.path)
                     target = posixpath.normpath(
@@ -196,7 +210,11 @@ class Package:
                         if decoded.startswith("/")
                         else posixpath.join(posixpath.dirname(part), decoded)
                     )
-                    if target.startswith("../") or target not in self.names:
+                    if target.startswith("../"):
+                        raise ValueError(
+                            f"missing or unsafe DOCX relationship target: {target}"
+                        )
+                    if target not in self.names:
                         raise ValueError(
                             f"missing or unsafe DOCX relationship target: {target}"
                         )
@@ -206,7 +224,9 @@ class Package:
 
     def related(self, part: str, rid: str | None, kind: str) -> Relationship:
         relation = self.relationships(part).get(rid or "")
-        if relation is None or relation.kind != f"{R}/{kind}":
+        if relation is None:
+            raise ValueError(f"missing or invalid DOCX {kind} relationship: {rid}")
+        if relation.kind != f"{R}/{kind}":
             raise ValueError(f"missing or invalid DOCX {kind} relationship: {rid}")
         return relation
 
@@ -225,7 +245,9 @@ class Package:
         if content_hash in self.assets:
             return self.assets[content_hash]
         media_type = self.media_type(relation.target)
-        if media_type is None or not media_type.startswith("image/"):
+        if media_type is None:
+            raise ValueError("DOCX image has no image content type")
+        if not media_type.startswith("image/"):
             raise ValueError("DOCX image has no image content type")
         extension = mimetypes.guess_extension(media_type) or ".bin"
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -234,12 +256,19 @@ class Package:
             with destination.open("xb") as stream:
                 stream.write(data)
         except FileExistsError:
-            if (
-                destination.is_symlink()
-                or not destination.is_file()
-                or destination.stat().st_size != len(data)
-                or destination.read_bytes() != data
-            ):
+            if destination.is_symlink():
+                raise ValueError(
+                    f"asset output conflicts with existing file: {destination}"
+                ) from None
+            if not destination.is_file():
+                raise ValueError(
+                    f"asset output conflicts with existing file: {destination}"
+                ) from None
+            if destination.stat().st_size != len(data):
+                raise ValueError(
+                    f"asset output conflicts with existing file: {destination}"
+                ) from None
+            if destination.read_bytes() != data:
                 raise ValueError(
                     f"asset output conflicts with existing file: {destination}"
                 ) from None

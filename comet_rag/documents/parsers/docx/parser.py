@@ -52,6 +52,9 @@ _MARKS = frozenset(
         "lastRenderedPageBreak",
     )
 )
+_SKIPPED_ELEMENTS = _MARKS | frozenset(
+    q(name) for name in ("sectPr", "tcPr", "sdtPr", "sdtEndPr")
+)
 
 
 @dataclass(slots=True)
@@ -85,10 +88,13 @@ class AsyncDocxParser:
             ("max_bytes", max_bytes),
             ("max_table_cells", max_table_cells),
         ):
-            if type(value) is not int or value <= 0:
+            if type(value) is not int:
+                raise ValueError(f"{name} must be an integer")
+            if value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
-        if archive_limits is not None and not isinstance(archive_limits, ArchiveLimits):
-            raise TypeError("archive_limits must be ArchiveLimits")
+        if archive_limits is not None:
+            if not isinstance(archive_limits, ArchiveLimits):
+                raise TypeError("archive_limits must be ArchiveLimits")
         self._limits = archive_limits or ArchiveLimits()
         self._max_bytes = max_bytes
         self._max_table_cells = max_table_cells
@@ -214,12 +220,7 @@ class _Mapper:
                 members.extend(self.paragraph(child, part, parent, role))
             elif child.tag == q("tbl"):
                 members.append(self.table(child, part, parent, role, depth))
-            elif child.tag in _MARKS or child.tag in {
-                q("sectPr"),
-                q("tcPr"),
-                q("sdtPr"),
-                q("sdtEndPr"),
-            }:
+            elif child.tag in _SKIPPED_ELEMENTS:
                 continue
             elif child.tag == q("sdt"):
                 content = child.find(q("sdtContent"))
@@ -261,7 +262,8 @@ class _Mapper:
             kind = "heading"
         else:
             num = self.styles.property(element, f"{q('numPr')}/{q('numId')}")
-            if num is not None and (nid := integer(val(num), "numbering id")) != 0:
+            nid = integer(val(num), "numbering id") if num is not None else 0
+            if nid != 0:
                 kind = "list_item"
                 ilvl = self.styles.property(element, f"{q('numPr')}/{q('ilvl')}")
                 level = integer(val(ilvl, "0"), "list level")
@@ -427,14 +429,17 @@ class _Mapper:
                 boundary = node.get(q("fldCharType"))
                 if boundary == "begin":
                     fields.append(_Field())
-                elif boundary == "separate" and fields:
+                    return
+                if not fields:
+                    raise ValueError("unbalanced DOCX field boundary")
+                if boundary == "separate":
                     fields[-1].result = True
                     fields[-1].link = field_link(fields[-1].instruction, node)
-                elif boundary == "end" and fields:
+                    return
+                if boundary == "end":
                     fields.pop()
-                else:
-                    raise ValueError("unbalanced DOCX field boundary")
-                return
+                    return
+                raise ValueError("unbalanced DOCX field boundary")
             if tag == q("instrText"):
                 if not fields:
                     self.issue(

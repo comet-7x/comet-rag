@@ -23,7 +23,9 @@ class AsyncTextParser:
         self, *, encoding: str = "utf-8", max_bytes: int = 8 * 1024 * 1024
     ) -> None:
         self._encoding = codecs.lookup(encoding).name
-        if type(max_bytes) is not int or max_bytes <= 0:
+        if type(max_bytes) is not int:
+            raise ValueError("max_bytes must be a positive integer")
+        if max_bytes <= 0:
             raise ValueError("max_bytes must be a positive integer")
         self._max_bytes = max_bytes
 

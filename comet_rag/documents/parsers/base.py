@@ -30,8 +30,9 @@ def _read_resource(resource: LocalResource, max_bytes: int) -> bytes:
         data = stream.read(max_bytes + 1)
     if len(data) > max_bytes:
         raise ValueError(f"parser input exceeds {max_bytes} bytes")
-    if resource.size_bytes is not None and len(data) != resource.size_bytes:
-        raise ValueError("resource size changed since resolution")
+    if resource.size_bytes is not None:
+        if len(data) != resource.size_bytes:
+            raise ValueError("resource size changed since resolution")
     if hashlib.sha256(data).hexdigest() != resource.source.content_hash:
         raise ValueError("resource bytes do not match source content_hash")
     return data

@@ -26,7 +26,7 @@ _IMAGE_TYPES = {
 }
 
 
-def _text(value: str, *, html: bool) -> str:
+def _escape_text(value: str, *, html: bool) -> str:
     value = escape(value, quote=False)
     if html:
         # Entities also keep Markdown from reinterpreting text inside inline HTML.
@@ -40,7 +40,9 @@ def _text(value: str, *, html: bool) -> str:
 
 def _code(value: str) -> str:
     # Markdown code spans normalize whitespace; HTML preserves the original string.
-    return f'<code style="white-space: pre-wrap">{_text(value, html=True)}</code>'
+    return (
+        f'<code style="white-space: pre-wrap">{_escape_text(value, html=True)}</code>'
+    )
 
 
 def _fence(value: str, language: str = "") -> str:
@@ -85,7 +87,7 @@ def _run(run: TextRun, *, html: bool) -> str:
     style = run.style
     preserve = re.search(r"\s{2,}|[\r\n\t]|^\s|\s$", run.text) is not None
     as_html = html or style is not None or preserve
-    value = _text(run.text, html=as_html)
+    value = _escape_text(run.text, html=as_html)
     if style is not None:
         for enabled, tag in (
             (style.bold, "strong"),
@@ -143,28 +145,26 @@ def export_markdown(document: ParsedDocument, *, max_table_cells: int = 10_000) 
 
     def image(asset: Asset, alt: str | None, *, html: bool) -> str:
         media = asset.media
-        target = (
-            _destination(str(media.path), path=True)
-            if media.path is not None
-            else _destination(media.url)
-            if media.url is not None
-            else None
-        )
+        if media.path is not None:
+            target = _destination(str(media.path), path=True)
+        elif media.url is not None:
+            target = _destination(media.url)
+        else:
+            target = None
         if target is None or asset.media_type not in _IMAGE_TYPES:
-            source = (
-                str(media.path)
-                if media.path is not None
-                else media.url
-                if media.url is not None
-                else f"inline bytes ({len(media.data or b'')} bytes)"
-            )
+            if media.path is not None:
+                source = str(media.path)
+            elif media.url is not None:
+                source = media.url
+            else:
+                source = f"inline bytes ({len(media.data or b'')} bytes)"
             details = f"image asset {asset.asset_id}; {asset.media_type or 'unknown media type'}; sha256={asset.content_hash}; source={source}"
-            label = f"{_text(alt, html=html)} " if alt is not None else ""
+            label = f"{_escape_text(alt, html=html)} " if alt is not None else ""
             return f"{label}[image not embedded: {_code(details)}]"
         label = alt if alt is not None else asset.asset_id
         if html:
             return f'<img src="{_attribute(target)}" alt="{_attribute(label)}">'
-        return f"![{_text(label, html=False)}](<{target}>)"
+        return f"![{_escape_text(label, html=False)}](<{target}>)"
 
     def formula(value: FormulaContent, *, inline: bool, html: bool) -> str:
         pieces = []
@@ -177,7 +177,9 @@ def export_markdown(document: ParsedDocument, *, max_table_cells: int = 10_000) 
                 expression = (
                     f"${value.expression}$" if inline else f"$$\n{value.expression}\n$$"
                 )
-                pieces.append(_text(expression, html=True) if html else expression)
+                pieces.append(
+                    _escape_text(expression, html=True) if html else expression
+                )
             else:
                 source = (
                     _code(value.expression)
@@ -243,7 +245,7 @@ def export_markdown(document: ParsedDocument, *, max_table_cells: int = 10_000) 
             if not known:
                 details.append(f"[code language: {_code(language)}]")
             content = (
-                f"<pre><code>{_text(block.code, html=True)}</code></pre>"
+                f"<pre><code>{_escape_text(block.code, html=True)}</code></pre>"
                 if html
                 else _fence(block.code, language if known else "")
             )
@@ -251,9 +253,7 @@ def export_markdown(document: ParsedDocument, *, max_table_cells: int = 10_000) 
         if block.formula is not None:
             content = formula(block.formula, inline=False, html=html)
             if block.formula_number is not None:
-                content += (
-                    f" [formula number: {_text(block.formula_number, html=html)}]"
-                )
+                content += f" [formula number: {_escape_text(block.formula_number, html=html)}]"
             return content
         if block.asset_id is not None:
             return image(assets[block.asset_id], block.alt_text, html=html)
@@ -262,7 +262,7 @@ def export_markdown(document: ParsedDocument, *, max_table_cells: int = 10_000) 
             raise ValueError("block has no exportable content")
         if table.html is not None:
             source = (
-                f"<pre><code>{_text(table.html, html=True)}</code></pre>"
+                f"<pre><code>{_escape_text(table.html, html=True)}</code></pre>"
                 if html
                 else _fence(table.html, "html")
             )

@@ -35,7 +35,9 @@ class Styles:
             )
             for style in root.findall(q("style")):
                 sid = style.get(q("styleId"))
-                if not sid or sid in self.styles:
+                if not sid:
+                    raise ValueError("missing or duplicate DOCX style id")
+                if sid in self.styles:
                     raise ValueError("missing or duplicate DOCX style id")
                 self.styles[sid] = style
                 if style.get(q("type")) == "paragraph" and style.get(q("default")) in {
@@ -171,22 +173,23 @@ class Styles:
                 value = val(rgb)
                 if value == "auto":
                     color = None
-                elif value and re.fullmatch(r"[a-fA-F0-9]{6}", value):
-                    color = f"#{value}"
-                else:
+                elif value is None:
                     raise ValueError("invalid DOCX text color")
+                elif re.fullmatch(r"[a-fA-F0-9]{6}", value) is None:
+                    raise ValueError("invalid DOCX text color")
+                else:
+                    color = f"#{value}"
             vertical = rpr.find(q("vertAlign"))
             if vertical is not None:
                 value = val(vertical)
                 if value not in {"baseline", "superscript", "subscript"}:
                     raise ValueError("invalid DOCX vertical text alignment")
-                script = (
-                    "superscript"
-                    if value == "superscript"
-                    else "subscript"
-                    if value == "subscript"
-                    else "normal"
-                )
+                if value == "superscript":
+                    script = "superscript"
+                elif value == "subscript":
+                    script = "subscript"
+                else:
+                    script = "normal"
         return TextStyle(
             font=font,
             size_pt=size,
@@ -218,7 +221,9 @@ class Numbering:
                 levels: dict[int, etree._Element] = {}
                 for level in node.findall(q("lvl")):
                     index = integer(level.get(q("ilvl")), "numbering level")
-                    if index > 8 or index in levels:
+                    if index > 8:
+                        raise ValueError("invalid DOCX numbering level")
+                    if index in levels:
                         raise ValueError("invalid DOCX numbering level")
                     levels[index] = level
                 abstract[aid] = levels
@@ -228,7 +233,9 @@ class Numbering:
                 aid = integer(
                     val(node.find(q("abstractNumId"))), "abstract numbering id"
                 )
-                if nid in seen or aid not in abstract:
+                if nid in seen:
+                    raise ValueError("invalid DOCX numbering reference")
+                if aid not in abstract:
                     raise ValueError("invalid DOCX numbering reference")
                 seen.add(nid)
                 self.levels.update(

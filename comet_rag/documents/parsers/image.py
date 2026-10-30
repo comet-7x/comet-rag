@@ -37,10 +37,11 @@ class AsyncImageParser:
     def __init__(
         self, *, max_bytes: int = 32 * 1024 * 1024, max_pixels: int = 40_000_000
     ) -> None:
-        if any(
-            type(value) is not int or value <= 0 for value in (max_bytes, max_pixels)
-        ):
-            raise ValueError("max_bytes and max_pixels must be positive integers")
+        for name, value in (("max_bytes", max_bytes), ("max_pixels", max_pixels)):
+            if type(value) is not int:
+                raise ValueError(f"{name} must be an integer")
+            if value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
         self._max_bytes = max_bytes
         self._max_pixels = max_pixels
 
@@ -52,7 +53,11 @@ class AsyncImageParser:
         try:
             with Image.open(BytesIO(data), formats=tuple(_FORMATS)) as image:
                 width, height = image.size
-                if width <= 0 or height <= 0 or width * height > self._max_pixels:
+                if width <= 0:
+                    raise ValueError(f"image exceeds {self._max_pixels} pixels")
+                if height <= 0:
+                    raise ValueError(f"image exceeds {self._max_pixels} pixels")
+                if width * height > self._max_pixels:
                     raise ValueError(f"image exceeds {self._max_pixels} pixels")
                 if getattr(image, "n_frames", 1) != 1:
                     raise ValueError("multi-frame images are not supported")
@@ -80,11 +85,15 @@ class AsyncImageParser:
             with destination.open("xb") as stream:
                 stream.write(data)
         except FileExistsError:
-            if (
-                destination.is_symlink()
-                or not destination.is_file()
-                or destination.samefile(resource.path)
-            ):
+            if destination.is_symlink():
+                raise ValueError(
+                    f"asset output conflicts with existing file: {destination}"
+                ) from None
+            if not destination.is_file():
+                raise ValueError(
+                    f"asset output conflicts with existing file: {destination}"
+                ) from None
+            if destination.samefile(resource.path):
                 raise ValueError(
                     f"asset output conflicts with existing file: {destination}"
                 ) from None
