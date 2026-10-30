@@ -91,7 +91,9 @@ def _encode(value: object, *, snapshot: bool = False) -> Any:
 
 
 def _decode(value: object, expected: str) -> Any:
-    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+    if not isinstance(value, dict):
+        raise ValueError("expected tagged object")
+    if any(not isinstance(key, str) for key in value):
         raise ValueError("expected tagged object")
     data: dict[str, Any] = dict(value)
     tag = data.pop("type", None)
@@ -109,12 +111,19 @@ def _decode(value: object, expected: str) -> Any:
     if set(data) - known:
         raise ValueError(f"unknown {tag} fields: {sorted(set(data) - known)}")
     supplied_id = data.pop("document_id", None) if cls is s.ParsedDocument else None
-    if cls is s.ParsedDocument and (
-        "schema_version" not in data
-        or "projection_version" not in data
-        or supplied_id is None
-    ):
-        raise ValueError("document requires explicit versions and snapshot identity")
+    if cls is s.ParsedDocument:
+        if "schema_version" not in data:
+            raise ValueError(
+                "document requires explicit versions and snapshot identity"
+            )
+        if "projection_version" not in data:
+            raise ValueError(
+                "document requires explicit versions and snapshot identity"
+            )
+        if supplied_id is None:
+            raise ValueError(
+                "document requires explicit versions and snapshot identity"
+            )
     for name, item in list(data.items()):
         if item is None:
             continue
@@ -145,8 +154,9 @@ def _decode(value: object, expected: str) -> Any:
         result = cls(**data)
     except TypeError as exc:
         raise ValueError(f"invalid {tag} fields") from exc
-    if isinstance(result, s.ParsedDocument) and result.document_id != supplied_id:
-        raise ValueError("document_id does not match snapshot")
+    if isinstance(result, s.ParsedDocument):
+        if result.document_id != supplied_id:
+            raise ValueError("document_id does not match snapshot")
     return result
 
 
@@ -175,10 +185,10 @@ def loads(value: str | bytes) -> s.ParsedDocument | s.ParseResult:
         raise ValueError(f"invalid JSON number: {token}")
 
     data = json.loads(value, object_pairs_hook=pairs, parse_constant=invalid_number)
-    if (
-        not isinstance(data, dict)
-        or not isinstance(data.get("type"), str)
-        or data["type"] not in {"document", "result"}
-    ):
+    if not isinstance(data, dict):
+        raise ValueError("expected document or result")
+    if not isinstance(data.get("type"), str):
+        raise ValueError("expected document or result")
+    if data["type"] not in {"document", "result"}:
         raise ValueError("expected document or result")
     return _decode(data, data["type"])
